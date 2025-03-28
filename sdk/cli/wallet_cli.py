@@ -1,12 +1,13 @@
-# file: sdk/cli/wallet_cli.py
-
 import click
 from rich.tree import Tree
 from rich.console import Console
 from pycardano import Network
 from sdk.keymanager.wallet_manager import WalletManager
 
-@click.group()
+# Define a custom context with a larger max_width to prevent wrapping
+CONTEXT_SETTINGS = dict(max_content_width=120)  # Increase this value as needed
+
+@click.group(context_settings=CONTEXT_SETTINGS)
 def wallet_cli():
     """
     CLI command group for Wallet Management (Coldkey & Hotkey).
@@ -15,24 +16,23 @@ def wallet_cli():
 
 #------------------------------------------------------------------------------
 # 1) CREATE COLDKEY
-#------------------------------------------------------------------------------
 @wallet_cli.command("create-coldkey")
-@click.option("--name", required=True, help="Coldkey name.")
+@click.option("--name", required=True, help="Specifies the unique name for your coldkey.")
 @click.option(
     "--password",
     prompt=True,
     hide_input=True,
     confirmation_prompt=True,
-    help="mnemonic encryption password.",
+    help="Sets a password to encrypt the mnemonic phrase, enhancing the security of your wallet recovery.",
 )
 @click.option(
-    "--base-dir", default="moderntensor", help="The base directory stores coldkeys."
+    "--base-dir", default="moderntensor", help="Defines the directory path where coldkeys are stored on the system."
 )
 @click.option(
     "--network",
     default="testnet",
     type=click.Choice(["testnet", "mainnet"]),
-    help="Select Cardano network.",
+    help="Chooses the Cardano network to connect, either testnet for testing or mainnet for live transactions.",
 )
 def create_coldkey_cmd(name, password, base_dir, network):
     """
@@ -41,16 +41,15 @@ def create_coldkey_cmd(name, password, base_dir, network):
     net = Network.TESTNET if network == "testnet" else Network.MAINNET
     wm = WalletManager(network=net, base_dir=base_dir)
     wm.create_coldkey(name, password)
-    click.echo(f"[OK] Coldkey '{name}' has been created in directory '{base_dir}'.")
-
+    click.echo(click.style(f"[OK] Coldkey '{name}' has been created in directory '{base_dir}'.", fg="green"))
 
 #------------------------------------------------------------------------------
 # 2) LOAD COLDKEY
 #------------------------------------------------------------------------------
 @wallet_cli.command("load-coldkey")
-@click.option("--name", required=True, help="Coldkey name.")
-@click.option("--password", prompt=True, hide_input=True, help="Password.")
-@click.option("--base-dir", default="moderntensor", help="Base directory.")
+@click.option("--name", required=True, help="Enter your coldkey name.")
+@click.option("--password", prompt=True, hide_input=True, help="Enter your password.")
+@click.option("--base-dir", default="moderntensor", help="Enter your base dictionary.")
 @click.option(
     "--network",
     default="testnet",
@@ -64,16 +63,15 @@ def load_coldkey_cmd(name, password, base_dir, network):
     net = Network.TESTNET if network == "testnet" else Network.MAINNET
     wm = WalletManager(network=net, base_dir=base_dir)
     wm.load_coldkey(name, password)
-    click.echo(f"[OK] Coldkey '{name}' has been loaded from '{base_dir}'.")
-
+    click.echo(click.style(f"[OK] Coldkey '{name}' has been loaded from '{base_dir}'.", fg="green"))
 
 #------------------------------------------------------------------------------
 # 3) GENERATE HOTKEY
 #------------------------------------------------------------------------------
 @wallet_cli.command("generate-hotkey")
-@click.option("--coldkey", required=True, help="Coldkey name.")
-@click.option("--hotkey-name", required=True, help="Hotkey name.")
-@click.option("--base-dir", default="moderntensor", help="Base directory.")
+@click.option("--coldkey", required=True, help="Enter your coldkey name.")
+@click.option("--hotkey-name", required=True, help="Enter your hotkey name.")
+@click.option("--base-dir", default="moderntensor", help="Enter your base directory.")
 @click.option(
     "--network",
     default="testnet",
@@ -90,16 +88,15 @@ def generate_hotkey_cmd(coldkey, hotkey_name, base_dir, network):
     password = click.prompt("Enter the coldkey password", hide_input=True)
     wm.load_coldkey(coldkey, password)
     encrypted_data = wm.generate_hotkey(coldkey, hotkey_name)
-    click.echo(f"[OK] Hotkey '{hotkey_name}' created => {encrypted_data}")
-
+    click.echo(click.style(f"[OK] Hotkey '{hotkey_name}' created => {encrypted_data}", fg="green"))
 
 #------------------------------------------------------------------------------
 # 4) IMPORT HOTKEY
 #------------------------------------------------------------------------------
 @wallet_cli.command("import-hotkey")
-@click.option("--coldkey", required=True, help="Coldkey name.")
+@click.option("--coldkey", required=True, help="Enter your coldkey name.")
 @click.option("--encrypted-hotkey", required=True, help="Encrypted hotkey string.")
-@click.option("--hotkey-name", required=True, help="Hotkey name.")
+@click.option("--hotkey-name", required=True, help="Enter your hotkey name.")
 @click.option(
     "--overwrite",
     is_flag=True,
@@ -126,13 +123,11 @@ def import_hotkey_cmd(
     wm.load_coldkey(coldkey, password)
 
     wm.import_hotkey(coldkey, encrypted_hotkey, hotkey_name, overwrite=overwrite)
-    click.echo(f"[OK] Hotkey '{hotkey_name}' has been imported.")
-
+    click.echo(click.style(f"[OK] Hotkey '{hotkey_name}' has been imported.", fg="green"))
 
 #------------------------------------------------------------------------------
 # 5) LIST KEY
 #------------------------------------------------------------------------------
-
 @wallet_cli.command(name='list')
 def list_coldkeys():
     """
@@ -164,3 +159,6 @@ def list_coldkeys():
                 )
     
     console.print(root_tree)
+
+if __name__ == "__main__":
+    wallet_cli()

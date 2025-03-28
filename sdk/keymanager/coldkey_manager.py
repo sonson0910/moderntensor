@@ -77,6 +77,7 @@ class ColdKeyManager:
         mnemonic = str(
             Bip39MnemonicGenerator(lang=Bip39Languages.ENGLISH).FromWordsNumber(words_num)
         )
+        logger.info(f"[create_coldkey] Mnemonic for Cold Key '{name}': {mnemonic}")
         logger.warning(
             f"[create_coldkey] Mnemonic for Cold Key '{name}' has been created. "
             "Please store it securely."

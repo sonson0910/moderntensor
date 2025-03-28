@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: moderntensor
 Version: 0.1.0
 Summary: Moderntensor CLI
@@ -67,6 +67,7 @@ Requires-Dist: win32_setctime==1.2.0
 Provides-Extra: cli
 Requires-Dist: click>=8.1.0; extra == "cli"
 Requires-Dist: rich>=13.0.0; extra == "cli"
+Dynamic: license-file
 
 # ModernTensor CLI
 

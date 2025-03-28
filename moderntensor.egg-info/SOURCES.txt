@@ -16,6 +16,7 @@ sdk/cli/wallet_cli.py
 sdk/config/__init__.py
 sdk/config/constants.py
 sdk/config/env.py
+sdk/config/settings.py
 sdk/keymanager/__init__.py
 sdk/keymanager/coldkey_manager.py
 sdk/keymanager/decryption_utils.py
@@ -57,6 +58,7 @@ sdk/service/__init__.py
 sdk/service/context.py
 sdk/service/contract_service.py
 sdk/service/query_service.py
+sdk/service/stake_service.py
 sdk/service/tx_service.py
 sdk/utils/__init__.py
 sdk/utils/helpers.py

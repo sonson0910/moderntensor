@@ -11,7 +11,13 @@ logging.basicConfig(level=logging.INFO)
 
 @click.group()
 def cli():
-    """CLI SDK, grouping coldkey, hotkey, metagraph commands, etc..."""
+    """
+    Welcome to the Cardano SDK CLI!
+    
+    CLI SDK, grouping coldkey, hotkey, metagraph commands, etc...
+    
+
+    """
     pass
 
 
