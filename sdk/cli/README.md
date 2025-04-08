@@ -5,29 +5,27 @@
 ### 1. Create Coldkey
 Creates a new coldkey (mnemonic) and saves it encrypted.  
 ```bash
-mtcli w create-coldkey --name <coldkey_name>
+mtcli w create-coldkey --name <coldkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
-
 - You will be prompted to enter and confirm a password
 - Coldkeys are stored in the `moderntensor` directory by default
 
 ### 2. Load Coldkey
 Loads an existing coldkey into memory.  
 ```bash
-mtcli w load-coldkey --name <coldkey_name>
+mtcli w load-coldkey --name <coldkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
-
 - Requires password for decryption
 - Needed before generating hotkeys
 
 ### 3. Generate Hotkey
 Creates a new hotkey (public key) for a coldkey.  
 ```bash
-mtcli w generate-hotkey --coldkey <coldkey_name> --hotkey-name <hotkey_name>
+mtcli w generate-hotkey --coldkey <coldkey_name> --hotkey-name <hotkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -38,7 +36,7 @@ mtcli w generate-hotkey --coldkey <coldkey_name> --hotkey-name <hotkey_name>
 ### 4. Import Hotkey
 Imports an encrypted hotkey string.  
 ```bash
-mtcli w import-hotkey --coldkey <coldkey_name> --encrypted-hotkey <key_string> --hotkey-name <hotkey_name>
+mtcli w import-hotkey --coldkey <coldkey_name> --encrypted-hotkey <key_string> --hotkey-name <hotkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -48,7 +46,7 @@ mtcli w import-hotkey --coldkey <coldkey_name> --encrypted-hotkey <key_string> -
 ### 5. List Keys
 Displays all coldkeys and associated hotkeys in a tree structure. 
 ```bash
-python sdk/cli/main.py w list
+mtcli w list
 ```
 
 ## Stake Commands
