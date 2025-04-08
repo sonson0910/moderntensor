@@ -18,7 +18,7 @@ class HotKeyManager:
         self,
         coldkeys_dict: dict,  # {coldkey_name -> {"wallet": HDWallet, "cipher_suite": ..., "hotkeys": {...}}}
         base_dir: str = None,
-        network: Network = None
+        network: Network = Network.TESTNET
     ):
         """
         Initializes the HotKeyManager.
@@ -34,7 +34,7 @@ class HotKeyManager:
         """
         self.coldkeys = coldkeys_dict
         self.base_dir = base_dir or settings.HOTKEY_BASE_DIR
-        self.network = network or settings.CARDANO_NETWORK
+        self.network = Network.TESTNET
 
     def generate_hotkey(self, coldkey_name: str, hotkey_name: str) -> str:
         """

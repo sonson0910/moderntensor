@@ -1,6 +1,6 @@
 # sdk/service/context.py
 
-from pycardano import BlockFrostChainContext
+from pycardano import BlockFrostChainContext, Network
 from sdk.config.settings import settings, logger
 
 
@@ -30,7 +30,7 @@ def get_chain_context(method="blockfrost"):
     # For now, we only support using Blockfrost
     if method == "blockfrost":
         project_id = settings.BLOCKFROST_PROJECT_ID
-        network = settings.CARDANO_NETWORK  # This is a pycardano.Network enum
+        network = "TESTNET"  # This is a pycardano.Network enum
 
         # Determine the base URL depending on the network
         if network == "MAINET":
@@ -39,6 +39,6 @@ def get_chain_context(method="blockfrost"):
             base_url = "https://cardano-preprod.blockfrost.io/api/"
 
         logger.info(f"Initializing BlockFrostChainContext with network={network}, project_id={project_id}")
-        return BlockFrostChainContext(project_id=project_id, base_url=base_url)
+        return BlockFrostChainContext(project_id=project_id, network=Network.TESTNET, base_url=base_url)
     else:
         raise ValueError(f"Unsupported chain context method: {method}")

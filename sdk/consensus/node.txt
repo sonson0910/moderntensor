@@ -1,0 +1,1749 @@
+# sdk/consensus/node.py
+
+"""
+
+Định nghĩa lớp ValidatorNode chứa logic chính điều phối chu trình đồng thuận.
+
+Sử dụng asyncio cho các tác vụ mạng và chờ đợi.
+
+Sử dụng đối tượng settings tập trung từ sdk.config.settings.
+
+*** Đây là khung sườn chi tiết, cần hoàn thiện logic cụ thể ***
+
+"""
+
+import random
+
+import time
+
+import math
+
+import asyncio
+
+import httpx
+
+from typing import List, Dict, Any, Tuple, Optional, Set
+
+from collections import defaultdict
+
+import logging
+
+
+
+# --- Import Settings ---
+
+from sdk.config.settings import settings
+
+
+
+# --- Import các module khác trong SDK ---
+
+# Formulas
+
+from sdk.formulas import * # Import tất cả hoặc import cụ thể
+
+# Metagraph & Blockchain Interaction
+
+from sdk.metagraph.metagraph_data import get_all_miner_data, get_all_validator_data
+
+from sdk.metagraph import metagraph_data, update_metagraph
+
+from sdk.metagraph.metagraph_datum import MinerDatum, ValidatorDatum, STATUS_ACTIVE, STATUS_JAILED, STATUS_INACTIVE
+
+from sdk.smartcontract.validator import read_validator
+
+# from sdk.metagraph.hash import hash_data, decode_history_from_hash # Cần hàm hash/decode
+
+def hash_data(data): return f"hashed_{str(data)[:10]}" # Mock hash
+
+async def decode_history_from_hash(hash_str): await asyncio.sleep(0); return [] # Mock decode
+
+# Network Models (for task/result data structure)
+
+from sdk.network.server import TaskModel, ResultModel
+
+# Core Datatypes
+
+from sdk.core.datatypes import (
+
+    MinerInfo, ValidatorInfo, TaskAssignment, MinerResult, ValidatorScore
+
+)
+
+# Pydantic model for API communication
+
+from sdk.network.app.api.v1.endpoints.consensus import ScoreSubmissionPayload
+
+# PyCardano types
+
+from pycardano import (Network, Address, ScriptHash, BlockFrostChainContext, PaymentSigningKey, StakeSigningKey, TransactionId)
+
+
+
+# --- Import các hàm logic đã tách ra ---
+
+from .selection import select_miners_logic
+
+from .scoring import score_results_logic
+
+from .p2p import broadcast_scores_logic
+
+from .state import (
+
+    run_consensus_logic,
+
+    verify_and_penalize_logic,
+
+    prepare_miner_updates_logic,
+
+    prepare_validator_updates_logic,
+
+    commit_updates_logic
+
+)
+
+
+
+# --- Logging ---
+
+logger = logging.getLogger(__name__)
+
+
+
+class ValidatorNode:
+
+    """
+
+    Lớp điều phối chính cho Validator Node.
+
+    Quản lý trạng thái và gọi các hàm logic từ các module con.
+
+    """
+
+    def __init__(self, validator_info: ValidatorInfo, cardano_context: BlockFrostChainContext, signing_key: PaymentSigningKey, stake_signing_key: Optional[StakeSigningKey] = None):
+
+        """
+
+        Khởi tạo Node Validator.
+
+
+
+        Args:
+
+            validator_info: Thông tin của validator này (UID, Address, API Endpoint).
+
+            cardano_context: Context để tương tác Cardano (BlockFrostChainContext).
+
+            signing_key: Khóa ký thanh toán (PaymentSigningKey) của validator.
+
+            stake_signing_key: Khóa ký stake (StakeSigningKey) nếu có.
+
+        """
+
+        if not validator_info or not validator_info.uid:
+
+             raise ValueError("Valid ValidatorInfo with a UID must be provided.")
+
+        if not cardano_context:
+
+             raise ValueError("Cardano context (e.g., BlockFrostChainContext) must be provided.")
+
+        if not signing_key:
+
+             raise ValueError("PaymentSigningKey must be provided.")
+
+
+
+        self.info = validator_info
+
+        self.context = cardano_context
+
+        self.signing_key = signing_key
+
+        self.stake_signing_key = stake_signing_key
+
+        self.settings = settings # Sử dụng instance settings đã import
+
+
+
+        # State variables
+
+        self.miners_info: Dict[str, MinerInfo] = {}
+
+        self.validators_info: Dict[str, ValidatorInfo] = {}
+
+        self.current_cycle: int = 0 # TODO: Nên load từ trạng thái cuối cùng on-chain/db
+
+        self.tasks_sent: Dict[str, TaskAssignment] = {}
+
+        self.results_received: Dict[str, List[MinerResult]] = {}
+
+        self.validator_scores: Dict[str, List[ValidatorScore]] = {} # Điểm do mình chấm
+
+
+
+        # P2P score sharing state
+
+        self.received_validator_scores: Dict[int, Dict[str, Dict[str, ValidatorScore]]] = defaultdict(lambda: defaultdict(dict))
+
+        self.received_scores_lock = asyncio.Lock()
+
+
+
+        # State for cross-cycle verification
+
+        self.previous_cycle_results: Dict[str, Any] = {
+
+            "final_miner_scores": {},
+
+            "calculated_validator_states": {}
+
+        }
+
+
+
+        # HTTP client for P2P communication
+
+        self.http_client = httpx.AsyncClient(
+
+            timeout=self.settings.CONSENSUS_NETWORK_TIMEOUT_SECONDS,
+
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20) # Cấu hình giới hạn
+
+        )
+
+
+
+        # Load script details once
+
+        try:
+
+            validator_details = read_validator()
+
+            if not validator_details or "script_hash" not in validator_details or "script_bytes" not in validator_details:
+
+                raise ValueError("Failed to load valid script details (hash or bytes missing).")
+
+            self.script_hash: ScriptHash = validator_details["script_hash"]
+
+            self.script_bytes = validator_details["script_bytes"]
+
+        except Exception as e:
+
+            logger.exception("Failed to read validator script details during node initialization.")
+
+            raise ValueError(f"Could not initialize node due to script loading error: {e}") from e
+
+
+
+        logger.info(f"Initialized ValidatorNode {self.info.uid} using centralized settings.")
+
+        logger.info(f"Contract Script Hash: {self.script_hash}")
+
+        logger.info(f"Cardano Network: {self.settings.CARDANO_NETWORK}")
+
+
+
+    # --- Tương tác Metagraph ---
+
+    async def load_metagraph_data(self):
+
+        """
+
+        Tải dữ liệu miners và validators từ Metagraph bằng cách gọi các hàm
+
+        trong sdk.metagraph.metagraph_data và cập nhật trạng thái node.
+
+        """
+
+        logger.info(f"[V:{self.info.uid}] Loading Metagraph data for cycle {self.current_cycle}...")
+
+        start_time = time.time()
+
+        network = self.settings.CARDANO_NETWORK
+
+        datum_divisor = self.settings.METAGRAPH_DATUM_INT_DIVISOR
+
+        max_history_len = self.settings.CONSENSUS_MAX_PERFORMANCE_HISTORY_LEN
+
+
+
+        try:
+
+            # Gọi đồng thời để tải dữ liệu
+
+            miner_data_task = get_all_miner_data(self.context, self.script_hash, network)
+
+            validator_data_task = get_all_validator_data(self.context, self.script_hash, network)
+
+            # TODO: Thêm task load Subnet/Foundation data nếu cần
+
+
+
+            all_miner_dicts, all_validator_dicts = await asyncio.gather(
+
+                miner_data_task, validator_data_task, return_exceptions=True
+
+            )
+
+
+
+            # Xử lý lỗi fetch
+
+            if isinstance(all_miner_dicts, Exception):
+
+                logger.error(f"Failed to fetch miner data: {all_miner_dicts}")
+
+                all_miner_dicts = []
+
+            if isinstance(all_validator_dicts, Exception):
+
+                logger.error(f"Failed to fetch validator data: {all_validator_dicts}")
+
+                all_validator_dicts = []
+
+
+
+            logger.info(f"Fetched {len(all_miner_dicts)} miner entries and {len(all_validator_dicts)} validator entries.")
+
+
+
+            # --- Chuyển đổi Miner dicts sang MinerInfo ---
+
+            temp_miners_info = {}
+
+            for miner_dict in all_miner_dicts:
+
+                try:
+
+                    datum = miner_dict.get("datum", {})
+
+                    uid_hex = datum.get("uid")
+
+                    if not uid_hex: continue
+
+
+
+                    # TODO: Triển khai logic load và giải mã performance_history_hash
+
+                    # perf_history_hash_hex = datum.get("performance_history_hash")
+
+                    # perf_history = await decode_history_from_hash(perf_history_hash_hex) if perf_history_hash_hex else []
+
+                    perf_history = [] # Placeholder
+
+
+
+                    temp_miners_info[uid_hex] = MinerInfo(
+
+                        uid=uid_hex,
+
+                        address=datum.get("address", f"addr_{uid_hex[:8]}..."),
+
+                        api_endpoint=datum.get("api_endpoint"),
+
+                        trust_score=float(datum.get("trust_score", 0.0)),
+
+                        weight=float(datum.get("weight", 0.0)),
+
+                        stake=int(datum.get("stake", 0)),
+
+                        last_selected_time=int(datum.get("last_selected_cycle", -1)),
+
+                        performance_history=perf_history[-max_history_len:],
+
+                        subnet_uid=int(datum.get("subnet_uid", -1)),
+
+                        version=int(datum.get("version", 0)),
+
+                        status=int(datum.get("status", STATUS_INACTIVE)), # Lấy status
+
+                        registration_slot=int(datum.get("registration_slot", 0)),
+
+                        wallet_addr_hash=datum.get("wallet_addr_hash"),
+
+                        performance_history_hash=datum.get("performance_history_hash"),
+
+                    )
+
+                except Exception as e:
+
+                    logger.warning(f"Failed to parse Miner data dict for UID {datum.get('uid', 'N/A')}: {e}", exc_info=False)
+
+                    logger.debug(f"Problematic miner data dict: {miner_dict}")
+
+
+
+            # --- Chuyển đổi Validator dicts sang ValidatorInfo ---
+
+            temp_validators_info = {}
+
+            for val_dict in all_validator_dicts:
+
+                 try:
+
+                    datum = val_dict.get("datum", {})
+
+                    uid_hex = datum.get("uid")
+
+                    if not uid_hex: continue
+
+
+
+                    temp_validators_info[uid_hex] = ValidatorInfo(
+
+                        uid=uid_hex,
+
+                        address=datum.get("address", f"addr_{uid_hex[:8]}..."),
+
+                        api_endpoint=datum.get("api_endpoint"),
+
+                        trust_score=float(datum.get("trust_score", 0.0)),
+
+                        weight=float(datum.get("weight", 0.0)),
+
+                        stake=int(datum.get("stake", 0)),
+
+                        subnet_uid=int(datum.get("subnet_uid", -1)),
+
+                        version=int(datum.get("version", 0)),
+
+                        status=int(datum.get("status", STATUS_INACTIVE)),
+
+                        registration_slot=int(datum.get("registration_slot", 0)),
+
+                        wallet_addr_hash=datum.get("wallet_addr_hash"),
+
+                        performance_history_hash=datum.get("performance_history_hash"),
+
+                    )
+
+                 except Exception as e:
+
+                    logger.warning(f"Failed to parse Validator data dict for UID {datum.get('uid', 'N/A')}: {e}", exc_info=False)
+
+                    logger.debug(f"Problematic validator data dict: {val_dict}")
+
+
+
+            # --- Cập nhật trạng thái node ---
+
+            self.miners_info = temp_miners_info
+
+            self.validators_info = temp_validators_info
+
+
+
+            # Cập nhật thông tin của chính mình
+
+            self_uid_hex = self.info.uid.hex() if isinstance(self.info.uid, bytes) else self.info.uid
+
+            if self_uid_hex in self.validators_info:
+
+                 loaded_info = self.validators_info[self_uid_hex]
+
+                 self.info.address = loaded_info.address
+
+                 self.info.api_endpoint = loaded_info.api_endpoint
+
+                 self.info.trust_score = loaded_info.trust_score
+
+                 self.info.weight = loaded_info.weight
+
+                 self.info.stake = loaded_info.stake
+
+                 # Cập nhật thêm các trường khác nếu cần
+
+                 logger.info(f"Self validator info ({self_uid_hex}) updated from metagraph.")
+
+            elif self.info.uid:
+
+                 self.validators_info[self_uid_hex] = self.info
+
+                 logger.warning(f"Self validator ({self_uid_hex}) not found in metagraph, added locally. Ensure initial state is correct.")
+
+            else:
+
+                 logger.error("Current validator info UID is invalid after loading metagraph.")
+
+
+
+            # TODO: Load và xử lý dữ liệu Subnet/Foundation nếu cần
+
+
+
+            load_duration = time.time() - start_time
+
+            logger.info(f"Processed info for {len(self.miners_info)} miners and {len(self.validators_info)} validators in {load_duration:.2f}s.")
+
+
+
+        except Exception as e:
+
+            logger.exception(f"Critical error during metagraph data loading/processing: {e}. Cannot proceed this cycle.")
+
+            raise RuntimeError(f"Failed to load and process metagraph data: {e}") from e
+
+
+
+    # --- Lựa chọn Miner ---
+
+    def select_miners(self) -> List[MinerInfo]:
+
+        """Chọn miners để giao việc."""
+
+        logger.info(f"[V:{self.info.uid}] Selecting miners for cycle {self.current_cycle}...")
+
+        # Gọi hàm logic từ selection.py
+
+        return select_miners_logic(
+
+            miners_info=self.miners_info,
+
+            current_cycle=self.current_cycle,
+
+            # Các tham số khác được lấy từ self.settings bên trong hàm logic
+
+        )
+
+
+
+    # --- Giao Task ---
+
+    def _create_task_data(self, miner_uid: str) -> Any:
+
+        """Tạo dữ liệu task cụ thể."""
+
+        # TODO: Triển khai logic tạo task phù hợp với ứng dụng AI của bạn
+
+        # Ví dụ: Chọn ngẫu nhiên một batch dữ liệu, yêu cầu dự đoán/huấn luyện
+
+        logger.debug(f"Creating task data for miner {miner_uid}")
+
+        # Trả về dữ liệu task (ví dụ: dict, object,...)
+
+        return {"type": "inference", "input_data": f"data_{random.randint(1,1000)}", "model_id": "model_xyz"}
+
+
+
+    async def _send_task_via_network_async(self, miner_endpoint: str, task: TaskModel) -> bool:
+
+        """
+
+        Gửi task qua mạng đến miner endpoint một cách bất đồng bộ.
+
+
+
+        Args:
+
+            miner_endpoint: Địa chỉ API của miner (đã bao gồm http/https).
+
+            task: Đối tượng TaskModel chứa thông tin task.
+
+
+
+        Returns:
+
+            True nếu gửi thành công (HTTP status 2xx), False nếu có lỗi.
+
+        """
+
+        if not miner_endpoint or not miner_endpoint.startswith(("http://", "https://")):
+
+            logger.warning(f"Invalid or missing API endpoint for miner: {miner_endpoint} in task {getattr(task, 'task_id', 'N/A')}")
+
+            return False
+
+
+
+        # TODO: Xác định đường dẫn endpoint chính xác trên miner node để nhận task
+
+        # Endpoint này cần được thống nhất giữa validator và miner.
+
+        target_url = f"{miner_endpoint}/execute_task" # <<<--- GIẢ ĐỊNH ENDPOINT
+
+
+
+        try:
+
+            # Serialize task data thành JSON
+
+            # Sử dụng model_dump nếu TaskModel là Pydantic v2, ngược lại dùng dict()
+
+            task_payload = task.model_dump(mode='json') if hasattr(task, 'model_dump') else task.dict()
+
+
+
+            logger.debug(f"Sending task {task.task_id} to {target_url}")
+
+            # --- Gửi request POST bằng httpx ---
+
+            response = await self.http_client.post(target_url, json=task_payload)
+
+
+
+            # Kiểm tra HTTP status code
+
+            response.raise_for_status() # Ném exception nếu là 4xx hoặc 5xx
+
+
+
+            logger.info(f"Successfully sent task {task.task_id} to {miner_endpoint} (Status: {response.status_code})")
+
+            # TODO: Có thể cần xử lý nội dung response nếu miner trả về thông tin xác nhận
+
+            # Ví dụ: data = response.json()
+
+            return True
+
+
+
+        except httpx.RequestError as e:
+
+            # Lỗi kết nối mạng, DNS, timeout,...
+
+            logger.error(f"Network error sending task {getattr(task, 'task_id', 'N/A')} to {target_url}: {e}")
+
+            return False
+
+        except httpx.HTTPStatusError as e:
+
+             # Lỗi từ phía server miner (4xx, 5xx)
+
+             logger.error(f"HTTP error sending task {getattr(task, 'task_id', 'N/A')} to {target_url}: Status {e.response.status_code} - Response: {e.response.text[:200]}")
+
+             return False
+
+        except Exception as e:
+
+            # Các lỗi khác (ví dụ: serialization,...)
+
+            logger.exception(f"Unexpected error sending task {getattr(task, 'task_id', 'N/A')} to {target_url}: {e}")
+
+            return False
+
+
+
+
+
+    def send_task_and_track(self, miners: List[MinerInfo]):
+
+        """
+
+        Tạo và gửi task cho các miners đã chọn một cách bất đồng bộ,
+
+        đồng thời lưu lại thông tin các task đã gửi thành công.
+
+        """
+
+        if not miners:
+
+            logger.warning("send_task_and_track called with empty miner list.")
+
+            self.tasks_sent = {}
+
+            return
+
+
+
+        logger.info(f"[V:{self.info.uid}] Attempting to send tasks to {len(miners)} selected miners...")
+
+        self.tasks_sent = {} # Xóa danh sách task đã gửi của chu kỳ trước
+
+        tasks_to_send = []
+
+        # Tạm lưu assignment để chỉ thêm vào self.tasks_sent nếu gửi thành công
+
+        task_assignments: Dict[str, TaskAssignment] = {} # {miner_uid: TaskAssignment}
+
+
+
+        for miner in miners:
+
+            # Kiểm tra xem miner có endpoint hợp lệ không
+
+            if not miner.api_endpoint or not miner.api_endpoint.startswith(("http://", "https://")):
+
+                logger.warning(f"Miner {miner.uid} has invalid or missing API endpoint ('{miner.api_endpoint}'). Skipping task assignment.")
+
+                continue
+
+
+
+            task_id = f"task_{self.current_cycle}_{self.info.uid}_{miner.uid}_{random.randint(1000,9999)}"
+
+            try:
+
+                task_data = self._create_task_data(miner.uid)
+
+                # Giả sử TaskModel có thể tạo từ dict hoặc có constructor phù hợp
+
+                # Cần đảm bảo TaskModel được import đúng
+
+                task = TaskModel(task_id=task_id, data=task_data)
+
+            except Exception as e:
+
+                logger.exception(f"Failed to create task for miner {miner.uid}: {e}")
+
+                continue # Bỏ qua miner này nếu không tạo được task
+
+
+
+            # Tạo đối tượng TaskAssignment trước khi gửi
+
+            assignment = TaskAssignment(
+
+                task_id=task_id,
+
+                task_data=task_data,
+
+                miner_uid=miner.uid, # Lưu UID dạng hex string
+
+                validator_uid=self.info.uid, # Lưu UID dạng hex string
+
+                timestamp_sent=time.time(),
+
+                expected_result_format={"output": "tensor", "loss": "float"} # Ví dụ
+
+            )
+
+            task_assignments[miner.uid] = assignment # Lưu tạm
+
+
+
+            # Tạo coroutine để gửi task và thêm vào danh sách chờ
+
+            tasks_to_send.append(self._send_task_via_network_async(miner.api_endpoint, task))
+
+
+
+        if not tasks_to_send:
+
+            logger.warning("No valid tasks could be prepared for sending (e.g., all selected miners lack valid endpoints).")
+
+            return
+
+
+
+        logger.info(f"Sending {len(tasks_to_send)} tasks concurrently...")
+
+        # Gửi đồng thời tất cả các task
+
+        results = asyncio.gather(*tasks_to_send, return_exceptions=True)
+
+
+
+        successful_sends = 0
+
+        # Xử lý kết quả gửi task
+
+        # Lấy danh sách miners tương ứng với results (những miner thực sự được gửi task)
+
+        miners_with_tasks = [m for m in miners if m.uid in task_assignments]
+
+        for i, result in enumerate(results):
+
+            # Lấy miner tương ứng với kết quả này
+
+            if i < len(miners_with_tasks):
+
+                miner = miners_with_tasks[i]
+
+                assignment = task_assignments.get(miner.uid)
+
+
+
+                if assignment and isinstance(result, bool) and result:
+
+                    # Chỉ lưu task và cập nhật last_selected_time nếu gửi thành công
+
+                    self.tasks_sent[assignment.task_id] = assignment
+
+                    if miner.uid in self.miners_info: # Cập nhật trạng thái trong bộ nhớ của node
+
+                        self.miners_info[miner.uid].last_selected_time = self.current_cycle
+
+                        logger.debug(f"Updated last_selected_time for miner {miner.uid} to cycle {self.current_cycle}")
+
+                    successful_sends += 1
+
+                    # Không log thành công ở đây nữa vì đã log trong _send_task_via_network_async
+
+                else:
+
+                    # Ghi log lỗi nếu gửi thất bại
+
+                    logger.warning(f"Failed to send task {assignment.task_id if assignment else 'N/A'} to Miner {miner.uid}. Error/Result: {result}")
+
+            else:
+
+                 # Trường hợp này không nên xảy ra nếu logic đúng
+
+                 logger.error(f"Result index {i} out of bounds for miners_with_tasks list during task sending.")
+
+
+
+        logger.info(f"Finished sending tasks attempt. Successful sends: {successful_sends}/{len(tasks_to_send)}.")
+
+
+
+
+
+    # --- Nhận và Chấm điểm Kết quả ---
+
+    async def _listen_for_results_async(self, timeout: float) -> Dict[str, List[MinerResult]]:
+
+        """
+
+        (MOCK) Lắng nghe/Chờ kết quả trả về từ miner trong khoảng thời gian timeout.
+
+        *** Cần thay thế bằng logic nhận kết quả qua mạng thực tế ***
+
+        """
+
+        logger.info(f"  (Mock Async) Starting to listen for miner results (timeout: {timeout:.1f}s)...")
+
+        start_listen_time = time.time()
+
+        received_results: Dict[str, List[MinerResult]] = defaultdict(list)
+
+
+
+        # Danh sách các task ID đang chờ kết quả
+
+        tasks_awaiting = list(self.tasks_sent.keys())
+
+        if not tasks_awaiting:
+
+            logger.info("  (Mock Async) No tasks were sent, nothing to listen for.")
+
+            return {}
+
+
+
+        # Giả lập việc chờ đợi và nhận kết quả ngẫu nhiên
+
+        # Trong thực tế, bạn sẽ dùng một cơ chế khác (API endpoint, queue, websocket...)
+
+        wait_step = 1.0 # Kiểm tra mỗi giây
+
+        while time.time() - start_listen_time < timeout:
+
+            # Giả lập kiểm tra xem có kết quả mới không
+
+            if tasks_awaiting and random.random() < 0.3: # 30% cơ hội nhận được 1 kết quả mỗi giây (ví dụ)
+
+                task_id_to_receive = random.choice(tasks_awaiting)
+
+                assignment = self.tasks_sent.get(task_id_to_receive)
+
+
+
+                if assignment:
+
+                    # Tạo kết quả giả lập
+
+                    # TODO: Cấu trúc result_data cần khớp với những gì miner thực sự trả về
+
+                    mock_loss = random.uniform(0.01, 0.9) # Loss ngẫu nhiên
+
+                    result_data = {
+
+                        "output": [random.random() for _ in range(5)], # Output vector ví dụ
+
+                        "loss": mock_loss,
+
+                        "processing_time": random.uniform(0.5, 5.0)
+
+                    }
+
+                    miner_result = MinerResult(
+
+                        task_id=task_id_to_receive,
+
+                        miner_uid=assignment.miner_uid,
+
+                        result_data=result_data,
+
+                        timestamp_received=time.time()
+
+                    )
+
+                    received_results[task_id_to_receive].append(miner_result)
+
+                    logger.info(f"  (Mock Async) Received result for task {task_id_to_receive} from Miner {assignment.miner_uid}")
+
+                    tasks_awaiting.remove(task_id_to_receive) # Xóa task đã nhận kết quả khỏi danh sách chờ
+
+
+
+            if not tasks_awaiting: # Nếu đã nhận đủ kết quả cho các task đã gửi
+
+                logger.info("  (Mock Async) Received results for all sent tasks.")
+
+                break
+
+
+
+            await asyncio.sleep(wait_step) # Chờ bước tiếp theo
+
+
+
+        # Ghi log các task không nhận được kết quả sau timeout
+
+        if tasks_awaiting:
+
+            for task_id in tasks_awaiting:
+
+                assignment = self.tasks_sent.get(task_id)
+
+                if assignment:
+
+                    logger.warning(f"  (Mock Async) Timeout waiting for result for task {task_id} from Miner {assignment.miner_uid}")
+
+
+
+        logger.info(f"  (Mock Async) Finished listening for results. Received for {len(received_results)} tasks.")
+
+        return dict(received_results) # Trả về dict thường thay vì defaultdict
+
+
+
+
+
+    async def receive_results(self, timeout: Optional[float] = None):
+
+        """
+
+        Chờ và nhận kết quả từ các miner đã được giao task.
+
+
+
+        Args:
+
+            timeout: Thời gian tối đa chờ đợi kết quả (giây).
+
+                     Nếu None, sử dụng giá trị mặc định từ settings.
+
+        """
+
+        if timeout is None:
+
+            # Lấy timeout từ settings hoặc đặt giá trị mặc định hợp lý
+
+            # Ví dụ: timeout bằng một phần nhỏ của thời gian gửi điểm
+
+            receive_timeout_default = self.settings.CONSENSUS_SEND_SCORE_OFFSET_MINUTES * 60 * 0.5 # Chờ 1/2 thời gian trước khi gửi điểm
+
+            timeout = receive_timeout_default
+
+            # Hoặc timeout = self.settings.CONSENSUS_RECEIVE_RESULT_TIMEOUT # Thêm tham số này vào settings
+
+
+
+        logger.info(f"[V:{self.info.uid}] Waiting for results (timeout: {timeout:.1f}s)...")
+
+        self.results_received = {} # Xóa kết quả cũ trước khi nhận mới
+
+        try:
+
+            self.results_received = await self._listen_for_results_async(timeout)
+
+            logger.info(f"Finished receiving results. Got results for {len(self.results_received)} tasks.")
+
+        except Exception as e:
+
+            logger.exception(f"Error during listening for results: {e}")
+
+            self.results_received = {} # Đảm bảo results_received là dict rỗng nếu có lỗi
+
+
+
+
+
+    def score_miner_results(self):
+
+        """Chấm điểm kết quả nhận được."""
+
+        # Gọi hàm logic từ scoring.py
+
+        self.validator_scores = score_results_logic(
+
+            results_received=self.results_received,
+
+            tasks_sent=self.tasks_sent,
+
+            validator_uid=self.info.uid # Truyền UID dạng hex string
+
+        )
+
+
+
+    async def add_received_score(self, submitter_uid: str, cycle: int, scores: List[ValidatorScore]):
+
+        """Thêm điểm số nhận được từ validator khác vào bộ nhớ (async safe)."""
+
+        # Logic này quản lý state nội bộ nên giữ lại trong Node
+
+        # TODO: Thêm validation cho scores và submitter_uid
+
+        async with self.received_scores_lock:
+
+            if cycle not in self.received_validator_scores:
+
+                # Chỉ lưu điểm cho chu kỳ hiện tại hoặc tương lai gần? Tránh lưu trữ quá nhiều.
+
+                if cycle < self.current_cycle - 1: # Ví dụ: chỉ giữ lại chu kỳ trước đó
+
+                    logger.warning(f"Received scores for outdated cycle {cycle} from {submitter_uid}. Ignoring.")
+
+                    return
+
+                self.received_validator_scores[cycle] = defaultdict(dict)
+
+
+
+            valid_scores_added = 0
+
+            for score in scores:
+
+                # Chỉ lưu điểm cho task mà node này cũng quan tâm (đã gửi đi)? Hay lưu tất cả?
+
+                # Tạm thời lưu tất cả điểm nhận được cho chu kỳ đó.
+
+                # if score.task_id in self.tasks_sent: # Chỉ lưu nếu task liên quan?
+
+                if score.task_id not in self.received_validator_scores[cycle]:
+
+                    self.received_validator_scores[cycle][score.task_id] = {}
+
+                # Ghi đè điểm nếu validator gửi lại?
+
+                self.received_validator_scores[cycle][score.task_id][score.validator_uid] = score
+
+                valid_scores_added += 1
+
+                # else:
+
+                #     logger.debug(f"Ignoring score for irrelevant task {score.task_id} from {submitter_uid}")
+
+
+
+            logger.debug(f"Added {valid_scores_added} scores from {submitter_uid} for cycle {cycle}")
+
+
+
+
+
+    async def broadcast_scores(self):
+
+        """
+
+        Lấy danh sách validator đang hoạt động và gọi logic gửi điểm số P2P.
+
+        """
+
+        # Gọi hàm logic từ p2p.py
+
+        try:
+
+            active_validators = await self._get_active_validators()
+
+            if active_validators:
+
+                await broadcast_scores_logic(
+
+                    local_scores=self.validator_scores, # Điểm mình đã chấm
+
+                    self_validator_info=self.info,
+
+                    active_validators=active_validators,
+
+                    current_cycle=self.current_cycle,
+
+                    http_client=self.http_client
+
+                )
+
+            else:
+
+                logger.warning("No active validators found to broadcast scores to.")
+
+        except Exception as e:
+
+            logger.exception(f"Error during broadcast_scores: {e}")
+
+
+
+    async def _get_active_validators(self) -> List[ValidatorInfo]:
+
+        """Lấy danh sách validator đang hoạt động."""
+
+        # TODO: Triển khai logic query metagraph thực tế hoặc dùng cache.
+
+        logger.debug("Getting active validators...")
+
+        # Tạm thời lọc từ danh sách đã load, cần đảm bảo danh sách này được cập nhật thường xuyên
+
+        active_vals = [
+
+            v for v in self.validators_info.values()
+
+            if v.api_endpoint and getattr(v, 'status', STATUS_ACTIVE) == STATUS_ACTIVE
+
+        ]
+
+        logger.debug(f"Found {len(active_vals)} active validators with API endpoints.")
+
+        return active_vals
+
+
+
+    def _has_sufficient_scores(self, task_id: str, total_active_validators: int) -> bool:
+
+        """
+
+        Kiểm tra xem đã nhận đủ điểm cho task cụ thể chưa để bắt đầu đồng thuận.
+
+        """
+
+        # Logic này quản lý state nội bộ nên giữ lại trong Node
+
+        current_cycle_scores = self.received_validator_scores.get(self.current_cycle, {})
+
+        task_scores = current_cycle_scores.get(task_id, {})
+
+        received_validators_for_task = task_scores.keys()
+
+
+
+        # Đếm cả điểm của chính mình (nếu đã chấm)
+
+        received_count = len(received_validators_for_task)
+
+        # Kiểm tra xem điểm của chính mình đã có trong validator_scores chưa
+
+        if task_id in self.validator_scores and self.info.uid not in received_validators_for_task:
+
+             # Nếu mình đã chấm nhưng điểm chưa nằm trong received_scores (ví dụ chưa broadcast/nhận lại)
+
+             # thì vẫn tính là mình đã có điểm
+
+             if any(s.validator_uid == self.info.uid for s in self.validator_scores[task_id]):
+
+                  received_count += 1
+
+
+
+        # Tính số lượng cần thiết
+
+        min_validators = self.settings.CONSENSUS_MIN_VALIDATORS_FOR_CONSENSUS
+
+        # Yêu cầu số lượng tối thiểu HOẶC phần trăm nhất định (ví dụ 60%)
+
+        required_count = max(min_validators, math.ceil(total_active_validators * 0.6))
+
+        # Đảm bảo required_count không lớn hơn tổng số validator hoạt động
+
+        required_count = min(required_count, total_active_validators)
+
+
+
+        logger.debug(f"Scores check for task {task_id}: Received from {received_count}/{required_count} validators (Total active: {total_active_validators})")
+
+        return received_count >= required_count
+
+
+
+    async def wait_for_consensus_scores(self, wait_timeout_seconds: float) -> bool:
+
+        """
+
+        Chờ nhận đủ điểm số từ các validator khác trong một khoảng thời gian giới hạn.
+
+
+
+        Args:
+
+            wait_timeout_seconds: Thời gian chờ tối đa (giây).
+
+
+
+        Returns:
+
+            True nếu nhận đủ điểm cho tất cả các task đã chấm trong thời gian chờ,
+
+            False nếu hết thời gian chờ mà chưa đủ.
+
+        """
+
+        logger.info(f"Waiting up to {wait_timeout_seconds:.1f}s for consensus scores for cycle {self.current_cycle}...")
+
+        start_wait = time.time()
+
+        active_validators = await self._get_active_validators()
+
+        total_active = len(active_validators)
+
+        min_consensus_validators = self.settings.CONSENSUS_MIN_VALIDATORS_FOR_CONSENSUS
+
+
+
+        if total_active < min_consensus_validators:
+
+             logger.warning(f"Not enough active validators ({total_active}) for minimum consensus ({min_consensus_validators}). Proceeding with available data.")
+
+             # Vẫn trả về True để cho phép tính toán với số điểm hiện có nếu số validator hoạt động ít
+
+             # Hoặc có thể trả về False nếu muốn dừng hẳn khi không đủ validator tối thiểu
+
+             return True # Tạm thời cho phép tiếp tục
+
+
+
+        # Chỉ kiểm tra các task mà validator này đã chấm điểm và gửi đi
+
+        tasks_to_check = set(self.validator_scores.keys())
+
+        if not tasks_to_check:
+
+             logger.info("No local scores generated, skipping wait for consensus scores.")
+
+             return True # Không có gì để chờ
+
+
+
+        logger.debug(f"Waiting for consensus on tasks: {list(tasks_to_check)}")
+
+        processed_task_ids = set() # Các task đã đủ điểm
+
+
+
+        while time.time() - start_wait < wait_timeout_seconds:
+
+            all_tasks_sufficient = True
+
+            async with self.received_scores_lock: # Lock khi kiểm tra dữ liệu được chia sẻ
+
+                tasks_needing_check = tasks_to_check - processed_task_ids
+
+                if not tasks_needing_check: # Nếu không còn task nào cần check
+
+                     break # Đã đủ điểm cho tất cả task cần check
+
+
+
+                logger.debug(f"Checking sufficiency for tasks: {list(tasks_needing_check)}")
+
+                for task_id in list(tasks_needing_check):
+
+                    # Kiểm tra xem task này đã đủ điểm chưa
+
+                    if self._has_sufficient_scores(task_id, total_active):
+
+                        logger.debug(f"Task {task_id} now has sufficient scores.")
+
+                        processed_task_ids.add(task_id)
+
+                    else:
+
+                        all_tasks_sufficient = False
+
+                        # Không break vội, kiểm tra hết các task khác trong lần lặp này
+
+
+
+            if all_tasks_sufficient and tasks_needing_check.issubset(processed_task_ids) :
+
+                logger.info("Sufficient scores received for all relevant tasks.")
+
+                return True
+
+
+
+            await asyncio.sleep(2) # Chờ 2 giây rồi kiểm tra lại
+
+
+
+        # Nếu vòng lặp kết thúc do timeout
+
+        remaining_tasks = tasks_to_check - processed_task_ids
+
+        if remaining_tasks:
+
+            logger.warning(f"Consensus score waiting timed out. Tasks still missing sufficient scores: {list(remaining_tasks)}")
+
+        else:
+
+             logger.info("Consensus score waiting finished (all tasks checked).")
+
+        # Trả về False nếu timeout và vẫn còn task chưa đủ điểm, nhưng run_cycle vẫn tiếp tục
+
+        return not bool(remaining_tasks)
+
+
+
+
+
+    # --- Kiểm tra và Phạt Validator (Chu kỳ trước) ---
+
+    async def verify_and_penalize_validators(self):
+
+        """Kiểm tra ValidatorDatum chu kỳ trước và áp dụng phạt."""
+
+        # Gọi hàm logic từ state.py
+
+        # Hàm này sẽ cập nhật self.validators_info trực tiếp nếu có phạt trust
+
+        penalized_updates = await verify_and_penalize_logic(
+
+            current_cycle=self.current_cycle,
+
+            previous_calculated_states=self.previous_cycle_results.get("calculated_validator_states", {}),
+
+            validators_info=self.validators_info, # Truyền trạng thái hiện tại
+
+            context=self.context,
+
+            settings=self.settings,
+
+            # signing_key=self.signing_key # Có thể cần nếu commit phạt ngay
+
+        )
+
+        # TODO: Xử lý penalized_updates nếu cần commit ngay hoặc lưu lại
+
+        if penalized_updates:
+
+            logger.warning(f"Validators penalized in verification step: {list(penalized_updates.keys())}")
+
+            # Hiện tại chỉ cập nhật trust trong self.validators_info, chưa commit
+
+
+
+    # --- Chạy Đồng thuận và Cập nhật Trạng thái ---
+
+    def run_consensus_and_penalties(self) -> Tuple[Dict[str, float], Dict[str, Any]]:
+
+        """Chạy đồng thuận, tính toán trạng thái mới."""
+
+        # Gọi hàm logic từ state.py
+
+        return run_consensus_logic(
+
+            current_cycle=self.current_cycle,
+
+            tasks_sent=self.tasks_sent,
+
+            received_scores=self.received_validator_scores.get(self.current_cycle, {}),
+
+            validators_info=self.validators_info,
+
+            settings=self.settings
+
+        )
+
+
+
+    def update_miner_state(self, final_scores: Dict[str, float]) -> Dict[str, MinerDatum]:
+
+        """Chuẩn bị cập nhật trạng thái miners."""
+
+        # Gọi hàm logic từ state.py
+
+        return prepare_miner_updates_logic(
+
+            current_cycle=self.current_cycle,
+
+            miners_info=self.miners_info,
+
+            final_scores=final_scores,
+
+            settings=self.settings,
+
+            # context=self.context # Truyền context nếu cần lấy datum cũ
+
+        )
+
+
+
+    async def prepare_validator_updates(self, calculated_states: Dict[str, Any]) -> Dict[str, ValidatorDatum]:
+
+        """Chuẩn bị cập nhật trạng thái validator (chỉ cho chính mình)."""
+
+        # Gọi hàm logic từ state.py
+
+        return await prepare_validator_updates_logic(
+
+            current_cycle=self.current_cycle,
+
+            self_validator_info=self.info,
+
+            calculated_states=calculated_states,
+
+            settings=self.settings,
+
+            context=self.context
+
+        )
+
+
+
+    async def commit_updates_to_blockchain(self, miner_updates: Dict[str, MinerDatum], validator_updates: Dict[str, ValidatorDatum]):
+
+        """Gửi giao dịch cập nhật Datum lên blockchain (async)."""
+
+        # Gọi hàm logic từ state.py
+
+        await commit_updates_logic(
+
+            miner_updates=miner_updates,
+
+            validator_updates=validator_updates,
+
+            context=self.context,
+
+            signing_key=self.signing_key,
+
+            stake_signing_key=self.stake_signing_key,
+
+            settings=self.settings
+
+        )
+
+
+
+    async def run_cycle(self):
+
+        """Thực hiện một chu kỳ đồng thuận hoàn chỉnh (async)."""
+
+        logger.info(f"\n--- Starting Cycle {self.current_cycle} for Validator {self.info.uid} ---")
+
+        cycle_start_time = time.time()
+
+        # Lấy các khoảng thời gian từ settings
+
+        interval_seconds = self.settings.CONSENSUS_METAGRAPH_UPDATE_INTERVAL_MINUTES * 60
+
+        send_offset_seconds = self.settings.CONSENSUS_SEND_SCORE_OFFSET_MINUTES * 60
+
+        consensus_offset_seconds = self.settings.CONSENSUS_CONSENSUS_TIMEOUT_OFFSET_MINUTES * 60
+
+        commit_offset_seconds = self.settings.CONSENSUS_COMMIT_OFFSET_SECONDS
+
+
+
+        metagraph_update_time = cycle_start_time + interval_seconds
+
+        send_score_time = metagraph_update_time - send_offset_seconds
+
+        consensus_timeout_time = metagraph_update_time - consensus_offset_seconds
+
+        commit_time = metagraph_update_time - commit_offset_seconds
+
+
+
+        miner_updates: Dict[str, MinerDatum] = {}
+
+        validator_updates: Dict[str, ValidatorDatum] = {}
+
+
+
+        try:
+
+            # Bước 0: Kiểm tra và phạt Validator từ chu kỳ TRƯỚC
+
+            await self.verify_and_penalize_validators()
+
+
+
+            # 1. Tải dữ liệu
+
+            await self.load_metagraph_data()
+
+            if not self.miners_info: raise Exception("No miners found in metagraph")
+
+
+
+            # 2. Chọn miners
+
+            selected_miners = self.select_miners() # Sync call
+
+            if not selected_miners: raise Exception("No miners selected for task assignment")
+
+
+
+            # 3. Gửi task
+
+            await self.send_task_and_track(selected_miners)
+
+
+
+            # 4. Nhận kết quả
+
+            receive_timeout = self.settings.CONSENSUS_NETWORK_TIMEOUT_SECONDS * 3 # Ví dụ
+
+            await self.receive_results(timeout=receive_timeout)
+
+
+
+            # 5. Chấm điểm cục bộ
+
+            self.score_miner_results() # Sync call
+
+
+
+            # 6. Chờ và gửi điểm
+
+            wait_before_send = send_score_time - time.time()
+
+            if wait_before_send > 0: await asyncio.sleep(wait_before_send)
+
+            await self.broadcast_scores()
+
+
+
+            # 7. Chờ nhận điểm
+
+            wait_for_scores_timeout = consensus_timeout_time - time.time()
+
+            consensus_possible = False
+
+            if wait_for_scores_timeout > 0:
+
+                 consensus_possible = await self.wait_for_consensus_scores(wait_for_scores_timeout)
+
+            else: logger.warning("Not enough time left for consensus scores.")
+
+
+
+            # 8. Chạy đồng thuận, tính toán trạng thái mới
+
+            final_miner_scores, calculated_validator_states = self.run_consensus_and_penalties() # Sync call
+
+            if not consensus_possible: logger.warning("Consensus calculated with potentially incomplete score set.")
+
+
+
+            # Lưu kết quả tính toán cho chu kỳ sau
+
+            self.previous_cycle_results["calculated_validator_states"] = calculated_validator_states
+
+            self.previous_cycle_results["final_miner_scores"] = final_miner_scores
+
+
+
+            # 9. Chuẩn bị cập nhật trạng thái miner
+
+            miner_updates = self.update_miner_state(final_miner_scores) # Sync call
+
+
+
+            # 10. Chuẩn bị cập nhật trạng thái validator (async)
+
+            validator_updates = await self.prepare_validator_updates(calculated_validator_states) # Async call
+
+
+
+            # 11. Chờ commit
+
+            wait_before_commit = commit_time - time.time()
+
+            if wait_before_commit > 0: await asyncio.sleep(wait_before_commit)
+
+            else: logger.warning("Commit time already passed!")
+
+
+
+            # 12. Commit lên blockchain
+
+            await self.commit_updates_to_blockchain(miner_updates, validator_updates) # Async call
+
+
+
+        except Exception as e:
+
+            logger.exception(f"Error during consensus cycle {self.current_cycle}: {e}")
+
+
+
+        finally:
+
+            cycle_end_time = time.time()
+
+            logger.info(f"--- Cycle {self.current_cycle} Finished (Duration: {cycle_end_time - cycle_start_time:.1f}s) ---")
+
+            self.current_cycle += 1
+
+            # Dọn dẹp dữ liệu chu kỳ cũ
+
+            cleanup_cycle = self.current_cycle - 3 # Giữ lại dữ liệu 2 chu kỳ trước
+
+            async with self.received_scores_lock:
+
+                 if cleanup_cycle in self.received_validator_scores:
+
+                      del self.received_validator_scores[cleanup_cycle]
+
+                      logger.info(f"Cleaned up received scores for cycle {cleanup_cycle}")
+
+
+
+
+
+# --- Hàm chạy chính (Ví dụ Async) ---
+
+async def main_validator_loop():
+
+    logger.info("Starting validator node loop...")
+
+    if not settings: logger.error("Settings not loaded. Exiting."); return
+
+
+
+    # --- Khởi tạo context Cardano ---
+
+    # cardano_ctx = await cardano_service.get_context_async(settings)
+
+
+
+    # --- Load thông tin validator từ settings ---
+
+    validator_uid = settings.VALIDATOR_UID
+
+    validator_address = settings.VALIDATOR_ADDRESS
+
+    api_endpoint = settings.VALIDATOR_API_ENDPOINT
+
+    if not validator_uid or not validator_address or not api_endpoint:
+
+        logger.error("Validator UID, Address, or API Endpoint not configured. Exiting.")
+
+        return
+
+
+
+    if not ValidatorInfo or not ValidatorNode: logger.error("Node classes not available. Exiting."); return
+
+
+
+    # TODO: Load signing key thực tế từ file/env được bảo vệ
+
+    signing_key: Optional[PaymentSigningKey] = None
+
+    stake_signing_key: Optional[StakeSigningKey] = None
+
+    # Ví dụ load từ file (cần triển khai hàm load_skey)
+
+    # try:
+
+    #     signing_key = load_skey(settings.PAYMENT_SKEY_PATH)
+
+    #     if settings.STAKE_SKEY_PATH:
+
+    #          stake_signing_key = load_skey(settings.STAKE_SKEY_PATH)
+
+    # except Exception as e:
+
+    #     logger.exception(f"Failed to load signing keys: {e}")
+
+    #     return
+
+    if signing_key is None:
+
+         logger.error("Payment signing key could not be loaded. Exiting.")
+
+         return
+
+
+
+
+
+    my_validator_info = ValidatorInfo(uid=validator_uid, address=validator_address, api_endpoint=api_endpoint)
+
+    # cardano_ctx = ... # Context thực tế
+
+
+
+    # Tạo node validator
+
+    validator_node = ValidatorNode(
+
+        validator_info=my_validator_info,
+
+        cardano_context=None, # cardano_ctx
+
+        signing_key=signing_key,
+
+        stake_signing_key=stake_signing_key
+
+    )
+
+
+
+    # --- Inject instance vào dependency của FastAPI ---
+
+    try:
+
+        from sdk.network.app.dependencies import set_validator_node_instance
+
+        set_validator_node_instance(validator_node)
+
+        logger.info("Validator node instance injected into API dependency.")
+
+    except Exception as e:
+
+        logger.error(f"Could not inject validator node into API dependency: {e}")
+
+
+
+    # --- Chạy vòng lặp chính ---
+
+    try:
+
+        while True:
+
+            cycle_start_time = time.time()
+
+            await validator_node.run_cycle()
+
+            cycle_duration = time.time() - cycle_start_time
+
+            cycle_interval_seconds = settings.CONSENSUS_METAGRAPH_UPDATE_INTERVAL_MINUTES * 60
+
+            min_wait = settings.CONSENSUS_CYCLE_MIN_WAIT_SECONDS
+
+            wait_time = max(min_wait, cycle_interval_seconds - cycle_duration)
+
+            logger.info(f"Cycle duration: {cycle_duration:.1f}s. Waiting {wait_time:.1f}s for next cycle...")
+
+            await asyncio.sleep(wait_time)
+
+    except asyncio.CancelledError:
+
+        logger.info("Main node loop cancelled.")
+
+    except Exception as e:
+
+        logger.exception(f"Exception in main node loop: {e}")
+
+    finally:
+
+        await validator_node.http_client.aclose()
+
+        logger.info("Main node loop finished.")
+
+
+
+if __name__ == "__main__":
+
+    try:
+
+        if settings: asyncio.run(main_validator_loop())
+
+        else: print("Could not load settings. Aborting.")
+
+    except KeyboardInterrupt:
+
+        print("\nInterrupted by user.")

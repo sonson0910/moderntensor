@@ -1,64 +1,109 @@
-from fastapi import FastAPI, Request
-from starlette.middleware.cors import CORSMiddleware
-
-from app.api.v1.routes import routers as v1_routers
-from app.core.config import configs
-from app.core.container import Container
-from app.util.class_object import singleton
-
+# sdk/network/app/main.py
+from fastapi import FastAPI
+import Optional
 import asyncio
-import time
-from starlette.status import HTTP_504_GATEWAY_TIMEOUT
-from fastapi.responses import JSONResponse
+import logging
+import time # Thêm time
 
+# Import các thành phần cần thiết
+from .api.v1.routes import api_router
+from .dependencies import set_validator_node_instance # Hàm để inject instance
+from sdk.consensus.node import ValidatorNode
+from sdk.core.datatypes import ValidatorInfo
+from sdk.config.settings import settings # Import settings
 
-@singleton
-class AppCreator:
-    def __init__(self):
-        # set app default
-        self.app = FastAPI(
-            title=configs.PROJECT_NAME,
-            openapi_url=f"{configs.API}/openapi.json",
-            version="0.0.1",
-        )
+logging.basicConfig(level=(settings.log_level.upper() if settings else "INFO"),
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-        # set container
-        self.container = Container()
+app = FastAPI(
+    title="Moderntensor Network API",
+    description="API endpoints for Moderntensor network communication, including P2P consensus.",
+    version="0.1.0"
+)
 
-        #time request
-        REQUEST_TIMEOUT_ERROR = 1  # Threshold
-        @self.app.middleware("http")
-        async def timeout_middleware(request: Request, call_next):
-            try:
-                start_time = time.time()
-                return await asyncio.wait_for(call_next(request), timeout=REQUEST_TIMEOUT_ERROR)
+main_validator_node_instance: Optional[ValidatorNode] = None
+main_loop_task: Optional[asyncio.Task] = None
 
-            except asyncio.TimeoutError:
-                process_time = time.time() - start_time
-                return JSONResponse({'detail': 'Request processing time excedeed limit',
-                                'processing_time': process_time},
-                                status_code=HTTP_504_GATEWAY_TIMEOUT)
+@app.on_event("startup")
+async def startup_event():
+    """Khởi tạo Validator Node và inject vào dependency."""
+    global main_validator_node_instance, main_loop_task
+    logger.info("FastAPI application starting up...")
+    if ValidatorInfo and ValidatorNode and settings:
+        try:
+            # --- Load thông tin validator từ settings hoặc nguồn khác ---
+            validator_uid = settings.validator_uid or "V_DEFAULT" # Giả sử có trong settings
+            validator_address = settings.validator_address or "addr_default..."
+            api_endpoint = settings.validator_api_endpoint or f"http://127.0.0.1:{settings.api_port or 8000}"
+            # cardano_ctx = await initialize_cardano_context(settings)
+            # node_config_dict = settings.model_dump() # Có thể truyền cả dict settings
 
-
-        # set cors
-        if configs.BACKEND_CORS_ORIGINS:
-            self.app.add_middleware(
-                CORSMiddleware,
-                allow_origins=[str(origin) for origin in configs.BACKEND_CORS_ORIGINS],
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
+            my_validator_info = ValidatorInfo(
+                uid=validator_uid, address=validator_address, api_endpoint=api_endpoint
             )
 
-        # set routes
-        @self.app.get("/")
-        def root():
-            return "service is working"
+            # Khởi tạo Node (truyền settings vào đây nếu node không import global)
+            main_validator_node_instance = ValidatorNode(
+                validator_info=my_validator_info,
+                cardano_context=None # cardano_ctx
+                # config=node_config_dict # Hoặc để node tự import settings
+            )
 
-        self.app.include_router(v1_routers, prefix=configs.API_V1_STR)
-        # self.app.include_router(v2_routers, prefix=configs.API_V2_STR)
+            # Inject instance
+            set_validator_node_instance(main_validator_node_instance)
+            logger.info(f"ValidatorNode instance '{validator_uid}' initialized and injected.")
+
+            # Khởi chạy vòng lặp chính trong background task
+            logger.info("Starting main consensus loop as background task...")
+            main_loop_task = asyncio.create_task(run_main_node_loop(main_validator_node_instance))
+
+        except Exception as e:
+            logger.exception(f"Failed to initialize ValidatorNode: {e}")
+    else:
+        logger.error("SDK components or settings not available. Cannot initialize node.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Dọn dẹp tài nguyên."""
+    logger.info("FastAPI application shutting down...")
+    if main_loop_task and not main_loop_task.done():
+        logger.info("Cancelling main node loop task...")
+        main_loop_task.cancel()
+        try:
+            await main_loop_task # Chờ task kết thúc sau khi cancel
+        except asyncio.CancelledError:
+            logger.info("Main node loop task cancelled successfully.")
+    if main_validator_node_instance and hasattr(main_validator_node_instance, 'http_client'):
+        await main_validator_node_instance.http_client.aclose()
+        logger.info("HTTP client closed.")
+
+async def run_main_node_loop(node: ValidatorNode):
+    """Hàm chạy vòng lặp đồng thuận chính trong background."""
+    # ... (Logic vòng lặp while True như trong node.py) ...
+    if not node or not settings: return
+    try:
+        # Chờ một chút để FastAPI sẵn sàng nhận request nếu cần
+        await asyncio.sleep(5)
+        while True:
+            cycle_start_time = time.time()
+            await node.run_cycle()
+            cycle_duration = time.time() - cycle_start_time
+            cycle_interval_seconds = settings.consensus_metagraph_update_interval_minutes * 60
+            min_wait = settings.consensus_cycle_min_wait_seconds
+            wait_time = max(min_wait, cycle_interval_seconds - cycle_duration)
+            logger.info(f"Cycle duration: {cycle_duration:.1f}s. Waiting {wait_time:.1f}s for next cycle...")
+            await asyncio.sleep(wait_time)
+    except asyncio.CancelledError:
+        logger.info("Main node loop cancelled.")
+    except Exception as e:
+        logger.exception(f"Exception in main node loop: {e}")
+    finally:
+        logger.info("Main node loop finished.")
 
 
-app_creator = AppCreator()
-app = app_creator.app
-container = app_creator.container
+# --- Include Routers ---
+app.include_router(api_router)
+
+# --- Điểm chạy chính (uvicorn) ---
+# ...
