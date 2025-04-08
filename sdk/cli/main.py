@@ -1,7 +1,7 @@
 import click
 import logging
 from .wallet_cli import wallet_cli
-from .stake_cli import stake_cli
+# from .stake_cli import stake_cli
 # from .metagraph_cli import metagraph_cli  # If you have
 
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +18,7 @@ def cli():
 
 # Add subcommands:
 cli.add_command(wallet_cli, name="w")
-cli.add_command(stake_cli, name="stake")
+# cli.add_command(stake_cli, name="stake")
 # cli.add_command(metagraph_cli, name="metagraph")
 
 # Version command

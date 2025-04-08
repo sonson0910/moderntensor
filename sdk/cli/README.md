@@ -1,14 +1,13 @@
-# ModernTensor CLI Guide
+# Moderntensor CLI Guide
 
 ## Wallet Commands
 
 ### 1. Create Coldkey
 
-**Description:** Creates a new coldkey (mnemonic) and saves it encrypted.  
-**Command:**
+Creates a new coldkey (mnemonic) and saves it encrypted.
 
 ```bash
-python sdk/cli/main.py w create-coldkey --name <coldkey_name>
+mtcli w create-coldkey --name <coldkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -18,11 +17,10 @@ python sdk/cli/main.py w create-coldkey --name <coldkey_name>
 
 ### 2. Load Coldkey
 
-**Description:** Loads an existing coldkey into memory.  
-**Command:**
+Loads an existing coldkey into memory.
 
 ```bash
-python sdk/cli/main.py w load-coldkey --name <coldkey_name>
+mtcli w load-coldkey --name <coldkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -32,11 +30,10 @@ python sdk/cli/main.py w load-coldkey --name <coldkey_name>
 
 ### 3. Generate Hotkey
 
-**Description:** Creates a new hotkey (public key) for a coldkey.  
-**Command:**
+Creates a new hotkey (public key) for a coldkey.
 
 ```bash
-python sdk/cli/main.py w generate-hotkey --coldkey <coldkey_name> --hotkey-name <hotkey_name>
+mtcli w generate-hotkey --coldkey <coldkey_name> --hotkey-name <hotkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -46,11 +43,10 @@ python sdk/cli/main.py w generate-hotkey --coldkey <coldkey_name> --hotkey-name 
 
 ### 4. Import Hotkey
 
-**Description:** Imports an encrypted hotkey string.  
-**Command:**
+Imports an encrypted hotkey string.
 
 ```bash
-python sdk/cli/main.py w import-hotkey --coldkey <coldkey_name> --encrypted-hotkey <key_string> --hotkey-name <hotkey_name>
+mtcli w import-hotkey --coldkey <coldkey_name> --encrypted-hotkey <key_string> --hotkey-name <hotkey_name> --base-dir "moderntensor"
 ```
 
 **Notes:**
@@ -59,56 +55,50 @@ python sdk/cli/main.py w import-hotkey --coldkey <coldkey_name> --encrypted-hotk
 
 ### 5. List Keys
 
-**Description:** Displays all coldkeys and associated hotkeys in a tree structure.  
-**Command:**
+Displays all coldkeys and associated hotkeys in a tree structure.
 
 ```bash
-python sdk/cli/main.py w list
+mtcli w list
 ```
 
 ## Stake Commands
 
 ### 1. Initialize Wallet
 
-**Description:** Prepares wallet for staking operations.  
-**Command:**
+Prepares wallet for staking operations.
 
 ```bash
-python sdk/cli/main.py stake init-wallet --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli stake init-wallet --coldkey <coldkey_name> --hotkey <hotkey_name>
 ```
 
 ### 2. Get Balance
 
-**Description:** Shows wallet balance and UTXOs.  
-**Command:**
+Shows wallet balance and UTXOs.
 
 ```bash
-python sdk/cli/main.py stake get-balance --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli stake get-balance --coldkey <coldkey_name> --hotkey <hotkey_name>
 ```
 
 ### 3. Delegate Stake
 
-**Description:** Delegates to a stake pool.  
-**Command:**
+Delegates to a stake pool.
 
 ```bash
-python sdk/cli/main.py stake delegate --coldkey <coldkey_name> --hotkey <hotkey_name> --pool-id <pool_id_hex>
+mtcli stake delegate --coldkey <coldkey_name> --hotkey <hotkey_name> --pool-id <pool_id_hex>
 ```
 
 ### 4. Redelegate Stake
 
-**Description:** Changes delegation to new pool.  
-**Command:**
+Changes delegation to new pool.
 
 ```bash
-python sdk/cli/main.py stake redelegate --coldkey <coldkey_name> --hotkey <hotkey_name> --new-pool-id <new_pool_id_hex>
+mtcli stake redelegate --coldkey <coldkey_name> --hotkey <hotkey_name> --new-pool-id <new_pool_id_hex>
 ```
 
 ### 5. Withdraw Rewards
 
-**Description:** Withdraws staking rewards.  
-**Command:**
+Withdraws staking rewards.
 
 ```bash
-python sdk/cli/main.py stake withdraw-rewards --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli stake withdraw-rewards --coldkey <coldkey_name> --hotkey <hotkey_name>
 ```
