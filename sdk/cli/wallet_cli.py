@@ -17,7 +17,9 @@ def wallet_cli():
 #------------------------------------------------------------------------------
 # 1) CREATE COLDKEY
 @wallet_cli.command("create-coldkey")
-@click.option("--name", required=True, help="Specifies the unique name for your coldkey.")
+@click.option("--name", 
+              required=True, 
+              help=click.style("Specifies the unique name for your coldkey.", fg="blue"),)
 @click.option(
     "--password",
     prompt=True,
