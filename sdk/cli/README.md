@@ -63,12 +63,12 @@ mtcli w list
 
 ## Stake Commands
 
-### 1. Initialize Wallet
+### 1. Get UTXOs
 
 Prepares wallet for staking operations.
 
 ```bash
-mtcli stake init-wallet --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli s get-utxos --coldkey <coldkey_name> --hotkey <hotkey_name> --password <coldkey_password>
 ```
 
 ### 2. Get Balance
@@ -76,7 +76,7 @@ mtcli stake init-wallet --coldkey <coldkey_name> --hotkey <hotkey_name>
 Shows wallet balance and UTXOs.
 
 ```bash
-mtcli stake get-balance --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli s get-balance --coldkey <coldkey_name> --hotkey <hotkey_name> --password <coldkey_password>
 ```
 
 ### 3. Delegate Stake
@@ -84,7 +84,7 @@ mtcli stake get-balance --coldkey <coldkey_name> --hotkey <hotkey_name>
 Delegates to a stake pool.
 
 ```bash
-mtcli stake delegate --coldkey <coldkey_name> --hotkey <hotkey_name> --pool-id <pool_id_hex>
+mtcli s delegate --coldkey <coldkey_name> --hotkey <hotkey_name> --password <coldkey_password> --pool-id <pool_id_hex>
 ```
 
 ### 4. Redelegate Stake
@@ -92,7 +92,7 @@ mtcli stake delegate --coldkey <coldkey_name> --hotkey <hotkey_name> --pool-id <
 Changes delegation to new pool.
 
 ```bash
-mtcli stake redelegate --coldkey <coldkey_name> --hotkey <hotkey_name> --new-pool-id <new_pool_id_hex>
+mtcli s redelegate --coldkey <coldkey_name> --hotkey <hotkey_name> --password <coldkey_password> --new-pool-id <new_pool_id_hex>
 ```
 
 ### 5. Withdraw Rewards
@@ -100,5 +100,5 @@ mtcli stake redelegate --coldkey <coldkey_name> --hotkey <hotkey_name> --new-poo
 Withdraws staking rewards.
 
 ```bash
-mtcli stake withdraw-rewards --coldkey <coldkey_name> --hotkey <hotkey_name>
+mtcli s withdraw-rewards --coldkey <coldkey_name> --hotkey <hotkey_name> --password <coldkey_password>
 ```
