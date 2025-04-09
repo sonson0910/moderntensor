@@ -90,12 +90,16 @@ class StakingService:
         """
         self.chain_context = get_chain_context()
         self.wallet = wallet
+        self.current_pool_id = None  # Theo dõi pool hiện tại đang ủy quyền
 
    
     def delegate_stake(self, pool_id: str):
         """
         Ủy quyền stake đến một pool cụ thể.
         """
+        if self.current_pool_id is not None:
+            raise Exception("Đã ủy quyền stake. Chỉ có thể ủy quyền lại pool mới bằng re_delegate_stake()")
+        
         # B1: Tạo chứng chỉ đăng ký stake
         stake_credential = StakeCredential(self.wallet.stake_key_hash)
         stake_reg = StakeRegistration(stake_credential)
@@ -127,10 +131,13 @@ class StakingService:
 
         # Gửi giao dịch lên blockchain
         self.chain_context.submit_tx(tx)
-
+        self.current_pool_id = pool_id  # Lưu pool hiện tại
         print(f"Transaction successfully submitted: {tx.id}")
 
     def re_delegate_stake(self, new_pool_id: str):
+        if self.current_pool_id is None:
+            raise Exception("Chưa ủy quyền stake vào pool nào")
+            
         stake_credential = StakeCredential(self.wallet.stake_key_hash)
         # B2: Chuyển đổi Pool ID sang PoolKeyHash
         pool_keyhash = PoolKeyHash(bytes.fromhex(new_pool_id))
@@ -159,7 +166,7 @@ class StakingService:
 
         # Gửi giao dịch lên blockchain
         self.chain_context.submit_tx(tx)
-
+        self.current_pool_id = new_pool_id  # Cập nhật pool mới
         print(f"Transaction successfully submitted: {tx.id}")
     def withdrawal_reward(self):
         """
@@ -198,12 +205,12 @@ class StakingService:
         self.chain_context.submit_tx(tx)
 
         print(f"Transaction successfully submitted: {tx.id}")    
-wallet = Wallet(coldkey_name='kickoff',hotkey_name='hk1',password='123456')
-wallet.get_utxos()
-wallet.get_balances()
+# wallet = Wallet(coldkey_name='wallet1',hotkey_name='hk1',password='123456')
+# wallet.get_utxos()
+# wallet.get_balances()
 
 # # Khởi tạo dịch vụ staking
-staking_service = StakingService(wallet)
+# staking_service = StakingService(wallet)
 # print(f"Done constructer staking service")
 # Đăng ký stake một khi đăng kí rồi là không có hủy chỉ có thể đăng kí pool mới
 # tx_id_delegate_stake = staking_service.delegate_stake(pool_id="429e1cf4c75799b4148402452aa0edd512111485e5e1cbe7cf93b696")
@@ -219,4 +226,4 @@ staking_service = StakingService(wallet)
 # "error":["ConwayWdrlNotDelegatedToDRep (KeyHash {unKeyHash = \"7e10785dc0bc5c4639863e155679f7c9c719deac3021df37453a70a3\"} 
 # :| [])"],"kind":"ShelleyTxValidationError"},"tag":"TxValidationErrorInCardanoMode"},"tag":"TxCmdTxSubmitValidationError"},
 # "tag":"TxSubmitFail"}
-tx_id_withdrawal_reward = staking_service.withdrawal_reward()
+# tx_id_withdrawal_reward = staking_service.withdrawal_reward()
