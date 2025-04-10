@@ -2,6 +2,7 @@ import click
 import logging
 from .wallet_cli import wallet_cli
 from .stake_cli import stake_cli
+from .tx_cli import tx_cli
 # from .metagraph_cli import metagraph_cli  # If you have
 
 logging.basicConfig(level=logging.INFO)
@@ -11,7 +12,7 @@ def cli():
     """
     Welcome to the Cardano SDK CLI!
     
-    CLI SDK, grouping coldkey, hotkey, staking, and metagraph commands
+    CLI SDK, grouping coldkey, hotkey, staking, transaction and metagraph commands
     
     """
     pass
@@ -19,6 +20,7 @@ def cli():
 # Add subcommands:
 cli.add_command(wallet_cli, name="w")
 cli.add_command(stake_cli, name="s")
+cli.add_command(tx_cli, name="tx")
 # cli.add_command(metagraph_cli, name="metagraph")
 
 # Version command
