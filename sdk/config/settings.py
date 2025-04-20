@@ -396,6 +396,51 @@ class Settings(BaseSettings):
         description="Khoảng thời gian tham chiếu (giây) cho bonus thời gian DAO (ví dụ: 1 năm).",
     )  # Đổi sang giây
 
+    # --- Miner/Validator Registration Settings ---
+    MINER_MIN_REQUIRED_STAKE = 100_000_000  # 100 ADA
+    VALIDATOR_MIN_REQUIRED_STAKE = 1000_000_000  # 1000 ADA
+
+    # --- Tokenomics Settings (Phase 1 - Off-chain Logic) ---
+    TOKEN_DECIMALS: int = 6  # Number of decimal places for the token
+    TOKEN_TOTAL_SUPPLY: int = 21_000_000 * (10**TOKEN_DECIMALS)
+    # Example: Halving every ~4 years if epoch = 2 mins -> 10,512,000 epochs
+    # Example: Halving every ~210,000 blocks (Bittensor like) if epoch = 1 block (~20s)
+    # You need to define your epoch length and adjust this accordingly.
+    TOKEN_EPOCH_LENGTH_SLOTS: int = (
+        43200  # Example: 12 hours (12 * 60 * 60 = 43200 slots)
+    )
+    TOKEN_HALVING_INTERVAL_EPOCHS: int = (
+        210_000  # Example: ~210k blocks/epochs (like Bitcoin/Bittensor)
+    )
+    TOKEN_INITIAL_ISSUANCE_PER_EPOCH: int = 50 * (
+        10**TOKEN_DECIMALS
+    )  # Example: 50 tokens per epoch initially
+    TOKEN_NAME_STR: str = "MOD"  # User-friendly name
+    TOKEN_TICKER_STR: str = "MOD"  # User-friendly ticker
+    TOKEN_NAME: bytes = TOKEN_NAME_STR.encode(
+        "utf-8"
+    )  # Byte representation for on-chain use
+    TOKEN_TICKER: bytes = TOKEN_TICKER_STR.encode("utf-8")  # Byte representation
+    MINTING_POLICY_ID_PLACEHOLDER: str = (
+        "c847c8d81c70084af43cf15dbb3241f4f4c44c732e7857f491507503"  # <<< UPDATED POLICY ID
+    )
+    MINTING_POLICY_SCRIPT_CBOR_HEX: str = Field(
+        default="5851010100323232323225333002323232323253330073370e900018041baa0011324a26eb8c028c024dd50008a503009300a0023008001300800230060013004375400229309b2b2b9a5573aaae795d0aba21",
+        alias="MINTING_POLICY_SCRIPT_CBOR_HEX",
+        description="CBOR hex of the compiled Plutus V3 minting script.",
+    )
+    MINTING_RECIPIENT_ADDRESS: str = Field(
+        default="addr_test1qpkxr3kpzex93m646qr7w82d56md2kchtsv9jy39dykn4cmcxuuneyeqhdc4wy7de9mk54fndmckahxwqtwy3qg8pums5vlxhz",  # <<< THAY BẰNG ĐỊA CHỈ VÍ NHẬN THỰC TẾ CỦA BẠN
+        alias="MINTING_RECIPIENT_ADDRESS",
+        description="Address that will receive the newly minted tokens.",
+    )
+
+    # === Advanced/Internal Settings (Less Likely to Change) ===
+    METAGRAPH_DATUM_INT_DIVISOR: float = (
+        1_000_000_000.0  # Divisor for scaling floats in Datum
+    )
+    CONSENSUS_MAX_PERFORMANCE_HISTORY_LEN: int = 100  # Max history entries to store
+
     # Giữ nguyên validator của bạn
     @field_validator("CARDANO_NETWORK", mode="before")
     def validate_network(cls, value: Optional[str]):

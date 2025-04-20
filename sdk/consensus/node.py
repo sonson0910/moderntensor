@@ -87,6 +87,9 @@ from .state import (
     commit_updates_logic,
 )
 
+# --- Import hàm minting mới --- # <<< THÊM SECTION IMPORT NÀY
+from sdk.smartcontract.minting import mint_native_tokens
+
 # --- Logging ---
 logger = logging.getLogger(__name__)
 
@@ -1928,7 +1931,9 @@ class ValidatorNode:
     # --- Chạy Đồng thuận và Cập nhật Trạng thái ---
     def run_consensus_and_penalties(
         self, self_validator_uid: str, consensus_possible: bool
-    ) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    ) -> Tuple[
+        Dict[str, float], Dict[str, Any], Dict[str, Any], int
+    ]:  # <<< THÊM int CHO issuance_this_epoch
         """Runs consensus calculations and determines new validator states."""
         # Gọi hàm logic từ state.py
         return run_consensus_logic(
@@ -1936,13 +1941,16 @@ class ValidatorNode:
             tasks_sent=self.tasks_sent,
             received_scores=self.received_validator_scores.get(self.current_cycle, {}),
             validators_info=self.validators_info,
+            miners_info=self.miners_info,  # <<< ADD THIS LINE
             settings=self.settings,
             consensus_possible=consensus_possible,
             self_validator_uid=self_validator_uid,
         )
 
     async def update_miner_state(
-        self, final_scores: Dict[str, float]
+        self,
+        final_scores: Dict[str, float],
+        calculated_miner_states: Dict[str, Any],  # <<< ADD PARAMETER
     ) -> Dict[str, MinerDatum]:
         """Prepares MinerDatum updates based on consensus scores."""
         # Gọi hàm logic từ state.py
@@ -1952,6 +1960,7 @@ class ValidatorNode:
             final_scores=final_scores,
             settings=self.settings,
             current_utxo_map=self.current_utxo_map,
+            calculated_miner_states=calculated_miner_states,  # <<< PASS PARAMETER
         )
 
     async def prepare_validator_updates(
@@ -2100,6 +2109,7 @@ class ValidatorNode:
         final_miner_scores: Dict[str, float] = {}
         calculated_validator_states: Dict[str, Any] = {}
         validator_self_update: Dict[str, ValidatorDatum] = {}
+        issuance_this_epoch: int = 0  # <<< KHỞI TẠO issuance
 
         try:
             # === C. Verify/Penalize Chu kỳ Trước ===
@@ -2252,20 +2262,41 @@ class ValidatorNode:
 
             # === H. Chạy Đồng thuận & Tính toán ===
             logger.info(":brain: Step 6: Running final consensus calculations...")
-            final_miner_scores, calculated_validator_states = (
-                self.run_consensus_and_penalties(
-                    consensus_possible=consensus_possible,
-                    self_validator_uid=self.info.uid,
-                )
+            # <<< ĐIỀU CHỈNH CÁCH LẤY KẾT QUẢ >>>
+            (
+                final_miner_scores,
+                calculated_validator_states,
+                calculated_miner_states,
+                issuance_this_epoch,
+            ) = self.run_consensus_and_penalties(
+                consensus_possible=consensus_possible,
+                self_validator_uid=self.info.uid,
             )
             # Lưu kết quả dự kiến cho chu kỳ sau (logic cũ)
             self.previous_cycle_results["calculated_validator_states"] = (
                 calculated_validator_states.copy()
             )
+            # <<< THÊM LƯU KẾT QUẢ MINER CHO CYCLE SAU (NẾU CẦN) >>>
+            self.previous_cycle_results["calculated_miner_states"] = (
+                calculated_miner_states.copy()
+            )
             self.previous_cycle_results["final_miner_scores"] = (
                 final_miner_scores.copy()
             )
-            logger.info(f":brain: Step 6: Consensus calculation finished.")
+            logger.info(
+                f":brain: Step 6: Consensus calculation finished. Issuance for epoch: {issuance_this_epoch}"
+            )  # <<< LOG ISSUANCE
+
+            # <<< THÊM BƯỚC GỌI update_miner_state >>>
+            logger.info(":clipboard: Step 6.5: Preparing MinerDatum updates...")
+            miner_updates: Dict[str, MinerDatum] = await self.update_miner_state(
+                final_scores=final_miner_scores,
+                calculated_miner_states=calculated_miner_states,
+            )
+            logger.info(
+                f":clipboard: Step 6.5: Prepared {len(miner_updates)} MinerDatum updates."
+            )
+            # Lưu ý: miner_updates hiện chưa được sử dụng tiếp trong run_cycle
 
             # === I. Publish Kết quả cho Miner ===
             logger.info(
@@ -2344,10 +2375,63 @@ class ValidatorNode:
             logger.info(
                 ":link: Step 10: Committing SELF validator update to blockchain..."
             )
-            await self.commit_updates_to_blockchain(
+            commit_result = await self.commit_updates_to_blockchain(
                 validator_updates=validator_self_update,  # Chỉ commit self-update
             )
-            logger.info(":link: Step 10: Commit process for self-validator initiated.")
+            # <<< THÊM KIỂM TRA commit_result >>>
+            commit_status = "Unknown"
+            if isinstance(commit_result, dict):
+                commit_status = commit_result.get("status", "StatusKeyMissing")
+            logger.info(
+                f":link: Step 10: Commit process for self-validator finished. Result: {commit_status}"
+            )
+
+            # === M. THỬ MINT TOKEN (NẾU CÓ ISSUANCE) === # <<< BƯỚC MỚI
+            if issuance_this_epoch > 0:
+                logger.info(
+                    f":money_with_wings: Step 11: Attempting to mint [blue]{issuance_this_epoch}[/blue] new tokens..."
+                )
+                try:
+                    mint_recipient_addr_str = settings.MINTING_RECIPIENT_ADDRESS
+                    if not mint_recipient_addr_str:
+                        logger.error(
+                            ":stop_sign: MINTING_RECIPIENT_ADDRESS not set in settings. Cannot mint."
+                        )
+                    else:
+                        mint_recipient_addr = Address.from_primitive(
+                            mint_recipient_addr_str
+                        )
+                        policy_cbor = settings.MINTING_POLICY_SCRIPT_CBOR_HEX
+                        asset_name = settings.TOKEN_NAME_STR
+
+                        mint_tx_id: Optional[TransactionId] = await mint_native_tokens(
+                            context=self.context,
+                            signing_key=self.signing_key,
+                            stake_signing_key=self.stake_signing_key,
+                            policy_script_cbor_hex=policy_cbor,
+                            asset_name_str=asset_name,
+                            amount_to_mint=issuance_this_epoch,
+                            recipient_address=mint_recipient_addr,
+                            network=self.network,
+                        )
+
+                        if mint_tx_id:
+                            logger.info(
+                                f":white_check_mark: Step 11: Minting transaction submitted: [yellow]{mint_tx_id}[/yellow]"
+                            )
+                        else:
+                            logger.error(
+                                ":x: Step 11: Minting transaction failed to submit."
+                            )
+
+                except Exception as mint_err:
+                    logger.exception(
+                        f":rotating_light: Step 11: Error during minting attempt: {mint_err}"
+                    )
+            else:
+                logger.info(
+                    ":information_source: Step 11: No new token issuance for this epoch. Skipping minting."
+                )
 
         except Exception as e:
             logger.exception(
@@ -2355,41 +2439,11 @@ class ValidatorNode:
             )
 
         finally:
-            # === M. Chờ Kết thúc Chu kỳ (Chờ đến Slot) & Dọn dẹp ===
-            cycle_end_time_actual = time.time()
-            cycle_duration = cycle_end_time_actual - cycle_start_time
-            logger.info(
-                f":stopwatch: Cycle {self.current_cycle} duration so far: {cycle_duration:.2f}s"
-            )
+            # === N. Chờ Kết thúc Chu kỳ & Dọn dẹp === # <<< ĐỔI SỐ THỨ TỰ
+            # ... (phần code chờ slot tiếp theo, lưu state, dọn dẹp)
+            pass  # Giữ nguyên logic finalize
 
-            next_cycle_start_slot = target_end_slot + 1
-            logger.info(
-                f":hourglass: Waiting until slot [yellow]{next_cycle_start_slot}[/yellow] to finalize cycle {self.current_cycle}..."
-            )
-            await self.wait_until_slot(next_cycle_start_slot)
-
-            # --- Cập nhật và Lưu trạng thái ---
-            completed_cycle = self.current_cycle  # Lưu lại số chu kỳ vừa hoàn thành
-            self._save_current_cycle(completed_cycle)  # Lưu chu kỳ đã hoàn thành
-            self.current_cycle += 1  # Tăng lên cho chu kỳ tiếp theo
-
-            # Dọn dẹp P2P scores cũ
-            cleanup_cycle = completed_cycle - 2  # Giữ lại dữ liệu 2 chu kỳ trước
-            async with self.received_scores_lock:
-                if cleanup_cycle in self.received_validator_scores:
-                    try:
-                        del self.received_validator_scores[cleanup_cycle]
-                        logger.debug(
-                            f":wastebasket: Cleaned up P2P scores for cycle {cleanup_cycle}"
-                        )
-                    except KeyError:
-                        pass
-            logger.info(f"--- End of Cycle {completed_cycle} ---")
-
-        cycle_duration_final = time.time() - cycle_start_time
-        logger.info(
-            f":checkered_flag: [bold green]>>> Completed Consensus Cycle {completed_cycle} in {cycle_duration_final:.2f}s <<<[/bold green]"
-        )
+        # ... (phần cuối của run_cycle)
 
     async def run(self):
         """

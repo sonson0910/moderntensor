@@ -24,6 +24,13 @@ from sdk.formulas import (
     # Import các công thức khác nếu cần
 )
 
+# Import tokenomics functions
+from sdk.formulas.tokenomics import (
+    get_current_epoch,
+    calculate_epoch_issuance,
+    distribute_issuance,
+)
+
 from sdk.metagraph.update_metagraph import update_datum
 from sdk.metagraph.metagraph_data import get_all_validator_data
 from sdk.metagraph.hash.hash_datum import hash_data  # Cần hàm hash
@@ -56,8 +63,9 @@ from sdk.metagraph.metagraph_datum import (
 )
 from blockfrost import ApiError
 
-EPSILON = 1e-9
 logger = logging.getLogger(__name__)
+
+EPSILON = 1e-9  # <<< ĐỊNH NGHĨA EPSILON TRỰC TIẾP
 
 # Default empty bytes for hash placeholders
 EMPTY_HASH_BYTES = b""
@@ -108,7 +116,7 @@ async def find_utxo_by_uid(
     datum_class: type,  # MinerDatum hoặc ValidatorDatum
 ) -> Optional[UTxO]:
     """
-    (Placeholder/Mock) Finds a UTXO at the script address containing a Datum with a matching UID.
+    (Placeholder/Mock) Finds a UTxO at the script address containing a Datum with a matching UID.
 
     Note:
         This is a placeholder and likely inefficient. Real implementation should
@@ -218,17 +226,19 @@ def run_consensus_logic(
     validators_info: Dict[
         str, ValidatorInfo
     ],  # {validator_uid_hex: ValidatorInfo} - State at the start of the cycle
+    miners_info: Dict[str, MinerInfo],  # <<< THÊM miners_info VÀO ĐÂY
     settings: Any,
     consensus_possible: bool,
-    self_validator_uid: str,
-) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    self_validator_uid: str,  # <<< Giữ lại nếu logic cần biết validator nào đang chạy
+) -> Tuple[
+    Dict[str, float], Dict[str, Any], Dict[str, Any], int
+]:  # <<< THAY ĐỔI RETURN TYPE
     """
     Performs the core consensus calculations for a cycle.
 
-    Calculates adjusted miner performance scores (P_adj) based on received validator scores
-    and trust. Then, calculates the expected next state (performance E_v, trust score,
-    potential reward, contribution) for each validator based on their participation,
-    deviations, and historical performance.
+    Calculates final miner adjusted scores (P_adj). Calculates expected next validator
+    states (E_v, trust, reward including incentive + issuance). Calculates expected
+    next miner states (P_adj, trust, reward from incentive).
 
     If `consensus_possible` is False, it skips most calculations and only applies trust decay.
 
@@ -237,60 +247,82 @@ def run_consensus_logic(
         tasks_sent (Dict[str, TaskAssignment]): Tasks sent out during this cycle.
         received_scores (Dict[str, Dict[str, ValidatorScore]]): Scores received from peer validators.
         validators_info (Dict[str, ValidatorInfo]): Validator info at the start of the cycle.
+        miners_info (Dict[str, MinerInfo]): Miner info at the start of the cycle.
         settings (Any): Application settings object.
         consensus_possible (bool): Whether enough P2P scores were received for full consensus.
         self_validator_uid (str): UID of the validator running this logic.
 
     Returns:
-        Tuple[Dict[str, float], Dict[str, Any]]: A tuple containing:
+        Tuple[Dict[str, float], Dict[str, Any], Dict[str, Any], int]: A tuple containing:
             - Final miner adjusted scores ({miner_uid_hex: P_adj}).
             - Calculated next validator states ({validator_uid_hex: {state_dict}}).
+            - Calculated next miner states ({miner_uid_hex: {state_dict}}).
+            - Calculated issuance for the current epoch (int, raw units).
     """
     logger.info(f":brain: Running consensus calculations for cycle {current_cycle}...")
     final_miner_scores: Dict[str, float] = {}  # {miner_uid_hex: P_adj}
-    validator_deviations: Dict[str, List[float]] = defaultdict(
-        list
-    )  # {validator_uid_hex: [deviation1, deviation2,...]}
+    validator_deviations: Dict[str, List[float]] = defaultdict(list)
     calculated_validator_states: Dict[str, Any] = {}  # {validator_uid_hex: {state}}
-    total_validator_contribution: float = 0.0  # Tổng W*E để tính thưởng validator
+    calculated_miner_states: Dict[str, Any] = {}  # <<< THÊM MINER STATES
+    total_validator_contribution: float = 0.0
+    issuance_this_epoch = 0  # Khởi tạo giá trị issuance
+
+    # <<< DI CHUYỂN TÍNH TOÁN LÊN ĐÂY >>>
+    # Gom tất cả validator đã gửi điểm cho bất kỳ task nào
+    unique_validators_overall = set()
+    if received_scores:
+        for validator_scores_dict in received_scores.values():
+            unique_validators_overall.update(validator_scores_dict.keys())
+    # Tính số validator tối thiểu cần thiết
+    min_validators_needed = settings.CONSENSUS_MIN_VALIDATORS_FOR_CONSENSUS
+    # ------------------------------------
+
     if not consensus_possible:
         logger.warning(
-            f":warning: Cycle {current_cycle}: Insufficient P2P scores received. Skipping detailed consensus. Applying only trust decay."
+            f"[Consensus:{current_cycle}] Consensus not possible (received from {len(unique_validators_overall)}/{min_validators_needed} validators). Skipping score aggregation. Applying decay to non-participating validators."
         )
-        # Chỉ tính decay cho trust score, không tính P_adj, E_v, reward
-        for validator_uid_hex, validator_info in validators_info.items():
-            time_since_val_eval = 1  # Giả định 1 chu kỳ
-            # Tính trust chỉ với decay (score_new = 0)
-            new_val_trust_score = update_trust_score(
-                validator_info.trust_score,
-                time_since_val_eval,
-                0.0,
-                delta_trust=settings.CONSENSUS_PARAM_DELTA_TRUST,
-                # Các tham số alpha, k_alpha, sigmoid không ảnh hưởng khi score_new=0
-                alpha_base=settings.CONSENSUS_PARAM_ALPHA_BASE,
-                k_alpha=settings.CONSENSUS_PARAM_K_ALPHA,
-                update_sigmoid_L=settings.CONSENSUS_PARAM_UPDATE_SIG_L,
-                update_sigmoid_k=settings.CONSENSUS_PARAM_UPDATE_SIG_K,
-                update_sigmoid_x0=settings.CONSENSUS_PARAM_UPDATE_SIG_X0,
-            )
-            # Lưu trạng thái tối thiểu
-            calculated_validator_states[validator_uid_hex] = {
-                "E_v": getattr(validator_info, "last_performance", 0.0),  # Giữ E_v cũ
-                "trust": new_val_trust_score,  # Chỉ có decay
-                "reward": 0.0,  # Không có reward
-                "weight": validator_info.weight,
-                "contribution": 0.0,
-                "last_update_cycle": current_cycle,
-                "start_trust": validator_info.trust_score,
-                "start_status": validator_info.status,
-                "notes": "Consensus skipped due to insufficient scores.",
-            }
-            # final_miner_scores vẫn rỗng
-
-        return (
-            final_miner_scores,
-            calculated_validator_states,
-        )  # Trả về kết quả rỗng/chỉ decay
+        # Apply decay to validators who *didn't* submit scores for any relevant task
+        for validator_uid, validator_info in validators_info.items():
+            if validator_uid not in unique_validators_overall:
+                # Chỉ decay nếu validator đang active
+                if getattr(validator_info, "status", STATUS_ACTIVE) == STATUS_ACTIVE:
+                    old_trust = getattr(validator_info, "trust_score", 1.0)
+                    # <<< ÁP DỤNG DECAY TIÊU CHUẨN >>>
+                    delta_trust = settings.CONSENSUS_PARAM_DELTA_TRUST
+                    # Giả định thời gian từ lần đánh giá cuối là 1 chu kỳ
+                    new_trust = old_trust * math.exp(-delta_trust * 1)
+                    new_trust = max(
+                        0.0, min(1.0, new_trust)
+                    )  # Đảm bảo trong khoảng [0, 1]
+                    # ----------------------------------
+                    # Cập nhật trực tiếp vào dict (hoặc tạo bản copy nếu cần)
+                    calculated_validator_states[validator_uid] = {
+                        "trust_score": new_trust,
+                        "weight": getattr(validator_info, "weight", 0.0),
+                        "stake": getattr(validator_info, "stake", 0.0),
+                        "last_performance": getattr(
+                            validator_info, "last_performance", 0.0
+                        ),
+                        "performance_history": getattr(
+                            validator_info, "performance_history", []
+                        ),
+                        "status": getattr(validator_info, "status", STATUS_ACTIVE),
+                        "registration_slot": getattr(
+                            validator_info, "registration_slot", 0
+                        ),
+                        "wallet_addr_hash": getattr(
+                            validator_info, "wallet_addr_hash", None
+                        ),
+                        "api_endpoint": getattr(validator_info, "api_endpoint", None),
+                        "performance_history_hash": getattr(
+                            validator_info, "performance_history_hash", None
+                        ),
+                    }
+                    logger.debug(
+                        f"Applied standard trust decay (delta={delta_trust}) to non-scoring validator {validator_uid}. Trust: {old_trust:.4f} -> {new_trust:.4f}"
+                    )
+        # final_miner_scores sẽ là {} như khởi tạo
+        # calculated_miner_states sẽ được tính ở vòng lặp sau dựa trên final_miner_scores rỗng
 
     # --- 1. Tính điểm đồng thuận Miner (P_miner_adjusted) và độ lệch ---
     scores_by_miner: Dict[str, List[Tuple[float, float]]] = defaultdict(
@@ -485,7 +517,7 @@ def run_consensus_logic(
             "start_status": getattr(validator_info, "status", STATUS_ACTIVE),
         }
 
-    # --- 3. Tính phần thưởng dự kiến cho từng validator (chỉ những ai active) ---
+    # --- 3. Tính phần thưởng CƠ BẢN dự kiến cho từng validator (chỉ những ai active) ---
     logger.info(
         f":moneybag: Total validator contribution (Sum W*E from Active): [yellow]{total_validator_contribution:.4f}[/yellow]"
     )
@@ -494,32 +526,158 @@ def run_consensus_logic(
             # Chỉ tính thưởng cho validator active
             if state.get("start_status") == STATUS_ACTIVE:
                 trust_for_reward = state["start_trust"]  # Dùng trust đầu chu kỳ
-                reward = calculate_validator_incentive(
+                # TÍNH REWARD GỐC Ở ĐÂY (NẾU CÓ)
+                # Ví dụ: reward_from_fees = ... (logic tính phí)
+                # state["reward"] = reward_from_fees
+                # Tạm thời giả định reward ban đầu = 0 nếu chưa có logic khác
+                if "reward" not in state:
+                    state["reward"] = 0.0
+
+                # Tính incentive (ví dụ, nếu có)
+                reward_from_incentive = calculate_validator_incentive(
                     trust_score=trust_for_reward,
-                    validator_weight=state["weight"],  # Weight đầu chu kỳ
-                    validator_performance=state["E_v"],  # E_v mới tính
-                    total_validator_value=total_validator_contribution,  # Tổng contribution của những người active
+                    validator_weight=state["weight"],
+                    validator_performance=state["E_v"],
+                    total_validator_value=total_validator_contribution,
                     incentive_sigmoid_L=settings.CONSENSUS_PARAM_INCENTIVE_SIG_L,
                     incentive_sigmoid_k=settings.CONSENSUS_PARAM_INCENTIVE_SIG_K,
                     incentive_sigmoid_x0=settings.CONSENSUS_PARAM_INCENTIVE_SIG_X0,
                 )
-                state["reward"] = reward  # Thêm phần thưởng vào trạng thái dự kiến
+                state["reward"] += reward_from_incentive  # Cộng incentive vào reward
                 logger.info(
-                    f"  :dollar: Validator [cyan]{validator_uid_hex}[/cyan]: Calculated Reward = [green]{reward:.6f}[/green]"
+                    f"  :dollar: Validator [cyan]{validator_uid_hex}[/cyan]: Calculated Base Reward (Incentive/Fees) = [green]{state['reward']:.6f}[/green]"
                 )
             else:
                 state["reward"] = 0.0  # Không có thưởng nếu không active
     else:
         logger.warning(
-            ":warning: Total active validator contribution is zero. No validator rewards calculated."
+            ":warning: Total active validator contribution is zero. No base validator rewards calculated."
         )
         for state in calculated_validator_states.values():
             state["reward"] = 0.0
 
+    # --- 4. TÍNH TOÁN VÀ PHÂN PHỐI TOKEN ISSUANCE MỚI (CHO VALIDATOR) ---
     logger.info(
-        ":brain: Finished consensus calculations and validator state estimation."
+        f":rocket: Calculating and distributing new token issuance for cycle {current_cycle}..."
     )
-    return final_miner_scores, calculated_validator_states
+    # Ước tính slot bắt đầu của chu kỳ hiện tại để xác định epoch
+    # Lưu ý: Đây là ước tính, có thể không chính xác 100% nếu độ dài slot thay đổi
+    estimated_cycle_start_slot = (
+        current_cycle - 1
+    ) * settings.CONSENSUS_CYCLE_SLOT_LENGTH
+    current_epoch = get_current_epoch(estimated_cycle_start_slot)
+    logger.info(f"  Current estimated epoch for issuance: {current_epoch}")
+
+    issuance_this_epoch = calculate_epoch_issuance(current_epoch)
+    logger.info(
+        f"  :money_mouth_face: Epoch {current_epoch}: Calculated new issuance: {issuance_this_epoch} raw units ({(issuance_this_epoch / (10**settings.TOKEN_DECIMALS)):.6f} MOD)"
+    )
+
+    if issuance_this_epoch > 0:
+        issuance_distribution = distribute_issuance(
+            issuance_this_epoch=issuance_this_epoch,
+            calculated_states=calculated_validator_states,
+            status_active_val=STATUS_ACTIVE,  # Đảm bảo dùng đúng hằng số STATUS_ACTIVE
+        )
+
+        # Cộng phần token mới được phát hành vào phần thưởng ('reward') của mỗi node
+        for uid_hex, state in calculated_validator_states.items():
+            issuance_share = issuance_distribution.get(
+                uid_hex, 0
+            )  # Lấy phần share (đơn vị nhỏ nhất)
+            if issuance_share > 0:
+                # Chuyển đổi share (int nhỏ nhất) thành giá trị float có thể cộng vào reward
+                # Giả định 'reward' lưu giá trị đã scale (chia cho divisor)
+                reward_from_issuance_scaled = (
+                    issuance_share / settings.METAGRAPH_DATUM_INT_DIVISOR
+                )
+
+                # Cộng vào reward hiện có
+                state["reward"] = state.get("reward", 0.0) + reward_from_issuance_scaled
+                logger.info(
+                    f"    :sparkles: UID [cyan]{uid_hex}[/cyan]: Issuance share = [blue]{issuance_share}[/blue] raw units -> Added [blue]{reward_from_issuance_scaled:.6f}[/blue] to total reward. New Total Reward: {state['reward']:.6f}"
+                )
+    else:
+        logger.info("  No new tokens issued in this epoch.")
+    # --- KẾT THÚC TÍCH HỢP TOKENOMICS ---
+
+    # --- 5. TÍNH TOÁN TRẠNG THÁI VÀ INCENTIVE CHO MINER ---
+    logger.info(f":gear: Calculating final states and incentives for miners...")
+    # Ước tính total_system_value cho incentive (tổng W*P_adj của miner active)
+    # Lưu ý: Giá trị này đã được tính trong prepare_miner_updates_logic trước đây
+    #      Chúng ta cần tính nó ở đây để dùng cho calculate_miner_incentive.
+    total_weighted_perf = sum(
+        getattr(minfo, "weight", 0) * final_miner_scores.get(uid, 0)
+        for uid, minfo in miners_info.items()
+        if getattr(minfo, "status", STATUS_ACTIVE) == STATUS_ACTIVE
+    )
+    min_total_value = 1.0  # Hoặc settings.MIN_TOTAL_INCENTIVE_VALUE?
+    total_system_value_for_miner_incentive = max(min_total_value, total_weighted_perf)
+    logger.debug(
+        f"Using total_system_value for miner incentive (Sum W*P_adj, min={min_total_value}): {total_system_value_for_miner_incentive:.4f}"
+    )
+
+    for miner_uid_hex, miner_info in miners_info.items():
+        p_adj = final_miner_scores.get(miner_uid_hex, 0.0)
+        trust_score_old = getattr(miner_info, "trust_score", 0.0)
+
+        # Tính Trust Score mới cho miner
+        time_since_miner_eval = 1  # Giả định
+        score_for_trust_update = (
+            p_adj
+            if getattr(miner_info, "status", STATUS_ACTIVE) == STATUS_ACTIVE
+            else 0.0
+        )
+        new_miner_trust_score = update_trust_score(
+            trust_score_old,
+            time_since_miner_eval,
+            score_for_trust_update,
+            # Các tham số trust có thể khác cho miner?
+            delta_trust=settings.CONSENSUS_PARAM_DELTA_TRUST,
+            alpha_base=settings.CONSENSUS_PARAM_ALPHA_BASE,
+            k_alpha=settings.CONSENSUS_PARAM_K_ALPHA,
+            update_sigmoid_L=settings.CONSENSUS_PARAM_UPDATE_SIG_L,
+            update_sigmoid_k=settings.CONSENSUS_PARAM_UPDATE_SIG_K,
+            update_sigmoid_x0=settings.CONSENSUS_PARAM_UPDATE_SIG_X0,
+        )
+
+        # Tính Incentive cho miner (dùng trust CŨ)
+        miner_incentive_float = 0.0
+        if getattr(miner_info, "status", STATUS_ACTIVE) == STATUS_ACTIVE:
+            miner_incentive_float = calculate_miner_incentive(
+                trust_score=trust_score_old,
+                miner_weight=getattr(miner_info, "weight", 0.0),
+                miner_performance_scores=[p_adj],
+                total_system_value=total_system_value_for_miner_incentive,
+                incentive_sigmoid_L=settings.CONSENSUS_PARAM_INCENTIVE_SIG_L,
+                incentive_sigmoid_k=settings.CONSENSUS_PARAM_INCENTIVE_SIG_K,
+                incentive_sigmoid_x0=settings.CONSENSUS_PARAM_INCENTIVE_SIG_X0,
+            )
+            logger.info(
+                f"  :receipt: Miner [cyan]{miner_uid_hex}[/cyan]: Incentive = [green]{miner_incentive_float:.6f}[/green]"
+            )
+
+        # Lưu trạng thái dự kiến cho miner
+        calculated_miner_states[miner_uid_hex] = {
+            "P_adj": p_adj,
+            "trust": new_miner_trust_score,
+            "reward": miner_incentive_float,  # <<< REWARD CỦA MINER (HIỆN CHỈ LÀ INCENTIVE)
+            "last_update_cycle": current_cycle,
+            "start_trust": trust_score_old,
+            "start_status": getattr(miner_info, "status", STATUS_ACTIVE),
+            "notes": "Calculated in run_consensus_logic",
+        }
+    # --- KẾT THÚC TÍNH TOÁN CHO MINER ---
+
+    logger.info(
+        ":brain: Finished consensus calculations and state estimation for validators and miners."
+    )
+    return (
+        final_miner_scores,
+        calculated_validator_states,
+        calculated_miner_states,
+        issuance_this_epoch,
+    )
 
 
 # --- Logic Kiểm tra và Phạt Validator ---
@@ -707,20 +865,20 @@ async def verify_and_penalize_logic(
 # --- Logic Chuẩn bị và Commit Cập nhật ---
 
 
-async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode datum cũ
+async def prepare_miner_updates_logic(
     current_cycle: int,
-    miners_info: Dict[str, MinerInfo],  # Input miner state (start of cycle)
-    final_scores: Dict[str, float],  # Adjusted performance scores (P_adj)
+    miners_info: Dict[str, MinerInfo],
+    final_scores: Dict[str, float],
     settings: Any,
-    # context: BlockFrostChainContext, # Optional if utxo_map has decoded datum
-    current_utxo_map: Dict[str, UTxO],  # Map uid_hex -> UTxO object
+    current_utxo_map: Dict[str, UTxO],
+    calculated_miner_states: Dict[str, Any],
 ) -> Dict[str, MinerDatum]:
     """
     Prepares new MinerDatum objects for committing to the blockchain.
 
     Calculates the next state for each miner based on consensus results:
     - Calculates new trust score using P_adj.
-    - Calculates new incentive based on P_adj and old trust score.
+    - Retrieves pre-calculated reward (incentive) from calculated_miner_states.
     - Updates accumulated rewards.
     - Updates performance history and calculates its new hash.
     - Constructs the final MinerDatum object.
@@ -731,6 +889,7 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
         final_scores (Dict[str, float]): Final adjusted performance scores (P_adj) for miners.
         settings (Any): Application settings.
         current_utxo_map (Dict[str, UTxO]): Map of UIDs to their UTxOs (needed for old rewards).
+        calculated_miner_states (Dict[str, Any]): Pre-calculated miner states from consensus logic.
 
     Returns:
         Dict[str, MinerDatum]: A dictionary mapping miner UIDs (hex) to their new MinerDatum objects.
@@ -743,28 +902,19 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
     miner_updates: Dict[str, MinerDatum] = {}
     divisor = settings.METAGRAPH_DATUM_INT_DIVISOR
 
-    # Ước tính total_system_value cho incentive (tổng W*P_adj của miner active)
-    total_weighted_perf = sum(
-        getattr(minfo, "weight", 0) * final_scores.get(uid, 0)
-        for uid, minfo in miners_info.items()
-        if getattr(minfo, "status", STATUS_ACTIVE) == STATUS_ACTIVE
-    )
-    # Đặt giá trị tối thiểu để tránh chia cho 0 và incentive quá lớn khi mạng nhỏ
-    min_total_value = 1.0  # Hoặc một giá trị phù hợp khác
-    total_system_value = max(min_total_value, total_weighted_perf)
-    logger.debug(
-        f"Using total_system_value (Sum W*P_adj, min={min_total_value}): {total_system_value:.4f}"
-    )
-
     for miner_uid_hex, miner_info in miners_info.items():
         log_prefix = f"Miner {miner_uid_hex}"
         logger.debug(f"{log_prefix}: Preparing update...")
         score_new = final_scores.get(miner_uid_hex, 0.0)  # P_adj
-        trust_score_old = getattr(
-            miner_info, "trust_score", 0.0
-        )  # Trust score đầu vào (trước update)
+        trust_score_old = getattr(miner_info, "trust_score", 0.0)
 
-        # --- 1. Lấy Thông tin Cần Thiết từ Datum Cũ (Chủ yếu là Reward) ---
+        # Lấy trạng thái đã tính toán cho miner này
+        calculated_state = calculated_miner_states.get(miner_uid_hex, {})
+        if not calculated_state:
+            logger.warning(f"{log_prefix}: No calculated state found. Skipping update.")
+            continue
+
+        # --- 1. Lấy Thông tin Cần Thiết từ Datum Cũ (Reward cũ) và Info ---
         pending_rewards_old = 0
         old_perf_history = list(getattr(miner_info, "performance_history", []))
         final_wallet_addr_hash = getattr(miner_info, "wallet_addr_hash", None)
@@ -814,55 +964,25 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
             )
         # ----------------------------------------------------------
 
-        # --- 2. Tính Trust Score Mới ---
-        time_since_eval = 1  # Giả định được đánh giá mỗi chu kỳ nếu active
-        # Chỉ cập nhật trust dựa trên điểm mới nếu miner đang active
-        score_for_trust_update = (
-            score_new
-            if getattr(miner_info, "status", STATUS_ACTIVE) == STATUS_ACTIVE
-            else 0.0
-        )
-        new_trust_score_float = update_trust_score(
-            trust_score_old=trust_score_old,
-            time_since_last_eval=time_since_eval,
-            score_new=score_for_trust_update,  # Dùng P_adj hoặc 0
-            # Lấy các tham số từ settings
-            delta_trust=settings.CONSENSUS_PARAM_DELTA_TRUST,
-            alpha_base=settings.CONSENSUS_PARAM_ALPHA_BASE,
-            k_alpha=settings.CONSENSUS_PARAM_K_ALPHA,
-            update_sigmoid_L=settings.CONSENSUS_PARAM_UPDATE_SIG_L,
-            update_sigmoid_k=settings.CONSENSUS_PARAM_UPDATE_SIG_K,
-            update_sigmoid_x0=settings.CONSENSUS_PARAM_UPDATE_SIG_X0,
-        )
+        # --- 2. Lấy Trust Score Mới (đã tính) ---
+        new_trust_score_float = calculated_state.get(
+            "trust", trust_score_old
+        )  # Lấy từ state đã tính
         logger.debug(
-            f"{log_prefix}: Trust update: {trust_score_old:.4f} -> {new_trust_score_float:.4f}"
+            f"{log_prefix}: Using pre-calculated Trust: {new_trust_score_float:.4f}"
         )
-        # -----------------------------
 
-        # --- 3. Tính Incentive (Dùng trust CŨ) ---
-        incentive_float = 0.0
-        if (
-            getattr(miner_info, "status", STATUS_ACTIVE) == STATUS_ACTIVE
-        ):  # Chỉ miner active mới nhận thưởng
-            incentive_float = calculate_miner_incentive(
-                trust_score=trust_score_old,  # <<<--- Dùng trust cũ
-                miner_weight=getattr(miner_info, "weight", 0.0),
-                miner_performance_scores=[score_new],  # Dùng P_adj
-                total_system_value=total_system_value,
-                # Lấy các tham số từ settings
-                incentive_sigmoid_L=settings.CONSENSUS_PARAM_INCENTIVE_SIG_L,
-                incentive_sigmoid_k=settings.CONSENSUS_PARAM_INCENTIVE_SIG_K,
-                incentive_sigmoid_x0=settings.CONSENSUS_PARAM_INCENTIVE_SIG_X0,
-            )
-        logger.debug(f"{log_prefix}: Incentive calculated: {incentive_float:.6f}")
-        # -------------------------------------
+        # --- 3. Lấy Incentive (Reward) (đã tính) ---
+        calculated_reward = calculated_state.get("reward", 0.0)  # Lấy từ state đã tính
+        logger.debug(
+            f"{log_prefix}: Using pre-calculated Reward: {calculated_reward:.6f}"
+        )
 
         # --- 4. Cập nhật Accumulated Rewards ---
-        accumulated_rewards_new = pending_rewards_old + int(incentive_float * divisor)
+        accumulated_rewards_new = pending_rewards_old + int(calculated_reward * divisor)
         logger.debug(
             f"{log_prefix}: AccumulatedRewards update: {pending_rewards_old} -> {accumulated_rewards_new}"
         )
-        # -------------------------------------
 
         # --- 5. Cập nhật Performance History & Hash ---
         updated_history = old_perf_history
@@ -1100,8 +1220,8 @@ async def commit_updates_logic(
     Builds and submits the transaction to commit the self-validator update.
 
     Takes the prepared ValidatorDatum update for the node itself, finds its
-    corresponding input UTXO from the `current_utxo_map`, constructs a
-    transaction spending that UTXO and creating a new one at the script address
+    corresponding input UTxO from the `current_utxo_map`, constructs a
+    transaction spending that UTxO and creating a new one at the script address
     with the new Datum, signs it with the owner's keys, and submits it.
 
     Args:
@@ -1197,7 +1317,7 @@ async def commit_updates_logic(
     log_prefix = f"CommitSelf (Validator {self_uid_hex})"
     logger.debug(f"{log_prefix}: Processing...")
 
-    # 1. Lấy Input UTXO từ map cho chính mình
+    # 1. Lấy Input UTxO từ map cho chính mình
     input_utxo = current_utxo_map.get(self_uid_hex)
     if not input_utxo:
         error_msg = "Input UTxO not found in initial map for self-update"
@@ -1220,7 +1340,7 @@ async def commit_updates_logic(
     try:
         builder = TransactionBuilder(context=context)
 
-        # a. Thêm Input Script UTXO (UTXO cũ của validator)
+        # a. Thêm Input Script UTxO (UTXO cũ của validator)
         builder.add_script_input(
             utxo=input_utxo,
             script=script_bytes,

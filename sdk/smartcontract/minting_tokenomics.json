@@ -1,0 +1,37 @@
+{
+  "preamble": {
+    "title": "son/minting_tokenomics",
+    "description": "Aiken contracts for project 'son/minting_tokenomics'",
+    "version": "0.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.0+be31a7c"
+    },
+    "license": "Apache-2.0"
+  },
+  "validators": [
+    {
+      "title": "minting_tokenomics.moderntensor_minting_policy.mint",
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/Data"
+        }
+      },
+      "compiledCode": "5851010100323232323225333002323232323253330073370e900018041baa0011324a26eb8c028c024dd50008a503009300a0023008001300800230060013004375400229309b2b2b9a5573aaae795d0aba21",
+      "hash": "c847c8d81c70084af43cf15dbb3241f4f4c44c732e7857f491507503"
+    },
+    {
+      "title": "minting_tokenomics.moderntensor_minting_policy.else",
+      "compiledCode": "5851010100323232323225333002323232323253330073370e900018041baa0011324a26eb8c028c024dd50008a503009300a0023008001300800230060013004375400229309b2b2b9a5573aaae795d0aba21",
+      "hash": "c847c8d81c70084af43cf15dbb3241f4f4c44c732e7857f491507503"
+    }
+  ],
+  "definitions": {
+    "Data": {
+      "title": "Data",
+      "description": "Any Plutus data."
+    }
+  }
+}
