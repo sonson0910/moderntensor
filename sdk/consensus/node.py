@@ -358,7 +358,7 @@ class ValidatorNode:
     ) -> Optional[CycleConsensusResults]:
         """Retrieves cached consensus results for a specific cycle."""
         async with self.consensus_results_cache_lock:
-            return self.consensus_results_cache.get(cycle_num)
+            return self.consensus_results_cache.get(cycle_num, None)  # Add default=None
 
     # --- Thêm phương thức mới để công bố/lưu kết quả ---
     async def _publish_consensus_results(
@@ -491,7 +491,9 @@ class ValidatorNode:
                     )
 
                     current_local_history = []  # Mặc định là rỗng
-                    previous_info = previous_miners_info.get(uid_hex)
+                    previous_info = previous_miners_info.get(
+                        uid_hex, None
+                    )  # Add default=None
                     if previous_info:
                         current_local_history = (
                             previous_info.performance_history
@@ -588,7 +590,9 @@ class ValidatorNode:
                     )
 
                     current_local_history = []
-                    previous_info = previous_validators_info.get(uid_hex)
+                    previous_info = previous_validators_info.get(
+                        uid_hex, None
+                    )  # Add default=None
                     if previous_info and hasattr(
                         previous_info, "performance_history"
                     ):  # Kiểm tra có thuộc tính không
@@ -1490,11 +1494,12 @@ class ValidatorNode:
             # Lấy miner tương ứng với kết quả này
             if i < len(miners_with_tasks):
                 miner = miners_with_tasks[i]
-                assignment = task_assignments.get(miner.uid)
-                assignment_check = self.tasks_sent.get(
-                    f"task_{self.current_cycle}_{self.info.uid}_{miner.uid}"
+                assignment = task_assignments.get(miner.uid, None)  # Add default=None
+                assignment_check = self.tasks_sent.get(  # Add default=None
+                    f"task_{self.current_cycle}_{self.info.uid}_{miner.uid}", None
                 )  # Tìm lại task_id theo cấu trúc
                 # Tìm task_id tương ứng với miner trong lần gửi này
+                # Add a default to prevent errors if task_id isn't found
                 for tid, assign in self.tasks_sent.items():
                     # Kiểm tra cycle và miner uid để đảm bảo đúng task
                     if (
@@ -1607,7 +1612,7 @@ class ValidatorNode:
 
         # Kiểm tra task ID có đang được mong đợi không (có trong tasks_sent)
         # Dùng get() để tránh lỗi nếu task_id không có (ví dụ đến quá muộn)
-        assignment = self.tasks_sent.get(result.task_id)
+        assignment = self.tasks_sent.get(result.task_id, None)  # Add default=None
         if not assignment:
             logger.warning(
                 f"API: Received result for unknown/already processed/timed out task_id: {result.task_id} from miner {result.miner_uid}. Ignoring."
@@ -1979,10 +1984,10 @@ class ValidatorNode:
     async def commit_updates_to_blockchain(
         self,
         validator_updates: Dict[str, ValidatorDatum],
-    ):
+    ) -> Dict[str, Any]:  # <<< Thêm kiểu trả về
         """Submits the transaction to update this node's Datum on the blockchain."""
-        # Gọi hàm logic từ state.py
-        await commit_updates_logic(
+        # Gọi hàm logic từ state.py và return kết quả
+        return await commit_updates_logic(  # <<< Thêm return
             validator_updates=validator_updates,
             current_utxo_map=self.current_utxo_map,
             script_hash=self.script_hash,
@@ -2317,7 +2322,9 @@ class ValidatorNode:
                     f"Calculated total_system_value for miner incentive: {total_system_value:.6f}"
                 )
                 for miner_uid_hex, p_adj in final_miner_scores.items():
-                    miner_info = self.miners_info.get(miner_uid_hex)
+                    miner_info = self.miners_info.get(
+                        miner_uid_hex, None
+                    )  # Add default=None
                     if (
                         miner_info
                         and getattr(miner_info, "status", STATUS_ACTIVE)
@@ -2386,52 +2393,8 @@ class ValidatorNode:
                 f":link: Step 10: Commit process for self-validator finished. Result: {commit_status}"
             )
 
-            # === M. THỬ MINT TOKEN (NẾU CÓ ISSUANCE) === # <<< BƯỚC MỚI
-            if issuance_this_epoch > 0:
-                logger.info(
-                    f":money_with_wings: Step 11: Attempting to mint [blue]{issuance_this_epoch}[/blue] new tokens..."
-                )
-                try:
-                    mint_recipient_addr_str = settings.MINTING_RECIPIENT_ADDRESS
-                    if not mint_recipient_addr_str:
-                        logger.error(
-                            ":stop_sign: MINTING_RECIPIENT_ADDRESS not set in settings. Cannot mint."
-                        )
-                    else:
-                        mint_recipient_addr = Address.from_primitive(
-                            mint_recipient_addr_str
-                        )
-                        policy_cbor = settings.MINTING_POLICY_SCRIPT_CBOR_HEX
-                        asset_name = settings.TOKEN_NAME_STR
-
-                        mint_tx_id: Optional[TransactionId] = await mint_native_tokens(
-                            context=self.context,
-                            signing_key=self.signing_key,
-                            stake_signing_key=self.stake_signing_key,
-                            policy_script_cbor_hex=policy_cbor,
-                            asset_name_str=asset_name,
-                            amount_to_mint=issuance_this_epoch,
-                            recipient_address=mint_recipient_addr,
-                            network=self.network,
-                        )
-
-                        if mint_tx_id:
-                            logger.info(
-                                f":white_check_mark: Step 11: Minting transaction submitted: [yellow]{mint_tx_id}[/yellow]"
-                            )
-                        else:
-                            logger.error(
-                                ":x: Step 11: Minting transaction failed to submit."
-                            )
-
-                except Exception as mint_err:
-                    logger.exception(
-                        f":rotating_light: Step 11: Error during minting attempt: {mint_err}"
-                    )
-            else:
-                logger.info(
-                    ":information_source: Step 11: No new token issuance for this epoch. Skipping minting."
-                )
+            # --- LOGIC CHỜ VÀ MINT TOKEN ĐÃ BỊ LOẠI BỎ ---
+            # (Quy trình mint token giờ đây sẽ chạy riêng biệt)
 
         except Exception as e:
             logger.exception(
@@ -2439,11 +2402,89 @@ class ValidatorNode:
             )
 
         finally:
-            # === N. Chờ Kết thúc Chu kỳ & Dọn dẹp === # <<< ĐỔI SỐ THỨ TỰ
-            # ... (phần code chờ slot tiếp theo, lưu state, dọn dẹp)
-            pass  # Giữ nguyên logic finalize
+            # === M. Chờ Kết thúc Chu kỳ (Chờ đến Slot) & Dọn dẹp ===
+            cycle_end_time_actual = time.time()
+            # Note: cycle_start_time might not be defined if an error occurred very early
+            # Provide a default value or handle the potential NameError
+            start_time_for_calc = (
+                cycle_start_time
+                if "cycle_start_time" in locals()
+                else cycle_end_time_actual
+            )
+            cycle_duration = cycle_end_time_actual - start_time_for_calc
+            logger.info(
+                f":stopwatch: Cycle {self.current_cycle} duration so far: {cycle_duration:.2f}s"
+            )
 
-        # ... (phần cuối của run_cycle)
+            # Ensure target_end_slot is defined before using it
+            if (
+                "target_end_slot" in locals()
+                and target_end_slot
+                and target_end_slot > 0
+            ):
+                next_cycle_start_slot = target_end_slot + 1
+                logger.info(
+                    f":hourglass: Waiting until slot [yellow]{next_cycle_start_slot}[/yellow] to finalize cycle {self.current_cycle}..."
+                )
+                await self.wait_until_slot(next_cycle_start_slot)
+            else:
+                logger.error(
+                    "target_end_slot not defined or invalid, cannot wait for next cycle slot. Waiting fixed duration."
+                )
+                # Fallback wait if slot calculation failed
+                await asyncio.sleep(self.settings.CONSENSUS_CYCLE_MIN_WAIT_SECONDS)
+
+            # --- Cập nhật và Lưu trạng thái ---
+            completed_cycle = self.current_cycle  # Lưu lại số chu kỳ vừa hoàn thành
+            self._save_current_cycle(completed_cycle)  # Lưu chu kỳ đã hoàn thành
+            self.current_cycle += 1  # Tăng lên cho chu kỳ tiếp theo
+
+            # Dọn dẹp P2P scores cũ
+            cleanup_cycle = completed_cycle - 2  # Giữ lại dữ liệu 2 chu kỳ trước
+            async with self.received_scores_lock:
+                if cleanup_cycle in self.received_validator_scores:
+                    try:
+                        del self.received_validator_scores[cleanup_cycle]
+                        logger.debug(
+                            f":wastebasket: Cleaned up P2P scores for cycle {cleanup_cycle}"
+                        )
+                    except KeyError:
+                        pass  # Already deleted or never existed
+            logger.info(f"--- End of Cycle {completed_cycle} ---")
+
+            # --- GHI THÔNG TIN ISSUANCE RA FILE JSON ---
+            # Đảm bảo issuance_this_epoch đã được tính toán trước đó trong khối try
+            # Nếu có lỗi xảy ra trước khi tính, issuance_this_epoch sẽ giữ giá trị khởi tạo (0)
+            issuance_amount_to_write = (
+                issuance_this_epoch if "issuance_this_epoch" in locals() else 0
+            )
+
+            trigger_file_path = getattr(
+                settings, "MINT_TRIGGER_FILE_PATH", "mint_trigger.json"
+            )
+            mint_data = {
+                "last_completed_cycle": completed_cycle,
+                "issuance_amount": issuance_amount_to_write,
+            }
+            try:
+                # Đảm bảo thư mục tồn tại
+                os.makedirs(os.path.dirname(trigger_file_path) or ".", exist_ok=True)
+                with open(trigger_file_path, "w") as f:
+                    json.dump(mint_data, f, indent=2)
+                logger.info(
+                    f":bell: Written mint trigger data to [blue]{trigger_file_path}[/blue]: {mint_data}"
+                )
+            except Exception as write_err:
+                logger.error(
+                    f":x: Failed to write mint trigger file to [blue]{trigger_file_path}[/blue]: {write_err}"
+                )
+            # ---------------------------------------------
+
+            # Final duration log needs completed_cycle which is defined above
+            cycle_duration_final = time.time() - start_time_for_calc
+            logger.info(
+                f":checkered_flag: [bold green]>>> Completed Consensus Cycle {completed_cycle} in {cycle_duration_final:.2f}s <<<[/bold green]"
+            )
 
     async def run(self):
         """

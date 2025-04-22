@@ -84,6 +84,10 @@ class Settings(BaseSettings):
         default="addr_test1qpkxr3kpzex93m646qr7w82d56md2kchtsv9jy39dykn4cmcxuuneyeqhdc4wy7de9mk54fndmckahxwqtwy3qg8pums5vlxhz",
         alias="TEST_RECEIVER_ADDRESS",
     )
+    MINTING_SCRIPT_CBOR_HEX: str = Field(
+        default="5851010100323232323225333002323232323253330073370e900018041baa0011324a26eb8c028c024dd50008a503009300a0023008001300800230060013004375400229309b2b2b9a5573aaae795d0aba21",
+        alias="MINTING_SCRIPT_CBOR_HEX",
+    )
     TEST_POLICY_ID_HEX: str = Field(
         default="b9107b627e28700da1c5c2077c40b1c7d1fe2e9b23ff20e0e6b8fec1",
         alias="TEST_POLICY_ID_HEX",
@@ -397,8 +401,8 @@ class Settings(BaseSettings):
     )  # Đổi sang giây
 
     # --- Miner/Validator Registration Settings ---
-    MINER_MIN_REQUIRED_STAKE = 100_000_000  # 100 ADA
-    VALIDATOR_MIN_REQUIRED_STAKE = 1000_000_000  # 1000 ADA
+    MINER_MIN_REQUIRED_STAKE: int = 100_000_000  # 100 ADA
+    VALIDATOR_MIN_REQUIRED_STAKE: int = 1000_000_000  # 1000 ADA
 
     # --- Tokenomics Settings (Phase 1 - Off-chain Logic) ---
     TOKEN_DECIMALS: int = 6  # Number of decimal places for the token
@@ -415,6 +419,14 @@ class Settings(BaseSettings):
     TOKEN_INITIAL_ISSUANCE_PER_EPOCH: int = 50 * (
         10**TOKEN_DECIMALS
     )  # Example: 50 tokens per epoch initially
+
+    # Add TOTAL_REWARD_AMOUNT setting
+    TOTAL_REWARD_AMOUNT: int = Field(
+        default=1_000_000 * (10**6),  # Default to 1M tokens (adjust decimals if needed)
+        alias="TOTAL_REWARD_AMOUNT",
+        description="Total amount of MOD tokens to distribute as rewards in a cycle/script run.",
+    )
+
     TOKEN_NAME_STR: str = "MOD"  # User-friendly name
     TOKEN_TICKER_STR: str = "MOD"  # User-friendly ticker
     TOKEN_NAME: bytes = TOKEN_NAME_STR.encode(

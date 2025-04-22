@@ -14,8 +14,8 @@ from pycardano import (
     ScriptHash,
     PlutusV3Script,  # Assuming Plutus V3 for Aiken
     AssetName,
-    MultiAsset,
     Asset,
+    MultiAsset,
     Value,
     TransactionBuilder,
     TransactionOutput,
@@ -25,7 +25,9 @@ from pycardano import (
     RawPlutusData,  # For empty redeemer data
     TransactionId,
     min_lovelace,
+    UTxO,
 )
+from pycardano.plutus import script_hash
 from blockfrost import ApiError
 
 # Import settings to get policy ID etc.
@@ -46,6 +48,7 @@ async def mint_native_tokens(
     amount_to_mint: int,
     recipient_address: Optional[Address] = None,
     network: Network = NETWORK,  # <<< Use the determined Network object
+    excluded_tx_id: Optional[TransactionId] = None,
 ) -> Optional[TransactionId]:
     """
     Builds and submits a transaction to mint native tokens using a given policy.
@@ -60,6 +63,7 @@ async def mint_native_tokens(
         recipient_address: The address to send the newly minted tokens to.
                            If None, sends to the address derived from signing_key.
         network: The Cardano network (Testnet or Mainnet).
+        excluded_tx_id: Optional transaction ID to exclude from UTxO selection.
 
     Returns:
         The TransactionId if submission is successful, None otherwise.
@@ -69,21 +73,15 @@ async def mint_native_tokens(
     try:
         # --- 1. Derive Keys and Addresses ---
         payment_vkey = signing_key.to_verification_key()
-        payment_key_hash: VerificationKeyHash = payment_vkey.hash()  # type: ignore
-
+        payment_pkh: VerificationKeyHash = payment_vkey.hash()
         stake_key_hash: Optional[VerificationKeyHash] = None
         if stake_signing_key:
             stake_vkey = stake_signing_key.to_verification_key()
-            stake_key_hash = stake_vkey.hash()  # type: ignore
-
+            stake_key_hash = stake_vkey.hash()
         minter_address = Address(
-            payment_part=payment_key_hash,
-            staking_part=stake_key_hash,
-            network=network,
+            payment_part=payment_pkh, staking_part=stake_key_hash, network=network
         )
         logger.debug(f"Minter Address (paying fees): {minter_address}")
-
-        # Determine recipient address
         if recipient_address is None:
             recipient_address = minter_address
         logger.debug(f"Recipient Address (receiving tokens): {recipient_address}")
@@ -91,32 +89,21 @@ async def mint_native_tokens(
         # --- 2. Prepare Script and Policy ID ---
         try:
             policy_script = PlutusV3Script(bytes.fromhex(policy_script_cbor_hex))
-            policy_id: ScriptHash = policy_script.hash()  # type: ignore
+            policy_id: ScriptHash = script_hash(policy_script)
             logger.debug(
                 f"Policy ID derived from script: {policy_id.to_primitive().hex()}"
             )
-            # Verify against settings (optional but good practice)
-            if policy_id.to_primitive().hex() != settings.MINTING_POLICY_ID_PLACEHOLDER:
-                logger.warning(
-                    f"Derived Policy ID ({policy_id.to_primitive().hex()}) does not match settings ({settings.MINTING_POLICY_ID_PLACEHOLDER}). Using derived ID."
-                )
-                # Decide whether to raise an error or proceed with the derived ID
-                # For now, proceed with the derived ID
         except Exception as e:
             logger.exception(f"Failed to create PlutusScript or derive Policy ID: {e}")
             return None
 
         # --- 3. Prepare Asset Name and Minting Structure ---
         try:
-            # Encode asset name string to bytes, then hex if needed, but AssetName takes bytes
             asset_name_bytes = asset_name_str.encode("utf-8")
             asset_name = AssetName(asset_name_bytes)
-            logger.debug(f"Asset Name (bytes): {asset_name_bytes.hex()}")
-
-            # Create the MultiAsset structure for minting
-            asset = Asset(asset_name=asset_name, amount=amount_to_mint)
-            multi_asset = MultiAsset(assets={asset_name: asset})
-            tokens_to_mint = MultiAsset(script_hash=policy_id, multi_asset=multi_asset)
+            inner_asset_dict = {asset_name: amount_to_mint}
+            inner_asset_obj = Asset(inner_asset_dict)
+            tokens_to_mint = MultiAsset({policy_id: inner_asset_obj})
             logger.debug(f"Tokens to mint structure prepared: {tokens_to_mint}")
         except Exception as e:
             logger.exception(f"Failed to prepare asset name or minting structure: {e}")
@@ -125,54 +112,93 @@ async def mint_native_tokens(
         # --- 4. Build Transaction ---
         builder = TransactionBuilder(context=context)
 
+        # --- 4a. Add Inputs (builder fetches UTxOs internally) ---
         builder.add_input_address(minter_address)
         logger.debug(f"Added input address for fees: {minter_address}")
 
+        # --- 4b. Add Collateral ---
+        logger.debug(f"Attempting to select collateral UTxO from {minter_address}...")
+        minter_utxos = context.utxos(str(minter_address))
+        collateral_utxo = None
+        MIN_COLLATERAL_ADA = 2_000_000  # Minimum 2 ADA for collateral UTXO
+        if excluded_tx_id:
+            original_count = len(minter_utxos)
+            minter_utxos = [
+                u for u in minter_utxos if u.input.transaction_id != excluded_tx_id
+            ]
+            filtered_count = len(minter_utxos)
+            if original_count != filtered_count:
+                logger.info(
+                    f"Filtered out {original_count - filtered_count} UTXO(s) matching excluded TxID {excluded_tx_id}."
+                )
+        for utxo in minter_utxos:
+            # Check if UTxO contains only ADA and has enough value
+            if (
+                not utxo.output.amount.multi_asset
+                and utxo.output.amount.coin >= MIN_COLLATERAL_ADA
+            ):
+                collateral_utxo = utxo
+                logger.info(
+                    f"Selected collateral UTxO: {collateral_utxo.input.transaction_id.payload.hex()}#{collateral_utxo.input.index}"
+                )
+                break  # Use the first suitable one
+
+        if not collateral_utxo:
+            logger.error(
+                f":x: Could not find a suitable collateral UTxO (>= {MIN_COLLATERAL_ADA/1_000_000} ADA only) at {minter_address}"
+            )
+            return None  # Cannot proceed without collateral
+
+        # Add the selected **full** collateral UTxO to the builder.collaterals list
+        builder.collaterals.append(collateral_utxo)
+        logger.debug("Added collateral UTxO to the transaction builder.")
+
+        # --- EXCLUDE the collateral UTXO from regular inputs ---
+        builder.excluded_inputs.append(collateral_utxo)
+        logger.debug(
+            f"Excluded collateral UTxO {collateral_utxo.input.transaction_id.payload.hex()}#{collateral_utxo.input.index} from being used as regular input."
+        )
+        # -------------------------------------------------------
+
+        # --- 4c. Add Minting Action ---
         builder.mint = tokens_to_mint
         builder.add_minting_script(
             script=policy_script, redeemer=Redeemer(data=RawPlutusData(data=bytes()))
         )
         logger.debug("Added mint action and minting script.")
 
-        # Add output to send minted tokens to the recipient
-        # Calculate minimum ADA required for this output using the imported function
+        # --- 4d. Add Output ---
         temp_output = TransactionOutput(recipient_address, Value(0, tokens_to_mint))
-        # Use min_lovelace from pycardano.utils
         min_ada_required = min_lovelace(output=temp_output, context=context)
         logger.debug(f"Calculated minimum ADA for output: {min_ada_required}")
         output_value = Value(coin=min_ada_required, multi_asset=tokens_to_mint)
-
         builder.add_output(
-            TransactionOutput(
-                address=recipient_address,
-                amount=output_value,
-            )
+            TransactionOutput(address=recipient_address, amount=output_value)
         )
         logger.debug(
             f"Added output for minted tokens to {recipient_address} (Value: {output_value})"
         )
 
-        builder.required_signers = [payment_key_hash]
-        logger.debug(f"Set required signer: {payment_key_hash.to_primitive().hex()}")
+        # --- 4e. Add Required Signer ---
+        builder.required_signers = [payment_pkh]
+        logger.debug(f"Set required signer: {payment_pkh.to_primitive().hex()}")
 
         # --- 5. Sign and Submit ---
         signing_keys = [signing_key]
         if stake_signing_key:
             signing_keys.append(stake_signing_key)
-
         logger.info("Building and signing the minting transaction...")
         signed_tx = builder.build_and_sign(
-            signing_keys=signing_keys,  # type: ignore
-            change_address=minter_address,  # Send change back to minter
+            signing_keys=signing_keys,  # type: ignore # Linter struggles with List invariance
+            change_address=minter_address,
         )
         logger.info(f"Transaction signed. Fee: {signed_tx.transaction_body.fee}")
-
         logger.info("Submitting minting transaction...")
-        tx_id = context.submit_tx(signed_tx.to_cbor())
+        tx_id_str = context.submit_tx(signed_tx.to_cbor())
         logger.info(
-            f":white_check_mark: Minting transaction submitted successfully! TxID: [yellow]{tx_id}[/yellow]"
+            f":white_check_mark: Minting transaction submitted successfully! TxID: [yellow]{tx_id_str}[/yellow]"
         )
-        return tx_id
+        return TransactionId.from_primitive(tx_id_str)
 
     except ApiError as e:
         logger.error(
