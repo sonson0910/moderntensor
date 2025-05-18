@@ -185,12 +185,12 @@ class Wallet:
         for item in bf_utxos:
             utxo_data: Any = item
             try:
-                tx_hash = getattr(utxo_data, "tx_hash", utxo_data["tx_hash"])
-                tx_index = getattr(utxo_data, "output_index", utxo_data["output_index"])
-                amount_list = getattr(utxo_data, "amount", utxo_data["amount"])
-            except (AttributeError, KeyError, TypeError) as access_err:
+                tx_hash = utxo_data.tx_hash
+                tx_index = utxo_data.output_index
+                amount_list = utxo_data.amount
+            except AttributeError as access_err:
                 logger.warning(
-                    f"Could not access expected UTxO attributes: {access_err} for data: {utxo_data}"
+                    f"Could not access expected UTxO attributes via dot notation: {access_err} for data: {utxo_data}"
                 )
                 continue
 
@@ -200,15 +200,15 @@ class Wallet:
                 for token_item in amount_list:
                     token_data: Any = token_item
                     try:
-                        unit = getattr(token_data, "unit", token_data["unit"])
-                        quantity = getattr(
-                            token_data, "quantity", token_data["quantity"]
-                        )
+                        unit = token_data.unit
+                        quantity_str = token_data.quantity
+                        quantity = int(quantity_str)
+
                         if unit == "lovelace":
-                            utxo_lovelace = int(quantity)
+                            utxo_lovelace = quantity
                             total_lovelace += utxo_lovelace
                         else:
-                            policy_id = unit[:56] if len(unit) > 56 else unit
+                            policy_id = unit[:56] if len(unit) >= 56 else unit
                             asset_hex = unit[56:] if len(unit) > 56 else ""
                             try:
                                 asset_name = bytes.fromhex(asset_hex).decode(
@@ -216,16 +216,28 @@ class Wallet:
                                 )
                             except ValueError:
                                 asset_name = f"(hex: {asset_hex})"
-                            token_key = f"{policy_id[:10]}...{asset_name}"
+                            token_display_name = asset_name if asset_name != f"(hex: {asset_hex})" else unit
+                            token_key = f"{token_display_name}"
                             tokens_summary[token_key] = tokens_summary.get(
                                 token_key, 0
-                            ) + int(quantity)
+                            ) + quantity
                             utxo_tokens_str += f" + {quantity} {asset_name}"
-                    except (AttributeError, KeyError, TypeError) as token_err:
+                    except AttributeError as token_attr_err:
                         logger.warning(
-                            f"Could not process token data: {token_err} for token: {token_data}"
+                            f"Could not access token attributes: {token_attr_err} for token data: {token_data}"
+                        )
+                        utxo_tokens_str += " + [Error Processing Token]"
+                    except ValueError as val_err:
+                        logger.warning(
+                            f"Could not convert token quantity to int: {val_err} for token data: {token_data}"
+                        )
+                        utxo_tokens_str += " + [Invalid Quantity]"
+                    except Exception as e_token:
+                        logger.warning(
+                            f"Unexpected error processing token: {e_token} for token data: {token_data}"
                         )
                         utxo_tokens_str += " + [Error]"
+            
             logger.info(
                 f"UTxO: {tx_hash}#{tx_index} \t {utxo_lovelace / 1000000:.6f} ADA{utxo_tokens_str}"
             )

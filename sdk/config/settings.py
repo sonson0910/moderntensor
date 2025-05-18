@@ -3,7 +3,7 @@
 import logging
 import math
 import os
-from typing import Optional
+from typing import Optional, Any
 import coloredlogs
 import re
 
@@ -69,7 +69,8 @@ class Settings(BaseSettings):
         extra="ignore",
         env_file=".env",
         env_file_encoding="utf-8",
-        env_prefix="MODERNTENSOR_",  # Giữ nguyên tiền tố (hoặc bỏ nếu không muốn)
+        env_prefix="MODERNTENSOR_",
+        validate_default=True, # Ensures validators run for default Field values
     )
 
     # --- Các trường cấu hình gốc của bạn ---
@@ -92,7 +93,9 @@ class Settings(BaseSettings):
         default="addr_test1wqlerxnfzfcgx72zpuepgchl6p5mnjsxm27cwjxqq9wuthch489d5",
         alias="TEST_CONTRACT_ADDRESS",
     )
-    CARDANO_NETWORK: str = Field(default="TESTNET", alias="CARDANO_NETWORK")
+    # Khai báo CARDANO_NETWORK với kiểu Network và default là đối tượng Network.TESTNET
+    # Alias vẫn là "CARDANO_NETWORK" để đọc từ biến môi trường MODERNTENSOR_CARDANO_NETWORK
+    CARDANO_NETWORK: Network = Field(default=Network.TESTNET, alias="CARDANO_NETWORK")
 
     # --- Encryption Settings ---
     ENCRYPTION_PBKDF2_ITERATIONS: int = Field(
@@ -396,18 +399,67 @@ class Settings(BaseSettings):
         description="Khoảng thời gian tham chiếu (giây) cho bonus thời gian DAO (ví dụ: 1 năm).",
     )  # Đổi sang giây
 
-    # Giữ nguyên validator của bạn
     @field_validator("CARDANO_NETWORK", mode="before")
-    def validate_network(cls, value: Optional[str]):
-        if value is None:
-            value = "TESTNET"
-        normalized = str(value).upper().strip()
-        if normalized == "MAINNET":
-            return Network.MAINNET
+    @classmethod
+    def _validate_and_convert_cardano_network(cls, value: Any) -> Network:
+        # This validator runs with the raw value from env var, or default from Field if validate_default=True
+        
+        if isinstance(value, Network):
+            logging.debug(f"CARDANO_NETWORK is already a Network object: {value}")
+            return value
+
+        if value is None: # Env var not set or explicitly null
+            logging.warning("CARDANO_NETWORK env var is None. Using default Network.TESTNET.")
+            return Network.TESTNET
+
+        if isinstance(value, str):
+            value_upper = value.strip().upper()
+            if not value_upper:
+                logging.warning("CARDANO_NETWORK env var is an empty string. Using default Network.TESTNET.")
+                return Network.TESTNET
+            
+            if value_upper == "MAINNET":
+                logging.info(f"Validated CARDANO_NETWORK from env string '{value}' to Network.MAINNET")
+                return Network.MAINNET
+            elif value_upper in ("TESTNET", "PREPROD", "PREVIEW"):
+                logging.info(f"Validated CARDANO_NETWORK from env string '{value}' to Network.TESTNET")
+                return Network.TESTNET
+            else:
+                logging.error(
+                    f"Invalid string '{value}' for CARDANO_NETWORK env var. "
+                    f"Using fallback Network.TESTNET."
+                )
+                return Network.TESTNET
+        
+        if isinstance(value, int): # Handle if someone puts an int in .env
+            logging.warning(f"CARDANO_NETWORK env var is an int: {value}. Attempting to map to Network enum.")
+            try:
+                # Attempt to convert int to Network enum member
+                # This assumes Network enum values match (e.g., TESTNET=0, MAINNET=1)
+                # and pycardano.Network(value) works for valid int values.
+                network_from_int = Network(value)
+                logging.info(f"Converted int {value} for CARDANO_NETWORK to {network_from_int}")
+                return network_from_int
+            except ValueError: # If int value is not a valid Network enum value
+                logging.error(f"Integer value {value} for CARDANO_NETWORK is not a valid Network enum member. Using fallback Network.TESTNET.")
+                return Network.TESTNET
+
+        logging.error(
+            f"Unexpected type '{type(value).__name__}' with value '{value}' for CARDANO_NETWORK. "
+            f"Using fallback Network.TESTNET."
+        )
         return Network.TESTNET
+
+    # --- Cấu hình Blockfrost tùy chọn cho từng mạng ---
+    BLOCKFROST_PROJECT_ID_MAINNET: Optional[str] = Field(None, alias="BLOCKFROST_PROJECT_ID_MAINNET")
 
 
 # --- Tạo một instance để sử dụng trong toàn bộ ứng dụng ---
+# Khởi tạo logger cơ bản trước khi tạo settings instance để validator có thể sử dụng
+# Cấu hình này sẽ được ghi đè bởi coloredlogs sau nếu LOG_LEVEL trong settings hợp lệ.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s: %(message)s")
+
+
 try:
     settings = Settings()  # type: ignore
     # --- Kiểm tra tổng Theta ---
@@ -418,11 +470,13 @@ try:
         1.0,
         abs_tol=1e-9,
     ):
+        # Sử dụng logging trực tiếp ở đây vì logger module có thể chưa được cấu hình đầy đủ
         logging.warning(
             f"Sum of Theta parameters (theta1+theta2+theta3 = {settings.CONSENSUS_PARAM_THETA1 + settings.CONSENSUS_PARAM_THETA2 + settings.CONSENSUS_PARAM_THETA3}) is not equal to 1.0!"
         )
     # ------------------------
 except Exception as e:
+    # Sử dụng print ở đây vì logger có thể chưa hoạt động
     print(
         f"CRITICAL: Error loading settings: {e}. Using default values where possible."
     )
@@ -430,28 +484,32 @@ except Exception as e:
     # raise SystemExit(f"Failed to load critical settings: {e}")
     settings = Settings()  # type: ignore # Cố gắng tạo với default
 
-# --- LOGGING CONFIGURATION ---
+# --- LOGGING CONFIGURATION --- (Phần này sẽ cấu hình lại logging dựa trên settings)
 # Giữ nguyên cấu hình logging của bạn, đảm bảo nó dùng settings.LOG_LEVEL
 # --- CẤU HÌNH LOGGING (CHỈ MỘT LẦN TẠI ĐÂY) ---
 # Sử dụng trường LOG_LEVEL vừa định nghĩa trong settings
 try:
     log_level_str = settings.LOG_LEVEL.upper()
     if log_level_str not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        # Nếu LOG_LEVEL không hợp lệ, dùng INFO làm mặc định và ghi log cảnh báo
+        logging.warning(f"Invalid LOG_LEVEL '{settings.LOG_LEVEL}' in settings. Defaulting to INFO.")
         log_level_str = "INFO"
     # Lấy hằng số logging tương ứng
     LOG_LEVEL_CONFIG = getattr(logging, log_level_str)
 except AttributeError:
-    print("Warning: Could not read LOG_LEVEL from settings. Defaulting to INFO.")
+    # Trường hợp settings.LOG_LEVEL không tồn tại (không nên xảy ra với Pydantic)
+    logging.warning("LOG_LEVEL attribute not found in settings. Defaulting to INFO.")
     LOG_LEVEL_CONFIG = logging.INFO
 except Exception as log_e:
-    print(f"Warning: Error processing LOG_LEVEL setting: {log_e}. Defaulting to INFO.")
+    logging.warning(f"Error processing LOG_LEVEL setting: {log_e}. Defaulting to INFO.")
     LOG_LEVEL_CONFIG = logging.INFO
 
 # <<< CLEAR EXISTING ROOT HANDLERS >>>
 root_logger = logging.getLogger()
 if root_logger.hasHandlers():
-    # Use logging.debug directly as logger instance is not yet defined
-    logging.debug(f"Root logger has handlers: {root_logger.handlers}. Removing them.")
+    # Use logging.debug directly as logger instance is not yet defined by coloredlogs
+    # Hoặc dùng print nếu muốn chắc chắn thấy output này trước khi coloredlogs được install
+    # print(f"Root logger has handlers: {root_logger.handlers}. Removing them.")
     for handler in root_logger.handlers[:]:  # Iterate over a copy
         root_logger.removeHandler(handler)
 # <<< END CLEAR >>>
@@ -486,14 +544,16 @@ highlight_formatter = HighlightFormatter(
 coloredlogs.install(
     level=LOG_LEVEL_CONFIG,
     formatter=highlight_formatter,
-    reconfigure=True,
+    reconfigure=True, # Đảm bảo ghi đè cấu hình logging.basicConfig trước đó
     # fmt, level_styles, field_styles are now handled by the formatter instance
 )
 
 # Lấy logger và ghi log ban đầu
+# Đây là logger chính của module settings, sau khi coloredlogs đã được thiết lập
 logger = logging.getLogger(__name__)
 # <<< FORCE DEBUG LEVEL FOR SDK CONSENSUS NODE >>>
-logging.getLogger("sdk.consensus.node").setLevel(LOG_LEVEL_CONFIG)
+# Cấu hình level cho các logger cụ thể khác nếu cần
+logging.getLogger("sdk.consensus.node").setLevel(LOG_LEVEL_CONFIG) # Hoặc 1 level cụ thể khác
 
 logger.info(
     f"Settings loaded. Log level set to {logging.getLevelName(LOG_LEVEL_CONFIG)}."
