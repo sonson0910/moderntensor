@@ -28,7 +28,7 @@ dependencies = [
   # Core cryptography
   "cryptography==42.0.8",
   "ecdsa==0.18.0",
-  "coincurve==18.0.0",
+  "coincurve>=19.0.1",
   
   # Web framework
   "fastapi==0.115.6",

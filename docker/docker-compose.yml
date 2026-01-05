@@ -1,0 +1,119 @@
+# ModernTensor Local Development Environment
+version: '3.8'
+
+services:
+  # Validator Node 1
+  validator1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mt-validator-1
+    ports:
+      - "8545:8545"  # RPC
+      - "30303:30303"  # P2P
+      - "9090:9090"  # Metrics
+    volumes:
+      - validator1-data:/data
+      - ../sdk:/app/sdk:ro
+    environment:
+      - NODE_TYPE=validator
+      - NODE_ID=1
+      - VALIDATOR_KEY=${VALIDATOR1_KEY:-0x1234567890abcdef}
+      - BOOTSTRAP_NODES=validator2:30303,validator3:30303
+      - MT_LOG_LEVEL=DEBUG
+    networks:
+      - moderntensor
+    restart: unless-stopped
+  
+  # Validator Node 2
+  validator2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mt-validator-2
+    ports:
+      - "8546:8545"  # RPC
+      - "30304:30303"  # P2P
+      - "9091:9090"  # Metrics
+    volumes:
+      - validator2-data:/data
+      - ../sdk:/app/sdk:ro
+    environment:
+      - NODE_TYPE=validator
+      - NODE_ID=2
+      - VALIDATOR_KEY=${VALIDATOR2_KEY:-0xabcdef1234567890}
+      - BOOTSTRAP_NODES=validator1:30303,validator3:30303
+      - MT_LOG_LEVEL=DEBUG
+    networks:
+      - moderntensor
+    restart: unless-stopped
+  
+  # Validator Node 3
+  validator3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mt-validator-3
+    ports:
+      - "8547:8545"  # RPC
+      - "30305:30303"  # P2P
+      - "9092:9090"  # Metrics
+    volumes:
+      - validator3-data:/data
+      - ../sdk:/app/sdk:ro
+    environment:
+      - NODE_TYPE=validator
+      - NODE_ID=3
+      - VALIDATOR_KEY=${VALIDATOR3_KEY:-0xfedcba0987654321}
+      - BOOTSTRAP_NODES=validator1:30303,validator2:30303
+      - MT_LOG_LEVEL=DEBUG
+    networks:
+      - moderntensor
+    restart: unless-stopped
+  
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mt-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - moderntensor
+    restart: unless-stopped
+  
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mt-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    networks:
+      - moderntensor
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+networks:
+  moderntensor:
+    driver: bridge
+
+volumes:
+  validator1-data:
+  validator2-data:
+  validator3-data:
+  prometheus-data:
+  grafana-data:

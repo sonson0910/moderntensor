@@ -17,7 +17,7 @@ except ImportError:
     leveldb = None
 
 from sdk.blockchain.block import Block, BlockHeader
-from sdk.blockchain.transaction import Transaction
+from sdk.blockchain.transaction import Transaction, TransactionReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +183,10 @@ class BlockchainDB:
             )
         
         # Write batch
-        self.blocks_db.batch_write(operations[:3])  # Block and header
-        self.index_db.batch_write(operations[3:])   # Indices
+        # Split operations: block and header go to blocks_db, rest to index_db
+        num_block_ops = 2  # Block data and header
+        self.blocks_db.batch_write(operations[:num_block_ops])
+        self.index_db.batch_write(operations[num_block_ops:])  # Height index and transactions
         
         # Update metadata
         self._update_best_block(height, block_hash)
@@ -335,6 +337,33 @@ class BlockchainDB:
                 blocks.append(block)
         
         return blocks
+    
+    def get_blocks_range(self, start_height: int, end_height: int) -> List[Block]:
+        """
+        Alias for get_blocks_in_range for API compatibility.
+        
+        Args:
+            start_height: Start height (inclusive)
+            end_height: End height (exclusive)
+            
+        Returns:
+            List of blocks
+        """
+        return self.get_blocks_in_range(start_height, end_height - 1)
+    
+    def get_receipt(self, tx_hash: bytes) -> Optional['TransactionReceipt']:
+        """
+        Get transaction receipt by hash.
+        
+        Args:
+            tx_hash: Transaction hash
+            
+        Returns:
+            TransactionReceipt or None if not found
+        """
+        # For now, return None as receipts are not yet implemented
+        # This will be implemented when transaction execution is added
+        return None
     
     def block_exists(self, block_hash: bytes) -> bool:
         """Check if block exists"""
