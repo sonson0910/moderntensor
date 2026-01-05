@@ -191,17 +191,22 @@ class ColdKeyManager:
             hdwallet = L1HDWallet.from_mnemonic(mnemonic)
 
             # --- Derive Layer 1 keys using standard BIP44 paths ---
-            # m/44'/0'/0'/0/0 - First payment key
+            # m/44'/0'/0'/0/0 - Payment key (receiving/sending)
             payment_keypair = hdwallet.derive_key("m/44'/0'/0'/0/0")
             
-            # Get Layer 1 address
+            # m/44'/0'/1'/0/0 - Stake key (for staking operations)
+            # Using different account (1) for separation
+            stake_keypair = hdwallet.derive_key("m/44'/0'/1'/0/0")
+            # m/44'/0'/1'/0/0 - Stake key (for staking operations)
+            # Using different account (1) for separation
+            stake_keypair = hdwallet.derive_key("m/44'/0'/1'/0/0")
+            
+            # Get Layer 1 address from payment key
             payment_address = L1Address(address=payment_keypair.address())
             
-            # For backward compatibility, store keypair as extended key equivalents
-            payment_xsk = payment_keypair  # Store keypair directly
-            stake_xsk = payment_keypair  # Layer 1 doesn't have separate stake keys
-            
-            # --- End Derivation ---
+            # For backward compatibility, store keypairs as extended key equivalents
+            payment_xsk = payment_keypair  # Store payment keypair
+            stake_xsk = stake_keypair  # Store stake keypair separately
 
             # Update internal state (Optional - Load hotkeys if needed for other methods)
             hotkeys_data = {}

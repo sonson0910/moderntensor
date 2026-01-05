@@ -96,14 +96,31 @@ class L1ChainContext:
             result = response.json()
             
             if "error" in result:
-                raise Exception(f"RPC error: {result['error']}")
+                error_msg = result['error'].get('message', str(result['error']))
+                from sdk.config.settings import logger
+                logger.error(f"RPC error for method {method}: {error_msg}")
+                raise Exception(f"RPC error: {error_msg}")
             
             return result.get("result")
-        except httpx.HTTPError as e:
-            # Node may not be running yet - return None for compatibility
+        except httpx.HTTPStatusError as e:
+            # HTTP error (4xx, 5xx)
+            from sdk.config.settings import logger
+            logger.warning(f"RPC HTTP error for {method}: {e.response.status_code}")
+            return None
+        except httpx.ConnectError:
+            # Connection refused - node may not be running
+            from sdk.config.settings import logger
+            logger.debug(f"RPC connection failed for {method} - node may not be running")
+            return None
+        except httpx.TimeoutException:
+            # Request timeout
+            from sdk.config.settings import logger
+            logger.warning(f"RPC timeout for {method}")
             return None
         except Exception as e:
-            # For now, return None during transition period
+            # Other errors - log but don't crash during transition
+            from sdk.config.settings import logger
+            logger.error(f"Unexpected RPC error for {method}: {e}")
             return None
     
     def get_balance(self, address: str) -> int:
@@ -169,11 +186,38 @@ class L1ChainContext:
             tx: Transaction to serialize
             
         Returns:
-            str: Hex-encoded transaction
+            str: Hex-encoded transaction (RLP in production)
         """
-        # TODO: Implement proper RLP encoding
-        # For now, return hex of transaction hash as placeholder
-        return "0x" + tx.hash().hex()
+        # TODO: Implement proper RLP (Recursive Length Prefix) encoding
+        # For now, serialize as JSON hex as a transition mechanism
+        import json
+        
+        tx_dict = {
+            "nonce": tx.nonce,
+            "from": tx.from_address.hex(),
+            "to": tx.to_address.hex() if tx.to_address else None,
+            "value": tx.value,
+            "gasPrice": tx.gas_price,
+            "gasLimit": tx.gas_limit,
+            "data": tx.data.hex(),
+            "v": tx.v,
+            "r": tx.r.hex(),
+            "s": tx.s.hex(),
+        }
+        
+        # Serialize to JSON bytes then hex encode
+        tx_json = json.dumps(tx_dict, separators=(',', ':')).encode('utf-8')
+        return "0x" + tx_json.hex()
+        
+        # Production implementation should use RLP:
+        # import rlp
+        # tx_rlp = rlp.encode([
+        #     tx.nonce, tx.gas_price, tx.gas_limit,
+        #     tx.to_address or b'',
+        #     tx.value, tx.data,
+        #     tx.v, tx.r, tx.s
+        # ])
+        # return "0x" + tx_rlp.hex()
     
     def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         """

@@ -97,17 +97,33 @@ class L1HDWallet:
         
         derived = self.master_key
         for part in path_parts:
-            if part.endswith("'") or part.endswith("h"):
-                # Hardened derivation
-                index = int(part[:-1]) + 0x80000000
-            else:
-                # Normal derivation
-                index = int(part)
-            
-            derived = derived.ChildKey(index)
+            try:
+                if part.endswith("'") or part.endswith("h"):
+                    # Hardened derivation
+                    index = int(part[:-1]) + 0x80000000
+                else:
+                    # Normal derivation
+                    index = int(part)
+                
+                derived = derived.ChildKey(index)
+            except Exception as e:
+                raise ValueError(f"Failed to derive key at path {path}: {e}")
         
-        # Extract private key bytes (32 bytes)
-        private_key_bytes = derived.PrivateKey().Raw().ToBytes()
+        # Extract private key bytes (32 bytes) with error checking
+        try:
+            private_key_obj = derived.PrivateKey()
+            if private_key_obj is None:
+                raise ValueError(f"Failed to get private key from derived path {path}")
+            
+            raw_obj = private_key_obj.Raw()
+            if raw_obj is None:
+                raise ValueError(f"Failed to get raw key from derived path {path}")
+            
+            private_key_bytes = raw_obj.ToBytes()
+            if len(private_key_bytes) != 32:
+                raise ValueError(f"Invalid private key length at path {path}: {len(private_key_bytes)} bytes")
+        except AttributeError as e:
+            raise ValueError(f"Invalid BIP32 key structure at path {path}: {e}")
         
         # Create KeyPair
         keypair = KeyPair(private_key_bytes)

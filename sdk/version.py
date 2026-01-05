@@ -45,7 +45,8 @@ class HotKeyManager:
         payment_wallet = coldkey_wallet.derive_from_path(f"m/44'/0'/0'/0/{idx}")
         payment_vk = PaymentVerificationKey.from_primitive(payment_wallet.public_key)
 
-        stake_wallet = coldkey_wallet.derive_from_path(f"m/44'/0'/0'/0/{idx}")
+        # Use different account for stake to avoid key reuse
+        stake_wallet = coldkey_wallet.derive_from_path(f"m/44'/0'/1'/0/{idx}")
         stake_vk = StakeVerificationKey.from_primitive(stake_wallet.public_key)
 
         # Create address (pycardano Address)
