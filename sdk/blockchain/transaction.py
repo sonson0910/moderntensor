@@ -6,7 +6,7 @@ Implements transaction format, signing, and verification.
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Literal
 
 
 @dataclass
@@ -261,3 +261,134 @@ class TransactionReceipt:
             status=receipt_data["status"],
             logs=receipt_data["logs"],
         )
+
+
+@dataclass
+class StakingTransaction:
+    """
+    Staking transaction for validator participation in ModernTensor Layer 1 PoS.
+    
+    This transaction type is used to stake tokens to become a validator or increase stake.
+    
+    Attributes:
+        tx_type: Type of staking operation ('stake', 'unstake', 'claim_rewards')
+        nonce: Transaction sequence number for the sender
+        from_address: Staker's address (20 bytes)
+        validator_address: Validator address (can be same as from_address)
+        amount: Amount to stake/unstake (0 for claim_rewards)
+        gas_price: Price per unit of gas
+        gas_limit: Maximum gas allowed
+        public_key: Validator public key (32 bytes, required for stake)
+        v: Recovery ID for signature
+        r: First 32 bytes of signature
+        s: Last 32 bytes of signature
+    """
+    tx_type: Literal['stake', 'unstake', 'claim_rewards']
+    nonce: int
+    from_address: bytes  # 20 bytes
+    validator_address: bytes  # 20 bytes
+    amount: int  # Amount in smallest unit
+    gas_price: int
+    gas_limit: int
+    public_key: bytes = field(default_factory=lambda: b'\x00' * 32)  # 32 bytes
+    
+    # Signature fields (ECDSA)
+    v: int = 0
+    r: bytes = field(default_factory=lambda: b'\x00' * 32)
+    s: bytes = field(default_factory=lambda: b'\x00' * 32)
+    
+    def hash(self) -> bytes:
+        """
+        Calculate transaction hash for signing/identification.
+        
+        Returns:
+            bytes: SHA256 hash of transaction
+        """
+        tx_data = {
+            "type": self.tx_type,
+            "nonce": self.nonce,
+            "from": self.from_address.hex(),
+            "validator": self.validator_address.hex(),
+            "amount": self.amount,
+            "gas_price": self.gas_price,
+            "gas_limit": self.gas_limit,
+            "public_key": self.public_key.hex(),
+        }
+        tx_json = json.dumps(tx_data, sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(tx_json.encode('utf-8')).digest()
+    
+    def sign(self, private_key: bytes) -> None:
+        """
+        Sign this transaction with a private key using ECDSA.
+        
+        Args:
+            private_key: The sender's private key (32 bytes)
+        """
+        from .crypto import KeyPair
+        
+        keypair = KeyPair(private_key)
+        tx_hash = self.hash()
+        signature = keypair.sign(tx_hash)
+        
+        self.r = signature[:32]
+        self.s = signature[32:64]
+        self.v = signature[64]
+    
+    def verify_signature(self) -> bool:
+        """
+        Verify the transaction signature.
+        
+        Returns:
+            bool: True if signature is valid
+        """
+        if self.r is None or self.s is None or self.v is None:
+            return False
+        
+        signature = self.r + self.s + bytes([self.v])
+        return len(signature) == 65 and len(self.from_address) == 20
+    
+    def serialize(self) -> bytes:
+        """Serialize staking transaction to bytes."""
+        tx_data = {
+            "type": self.tx_type,
+            "nonce": self.nonce,
+            "from": self.from_address.hex(),
+            "validator": self.validator_address.hex(),
+            "amount": self.amount,
+            "gas_price": self.gas_price,
+            "gas_limit": self.gas_limit,
+            "public_key": self.public_key.hex(),
+            "v": self.v,
+            "r": self.r.hex(),
+            "s": self.s.hex(),
+        }
+        return json.dumps(tx_data, separators=(',', ':')).encode('utf-8')
+    
+    @classmethod
+    def deserialize(cls, data: bytes) -> 'StakingTransaction':
+        """Deserialize staking transaction from bytes."""
+        tx_data = json.loads(data.decode('utf-8'))
+        
+        return cls(
+            tx_type=tx_data["type"],
+            nonce=tx_data["nonce"],
+            from_address=bytes.fromhex(tx_data["from"]),
+            validator_address=bytes.fromhex(tx_data["validator"]),
+            amount=tx_data["amount"],
+            gas_price=tx_data["gas_price"],
+            gas_limit=tx_data["gas_limit"],
+            public_key=bytes.fromhex(tx_data["public_key"]),
+            v=tx_data["v"],
+            r=bytes.fromhex(tx_data["r"]),
+            s=bytes.fromhex(tx_data["s"]),
+        )
+    
+    def intrinsic_gas(self) -> int:
+        """
+        Calculate intrinsic gas cost for staking transaction.
+        
+        Returns:
+            int: Base gas cost
+        """
+        # Base cost for staking operations
+        return 50000  # Higher than regular transaction due to state modifications
