@@ -327,6 +327,9 @@ class MetricsCollector:
 
 
 # Singleton instances for easy access
+# Note: These are convenience singletons that share the same registry.
+# In production, you would typically use a single collector instance
+# or implement scoped collectors with distinct responsibilities.
 blockchain_metrics = MetricsCollector()
 network_metrics = MetricsCollector()
 consensus_metrics = MetricsCollector()

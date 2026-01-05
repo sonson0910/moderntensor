@@ -8,6 +8,7 @@ import pytest
 import asyncio
 import tempfile
 import shutil
+import time
 from pathlib import Path
 
 from sdk.blockchain.block import Block, BlockHeader
@@ -260,7 +261,6 @@ class TestNetworkSync:
         tx.sign(sender.private_key)
         
         # Create block
-        import time
         prev_block = blockchain_db.get_block_by_height(0)
         
         header = BlockHeader(

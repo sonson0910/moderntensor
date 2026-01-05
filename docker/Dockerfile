@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libleveldb-dev \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -42,7 +43,7 @@ ENV MT_LOG_LEVEL=INFO
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8545/health')" || exit 1
+    CMD curl -f http://localhost:8545/health || exit 1
 
 # Default command (can be overridden)
 CMD ["python", "-m", "uvicorn", "sdk.api.rpc:app", "--host", "0.0.0.0", "--port", "8545"]

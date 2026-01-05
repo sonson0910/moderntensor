@@ -79,6 +79,8 @@ spec:
       name: data
     spec:
       accessModes: ["ReadWriteOnce"]
+      # Note: Change 'standard' to match your cluster's storage class
+      # Common values: 'standard', 'gp2' (AWS), 'pd-standard' (GCP), 'default'
       storageClassName: "standard"
       resources:
         requests:
