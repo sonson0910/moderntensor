@@ -8,11 +8,31 @@
 
 ## 🚀 Introduction
 
+**ModernTensor** is transitioning from a Cardano-based application to a **custom Layer 1 blockchain** optimized for AI/ML workloads.
+
+### 🎯 Current Focus: Building Layer 1 Blockchain
+
+**Status:** 17% complete  
+**Target:** Mainnet Q4 2026  
+**Priority:** Core blockchain infrastructure (Phases 2-7)
+
 In the ModernTensor ecosystem:
 
 *   **Miners:** Provide AI/ML services/models via API endpoints. They register their hotkey (representing the miner's identifier - UID) onto the network.
-*   **Validators:** (Future) Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
-*   **Cardano Blockchain:** Serves as the secure and decentralized foundation layer to record the network state (miner registrations, stake, rewards, etc.) through smart contracts (Plutus).
+*   **Validators:** Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
+*   **Custom L1 Blockchain:** Independent blockchain with PoS consensus, optimized for AI validation and incentive distribution.
+
+### Layer 1 Development Status
+
+- ✅ **Phase 1:** On-Chain State Optimization (Complete)
+- ⏸️ **Phase 2:** Core Blockchain - Block, Transaction, State (In Progress)
+- ⏸️ **Phase 3:** Consensus Layer - PoS (Planned)
+- ⏸️ **Phase 4:** Network Layer - P2P (Planned)
+- ⏸️ **Phase 5-7:** Storage, API, Security (Planned)
+- ✅ **Phase 8:** Testnet Infrastructure (Complete)
+- ⏸️ **Phase 9:** Mainnet Launch (Q4 2026 Target)
+
+**See [LAYER1_FOCUS.md](LAYER1_FOCUS.md) for detailed priorities and timeline.**
 
 This project includes an SDK toolkit and a command-line interface (CLI) for interacting with the network.
 

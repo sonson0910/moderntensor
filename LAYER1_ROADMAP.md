@@ -16,6 +16,23 @@ Chuyển ModernTensor từ một ứng dụng chạy trên Cardano thành một 
 - Token và economics độc lập
 - Tích hợp AI/ML validation natively
 
+### ⚠️ TRẠNG THÁI HIỆN TẠI: 17% HOÀN THÀNH
+
+**Đã hoàn thành:**
+- ✅ Phase 1: On-Chain State Optimization (Metagraph, Weight Matrix)
+- ✅ Phase 8: Testnet Infrastructure (Genesis, Faucet, Bootstrap, Monitoring)
+
+**Cần làm NGAY (Ưu tiên cao):**
+- ⏸️ Phase 2: Core Blockchain (Block, Transaction, StateDB) - **ƯU TIÊN SỐ 1**
+- ⏸️ Phase 3: Consensus Layer (PoS) - **ƯU TIÊN SỐ 2**
+- ⏸️ Phase 4: Network Layer (P2P) - **ƯU TIÊN SỐ 3**
+- ⏸️ Phase 5: Storage Layer - Trung bình
+- ⏸️ Phase 6: RPC & API - Trung bình
+- ⏸️ Phase 7: Security & Optimization - Cao
+- ⏸️ Phase 9: Mainnet Launch - Mục tiêu cuối năm
+
+**Layer 2:** Không phải priority hiện tại, chỉ sau khi Layer 1 stable.
+
 ### Lý Do Chuyển Đổi
 **Ưu điểm của L1 riêng:**
 - ✅ Kiểm soát hoàn toàn consensus và performance
@@ -129,7 +146,18 @@ Chuyển ModernTensor từ một ứng dụng chạy trên Cardano thành một 
 
 ---
 
-## Phase 1: Core Blockchain (Tháng 2-3)
+## Phase 1: Core Blockchain (Tháng 2-3) ⏸️ **ƯU TIÊN SỐ 1 - CẦN LÀM NGAY**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🔴 CRITICAL - Đây là foundation của toàn bộ blockchain  
+**Timeline:** 2 tháng (Tháng 2-3, 2026)  
+**Nguồn lực:** 2 engineers  
+
+### Tại sao đây là ưu tiên số 1:
+- Không có Phase 1, không thể build bất cứ thứ gì khác
+- Block và Transaction là core components của mọi blockchain
+- StateDB là nơi lưu trữ tất cả account và smart contract state
+- Mọi phase khác đều phụ thuộc vào Phase 1
 
 ### 1.1 Blockchain Primitives
 
@@ -331,7 +359,19 @@ class BlockValidator:
 
 ---
 
-## Phase 2: Consensus Layer (Tháng 3-4)
+## Phase 2: Consensus Layer (Tháng 3-4) ⏸️ **ƯU TIÊN SỐ 2 - CRITICAL**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🔴 CRITICAL - Cần cho block production  
+**Timeline:** 2 tháng (Tháng 3-4, 2026)  
+**Nguồn lực:** 2 engineers  
+**Phụ thuộc:** Phase 1 Core Blockchain
+
+### Tại sao đây là ưu tiên số 2:
+- Không có consensus, không thể produce blocks
+- PoS validator selection cần cho testnet
+- Reward distribution cần cho economics
+- Fork choice cần cho blockchain safety
 
 ### 2.1 PoS Consensus Implementation
 
@@ -470,7 +510,19 @@ class AIResult:
 
 ---
 
-## Phase 3: Network Layer (Tháng 4-5)
+## Phase 3: Network Layer (Tháng 4-5) ⏸️ **ƯU TIÊN SỐ 3 - CAO**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🔴 CAO - Cần cho multi-node network  
+**Timeline:** 2 tháng (Tháng 4-5, 2026)  
+**Nguồn lực:** 2 engineers  
+**Phụ thuộc:** Phase 1 Core Blockchain, Phase 2 Consensus
+
+### Tại sao đây là ưu tiên số 3:
+- Không có P2P, blockchain chỉ chạy single node
+- Block propagation cần cho decentralization
+- Peer discovery cần cho network growth
+- Sync mechanism cần cho new nodes
 
 ### 3.1 P2P Protocol
 
@@ -621,7 +673,13 @@ class MessageCodec:
 
 ---
 
-## Phase 4: Storage Layer (Tháng 5-6)
+## Phase 4: Storage Layer (Tháng 5-6) ⏸️ **TRUNG BÌNH**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🟡 TRUNG BÌNH - Cần cho production  
+**Timeline:** 2 tháng (Tháng 5-6, 2026)  
+**Nguồn lực:** 1-2 engineers  
+**Phụ thuộc:** Phase 1-3
 
 ### 4.1 Blockchain Database
 
@@ -752,7 +810,13 @@ class Indexer:
 
 ---
 
-## Phase 5: RPC & API (Tháng 6)
+## Phase 5: RPC & API (Tháng 6) ⏸️ **TRUNG BÌNH**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🟡 TRUNG BÌNH - Cần cho developer access  
+**Timeline:** 1 tháng (Tháng 6, 2026)  
+**Nguồn lực:** 1 engineer  
+**Phụ thuộc:** Phase 1-4
 
 ### 5.1 JSON-RPC API
 
@@ -863,7 +927,13 @@ class GraphQLAPI:
 
 ---
 
-## Phase 6: Testing & DevOps (Tháng 7-8)
+## Phase 6: Testing & DevOps (Tháng 7-8) ⏸️ **CAO**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🔴 CAO - Critical cho production readiness  
+**Timeline:** 2 tháng (Tháng 7-8, 2026)  
+**Nguồn lực:** 2 engineers  
+**Phụ thuộc:** Phase 1-5
 
 ### 6.1 Testing Framework
 
@@ -991,7 +1061,14 @@ peer_count = Gauge('peers_connected', 'Number of connected peers')
 
 ---
 
-## Phase 7: Security Audit & Optimization (Tháng 8-9)
+## Phase 7: Security Audit & Optimization (Tháng 8-9) ⏸️ **CRITICAL**
+
+**Trạng thái:** CHƯA BẮT ĐẦU  
+**Ưu tiên:** 🔴 CRITICAL - Required cho mainnet  
+**Timeline:** 2 tháng (Tháng 8-9, 2026)  
+**Nguồn lực:** External auditors + 2 engineers  
+**Budget:** $50,000 - $100,000  
+**Phụ thuộc:** Phase 1-6
 
 ### 7.1 Security Audit
 
@@ -1128,7 +1205,12 @@ peer_count = Gauge('peers_connected', 'Number of connected peers')
 
 ---
 
-## Phase 9: Mainnet Preparation (Tháng 11-12) ⏳ **NEXT**
+## Phase 9: Mainnet Preparation (Tháng 11-12) ⏳ **NEXT - MỤC TIÊU CUỐI NĂM**
+
+**Trạng thái:** KẾ HOẠCH  
+**Ưu tiên:** 🎯 MỤC TIÊU - Mainnet launch  
+**Timeline:** 2 tháng (Tháng 11-12, 2026)  
+**Phụ thuộc:** Phase 1-8 tất cả hoàn thành
 
 ### 9.1 Mainnet Readiness
 
@@ -1176,23 +1258,23 @@ Total Supply: 1,000,000,000 MTN
 
 ## Tổng Kết Nguồn Lực
 
-### Timeline Summary
+### Timeline Summary - FOCUS ON LAYER 1
 
-| Phase | Thời gian | Nguồn lực | Output (LOC) | Status |
-|-------|-----------|-----------|--------------|--------|
-| 0. R&D | 4 tuần | 1-2 engineers | Documents | ⏸️ Planned |
-| 1. Core | 8 tuần | 2 engineers | ~5,500 | ⏸️ Planned |
-| 2. Consensus | 9 tuần | 2-3 engineers | ~5,500 | ⏸️ Planned |
-| 3. Network | 6 tuần | 2 engineers | ~4,500 | ⏸️ Planned |
-| 4. Storage | 6 tuần | 1-2 engineers | ~3,500 | ⏸️ Planned |
-| 5. API | 3 tuần | 1 engineer | ~2,500 | ⏸️ Planned |
-| 6. Testing | 6 tuần | 2 engineers | ~3,500 | ⏸️ Planned |
-| 7. Security | 7 tuần | External + 2 | ~3,600 | ✅ Done |
-| 8. Testnet | 1 tuần | 1 engineer | ~1,700 | ✅ Done |
-| 9. Mainnet | 4 tuần | Full team | - | ⏳ Next |
-| **Total** | **~48 tuần** | **3-5 engineers** | **~30,300 LOC** | **17% Done** |
+| Phase | Thời gian | Nguồn lực | Output (LOC) | Ưu tiên | Status |
+|-------|-----------|-----------|--------------|---------|--------|
+| 0. R&D | 4 tuần | 1-2 engineers | Documents | ✅ Done | ✅ Done |
+| 1. Core | 8 tuần | 2 engineers | ~5,500 | 🔴 CRITICAL | ⏸️ TODO |
+| 2. Consensus | 9 tuần | 2-3 engineers | ~5,500 | 🔴 CRITICAL | ⏸️ TODO |
+| 3. Network | 6 tuần | 2 engineers | ~4,500 | 🔴 HIGH | ⏸️ TODO |
+| 4. Storage | 6 tuần | 1-2 engineers | ~3,500 | 🟡 MEDIUM | ⏸️ TODO |
+| 5. API | 3 tuần | 1 engineer | ~2,500 | 🟡 MEDIUM | ⏸️ TODO |
+| 6. Testing | 6 tuần | 2 engineers | ~3,500 | 🔴 HIGH | ⏸️ TODO |
+| 7. Security | 7 tuần | External + 2 | ~3,600 | 🔴 CRITICAL | ⏸️ TODO |
+| 8. Testnet | 1 tuần | 1 engineer | ~1,700 | ✅ Done | ✅ Done |
+| 9. Mainnet | 4 tuần | Full team | - | 🎯 GOAL | ⏸️ Planned |
+| **Total** | **~48 tuần** | **3-5 engineers** | **~30,300 LOC** | - | **17% Done** |
 
-**Tổng thời gian:** 12 tháng (1 năm)
+**Tổng thời gian còn lại:** ~40 tuần (10 tháng)
 
 ---
 
@@ -1213,30 +1295,39 @@ Total Supply: 1,000,000,000 MTN
 
 ## Các Quyết Định Quan Trọng Cần Làm Ngay
 
-### 1. Consensus Mechanism ⭐⭐⭐
-**Quyết định:** PoS, DPoS, hay Hybrid?  
-**Khuyến nghị:** PoS với AI validation bonus  
-**Timeline impact:** Critical - affects entire architecture
+### ⚠️ ƯU TIÊN THỰC THI LAYER 1 - KHÔNG PHẢI QUYẾT ĐỊNH NỮA
 
-### 2. State Model ⭐⭐
-**Quyết định:** UTXO hay Account?  
-**Khuyến nghị:** Account model  
-**Timeline impact:** Major - affects transactions and smart contracts
+**Các quyết định kỹ thuật đã được xác định trong Phase 0:**
+- ✅ Consensus: PoS (Proof of Stake)
+- ✅ State Model: Account-based
+- ✅ Execution: WASM hoặc Native (tùy implementation)
+- ✅ Architecture: Custom L1 blockchain
 
-### 3. Execution Environment ⭐⭐
-**Quyết định:** EVM, WASM, hay Custom?  
-**Khuyến nghị:** WASM  
-**Timeline impact:** Major - affects smart contract development
+**BÂY GIỜ CẦN HÀNH ĐỘNG, KHÔNG PHẢI THẢO LUẬN:**
 
-### 4. Tokenomics ⭐⭐⭐
-**Quyết định:** Supply, distribution, inflation  
-**Khuyến nghị:** Consult economists  
-**Timeline impact:** Critical - affects adoption
+### 1. Allocate Resources ⭐⭐⭐ NGAY LẬP TỨC
+**Hành động:** Assign engineers to Phase 1-3  
+**Timeline:** Week 1  
+**Critical:** Không có team, không build được gì
 
-### 5. Governance ⭐
-**Quyết định:** On-chain vs off-chain?  
-**Khuyến nghị:** Start with off-chain, move to on-chain  
-**Timeline impact:** Minor - can evolve
+### 2. Start Phase 1 Implementation ⭐⭐⭐ TUẦN NÀY
+**Hành động:** Begin coding Block, Transaction, StateDB  
+**Timeline:** Week 1-8  
+**Critical:** Foundation của toàn bộ blockchain
+
+### 3. Setup Development Infrastructure ⭐⭐ TUẦN NÀY
+**Hành động:** CI/CD, testing framework, code review  
+**Timeline:** Week 1-2  
+**Critical:** Cần cho team collaboration
+
+### 4. Weekly Progress Review ⭐⭐⭐ HÀNG TUẦN
+**Hành động:** Track Phase 1-3 progress  
+**Timeline:** Mỗi tuần  
+**Critical:** Ensure on schedule
+
+### 5. ❌ KHÔNG PHẢI: Layer 2, Governance, Tokenomics Details
+**Lý do:** Làm những thứ này BÂY GIỜ là lãng phí thời gian  
+**Khi nào:** Sau khi Layer 1 core (Phase 1-3) hoàn thành
 
 ---
 
@@ -1262,25 +1353,96 @@ Total Supply: 1,000,000,000 MTN
 
 ---
 
-## Khuyến Nghị Hành Động Ngay
+## Khuyến Nghị Hành Động Ngay - ACTION PLAN
 
-### Tuần 1-2: Research Sprint
-1. ✅ Đọc whitepapers của Ethereum, Cosmos, Polkadot
-2. ✅ Nghiên cứu consensus mechanisms
-3. ✅ Quyết định technical stack
-4. ✅ Viết design document draft
+### ⚠️ NGỪNG NGHIÊN CỨU, BẮT ĐẦU XÂY DỰNG
 
-### Tuần 3-4: Team & Planning
-1. ✅ Hire core engineers (nếu chưa có)
+**Phase 0 (Research) đã hoàn thành. Bây giờ cần EXECUTE.**
+
+### Tuần 1-2: KICKOFF - BẮT ĐẦU NGAY
+
+**Tuần 1:**
+1. ✅ Allocate 2 engineers cho Phase 1 Core Blockchain
 2. ✅ Setup development environment
-3. ✅ Create detailed project plan
-4. ✅ Setup GitHub projects/issues
+3. ✅ Create Phase 1 project board với tasks
+4. ✅ Begin implementing Block structure
+5. ✅ Begin implementing Transaction format
 
-### Tháng 2: Start Coding
-1. ✅ Implement basic block structure
-2. ✅ Implement transaction format
-3. ✅ Setup testing framework
-4. ✅ First prototype
+**Tuần 2:**
+1. ✅ Continue Block & Transaction implementation
+2. ✅ Start StateDB design
+3. ✅ Setup unit testing framework
+4. ✅ First code review session
+5. ✅ Week 2 progress report
+
+### Tháng 2-3: PHASE 1 CORE BLOCKCHAIN
+
+**Deliverables mỗi tuần:**
+- Week 3: Block validation working
+- Week 4: Transaction signing working
+- Week 5: StateDB basic operations
+- Week 6: Merkle tree implementation
+- Week 7: Integration tests
+- Week 8: Phase 1 complete, demo working
+
+### Tháng 4: PHASE 2-3 CONSENSUS & NETWORK
+
+**Parallel development:**
+- Team A: PoS consensus implementation
+- Team B: P2P network protocol
+- Weekly sync meetings
+- Monthly demo
+
+### Tháng 5-6: PHASE 4-5 STORAGE & API
+
+**Production ready:**
+- Storage layer với persistent DB
+- RPC API compatible với existing tools
+- Documentation complete
+
+### Tháng 7-8: PHASE 6-7 TESTING & SECURITY
+
+**Critical for mainnet:**
+- Full test coverage
+- External security audit
+- Performance benchmarks
+- Bug fixes
+
+### Tháng 9-10: PHASE 8-9 TESTNET & MAINNET PREP
+
+**Launch ready:**
+- Community testnet (using Phase 8 infrastructure)
+- Validator onboarding
+- Genesis preparation
+
+### Tháng 11-12: MAINNET LAUNCH
+
+**Go live:**
+- Mainnet deployment
+- Token distribution
+- Exchange listings
+
+---
+
+### ❌ NHỮNG GÌ KHÔNG LÀM BÂY GIỜ:
+
+1. ❌ Layer 2 research/design
+2. ❌ Tokenomics optimization details
+3. ❌ Governance mechanism details
+4. ❌ Advanced features (zkML deep integration)
+5. ❌ Marketing/community building (until testnet)
+
+**Lý do:** Làm những thứ này BÂY GIỜ = lãng phí resources khi Layer 1 core chưa xong.
+
+---
+
+### ✅ NHỮNG GÌ CẦN LÀM BÂY GIỜ:
+
+1. ✅ BUILD Layer 1 Core (Phase 1-3)
+2. ✅ Weekly progress tracking
+3. ✅ Code reviews và testing
+4. ✅ Technical documentation
+5. ✅ Resource allocation và management
 
 ---
 
@@ -1306,27 +1468,58 @@ Total Supply: 1,000,000,000 MTN
 
 ---
 
-## Kết Luận
+## Kết Luận - TẬP TRUNG VÀO EXECUTION
 
 Chuyển ModernTensor thành Layer 1 blockchain là một **dự án lớn và phức tạp** nhưng **khả thi** với:
 
 ✅ **Team đủ mạnh:** 3-5 senior engineers  
-✅ **Thời gian hợp lý:** 12 tháng  
+✅ **Thời gian hợp lý:** 10 tháng còn lại (17% done)  
 ✅ **Budget đầy đủ:** ~$1.5M  
 ✅ **Vision rõ ràng:** AI-focused blockchain  
-✅ **Execution tốt:** Follow roadmap này  
+✅ **Execution plan:** Roadmap này  
 
-**Next Steps:**
-1. Review roadmap này với team
-2. Quyết định các technical choices
-3. Secure funding
-4. Start Phase 0 (Research & Design)
-5. Build amazing product! 🚀
+### ⚠️ QUAN TRỌNG: FOCUS ON LAYER 1
+
+**KHÔNG LÀM:**
+- ❌ Layer 2 research/planning
+- ❌ Advanced features chưa cần
+- ❌ Over-engineering
+
+**CẦN LÀM:**
+- ✅ Phase 1: Core Blockchain (2 tháng)
+- ✅ Phase 2: Consensus (2 tháng)
+- ✅ Phase 3: Network (2 tháng)
+- ✅ Phase 4-7: Storage, API, Testing, Security (4 tháng)
+- ✅ Phase 9: Mainnet (2 tháng)
+
+**Timeline:** 10 tháng (Tháng 2 - Tháng 12, 2026)
+
+### Next Steps NGAY:
+
+1. ✅ Roadmap approved - FOCUS LAYER 1
+2. ⏳ Allocate 2 engineers to Phase 1 - TUẦN NÀY
+3. ⏳ Start coding Block & Transaction - TUẦN NÀY
+4. ⏳ Weekly progress reviews - HÀNG TUẦN
+5. ⏳ Mainnet launch - THÁNG 12
+
+### Khi gọi vốn VC:
+
+**NÓI:**
+- "17% Layer 1 complete, 83% remaining"
+- "10 tháng để hoàn thiện Layer 1 blockchain"
+- "Focus 100% resources vào core infrastructure"
+- "Mainnet target: Q4 2026"
+- "Layer 2 là vision sau mainnet"
+
+**KHÔNG NÓI:**
+- "Chúng tôi đang làm Layer 2"
+- "Optimistic Rollup trong roadmap"
+- Bất cứ thứ gì về Layer 2
 
 ---
 
-**Document này là:** Living document - sẽ được update khi có progress
+**Document này là:** Action-oriented roadmap - EXECUTE, đừng chỉ plan
 
-**Liên hệ:** Tạo GitHub issue để discuss chi tiết từng phase
+**Liên hệ:** Tạo GitHub issue để track progress
 
-**Good luck building the future of AI × Blockchain! 🎉**
+**Let's build! 🚀 FOCUS ON LAYER 1 FIRST!**
