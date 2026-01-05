@@ -5,8 +5,9 @@ import asyncio
 import json
 import binascii
 import time
-import dataclasses  # <<<--- Thêm import dataclasses
-from typing import List, Annotated, Optional
+import dataclasses
+from typing import List, Annotated, Optional, DefaultDict
+from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Depends, status
 
 from pydantic import BaseModel, Field, ValidationError
@@ -28,13 +29,46 @@ from pycardano import (
     PaymentVerificationKey,
     VerificationKeyHash,
     Network,
-)  # <<<--- Thêm Network
+)
 import nacl.signing
 import nacl.exceptions
 
 # --- Router ---
 router = APIRouter(prefix="/consensus", tags=["Consensus P2P"])
 logger = logging.getLogger(__name__)
+
+# --- Rate Limiting State ---
+# Simple in-memory rate limiter (for production, use Redis or similar)
+# Note: This implementation has limitations:
+# - Not suitable for multi-process deployments
+# - State lost on service restart
+# - Consider implementing Redis-based rate limiter for production
+_request_counts: DefaultDict[str, list] = defaultdict(list)
+_MAX_REQUESTS_PER_MINUTE = 10
+_MAX_SCORES_PER_REQUEST = 1000
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+def _check_rate_limit(submitter_uid: str) -> bool:
+    """
+    Check if submitter is within rate limits.
+    
+    Note: This is a simple implementation. For production use:
+    - Implement Redis-based distributed rate limiter
+    - Use token bucket or sliding window algorithm
+    - Add background cleanup task instead of per-request cleanup
+    """
+    current_time = time.time()
+    # Clean old entries (inefficient - should use background task in production)
+    _request_counts[submitter_uid] = [
+        t for t in _request_counts[submitter_uid]
+        if current_time - t < _RATE_LIMIT_WINDOW
+    ]
+    # Check limit
+    if len(_request_counts[submitter_uid]) >= _MAX_REQUESTS_PER_MINUTE:
+        return False
+    # Record this request
+    _request_counts[submitter_uid].append(current_time)
+    return True
 
 
 # --- Hàm xác thực chữ ký (Đã sửa đổi và thêm logging) ---
@@ -219,32 +253,6 @@ async def verify_payload_signature(
             f"SigVerifyFail (Sender: {submitter_uid}): Unexpected outer error during verification: {outer_e}"
         )
         return False
-
-
-# --- Rate Limiting State ---
-from collections import defaultdict
-from typing import DefaultDict
-
-# Simple in-memory rate limiter (for production, use Redis or similar)
-_request_counts: DefaultDict[str, list] = defaultdict(list)
-_MAX_REQUESTS_PER_MINUTE = 10
-_MAX_SCORES_PER_REQUEST = 1000
-_RATE_LIMIT_WINDOW = 60  # seconds
-
-def _check_rate_limit(submitter_uid: str) -> bool:
-    """Check if submitter is within rate limits."""
-    current_time = time.time()
-    # Clean old entries
-    _request_counts[submitter_uid] = [
-        t for t in _request_counts[submitter_uid]
-        if current_time - t < _RATE_LIMIT_WINDOW
-    ]
-    # Check limit
-    if len(_request_counts[submitter_uid]) >= _MAX_REQUESTS_PER_MINUTE:
-        return False
-    # Record this request
-    _request_counts[submitter_uid].append(current_time)
-    return True
 
 
 # --- API Endpoint ---
