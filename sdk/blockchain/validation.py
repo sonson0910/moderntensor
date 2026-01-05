@@ -98,10 +98,13 @@ class BlockValidator:
         
         # TODO: Check timestamp is not too far in the future
         
-        # 4. Verify validator signature
-        if not block.header.verify_signature():
-            logger.error("Block signature verification failed")
-            return False
+        # 4. Verify validator signature (skip for genesis)
+        if block.header.height > 0:
+            # For non-genesis blocks, verify signature
+            if not block.header.verify_signature():
+                logger.error("Block signature verification failed")
+                return False
+        # Genesis block doesn't need signature verification
         
         # 5. Validate all transactions
         total_gas_used = 0
