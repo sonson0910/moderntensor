@@ -235,3 +235,31 @@ Codebase đã được dọn dẹp và tổ chức lại hoàn toàn:
 
 **Commit:** a92aca8  
 **Date:** January 5, 2026
+
+## 📝 Note: Remaining Cardano Code
+
+**Intentionally Kept:**
+Some Cardano-related code remains in active modules for bridge functionality:
+- `sdk/bridge/` - Bridge layer for Cardano compatibility
+- `sdk/metagraph/` - Metagraph utilities (some Cardano interaction)
+- `sdk/consensus/` - Consensus state (bridge support)
+- `sdk/agent/` - Miner agent (bridge support)
+
+**Why?**
+These are needed for:
+1. Migration path from Cardano to Layer 1
+2. Dual-mode support (Cardano + L1)
+3. Bridge functionality as documented in MIGRATION.md
+
+**Not Removed:**
+- Active code files with real functionality
+- Bridge/migration support code
+- Code that's still being used
+
+**Removed:**
+- ✅ Empty/stub files
+- ✅ Legacy/deprecated code
+- ✅ Unused test files
+- ✅ Placeholder modules
+
+This is intentional and correct per the migration strategy.
