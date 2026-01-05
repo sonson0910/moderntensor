@@ -19,6 +19,9 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+# Note: sys.path manipulation is used to allow running the script
+# directly without installation, consistent with other examples in this repo.
+# For production use, install the package properly.
 sys.path.insert(0, str(Path(__file__).parent))
 
 from sdk.blockchain import Block, Transaction
