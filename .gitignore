@@ -169,3 +169,22 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# macOS files
+.DS_Store
+
+# Log files
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
