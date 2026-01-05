@@ -4,6 +4,7 @@ Safety utilities for consensus operations.
 Provides defensive programming helpers to prevent common errors.
 """
 import logging
+import math
 from typing import Optional, Dict, Any, TypeVar, Callable
 from functools import wraps
 
@@ -43,8 +44,8 @@ def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> f
     
     try:
         result = numerator / denominator
-        # Check for overflow/NaN
-        if not isinstance(result, (int, float)) or result != result:  # NaN check
+        # Check for invalid results (NaN, infinity)
+        if math.isnan(result) or math.isinf(result):
             logger.error(f"Division produced invalid result: {result}. Using default.")
             return default
         return result
@@ -106,10 +107,10 @@ def validate_score(score: float, name: str = "score") -> float:
     Raises:
         ValueError: If score is NaN or infinite
     """
-    if score != score:  # NaN check
+    if math.isnan(score):
         raise ValueError(f"{name} is NaN")
     
-    if not (-float('inf') < score < float('inf')):  # Infinity check
+    if math.isinf(score):
         raise ValueError(f"{name} is infinite: {score}")
     
     clamped = clamp(score, 0.0, 1.0)
