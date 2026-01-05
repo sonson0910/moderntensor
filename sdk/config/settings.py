@@ -220,6 +220,23 @@ class Settings(BaseSettings):
         description="Số validator tối thiểu cần gửi điểm để thực hiện tính toán đồng thuận.",
     )
     # CONSENSUS_REQUIRED_PERCENTAGE: float = Field(0.6, description="Tỷ lệ % validator tối thiểu cần gửi điểm (ngoài số lượng tối thiểu).") # Có thể thêm nếu muốn
+    
+    CONSENSUS_MAX_RESULTS_BUFFER_SIZE: int = Field(
+        10000,
+        description="Kích thước tối đa của results_buffer để ngăn memory leak.",
+    )
+    
+    CONSENSUS_STAKE_DAMPENING_ENABLED: bool = Field(
+        True,
+        description="Bật stake dampening để giảm ảnh hưởng của validator có stake lớn.",
+    )
+    
+    CONSENSUS_STAKE_DAMPENING_FACTOR: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Hệ số dampening cho stake (0.5 = sqrt, 1.0 = no dampening).",
+    )
 
     # --- Miner Selection ---
     CONSENSUS_NUM_MINERS_TO_SELECT: int = Field(

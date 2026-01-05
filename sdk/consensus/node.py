@@ -1713,6 +1713,17 @@ class ValidatorNode:
 
         # --- Lưu vào buffer ---
         async with self.results_buffer_lock:
+            # Check buffer size limit to prevent memory leak
+            max_buffer_size = self.settings.CONSENSUS_MAX_RESULTS_BUFFER_SIZE
+            if len(self.results_buffer) >= max_buffer_size:
+                # Remove oldest entries (use OrderedDict-like behavior)
+                # Since dict maintains insertion order in Python 3.7+, we can pop first item
+                oldest_task_id = next(iter(self.results_buffer))
+                removed_result = self.results_buffer.pop(oldest_task_id)
+                logger.warning(
+                    f"API: Results buffer full ({max_buffer_size}). Removed oldest result for task {oldest_task_id} to make room."
+                )
+            
             if result.task_id in self.results_buffer:
                 logger.warning(
                     f"API: Overwriting previous buffered result for task {result.task_id}."
