@@ -56,6 +56,13 @@ MINER_SELF_UPDATE_REDEEMER_TAG = 1  # Ví dụ: Tag 1 cho hành động miner t�
 # ---------------------------------------------------
 
 
+from sdk.subnets.protocol import SubnetProtocol
+from sdk.utils.zkml import ZkmlManager
+from fastapi import FastAPI, BackgroundTasks
+import uvicorn
+from sdk.network.server import TaskModel, ResultModel
+
+
 class MinerAgent:
     """
     Agent chạy song song với Miner Server, chịu trách nhiệm:
@@ -63,6 +70,7 @@ class MinerAgent:
     2. Tìm UTXO Datum của chính mình trên blockchain.
     3. Tính toán trạng thái Datum mới (trust, reward, performance...).
     4. Gửi giao dịch self-update lên Cardano để cập nhật Datum.
+    5. Xử lý Task từ Validator (sử dụng SubnetProtocol).
     """
 
     def __init__(
@@ -71,6 +79,7 @@ class MinerAgent:
         config: Settings,
         miner_skey: ExtendedSigningKey,  # Khóa ký payment chính
         miner_stake_skey: Optional[ExtendedSigningKey] = None,  # Khóa ký stake (nếu có)
+        subnet_protocol: Optional[SubnetProtocol] = None,  # Inject Subnet Protocol
     ):
         """
         Khởi tạo Miner Agent.
@@ -80,6 +89,7 @@ class MinerAgent:
             config: Đối tượng Settings chứa các tham số cấu hình.
             miner_skey: Khóa ký payment (ExtendedSigningKey) của ví miner.
             miner_stake_skey: Khóa ký stake (ExtendedSigningKey) của ví miner (tùy chọn).
+            subnet_protocol: Giao thức Subnet để xử lý task.
 
         Raises:
             ValueError: Nếu miner_uid_hex không hợp lệ.
@@ -89,6 +99,25 @@ class MinerAgent:
             raise ValueError("MinerAgent requires a valid miner_uid_hex (string).")
 
         self.miner_uid_hex: str = miner_uid_hex
+        self.config = config
+        self.miner_skey = miner_skey
+        self.miner_stake_skey = miner_stake_skey
+        self.subnet_protocol = subnet_protocol
+
+        # Initialize zkML Manager
+        self.zkml_manager = ZkmlManager(
+            settings_path="zkml_settings.json"
+        )  # Path should be configurable
+        self.subnet_protocol = subnet_protocol
+        self.zkml_manager = ZkmlManager(
+            model_path="model.onnx", settings_path="settings.json"
+        )  # Initialize zkML
+
+        # --- Initialize FastAPI ---
+        self.app = FastAPI()
+        self.setup_routes()
+        # --------------------------
+
         try:
             # Chuyển đổi và lưu trữ UID dạng bytes
             self.miner_uid_bytes: bytes = binascii.unhexlify(miner_uid_hex)
@@ -183,6 +212,69 @@ class MinerAgent:
         logger.info(f"{uid_prefix} Wallet Address: {self.miner_wallet_address}")
         logger.info(f"{uid_prefix} Contract Address: {self.contract_address}")
         logger.info(f"{uid_prefix} UID Bytes: {self.miner_uid_bytes.hex()}")
+
+    def setup_routes(self):
+        """Set up routes for the miner server."""
+
+        @self.app.post("/receive-task")
+        async def receive_task(task: TaskModel, background_tasks: BackgroundTasks):
+            logger.info(
+                f":inbox_tray: [Miner:{self.miner_uid_hex}] Received task [yellow]{task.task_id}[/yellow]"
+            )
+            background_tasks.add_task(self.handle_task_async, task)
+            return {"message": f"Task {task.task_id} received and processing"}
+
+    async def handle_task_async(self, task: TaskModel):
+        """Async handler for processing tasks and sending results."""
+        try:
+            # 1. Process Task
+            result_data = await self.process_task(task.task_data)
+
+            # 2. Generate zkML Proof (if required/enabled)
+            proof = None
+            # Check if task requires proof (e.g., via flag in task_data or global config)
+            if task.task_data.get("require_proof", False):
+                logger.info(f"Task {task.task_id} requires zkML proof. Generating...")
+                try:
+                    # Assuming result_data is compatible with zkML input
+                    proof = self.zkml_manager.generate_proof(input_data=result_data)
+                    if proof:
+                        logger.info(
+                            f"Proof generated successfully for task {task.task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Failed to generate proof for task {task.task_id}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error generating zkML proof: {e}")
+
+            # 3. Prepare Result Model
+            result_to_send = ResultModel(
+                task_id=task.task_id,
+                miner_uid=self.miner_uid_hex,
+                result_data=result_data,
+                proof=proof,
+            )
+
+            # 4. Send Result back to Validator
+            target_validator_url = task.validator_endpoint
+            if not target_validator_url:
+                logger.error(f"No validator endpoint provided for task {task.task_id}")
+                return
+
+            submit_url = f"{target_validator_url.rstrip('/')}/v1/miner/submit_result"
+            logger.info(f"Sending result to {submit_url}")
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    submit_url, json=result_to_send.dict(), timeout=30.0
+                )
+                resp.raise_for_status()
+                logger.info(f"Result for task {task.task_id} submitted successfully.")
+
+        except Exception as e:
+            logger.error(f"Error handling task {task.task_id}: {e}")
 
     def _load_local_history(self) -> List[float]:
         """Tải danh sách lịch sử hiệu suất từ file cục bộ."""
@@ -537,13 +629,15 @@ class MinerAgent:
             # logger.error(f"Transaction builder state: Inputs={getattr(builder,'inputs',[])}, Outputs={getattr(builder,'outputs',[])}")
             return None
 
-    async def run(self, validator_api_url: str, check_interval_seconds: int = 60):
+    async def consensus_loop(
+        self, validator_api_url: str, check_interval_seconds: int = 60
+    ):
         """
         Vòng lặp chính của Miner Agent: Fetch kết quả -> Tìm UTXO -> Tính Datum -> Commit.
         """
         uid_prefix = f"[RunLoop:{self.miner_uid_hex}]"
         logger.info(
-            f"{uid_prefix} Starting run loop. Checking every {check_interval_seconds}s."
+            f"{uid_prefix} Starting consensus loop. Checking every {check_interval_seconds}s."
         )
         target_cycle = self.last_processed_cycle + 1  # Start checking the next cycle
 
@@ -647,6 +741,60 @@ class MinerAgent:
                 consensus_result is None
             ):  # Only increment if fetch explicitly returned None (meaning cycle check is done)
                 target_cycle += 1
+
+    async def run(
+        self,
+        validator_api_url: str = "http://localhost:8000",
+        check_interval_seconds: int = 60,
+        host: str = "0.0.0.0",
+        port: int = 8001,
+    ):
+        """
+        Starts the Miner Agent: API Server + Consensus Loop.
+        """
+        logger.info(f"Starting Miner Agent on {host}:{port}")
+
+        # Start API Server
+        config = uvicorn.Config(self.app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+
+        # Run server and consensus loop concurrently
+        await asyncio.gather(
+            server.serve(),
+            self.consensus_loop(validator_api_url, check_interval_seconds),
+        )
+
+    async def process_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Xử lý task nhận được từ Validator.
+        1. Sử dụng SubnetProtocol để giải quyết task.
+        2. Tạo zkML proof cho quá trình tính toán.
+        """
+        if not self.subnet_protocol:
+            logger.error("No Subnet Protocol loaded. Cannot process task.")
+            return {}
+
+        try:
+            # 1. Solve Task
+            logger.info(
+                f"Processing task with protocol: {self.subnet_protocol.get_metadata()['name']}"
+            )
+            result_data = self.subnet_protocol.solve_task(task_data)
+
+            # 2. Generate zkML Proof (Mocked input for now)
+            # Trong thực tế, input_data sẽ là tensor đầu vào và output của model
+            input_data = [1.0, 2.0, 3.0]  # Placeholder
+            proof = self.zkml_manager.generate_proof(input_data)
+
+            if proof:
+                result_data["proof"] = proof
+                logger.info("Generated zkML proof for task result.")
+
+            return result_data
+
+        except Exception as e:
+            logger.exception(f"Error processing task: {e}")
+            return {}
 
     async def close(self):
         """Đóng các tài nguyên (ví dụ: http client) khi agent dừng."""

@@ -12,6 +12,10 @@ from .wallet_cli import wallet_cli
 from .tx_cli import tx_cli
 from .query_cli import query_cli
 from .stake_cli import stake_cli
+from .subnet_cli import subnet_cli  # Import Subnet CLI
+from .validator_cli import run_validator  # Import Validator Runner
+from .miner_cli import run_miner  # Import Miner Runner
+from .simulation_cli import simulate_subnet  # Import Simulator
 
 # from .metagraph_cli import metagraph_cli  # If you have
 
@@ -19,14 +23,14 @@ logging.basicConfig(level=logging.INFO)
 
 # ASCII Art for ModernTensor
 ASCII_ART = r"""
-███╗   ███╗ ██████╗ ██████╗ ███████╗██████╗ ███╗   ██╗████████╗███████╗███╗   ██╗███████╗ ██████╗ ██████╗ 
+███╗   ███╗ ██████╗ ██████╗ ███████╗██████╗ ███╗   ██╗████████╗███████╗███╗   ██╗███████╗ ██████╗ ██████╗
 ████╗ ████║██╔═══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║╚══██╔══╝██╔════╝████╗  ██║██╔════╝██╔═══██╗██╔══██╗
 ██╔████╔██║██║   ██║██║  ██║█████╗  ██████╔╝██╔██╗ ██║   ██║   █████╗  ██╔██╗ ██║███████╗██║   ██║██████╔╝
 ██║╚██╔╝██║██║   ██║██║  ██║██╔══╝  ██╔══██╗██║╚██╗██║   ██║   ██╔══╝  ██║╚██╗██║╚════██║██║   ██║██╔══██╗
 ██║ ╚═╝ ██║╚██████╔╝██████╔╝███████╗██║  ██║██║ ╚████║   ██║   ███████╗██║ ╚████║███████║╚██████╔╝██║  ██║
 ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝
-                                                                                                          
-                                                                    
+
+
 """
 
 # Colorful scheme v2
@@ -71,7 +75,9 @@ def cli(ctx):
             (version, "yellow"),
         )
 
-        console.print(f"[bold bright_white]{ASCII_ART}[/bold bright_white]", justify="center")
+        console.print(
+            f"[bold bright_white]{ASCII_ART}[/bold bright_white]", justify="center"
+        )
         console.print(PROJECT_DESCRIPTION, justify="center")
         console.print(" ")  # Spacer
         console.print(
@@ -92,6 +98,10 @@ cli.add_command(wallet_cli, name="w")
 cli.add_command(tx_cli, name="tx")
 cli.add_command(query_cli, name="query")
 cli.add_command(stake_cli, name="stake")
+cli.add_command(subnet_cli, name="subnet")  # Register subnet command
+cli.add_command(run_validator, name="run_validator")  # Register validator runner
+cli.add_command(run_miner, name="run_miner")  # Register miner runner
+cli.add_command(simulate_subnet, name="simulate")  # Register simulator
 # cli.add_command(metagraph_cli, name="metagraph")
 
 # If you want, you can place the original command here:

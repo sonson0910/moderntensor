@@ -7,6 +7,7 @@ import logging
 import math
 import hashlib  # Đảm bảo đã import
 import asyncio
+import json  # Added for JSON serialization
 from typing import List, Dict, Any, Tuple, Optional, Set, Union
 import numpy as np  # Cần cài đặt numpy: pip install numpy
 from collections import defaultdict
@@ -17,11 +18,12 @@ from sdk.formulas import (
     calculate_adjusted_miner_performance,
     calculate_validator_performance,
     update_trust_score,
-    calculate_fraud_severity_value,  # Cần logic cụ thể
+    calculate_fraud_severity_value,
     calculate_slash_amount,
     calculate_miner_incentive,
     calculate_validator_incentive,
-    # Import các công thức khác nếu cần
+    calculate_consensus_score,  # Import mới
+    calculate_validator_consensus_weight,  # Import mới
 )
 
 from sdk.metagraph.update_metagraph import update_datum
@@ -56,8 +58,21 @@ from sdk.metagraph.metagraph_datum import (
 )
 from blockfrost import ApiError
 
+from sdk.network.hydra_client import HydraClient  # Import Hydra Client
+
 EPSILON = 1e-9
 logger = logging.getLogger(__name__)
+
+# Global Hydra Client instance (lazy init)
+hydra_client = None
+
+async def get_hydra_client():
+    global hydra_client
+    if hydra_client is None:
+        # Lấy URL từ settings hoặc dùng default
+        hydra_url = getattr(settings, "HYDRA_NODE_URL", "ws://localhost:4001")
+        hydra_client = HydraClient(hydra_node_url=hydra_url)
+    return hydra_client
 
 # Default empty bytes for hash placeholders
 EMPTY_HASH_BYTES = b""
@@ -221,7 +236,7 @@ def run_consensus_logic(
     settings: Any,
     consensus_possible: bool,
     self_validator_uid: str,
-) -> Tuple[Dict[str, float], Dict[str, Any]]:
+) -> Tuple[Dict[str, float], Dict[str, Any], Dict[str, float]]:
     """
     Performs the core consensus calculations for a cycle.
 
@@ -242,12 +257,14 @@ def run_consensus_logic(
         self_validator_uid (str): UID of the validator running this logic.
 
     Returns:
-        Tuple[Dict[str, float], Dict[str, Any]]: A tuple containing:
+        Tuple[Dict[str, float], Dict[str, Any], Dict[str, float]]: A tuple containing:
             - Final miner adjusted scores ({miner_uid_hex: P_adj}).
             - Calculated next validator states ({validator_uid_hex: {state_dict}}).
+            - Miner penalties ({miner_uid_hex: penalty_score}).
     """
     logger.info(f":brain: Running consensus calculations for cycle {current_cycle}...")
     final_miner_scores: Dict[str, float] = {}  # {miner_uid_hex: P_adj}
+    miner_penalties: Dict[str, float] = defaultdict(float) # {miner_uid_hex: penalty_score}
     validator_deviations: Dict[str, List[float]] = defaultdict(
         list
     )  # {validator_uid_hex: [deviation1, deviation2,...]}
@@ -290,67 +307,71 @@ def run_consensus_logic(
         return (
             final_miner_scores,
             calculated_validator_states,
+            miner_penalties,
         )  # Trả về kết quả rỗng/chỉ decay
 
-    # --- 1. Tính điểm đồng thuận Miner (P_miner_adjusted) và độ lệch ---
-    scores_by_miner: Dict[str, List[Tuple[float, float]]] = defaultdict(
-        list
-    )  # {miner_uid_hex: [(score, validator_trust)]}
-    tasks_processed_by_miner: Dict[str, Set[str]] = defaultdict(
-        set
-    )  # {miner_uid_hex: {task_id1, task_id2,...}}
-    validator_scores_by_task: Dict[str, Dict[str, float]] = defaultdict(
-        dict
-    )  # {task_id: {validator_uid: score}}
+    # --- 1. Tính điểm đồng thuận Miner (Global Consensus - Yuma Style) ---
+    # Chuẩn bị dữ liệu cho tính toán đồng thuận
+    miner_scores_map: Dict[str, Dict[str, float]] = defaultdict(dict) # {miner_uid: {validator_uid: score}}
+    validator_scores_map: Dict[str, Dict[str, float]] = defaultdict(dict) # {validator_uid: {miner_uid: score}}
+    validator_stakes: Dict[str, float] = {
+        uid: v.stake for uid, v in validators_info.items()
+        if getattr(v, "status", STATUS_ACTIVE) == STATUS_ACTIVE
+    }
+    total_active_stake = sum(validator_stakes.values())
 
-    # Gom điểm theo miner VÀ theo task
+    # Gom điểm từ received_scores
     for task_id, validator_scores_dict in received_scores.items():
         first_score = next(iter(validator_scores_dict.values()), None)
         if not first_score:
             continue
         miner_uid_hex = first_score.miner_uid
-        tasks_processed_by_miner[miner_uid_hex].add(
-            task_id
-        )  # Lưu tất cả task miner đã làm
 
         for validator_uid_hex, score_entry in validator_scores_dict.items():
-            validator = validators_info.get(validator_uid_hex)
-            if (
-                validator
-                and getattr(validator, "status", STATUS_ACTIVE) == STATUS_ACTIVE
-            ):  # Chỉ tính điểm từ validator active
-                # Lưu (điểm, trust của validator chấm điểm) cho miner
-                scores_by_miner[miner_uid_hex].append(
-                    (score_entry.score, validator.trust_score)
-                )
-                # Lưu điểm của validator cho task này
-                validator_scores_by_task[task_id][validator_uid_hex] = score_entry.score
-            # else: logger.warning(...) # Bỏ qua validator không tồn tại hoặc inactive
+            # Chỉ nhận điểm từ validator active
+            if validator_uid_hex in validator_stakes:
+                miner_scores_map[miner_uid_hex][validator_uid_hex] = score_entry.score
+                validator_scores_map[validator_uid_hex][miner_uid_hex] = score_entry.score
 
-    # Tính P_adj và độ lệch
-    for miner_uid_hex, scores_trusts in scores_by_miner.items():
-        if not scores_trusts:
-            continue
-        scores = [s for s, t in scores_trusts]
-        trusts = [t for s, t in scores_trusts]
+                # Accumulate penalties
+                if getattr(score_entry, "penalty", 0.0) > 0:
+                    stake = validator_stakes[validator_uid_hex]
+                    miner_penalties[miner_uid_hex] += stake * score_entry.penalty
 
-        p_adj = calculate_adjusted_miner_performance(scores, trusts)
-        final_miner_scores[miner_uid_hex] = p_adj
+    # Normalize penalties
+    if total_active_stake > 0:
+        for miner_uid in miner_penalties:
+            miner_penalties[miner_uid] /= total_active_stake
+            if miner_penalties[miner_uid] > 0.5: # Threshold > 50% stake flags penalty
+                logger.warning(f"Miner {miner_uid} flagged for slashing! Penalty Score: {miner_penalties[miner_uid]:.4f}")
+
+    # Tính điểm đồng thuận cho từng Miner (P_adj)
+    for miner_uid_hex, scores_dict in miner_scores_map.items():
+        # Sử dụng cơ chế đồng thuận theo trọng số Stake (Yuma-like)
+        consensus_score = calculate_consensus_score(scores_dict, validator_stakes)
+
+        # Apply penalty if significant
+        if miner_penalties.get(miner_uid_hex, 0.0) > 0.5:
+            consensus_score = 0.0 # Force score to 0 if penalized
+
+        final_miner_scores[miner_uid_hex] = consensus_score
+
         logger.info(
-            f"  :chart_with_upwards_trend: Consensus score (P_adj) for Miner [cyan]{miner_uid_hex}[/cyan]: [yellow]{p_adj:.4f}[/yellow]"
+            f"  :chart_with_upwards_trend: Global Consensus Score for Miner [cyan]{miner_uid_hex}[/cyan]: [yellow]{consensus_score:.4f}[/yellow]"
         )
 
-        # Tính độ lệch cho từng validator đã chấm điểm miner này, trên từng task
-        related_task_ids = tasks_processed_by_miner.get(miner_uid_hex, set())
-        for task_id in related_task_ids:
-            scores_for_this_task = validator_scores_by_task.get(task_id, {})
-            for validator_uid_hex, score in scores_for_this_task.items():
-                # Độ lệch = |điểm validator chấm - điểm đồng thuận của miner|
-                deviation = abs(score - p_adj)
-                validator_deviations[validator_uid_hex].append(deviation)
-                logger.debug(
-                    f"  Deviation for V:{validator_uid_hex} on M:{miner_uid_hex} (Task:{task_id}): {deviation:.4f}"
-                )
+    # Tính hiệu suất đồng thuận cho từng Validator (E_v)
+    # Thay vì tính deviation thủ công, ta dùng hàm calculate_validator_consensus_weight
+    validator_consensus_weights: Dict[str, float] = {}
+    for validator_uid_hex, scores_dict in validator_scores_map.items():
+        # So sánh điểm validator chấm với điểm đồng thuận chung
+        weight = calculate_validator_consensus_weight(
+            scores_dict,
+            final_miner_scores,
+            sigma=settings.CONSENSUS_PARAM_SIGMA if hasattr(settings, 'CONSENSUS_PARAM_SIGMA') else 0.5
+        )
+        validator_consensus_weights[validator_uid_hex] = weight
+        logger.debug(f"  Validator {validator_uid_hex} Consensus Weight: {weight:.4f}")
 
     # --- 2. Tính E_validator, Trust mới dự kiến, và Đóng góp cho thưởng ---
     temp_validator_contributions: Dict[str, float] = {}
@@ -392,45 +413,13 @@ def run_consensus_logic(
             f"  Validator {validator_uid_hex}: Average deviation = {avg_dev:.4f} ({len(deviations)} scores evaluated)"
         )
 
-        # Metric Quality Placeholder
-        # Giả định validator_info.performance_history chứa list điểm số float
-        historical_scores = getattr(validator_info, "performance_history", [])
-        # Cần lấy tham số max_stddev_penalty từ settings hoặc đặt mặc định
-        max_penalty_for_consistency = getattr(
-            settings, "CONSENSUS_METRIC_MAX_STDDEV", 0.2
-        )  # Ví dụ: ngưỡng 0.2
-        metric_quality = calculate_historical_consistency(
-            historical_scores, max_penalty_for_consistency
-        )
-        logger.debug(
-            f"  Validator {validator_uid_hex}: Historical Consistency Metric = {metric_quality:.3f} (based on {len(historical_scores)} scores)"
-        )
+        # --- Cải tiến: Sử dụng Consensus Weight làm E_validator ---
+        # Thay vì tính toán phức tạp với deviation thủ công, ta dùng trọng số đồng thuận
+        # đã được tính toán dựa trên độ tương đồng với toàn mạng lưới (Yuma-like)
+        new_e_validator = validator_consensus_weights.get(validator_uid_hex, 0.0)
 
-        # Kiểm tra xem UID của validator này có trong danh sách điểm miner cuối cùng không
-        q_task_val = 0.0  # Mặc định là 0
-        if (
-            validator_uid_hex in final_miner_scores
-        ):  # final_miner_scores đã được tính ở phần 1 của hàm
-            q_task_val = final_miner_scores[validator_uid_hex]
-            logger.debug(
-                f"  Validator {validator_uid_hex} also acted as miner. Using P_adj={q_task_val:.4f} as Q_task_validator."
-            )
-
-        # Tính E_validator mới
-        new_e_validator = calculate_validator_performance(
-            q_task_validator=q_task_val,
-            metric_validator_quality=metric_quality,
-            deviation=avg_dev,  # Độ lệch trung bình của validator này
-            theta1=settings.CONSENSUS_PARAM_THETA1,
-            theta2=settings.CONSENSUS_PARAM_THETA2,
-            theta3=settings.CONSENSUS_PARAM_THETA3,
-            # Tham số Penalty Term lấy từ settings
-            penalty_threshold_dev=settings.CONSENSUS_PARAM_PENALTY_THRESHOLD_DEV,
-            penalty_k_penalty=settings.CONSENSUS_PARAM_PENALTY_K_PENALTY,
-            penalty_p_penalty=settings.CONSENSUS_PARAM_PENALTY_P_PENALTY,
-        )
         logger.info(
-            f"  :chart_with_downwards_trend: Calculated performance (E_val) for Validator [cyan]{validator_uid_hex}[/cyan]: [yellow]{new_e_validator:.4f}[/yellow]"
+            f"  :chart_with_downwards_trend: Consensus Performance (E_val) for Validator [cyan]{validator_uid_hex}[/cyan]: [yellow]{new_e_validator:.4f}[/yellow]"
         )
 
         # Tính Trust Score mới dự kiến
@@ -442,7 +431,6 @@ def run_consensus_logic(
             score_for_trust_update = new_e_validator
         else:
             # Nếu không active, trust chỉ bị suy giảm (score_new = 0)
-            # Có thể cần logic tính time_since phức tạp hơn nếu validator bị inactive/jailed lâu
             logger.debug(
                 f"Validator {validator_uid_hex} is not active. Applying only trust decay."
             )
@@ -480,7 +468,6 @@ def run_consensus_logic(
             "last_update_cycle": current_cycle,
             # Lưu thêm trạng thái đầu vào để tiện debug/kiểm tra
             "avg_deviation": avg_dev,
-            "metric_quality": metric_quality,
             "start_trust": validator_info.trust_score,
             "start_status": getattr(validator_info, "status", STATUS_ACTIVE),
         }
@@ -519,7 +506,7 @@ def run_consensus_logic(
     logger.info(
         ":brain: Finished consensus calculations and validator state estimation."
     )
-    return final_miner_scores, calculated_validator_states
+    return final_miner_scores, calculated_validator_states, miner_penalties
 
 
 # --- Logic Kiểm tra và Phạt Validator ---
@@ -535,7 +522,7 @@ async def verify_and_penalize_logic(
     settings: Any,
     script_hash: ScriptHash,
     network: Network,
-) -> None:
+) -> Dict[str, str]:
     """
     Verifies previous cycle's ValidatorDatum against on-chain data.
     Applies trust/status penalties IN-PLACE to the `validators_info` dictionary
@@ -552,7 +539,7 @@ async def verify_and_penalize_logic(
         network (Network): The Cardano network.
 
     Returns:
-        None: Modifies `validators_info` directly.
+        Dict[str, str]: A dictionary of {validator_uid: reason} for penalized validators.
 
     Raises:
         ApiError: If fetching on-chain data from BlockFrost fails.
@@ -562,8 +549,9 @@ async def verify_and_penalize_logic(
         f":mag: Verifying previous cycle ({current_cycle - 1}) validator updates..."
     )
     previous_cycle = current_cycle - 1
+    suspicious_validators: Dict[str, str] = {}
     if previous_cycle < 0:
-        return
+        return suspicious_validators
 
     # penalized_validator_datums: Dict[str, ValidatorDatum] = {}
     tolerance = settings.CONSENSUS_DATUM_COMPARISON_TOLERANCE
@@ -700,8 +688,8 @@ async def verify_and_penalize_logic(
 
     except Exception as e:
         logger.exception(f"Error during validator verification/penalization: {e}")
-
-    return
+    
+    return suspicious_validators
 
 
 # --- Logic Chuẩn bị và Commit Cập nhật ---
@@ -714,6 +702,7 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
     settings: Any,
     # context: BlockFrostChainContext, # Optional if utxo_map has decoded datum
     current_utxo_map: Dict[str, UTxO],  # Map uid_hex -> UTxO object
+    miner_penalties: Dict[str, float] = None, # Optional penalties
 ) -> Dict[str, MinerDatum]:
     """
     Prepares new MinerDatum objects for committing to the blockchain.
@@ -731,6 +720,7 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
         final_scores (Dict[str, float]): Final adjusted performance scores (P_adj) for miners.
         settings (Any): Application settings.
         current_utxo_map (Dict[str, UTxO]): Map of UIDs to their UTxOs (needed for old rewards).
+        miner_penalties (Dict[str, float]): Optional map of miner penalties.
 
     Returns:
         Dict[str, MinerDatum]: A dictionary mapping miner UIDs (hex) to their new MinerDatum objects.
@@ -742,6 +732,8 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
     logger.info(f":package: Preparing miner state updates for cycle {current_cycle}...")
     miner_updates: Dict[str, MinerDatum] = {}
     divisor = settings.METAGRAPH_DATUM_INT_DIVISOR
+    if miner_penalties is None:
+        miner_penalties = {}
 
     # Ước tính total_system_value cho incentive (tổng W*P_adj của miner active)
     total_weighted_perf = sum(
@@ -762,7 +754,13 @@ async def prepare_miner_updates_logic(  # <<<--- async vì cần lấy/decode da
         score_new = final_scores.get(miner_uid_hex, 0.0)  # P_adj
         trust_score_old = getattr(
             miner_info, "trust_score", 0.0
-        )  # Trust score đầu vào (trước update)
+        )
+
+        # Apply penalty to trust score if needed
+        penalty = miner_penalties.get(miner_uid_hex, 0.0)
+        if penalty > 0.5:
+            logger.warning(f"{log_prefix}: Applying penalty {penalty} to trust score.")
+            trust_score_old = 0.0 # Slash trust to 0
 
         # --- 1. Lấy Thông tin Cần Thiết từ Datum Cũ (Chủ yếu là Reward) ---
         pending_rewards_old = 0
@@ -961,6 +959,8 @@ async def prepare_validator_updates_logic(
     context: Optional[
         BlockFrostChainContext
     ],  # Context might be needed for future extensions
+    final_miner_scores: Dict[str, float] = None,  # Added: Scores to hash
+    signing_key: Optional[ExtendedSigningKey] = None, # Added: For correct address hashing
 ) -> Dict[str, ValidatorDatum]:
     """
     Prepares the ValidatorDatum update specifically for the validator running this node.
@@ -968,6 +968,9 @@ async def prepare_validator_updates_logic(
     Uses the pre-calculated state for this validator (from `run_consensus_logic`)
     and combines it with potentially updated trust/status (from `verify_and_penalize_logic`,
     reflected in `self_validator_info`) to create the final Datum.
+
+    Also hashes the `final_miner_scores` (weights) into `performance_history_hash`
+    to commit the consensus weights to the blockchain.
 
     Args:
         current_cycle (int): The current cycle number.
@@ -977,6 +980,8 @@ async def prepare_validator_updates_logic(
                                            from `run_consensus_logic`.
         settings (Any): Application settings.
         context (Optional[BlockFrostChainContext]): Cardano context (may be unused currently).
+        final_miner_scores (Dict[str, float]): The calculated miner scores (weights) for this cycle.
+        signing_key (Optional[ExtendedSigningKey]): The validator's signing key for address hashing.
 
     Returns:
         Dict[str, ValidatorDatum]: A dictionary containing the single update for this validator,
@@ -1012,9 +1017,22 @@ async def prepare_validator_updates_logic(
     api_endpoint_current = self_validator_info.api_endpoint
     status_current = getattr(self_validator_info, "status", STATUS_ACTIVE)
 
-    # Hash địa chỉ thay vì dùng bytes gốc
+    # Hash địa chỉ
     wallet_addr_hash_bytes = getattr(self_validator_info, "wallet_addr_hash", None)
+
+    # Ưu tiên tính lại hash từ signing key nếu có (để đảm bảo chính xác)
+    if signing_key:
+        try:
+            # Sử dụng Payment Verification Key Hash (28 bytes)
+            vkey = signing_key.to_verification_key()
+            wallet_addr_hash_bytes = vkey.hash().to_primitive()
+        except Exception as e:
+            logger.warning(f"Failed to derive wallet hash from signing key: {e}")
+
+    # Fallback nếu chưa có hash
     if not isinstance(wallet_addr_hash_bytes, bytes):
+        # Cố gắng hash từ địa chỉ string (kém chính xác hơn nhưng là fallback)
+        # Lưu ý: Đây là SHA256 của string, KHÔNG PHẢI key hash chuẩn của Cardano
         wallet_addr_hash_bytes = hashlib.sha256(
             validator_address_str.encode("utf-8")
         ).digest()
@@ -1038,12 +1056,26 @@ async def prepare_validator_updates_logic(
         )
         api_endpoint_bytes_utf8 = b""
 
-    # Lấy performance history hash, default to empty bytes
-    perf_history_hash_bytes = getattr(
-        self_validator_info, "performance_history_hash", None
-    )
-    if not isinstance(perf_history_hash_bytes, bytes):
-        perf_history_hash_bytes = EMPTY_HASH_BYTES
+    # --- Calculate Weight Hash (Commitment) ---
+    if final_miner_scores:
+        try:
+            # Sort by UID to ensure deterministic hash
+            sorted_scores = sorted(final_miner_scores.items())
+            # Serialize to JSON string
+            scores_str = json.dumps(sorted_scores, separators=(',', ':'))
+            # Hash the string
+            perf_history_hash_bytes = hashlib.sha256(scores_str.encode('utf-8')).digest()
+            logger.info(f"Calculated weight hash for cycle {current_cycle}: {perf_history_hash_bytes.hex()[:8]}...")
+        except Exception as e:
+            logger.error(f"Failed to hash miner scores: {e}. Using empty bytes.")
+            perf_history_hash_bytes = EMPTY_HASH_BYTES
+    else:
+        # Fallback: Use existing hash or empty
+        perf_history_hash_bytes = getattr(
+            self_validator_info, "performance_history_hash", None
+        )
+        if not isinstance(perf_history_hash_bytes, bytes):
+            perf_history_hash_bytes = EMPTY_HASH_BYTES
 
     # Lấy accumulated_rewards cũ
     pending_rewards_old = int(state.get("accumulated_rewards_old", 0))
@@ -1218,6 +1250,20 @@ async def commit_updates_logic(
 
     # 2. Xây dựng Giao dịch cho self-update
     try:
+        # --- Cải tiến: Hydra Head Integration ---
+        # Kiểm tra xem có dùng Hydra không
+        use_hydra = getattr(settings, "USE_HYDRA_HEAD", False)
+        hydra_client = None
+        if use_hydra:
+            try:
+                hydra_client = await get_hydra_client()
+                if not hydra_client.is_connected:
+                    await hydra_client.connect()
+                logger.info(f"{log_prefix}: Using Hydra Head for transaction submission.")
+            except Exception as e:
+                logger.error(f"{log_prefix}: Failed to connect to Hydra: {e}. Falling back to Layer 1.")
+                use_hydra = False
+
         builder = TransactionBuilder(context=context)
 
         # a. Thêm Input Script UTXO (UTXO cũ của validator)
@@ -1267,11 +1313,37 @@ async def commit_updates_logic(
             f"{log_prefix}: Transaction built and signed. Fee: {signed_tx.transaction_body.fee}"
         )
 
+        # f. Submit Transaction (Hydra or L1)
+        tx_id_str = str(signed_tx.id)
+
+        if use_hydra and hydra_client:
+            try:
+                # Submit to Hydra
+                # Cần serialize tx sang CBOR hex
+                tx_cbor = signed_tx.to_cbor_hex()
+                hydra_tx_id = await hydra_client.submit_tx(tx_cbor)
+                if hydra_tx_id:
+                    logger.info(f"{log_prefix}: :rocket: Successfully submitted update via Hydra! TxID: {hydra_tx_id}")
+                    submitted_tx_ids[self_uid_hex] = hydra_tx_id
+                else:
+                    raise Exception("Hydra submission returned None")
+            except Exception as hydra_e:
+                logger.warning(f"{log_prefix}: Hydra submission failed ({hydra_e}). Falling back to L1...")
+                # Fallback to L1
+                context.submit_tx(signed_tx)
+                logger.info(f"{log_prefix}: :rocket: Successfully submitted update via L1 (Fallback)! TxID: {tx_id_str}")
+                submitted_tx_ids[self_uid_hex] = tx_id_str
+        else:
+            # Submit to L1 (BlockFrost)
+            context.submit_tx(signed_tx)
+            logger.info(f"{log_prefix}: :rocket: Successfully submitted update via L1! TxID: {tx_id_str}")
+            submitted_tx_ids[self_uid_hex] = tx_id_str
+
     except Exception as build_e:
         logger.exception(
-            f":hammer: {log_prefix}: Failed during transaction build/sign phase: {build_e}"
+            f":hammer: {log_prefix}: Failed during transaction build/sign/submit phase: {build_e}"
         )
-        failed_updates[self_uid_hex] = f"Build/Sign Error: {str(build_e)}"
+        failed_updates[self_uid_hex] = f"Error: {str(build_e)}"
         # Trả về kết quả lỗi
         return {
             "status": "completed_with_errors",
@@ -1282,34 +1354,6 @@ async def commit_updates_logic(
             "failures": failed_updates,
             "skips": {},
         }
-
-    # 3. Submit Giao dịch self-update
-    tx_id_str: Optional[str] = None
-    try:
-        logger.info(
-            f":arrow_up: {log_prefix}: Submitting self-update transaction to the blockchain..."
-        )
-        # submit_tx của BlockFrostContext trả về TransactionId
-        tx_id: TransactionId = context.submit_tx(signed_tx)  # type: ignore
-        tx_id_str = str(tx_id)
-        logger.info(
-            f":white_check_mark: {log_prefix}: Successfully submitted self-update! TxID: [yellow]{tx_id_str}[/yellow]"
-        )
-        submitted_tx_ids[f"validator_{self_uid_hex}"] = tx_id_str
-
-    except ApiError as e:
-        error_msg = f"Blockfrost API Error ({e.status_code}): {e.message}"
-        logger.error(
-            f":x: {log_prefix}: Blockfrost API Error on submit: Status=[red]{e.status_code}[/red], Message=[yellow]{e.message}[/yellow]",
-            exc_info=False,
-        )
-        failed_updates[self_uid_hex] = error_msg
-    except Exception as e:
-        error_msg = f"Submit Error: {str(e)}"
-        logger.exception(
-            f":rotating_light: {log_prefix}: Generic error during transaction submission: {e}"
-        )
-        failed_updates[self_uid_hex] = error_msg
 
     # --- Tổng kết ---
     total_submitted = len(submitted_tx_ids)

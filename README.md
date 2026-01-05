@@ -18,6 +18,9 @@ This project includes an SDK toolkit and a command-line interface (CLI) for inte
 
 ## 📋 Current Features
 
+*   **Dynamic Subnets:** Create and deploy custom subnets with unique task logic and scoring mechanisms.
+*   **zkML Integration:** Built-in support for Zero-Knowledge Machine Learning proofs using `ezkl`.
+*   **Subnet Simulator:** Test your subnet logic locally with the `simulate` command.
 *   **Wallet Management CLI (`mtcli w`):**
     *   Create Coldkey (`create-coldkey`): Generates a secure mnemonic phrase and encrypts it for storing the root key.
     *   Restore Coldkey (`restore-coldkey`): Recreates a coldkey from a saved mnemonic phrase.
@@ -39,6 +42,23 @@ mtcli tx --help
 mtcli query --help
 mtcli w <command_name> --help # Example: mtcli w create-coldkey --help
 mtcli query <command_name> --help # Example: mtcli query address --help
+```
+
+### Subnet & Simulation Commands
+
+**Run a Validator:**
+```bash
+mtcli run_validator --subnet sdk.subnets.text_gen.TextGenerationSubnet --coldkey my_coldkey --hotkey my_hotkey --network testnet
+```
+
+**Run a Miner:**
+```bash
+mtcli run_miner --subnet sdk.subnets.text_gen.TextGenerationSubnet --coldkey my_coldkey --uid <UID> --network testnet
+```
+
+**Simulate a Subnet Locally:**
+```bash
+mtcli simulate --subnet sdk.subnets.text_gen.TextGenerationSubnet --miners 3 --steps 5
 ```
 
 ### Wallet Commands (`mtcli w`)

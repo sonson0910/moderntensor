@@ -76,6 +76,8 @@ from pycardano import (
     ExtendedSigningKey,
 )
 
+from sdk.subnets.protocol import SubnetProtocol
+
 # --- Import các hàm logic đã tách ra ---
 from .selection import select_miners_logic
 from .scoring import score_results_logic, broadcast_scores_logic
@@ -123,6 +125,7 @@ class ValidatorNode:
         http_client (httpx.AsyncClient): Async HTTP client for P2P communication.
         script_hash (ScriptHash): Script hash of the validator contract.
         script_bytes (bytes): Script bytes of the validator contract.
+        subnet_protocol (SubnetProtocol): The specific subnet logic to run.
     """
 
     def __init__(
@@ -132,6 +135,7 @@ class ValidatorNode:
         signing_key: ExtendedSigningKey,
         stake_signing_key: Optional[ExtendedSigningKey] = None,
         state_file="validator_state.json",
+        subnet_protocol: Optional[SubnetProtocol] = None,  # Inject Subnet Protocol
     ):
         """
         Initializes the Validator Node.
@@ -142,6 +146,7 @@ class ValidatorNode:
             signing_key (ExtendedSigningKey): The validator's payment signing key.
             stake_signing_key (Optional[ExtendedSigningKey]): The validator's stake signing key, if any.
             state_file (str): Path to the file for saving/loading the last completed cycle.
+            subnet_protocol (SubnetProtocol): The specific subnet logic implementation.
 
         Raises:
             ValueError: If essential arguments (validator_info, context, signing_key) are missing,
@@ -157,6 +162,8 @@ class ValidatorNode:
             raise ValueError("PaymentSigningKey must be provided.")
 
         self.info = validator_info
+        self.subnet_protocol = subnet_protocol  # Store the protocol
+
         # Define prefix early for use in initial logs
         self.uid_prefix = f"[{self.info.uid}]"  # Base prefix with UID
         init_prefix = f"[bold green][Init:{self.uid_prefix}][/bold green]"  # Specific prefix for init
@@ -170,6 +177,15 @@ class ValidatorNode:
         logger.debug(
             f"{init_prefix} :floppy_disk: State file set to: [blue]{self.state_file}[/blue]"
         )
+        if self.subnet_protocol:
+            logger.info(
+                f"{init_prefix} :puzzle_piece: Loaded Subnet Protocol: {self.subnet_protocol.get_metadata()['name']}"
+            )
+        else:
+            logger.warning(
+                f"{init_prefix} :warning: No Subnet Protocol loaded! Node will fail to create tasks."
+            )
+
         self.miners_selected_for_cycle: Set[str] = set()
 
         # Load initial cycle
@@ -198,6 +214,51 @@ class ValidatorNode:
         self.validators_info: Dict[str, ValidatorInfo] = {}
         self.current_utxo_map: Dict[str, UTxO] = {}  # Map: uid_hex -> UTxO object
         self.tasks_sent: Dict[str, TaskAssignment] = {}
+
+        # --- Cải tiến: Commit-Reveal Storage ---
+        self.commitments: Dict[str, Any] = {}  # {task_id: {miner_uid: MinerCommitment}}
+
+        # --- Cải tiến: Dynamic Difficulty ---
+        self.current_difficulty: float = 1.0  # Mặc định 1.0
+        self.target_avg_trust: float = 0.7  # Mục tiêu Trust trung bình của mạng lưới
+
+    def adjust_network_difficulty(self):
+        """
+        Tự động điều chỉnh độ khó của mạng lưới dựa trên hiệu suất trung bình của Miner.
+        (Dynamic Difficulty Adjustment - Bitcoin Style)
+        """
+        if not self.miners_info:
+            return
+
+        # Tính Trust Score trung bình của các Miner active
+        active_miners = [
+            m for m in self.miners_info.values() if getattr(m, "status", 1) == 1
+        ]  # STATUS_ACTIVE
+        if not active_miners:
+            return
+
+        avg_trust = sum(m.trust_score for m in active_miners) / len(active_miners)
+        logger.info(
+            f"Current Network Average Trust: {avg_trust:.4f} (Target: {self.target_avg_trust})"
+        )
+
+        # Điều chỉnh độ khó
+        # Nếu Trust cao > Target -> Mạng lưới đang làm tốt -> Tăng độ khó để thử thách
+        if avg_trust > self.target_avg_trust * 1.1:  # > 10% so với target
+            self.current_difficulty *= 1.05  # Tăng 5%
+            logger.info(
+                f":chart_with_upwards_trend: Increasing Network Difficulty to {self.current_difficulty:.4f}"
+            )
+
+        # Nếu Trust thấp < Target -> Mạng lưới đang gặp khó -> Giảm độ khó
+        elif avg_trust < self.target_avg_trust * 0.9:  # < 10% so với target
+            self.current_difficulty *= 0.95  # Giảm 5%
+            logger.info(
+                f":chart_with_downwards_trend: Decreasing Network Difficulty to {self.current_difficulty:.4f}"
+            )
+
+        # Giới hạn độ khó (Safety bounds)
+        self.current_difficulty = max(0.1, min(10.0, self.current_difficulty))
         self.cycle_scores: Dict[str, List[ValidatorScore]] = defaultdict(
             list
         )  # Điểm tích lũy của cả chu kỳ
@@ -712,7 +773,8 @@ class ValidatorNode:
                     "Current validator info UID is invalid after loading metagraph."
                 )
 
-            # TODO: Load và xử lý dữ liệu Subnet/Foundation nếu cần
+            # Future: Load Subnet/Foundation data here if dynamic parameters (DAO) are implemented.
+            # Currently using static settings from sdk.config.settings.
 
             load_duration = time.time() - start_time
             logger.info(
@@ -1000,7 +1062,7 @@ class ValidatorNode:
                 miner_uid=miner_uid,
                 validator_uid=self_uid_hex,  # Use hex UID
                 timestamp_sent=time.time(),
-                expected_result_format={},  # TODO: Define actual expected format if needed
+                expected_result_format={},  # Reserved for future schema validation
             )
 
             # --- State Updates Before Sending ---
@@ -1248,7 +1310,29 @@ class ValidatorNode:
 
     # --- Add this placeholder scoring method (IMPORTANT) ---
     # This NEEDS to be overridden by Subnet1Validator
+    def _create_task_data(
+        self, miner_uid: str, difficulty: float = 1.0
+    ) -> Dict[str, Any]:
+        """
+        Creates the data payload for a task using the loaded Subnet Protocol.
+        """
+        if self.subnet_protocol:
+            return self.subnet_protocol.create_task(miner_uid, difficulty)
+
+        raise NotImplementedError(
+            "_create_task_data failed: No Subnet Protocol loaded."
+        )
+
     def _score_individual_result(self, task_data: Any, result_data: Any) -> float:
+        """
+        Scores the result using the loaded Subnet Protocol.
+        """
+        if self.subnet_protocol:
+            return self.subnet_protocol.score_result(task_data, result_data)
+
+        raise NotImplementedError(
+            "_score_individual_result failed: No Subnet Protocol loaded."
+        )
         """
         (Placeholder/Needs Override) Calculates the score for a single miner result.
 
@@ -1348,9 +1432,9 @@ class ValidatorNode:
             )
             return False
 
-        # TODO: Xác định đường dẫn endpoint chính xác trên miner node để nhận task
         # Endpoint này cần được thống nhất giữa validator và miner.
-        target_url = f"{miner_endpoint}/receive-task"  # <<<--- GIẢ ĐỊNH ENDPOINT
+        # Đã xác nhận khớp với route /receive-task trong MinerAgent (sdk/agent/miner_agent.py)
+        target_url = f"{miner_endpoint}/receive-task"
 
         try:
             # Serialize task data thành JSON
@@ -1378,8 +1462,8 @@ class ValidatorNode:
                     f"Successfully sent task {task.task_id} to {miner_endpoint}. Status: {response.status_code} (Non-JSON response)"
                 )
 
-            # TODO: Có thể cần xử lý nội dung response nếu miner trả về thông tin xác nhận
-            # Ví dụ: data = response.json()
+            # Currently ignoring specific response fields (like ETA).
+            # Assuming 200 OK + valid JSON (optional) is sufficient confirmation.
             return True
 
         except httpx.RequestError as e:
@@ -1442,7 +1526,11 @@ class ValidatorNode:
 
             task_id = f"task_{self.current_cycle}_{self.info.uid}_{miner.uid}_{random.randint(1000,9999)}"
             try:
-                task_data = self._create_task_data(miner.uid)
+                # --- Cải tiến: Dynamic Difficulty ---
+                # Truyền current_difficulty vào hàm tạo task
+                task_data = self._create_task_data(
+                    miner.uid, difficulty=self.current_difficulty
+                )
                 # Giả sử TaskModel có thể tạo từ dict hoặc có constructor phù hợp
                 # Cần đảm bảo TaskModel được import đúng
                 task = TaskModel(task_id=task_id, **task_data)
@@ -1659,15 +1747,15 @@ class ValidatorNode:
             results_received=results_to_score,  # <<<--- Dùng bản copy
             tasks_sent=self.tasks_sent,
             validator_uid=self.info.uid,
+            subnet_protocol=self.subnet_protocol,  # Pass subnet protocol
         )
-        # Hàm score_results_logic sẽ gọi _calculate_score_from_result (cần override)
+        # Hàm score_results_logic sẽ gọi subnet_protocol.score_result hoặc fallback
 
     async def add_received_score(
         self, submitter_uid: str, cycle: int, scores: List[ValidatorScore]
     ):
         """Adds scores received from another validator to memory (async safe)."""
         # Logic này quản lý state nội bộ nên giữ lại trong Node
-        # TODO: Thêm validation cho scores và submitter_uid
         async with self.received_scores_lock:
             if cycle not in self.received_validator_scores:
                 # Chỉ lưu điểm cho chu kỳ hiện tại hoặc tương lai gần? Tránh lưu trữ quá nhiều.
@@ -1748,7 +1836,7 @@ class ValidatorNode:
 
     async def _get_active_validators(self) -> List[ValidatorInfo]:
         """Gets the list of currently active validators."""
-        # TODO: Implement actual metagraph query or use a reliable cache.
+        # Sử dụng danh sách validators_info đã được sync từ metagraph (periodic sync)
         logger.debug("Getting active validators...")
         # Tạm thời lọc từ danh sách đã load, cần đảm bảo danh sách này được cập nhật thường xuyên
         active_vals = [
@@ -1916,19 +2004,20 @@ class ValidatorNode:
             network=self.network,
             # signing_key=self.signing_key # Có thể cần nếu commit phạt ngay
         )
-        # TODO: Xử lý penalized_updates nếu cần commit ngay hoặc lưu lại
+
         if penalized_updates:
             logger.warning(
                 f"Validators penalized in verification step: {list(penalized_updates.keys())}"
             )
-            # Hiện tại chỉ cập nhật trust trong self.validators_info, chưa commit
+            # Hiện tại chỉ cập nhật trust trong self.validators_info, chưa commit ngay lập tức.
+            # Trust score mới sẽ được sử dụng trong tính toán consensus của chu kỳ này.
 
         return
 
     # --- Chạy Đồng thuận và Cập nhật Trạng thái ---
     def run_consensus_and_penalties(
         self, self_validator_uid: str, consensus_possible: bool
-    ) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    ) -> Tuple[Dict[str, float], Dict[str, Any], Dict[str, float]]:
         """Runs consensus calculations and determines new validator states."""
         # Gọi hàm logic từ state.py
         return run_consensus_logic(
@@ -1942,7 +2031,7 @@ class ValidatorNode:
         )
 
     async def update_miner_state(
-        self, final_scores: Dict[str, float]
+        self, final_scores: Dict[str, float], miner_penalties: Dict[str, float] = None
     ) -> Dict[str, MinerDatum]:
         """Prepares MinerDatum updates based on consensus scores."""
         # Gọi hàm logic từ state.py
@@ -1952,10 +2041,13 @@ class ValidatorNode:
             final_scores=final_scores,
             settings=self.settings,
             current_utxo_map=self.current_utxo_map,
+            miner_penalties=miner_penalties,
         )
 
     async def prepare_validator_updates(
-        self, calculated_states: Dict[str, Any]
+        self,
+        calculated_states: Dict[str, Any],
+        final_miner_scores: Dict[str, float] = None,
     ) -> Dict[str, ValidatorDatum]:
         """Prepares the ValidatorDatum update for this node itself."""
         # Gọi hàm logic từ state.py
@@ -1965,6 +2057,8 @@ class ValidatorNode:
             calculated_states=calculated_states,
             settings=self.settings,
             context=self.context,
+            final_miner_scores=final_miner_scores,
+            signing_key=self.signing_key,  # Pass signing key for correct address hashing
         )
 
     async def commit_updates_to_blockchain(
@@ -2252,7 +2346,7 @@ class ValidatorNode:
 
             # === H. Chạy Đồng thuận & Tính toán ===
             logger.info(":brain: Step 6: Running final consensus calculations...")
-            final_miner_scores, calculated_validator_states = (
+            final_miner_scores, calculated_validator_states, miner_penalties = (
                 self.run_consensus_and_penalties(
                     consensus_possible=consensus_possible,
                     self_validator_uid=self.info.uid,
@@ -2328,7 +2422,8 @@ class ValidatorNode:
             # === J. Chuẩn bị Self-Update Datum ===
             logger.info(":pencil2: Step 8: Preparing self validator datum update...")
             validator_self_update = await self.prepare_validator_updates(
-                calculated_validator_states
+                calculated_states=calculated_validator_states,
+                final_miner_scores=final_miner_scores,
             )
             logger.info(
                 f":pencil2: Step 8: Prepared [cyan]{len(validator_self_update)}[/cyan] self validator datums."

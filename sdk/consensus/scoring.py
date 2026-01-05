@@ -32,7 +32,12 @@ try:
 except ImportError as e:
     raise ImportError(f"Error importing dependencies in scoring.py: {e}")
 
+from sdk.utils.zkml import ZkmlManager  # Import zkML Manager
+
 logger = logging.getLogger(__name__)
+
+# Khởi tạo ZkmlManager (có thể cần cấu hình path từ settings)
+zkml_manager = ZkmlManager(model_path="model.onnx", settings_path="settings.json")
 
 
 # --- Helper function for canonical serialization ---
@@ -85,33 +90,19 @@ if TYPE_CHECKING:
 
 
 # --- 1. Đánh dấu hàm này cần override ---
+# DEPRECATED: Logic này đã được chuyển vào SubnetProtocol.score_result
+# Giữ lại để tương thích ngược nếu cần, nhưng nên sử dụng SubnetProtocol.
 def _calculate_score_from_result(task_data: Any, result_data: Any) -> float:
     """
-    (Trừu tượng/Cần Override) Tính điểm P_miner,v từ dữ liệu task và kết quả.
+    (Deprecated) Tính điểm P_miner,v từ dữ liệu task và kết quả.
 
-    Lớp Validator kế thừa cho từng Subnet PHẢI override phương thức này
-    với logic chấm điểm phù hợp cho loại nhiệm vụ AI của họ.
-
-    Args:
-        task_data: Dữ liệu của nhiệm vụ đã giao (từ TaskAssignment.task_data).
-        result_data: Dữ liệu kết quả mà miner trả về (từ MinerResult.result_data).
-
-    Returns:
-        Điểm số (từ 0.0 đến 1.0).
-
-    Raises:
-        NotImplementedError: Nếu phương thức này không được override bởi lớp con.
+    Hiện tại logic này nên được implement trong SubnetProtocol.score_result.
     """
-    # Hoặc trả về điểm mặc định và log warning:
     logger.warning(
-        f"'_calculate_score_from_result' is using the base implementation. "
-        f"This should be overridden by specific subnet/validator logic. "
-        f"Task data type: {type(task_data)}, Result data type: {type(result_data)}. "
-        f"Returning default score 0.0"
+        f"'_calculate_score_from_result' in scoring.py is deprecated. "
+        f"Use SubnetProtocol.score_result instead."
     )
     return 0.0
-    # Hoặc raise lỗi để bắt buộc override:
-    # raise NotImplementedError("Scoring logic must be implemented by validator subclass/subnet.")
 
 
 # ---------------------------------------
@@ -121,6 +112,7 @@ def score_results_logic(
     results_received: Dict[str, List[MinerResult]],
     tasks_sent: Dict[str, TaskAssignment],
     validator_uid: str,
+    subnet_protocol: Optional[Any] = None,  # Thêm tham số subnet_protocol
 ) -> Dict[str, List[ValidatorScore]]:
     """
     Chấm điểm tất cả các kết quả hợp lệ nhận được từ miners cho chu kỳ hiện tại.
@@ -129,10 +121,16 @@ def score_results_logic(
     1. If the task ID corresponds to a task actually sent by this validator.
     2. If the result came from the miner the task was assigned to.
 
-    Valid results are then scored using `_calculate_score_from_result`, and a
-    `ValidatorScore` object is created.
+    Valid results are then scored using `subnet_protocol.score_result` (if available)
+    or fallback to `_calculate_score_from_result`.
 
     Args:
+        results_received: Dictionary mapping task IDs to lists of `MinerResult` objects received.
+                          {task_id: [MinerResult, MinerResult, ...]}.
+        tasks_sent: Dictionary mapping task IDs to the `TaskAssignment` objects sent out.
+                    {task_id: TaskAssignment}.
+        validator_uid: UID (hex string) of the validator performing the scoring.
+        subnet_protocol: (Optional) Instance of SubnetProtocol to use for
         results_received: Dictionary mapping task IDs to lists of `MinerResult` objects received.
                           {task_id: [MinerResult, MinerResult, ...]}.
         tasks_sent: Dictionary mapping task IDs to the `TaskAssignment` objects sent out.
@@ -161,30 +159,52 @@ def score_results_logic(
         valid_result_found = False
         for result in results:
             if result.miner_uid == assignment.miner_uid:
-                # Gọi hàm chấm điểm (có thể là hàm đã override)
-                try:
-                    score = _calculate_score_from_result(
-                        assignment.task_data, result.result_data
-                    )
-                    # Đảm bảo điểm nằm trong khoảng [0, 1]
-                    score = max(0.0, min(1.0, score))
-                    valid_result_found = True  # Đánh dấu đã tìm thấy kết quả hợp lệ
-                except NotImplementedError:
-                    logger.error(
-                        f"Scoring logic not implemented for task {task_id}! Assigning score 0."
-                    )
-                    score = 0.0
-                    valid_result_found = True  # Vẫn coi như đã xử lý
-                except Exception as e:
-                    logger.exception(
-                        f"Error calculating score for task {task_id}, miner {result.miner_uid}: {e}. Assigning score 0."
-                    )
-                    score = 0.0
-                    # Có nên coi đây là kết quả hợp lệ để dừng không? Tạm thời không.
-                    continue  # Thử kết quả tiếp theo nếu có lỗi
+                # --- Cải tiến: Verify zkML Proof ---
+                penalty = 0.0
+                if result.proof:
+                    is_valid_proof = zkml_manager.verify_proof(result.proof)
+                    if not is_valid_proof:
+                        logger.warning(
+                            f"Invalid zkML proof from Miner {result.miner_uid}. Score = 0. Penalty = 1.0"
+                        )
+                        score = 0.0
+                        penalty = 1.0  # Phạt nặng vì fake proof
+                    else:
+                        # Proof hợp lệ, tiến hành chấm điểm logic
+                        try:
+                            if subnet_protocol:
+                                score = subnet_protocol.score_result(
+                                    assignment.task_data, result.result_data
+                                )
+                            else:
+                                score = _calculate_score_from_result(
+                                    assignment.task_data, result.result_data
+                                )
+                            score = max(0.0, min(1.0, score))
+                        except Exception as e:
+                            logger.error(f"Error scoring: {e}")
+                            score = 0.0
+                else:
+                    # Nếu không có proof (với các task yêu cầu proof), có thể cho điểm 0 hoặc thấp
+                    # Tạm thời vẫn chấm điểm nhưng log warning
+                    logger.warning(f"Missing zkML proof from Miner {result.miner_uid}.")
+                    try:
+                        if subnet_protocol:
+                            score = subnet_protocol.score_result(
+                                assignment.task_data, result.result_data
+                            )
+                        else:
+                            score = _calculate_score_from_result(
+                                assignment.task_data, result.result_data
+                            )
+                        score = max(0.0, min(1.0, score))
+                    except Exception:
+                        score = 0.0
+
+                valid_result_found = True
 
                 logger.info(
-                    f"  Scored Miner {result.miner_uid} for task {task_id}: {score:.4f}"
+                    f"  Scored Miner {result.miner_uid} for task {task_id}: {score:.4f} (Penalty: {penalty})"
                 )
 
                 val_score = ValidatorScore(
@@ -192,6 +212,7 @@ def score_results_logic(
                     miner_uid=result.miner_uid,
                     validator_uid=validator_uid,
                     score=score,
+                    penalty=penalty,
                 )
                 validator_scores[task_id].append(val_score)
                 break  # Chỉ chấm điểm kết quả hợp lệ đầu tiên từ đúng miner
