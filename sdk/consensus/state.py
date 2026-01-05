@@ -335,8 +335,8 @@ def run_consensus_logic(
 
                 # Accumulate penalties
                 if getattr(score_entry, "penalty", 0.0) > 0:
-                     stake = validator_stakes[validator_uid_hex]
-                     miner_penalties[miner_uid_hex] += stake * score_entry.penalty
+                    stake = validator_stakes[validator_uid_hex]
+                    miner_penalties[miner_uid_hex] += stake * score_entry.penalty
 
     # Normalize penalties
     if total_active_stake > 0:
