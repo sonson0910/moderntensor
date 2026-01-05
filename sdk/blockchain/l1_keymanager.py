@@ -81,13 +81,26 @@ class L1HDWallet:
         Derive a key at a given BIP32 path.
         
         Args:
-            path: BIP32 derivation path (e.g., "m/44'/0'/0'/0/0")
-                 Standard paths:
-                 - m/44'/0'/0'/0/0 - First account, first key
-                 - m/44'/0'/0'/0/1 - First account, second key
+            path: BIP32 derivation path following BIP44 standard.
+                 
+                 Format: m / purpose' / coin_type' / account' / change / address_index
+                 
+                 Standard paths used in ModernTensor:
+                 - Payment keys: m/44'/0'/0'/0/{index}  (account 0)
+                 - Stake keys:   m/44'/0'/1'/0/{index}  (account 1)
+                 
+                 The apostrophe (') indicates hardened derivation for security.
+                 
+                 Examples:
+                 - m/44'/0'/0'/0/0 - Root payment key
+                 - m/44'/0'/0'/0/1 - Second payment key
+                 - m/44'/0'/1'/0/0 - Root stake key
                  
         Returns:
-            KeyPair: Derived key pair
+            KeyPair: Derived key pair with private/public keys
+            
+        Raises:
+            ValueError: If derivation fails or path is invalid
         """
         if path in self._derived_keys:
             return self._derived_keys[path]
@@ -135,15 +148,23 @@ class L1HDWallet:
     
     def derive_hotkey(self, index: int = 0) -> KeyPair:
         """
-        Derive a hotkey at the given index.
+        Derive a hotkey (payment key) at the given index.
         
-        Uses path: m/44'/0'/0'/0/{index}
+        Uses BIP44 path for payment keys: m/44'/0'/0'/0/{index}
+        
+        For staking operations, use derive_key() with stake path:
+        m/44'/0'/1'/0/{index}
         
         Args:
-            index: Derivation index
+            index: Derivation index (0, 1, 2, ...)
             
         Returns:
-            KeyPair: Hotkey pair
+            KeyPair: Payment hotkey pair
+            
+        Example:
+            >>> wallet = L1HDWallet()
+            >>> payment_key = wallet.derive_hotkey(0)  # m/44'/0'/0'/0/0
+            >>> stake_key = wallet.derive_key("m/44'/0'/1'/0/0")
         """
         path = f"m/44'/0'/0'/0/{index}"
         return self.derive_key(path)

@@ -191,14 +191,11 @@ class ColdKeyManager:
             hdwallet = L1HDWallet.from_mnemonic(mnemonic)
 
             # --- Derive Layer 1 keys using standard BIP44 paths ---
-            # m/44'/0'/0'/0/0 - Payment key (receiving/sending)
+            # Payment key: m/44'/0'/0'/0/0 (account 0, receiving/sending)
             payment_keypair = hdwallet.derive_key("m/44'/0'/0'/0/0")
             
-            # m/44'/0'/1'/0/0 - Stake key (for staking operations)
-            # Using different account (1) for separation
-            stake_keypair = hdwallet.derive_key("m/44'/0'/1'/0/0")
-            # m/44'/0'/1'/0/0 - Stake key (for staking operations)
-            # Using different account (1) for separation
+            # Stake key: m/44'/0'/1'/0/0 (account 1, staking operations)
+            # Using separate account for security (prevents key reuse)
             stake_keypair = hdwallet.derive_key("m/44'/0'/1'/0/0")
             
             # Get Layer 1 address from payment key
