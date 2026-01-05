@@ -1716,8 +1716,7 @@ class ValidatorNode:
             # Check buffer size limit to prevent memory leak
             max_buffer_size = self.settings.CONSENSUS_MAX_RESULTS_BUFFER_SIZE
             if len(self.results_buffer) >= max_buffer_size:
-                # Remove oldest entries (use OrderedDict-like behavior)
-                # Since dict maintains insertion order in Python 3.7+, we can pop first item
+                # Remove oldest entry (dicts maintain insertion order in Python 3.7+)
                 oldest_task_id = next(iter(self.results_buffer))
                 removed_result = self.results_buffer.pop(oldest_task_id)
                 logger.warning(

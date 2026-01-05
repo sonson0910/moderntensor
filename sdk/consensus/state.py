@@ -322,8 +322,9 @@ def run_consensus_logic(
     # Apply stake dampening to reduce centralization risk
     if settings.CONSENSUS_STAKE_DAMPENING_ENABLED:
         dampening_factor = settings.CONSENSUS_STAKE_DAMPENING_FACTOR
+        # Validate stakes are positive before applying power operation
         validator_stakes = {
-            uid: stake ** dampening_factor
+            uid: max(1e-9, stake) ** dampening_factor  # Ensure positive stake
             for uid, stake in validator_stakes.items()
         }
         logger.debug(f"Applied stake dampening with factor {dampening_factor}")
@@ -1314,8 +1315,8 @@ async def commit_updates_logic(
             owner_utxos = context.utxos(str(owner_address))
             owner_balance = sum(utxo.output.amount.coin for utxo in owner_utxos)
             
-            # Estimate minimum fee (rough estimate: 200k-500k lovelace for script tx)
-            estimated_min_fee = 500_000  # 0.5 ADA as conservative estimate
+            # Use configured fee estimate
+            estimated_min_fee = settings.CONSENSUS_TRANSACTION_FEE_ESTIMATE
             required_amount = output_value.coin + estimated_min_fee
             
             if owner_balance < required_amount:

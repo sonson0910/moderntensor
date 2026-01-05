@@ -226,6 +226,11 @@ class Settings(BaseSettings):
         description="Kích thước tối đa của results_buffer để ngăn memory leak.",
     )
     
+    CONSENSUS_TRANSACTION_FEE_ESTIMATE: int = Field(
+        500_000,
+        description="Ước tính phí giao dịch tối thiểu (lovelace) cho script transactions.",
+    )
+    
     CONSENSUS_STAKE_DAMPENING_ENABLED: bool = Field(
         True,
         description="Bật stake dampening để giảm ảnh hưởng của validator có stake lớn.",
@@ -233,9 +238,9 @@ class Settings(BaseSettings):
     
     CONSENSUS_STAKE_DAMPENING_FACTOR: float = Field(
         0.5,
-        ge=0.0,
+        ge=0.1,
         le=1.0,
-        description="Hệ số dampening cho stake (0.5 = sqrt, 1.0 = no dampening).",
+        description="Hệ số dampening cho stake (0.5 = sqrt, 1.0 = no dampening). Min 0.1 to avoid edge cases.",
     )
 
     # --- Miner Selection ---
