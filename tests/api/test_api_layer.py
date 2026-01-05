@@ -4,6 +4,7 @@ Tests for JSON-RPC and GraphQL APIs.
 import pytest
 import tempfile
 import shutil
+import time
 from pathlib import Path
 
 from sdk.blockchain.block import Block, BlockHeader
@@ -68,7 +69,6 @@ def sample_blocks(blockchain_db, state_db):
         tx.sign(keypair.private_key)
         
         # Create block header
-        import time
         header = BlockHeader(
             version=1,
             height=i,

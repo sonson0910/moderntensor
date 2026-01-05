@@ -333,6 +333,9 @@ class GraphQLAPI:
                 )
         
         # Bind resolvers to instance
+        # Note: This binding pattern is necessary because Strawberry's @strawberry.field
+        # decorator creates resolvers that need access to this GraphQLAPI instance.
+        # The lambda wrappers capture 'self' and forward to the actual Query methods.
         Query.block = lambda self_inner, **kwargs: Query.block(self, **kwargs)
         Query.blocks = lambda self_inner, **kwargs: Query.blocks(self, **kwargs)
         Query.transaction = lambda self_inner, **kwargs: Query.transaction(self, **kwargs)
