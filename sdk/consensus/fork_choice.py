@@ -97,8 +97,10 @@ class ForkChoice:
         
         parent_node = self.blocks[parent_hash]
         
-        # Calculate total difficulty (simple chain length for now)
-        # TODO: Implement proper difficulty calculation
+        # Calculate total difficulty for PoS
+        # In PoS, difficulty represents cumulative stake or weight
+        # For simplicity, use chain length (height) as total difficulty
+        # Production could use: cumulative stake, attestation count, or time-weighted stake
         total_difficulty = parent_node.total_difficulty + 1
         
         # Create block node

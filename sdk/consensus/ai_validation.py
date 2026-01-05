@@ -154,9 +154,11 @@ class AIValidator:
         # 2. Verify zkML proof
         if result.proof:
             try:
+                # Use configurable verification key path
+                vk_path = getattr(self, 'vk_path', 'vk.key')  # Allow configuration
                 proof_valid = self.zkml.verify_proof(
                     result.proof.hex() if isinstance(result.proof, bytes) else result.proof,
-                    vk_path="vk.key"  # TODO: Make configurable
+                    vk_path=vk_path
                 )
                 if not proof_valid:
                     logger.error(f"zkML proof verification failed for task {task.task_id.hex()[:8]}...")
@@ -166,8 +168,12 @@ class AIValidator:
                 return False
         else:
             logger.warning(f"No zkML proof provided for task {task.task_id.hex()[:8]}...")
-            # For now, accept without proof (development mode)
-            # TODO: Make proof mandatory in production
+            # Check if proof is mandatory (production mode)
+            require_proof = getattr(self, 'require_proof', False)
+            if require_proof:
+                logger.error("zkML proof is mandatory in production mode")
+                return False
+            # Accept without proof in development mode
         
         # 3. Check result correctness (application-specific)
         # This would involve checking the result data matches expected format
@@ -282,9 +288,21 @@ class AIValidator:
         expired = []
         
         for task_id, task in self.pending_tasks.items():
-            # TODO: Track submission height to properly calculate timeout
-            # For now, just placeholder logic
-            pass
+            # Track submission height for proper timeout calculation
+            # Check if task has expired based on submission time or block height
+            submission_height = task.get('submission_height', 0)
+            timeout_blocks = task.get('timeout_blocks', 100)  # Default timeout in blocks
+            
+            # In production, compare against current block height
+            # For now, use time-based expiration as fallback
+            if hasattr(self, 'current_block_height'):
+                if self.current_block_height - submission_height > timeout_blocks:
+                    expired.append(task_id)
+            # Fallback to time-based for development
+            else:
+                submission_time = task.get('submission_time', 0)
+                if time.time() - submission_time > 3600:  # 1 hour
+                    expired.append(task_id)
         
         for task_id in expired:
             del self.pending_tasks[task_id]

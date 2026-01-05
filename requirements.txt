@@ -1,6 +1,8 @@
 pycardano==0.12.2
 bip_utils==2.9.3
 cryptography==42.0.8
+ecdsa==0.19.1
+pycryptodome==3.23.0
 annotated-types==0.7.0
 anyio==4.7.0
 certifi==2024.12.14
