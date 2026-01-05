@@ -132,9 +132,18 @@ class EmissionController:
         Returns:
             Dictionary with supply metrics
         """
+        # Protect against division by zero (should not happen with default config)
+        if self.config.max_supply == 0:
+            return {
+                'current_supply': self.current_supply,
+                'max_supply': 0,
+                'remaining_supply': 0,
+                'supply_percentage': 0
+            }
+        
         return {
             'current_supply': self.current_supply,
             'max_supply': self.config.max_supply,
             'remaining_supply': self.config.max_supply - self.current_supply,
-            'supply_percentage': (self.current_supply / self.config.max_supply * 100) if self.config.max_supply > 0 else 0
+            'supply_percentage': (self.current_supply / self.config.max_supply * 100)
         }

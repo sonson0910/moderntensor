@@ -5,7 +5,7 @@ This module manages token recycling from fees, slashing, and penalties,
 reducing the need for new token minting.
 """
 
-from typing import Dict
+from typing import Dict, Tuple
 
 
 class RecyclingPool:
@@ -58,7 +58,7 @@ class RecyclingPool:
     def allocate_rewards(
         self,
         required_amount: int
-    ) -> tuple[int, int]:
+    ) -> Tuple[int, int]:
         """
         Allocate rewards from pool or indicate amount to mint.
         

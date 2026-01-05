@@ -124,8 +124,8 @@ class MerkleTree:
         current = leaf
         
         for sibling in proof:
-            # Determine order (smaller hash first for deterministic hashing)
-            if current <= sibling:
+            # Consistent ordering: concatenate in sorted order for deterministic hashing
+            if current < sibling:
                 combined = current + sibling
             else:
                 combined = sibling + current
