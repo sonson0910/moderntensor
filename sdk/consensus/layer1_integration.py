@@ -17,6 +17,7 @@ from sdk.metagraph.aggregated_state import (
 )
 from sdk.consensus.weight_matrix import WeightMatrixManager
 from sdk.core.datatypes import MinerInfo, ValidatorInfo
+from sdk.metagraph.metagraph_datum import STATUS_ACTIVE
 
 
 class Layer1ConsensusIntegrator:
@@ -271,8 +272,8 @@ class Layer1ConsensusIntegrator:
     ) -> None:
         """Update aggregated state with new consensus data."""
         # Update participant counts
-        active_miners = sum(1 for m in miners if m.status == 1)
-        active_validators = sum(1 for v in validators if v.status == 1)
+        active_miners = sum(1 for m in miners if m.status == STATUS_ACTIVE)
+        active_validators = sum(1 for v in validators if v.status == STATUS_ACTIVE)
         
         self.state_manager.update_participant_counts(
             subnet_uid=subnet_uid,

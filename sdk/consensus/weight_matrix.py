@@ -108,6 +108,7 @@ class WeightMatrixManager:
         merkle_root = self._calculate_merkle_root(weights)
         
         # Upload to IPFS (Layer 3)
+        import logging
         ipfs_hash = ""
         if upload_to_ipfs and self.ipfs:
             try:
@@ -118,8 +119,8 @@ class WeightMatrixManager:
                     'is_sparse': is_sparse,
                     'timestamp': int(datetime.now().timestamp())
                 })
-            except Exception as e:
-                print(f"Warning: Failed to upload to IPFS: {e}")
+            except (ConnectionError, TimeoutError) as e:
+                logging.warning(f"Failed to upload to IPFS: {e}")
                 ipfs_hash = "local_only"
         else:
             ipfs_hash = "local_only"
@@ -177,6 +178,7 @@ class WeightMatrixManager:
         
         # Try IPFS as fallback
         if self.ipfs:
+            import logging
             metadata = self.metadata_cache.get(key)
             if metadata and metadata.ipfs_hash != "local_only":
                 try:
@@ -186,8 +188,8 @@ class WeightMatrixManager:
                         # Store in DB for future use
                         await self._store_in_db(subnet_uid, epoch, weights, metadata)
                         return weights
-                except Exception as e:
-                    print(f"Warning: Failed to download from IPFS: {e}")
+                except (ConnectionError, TimeoutError) as e:
+                    logging.warning(f"Failed to download from IPFS: {e}")
         
         return None
     
@@ -222,9 +224,17 @@ class WeightMatrixManager:
         """
         Calculate Merkle root of weight matrix.
         
-        Uses a simple approach: hash each row, then build Merkle tree.
-        In production, use a proper Merkle tree implementation.
+        IMPORTANT: This is a simplified implementation suitable for development
+        and testing. For production use, implement a proper Merkle tree with:
+        - Binary tree structure with left/right branches
+        - Proof generation capability
+        - Proper leaf node ordering
+        
+        Current approach: Hash each row individually, then hash all row hashes.
+        This provides basic integrity checking but lacks proof generation.
         """
+        import hashlib
+        
         # Hash each row
         row_hashes = []
         for row in weights:
@@ -232,8 +242,8 @@ class WeightMatrixManager:
             row_hash = hashlib.sha256(row_bytes).digest()
             row_hashes.append(row_hash)
         
-        # Build Merkle tree (simplified - just hash all row hashes together)
-        # In production, use proper Merkle tree with left/right branches
+        # Build simplified root (hash all row hashes together)
+        # TODO: Replace with proper binary Merkle tree for production
         all_hashes = b''.join(row_hashes)
         merkle_root = hashlib.sha256(all_hashes).digest()
         
@@ -247,12 +257,13 @@ class WeightMatrixManager:
         """
         Generate Merkle proof for a specific row.
         
-        This is a simplified implementation.
-        In production, implement proper Merkle tree proof generation.
+        NOTE: This method is not yet implemented. A proper Merkle tree
+        implementation with binary tree structure is needed for production use.
         """
-        # For now, return empty list (not implemented)
-        # TODO: Implement proper Merkle proof generation
-        return []
+        raise NotImplementedError(
+            "Merkle proof generation not yet implemented. "
+            "Use _calculate_merkle_root() for basic verification instead."
+        )
     
     def _serialize_sparse_matrix(self, sparse_matrix: scipy.sparse.csr_matrix) -> bytes:
         """Serialize sparse matrix to bytes."""

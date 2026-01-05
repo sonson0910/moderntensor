@@ -21,7 +21,8 @@ try:
     from sdk.config.settings import settings
     DATUM_INT_DIVISOR = settings.METAGRAPH_DATUM_INT_DIVISOR
 except ImportError:
-    print("Warning: Could not import settings for DATUM_INT_DIVISOR. Using default 1_000_000.0")
+    import logging
+    logging.warning("Could not import settings for DATUM_INT_DIVISOR. Using default 1_000_000.0")
     DATUM_INT_DIVISOR = 1_000_000.0
 
 
