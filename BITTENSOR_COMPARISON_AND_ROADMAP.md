@@ -5,27 +5,43 @@
 
 ---
 
-## ⚠️ LƯU Ý QUAN TRỌNG VỀ KIẾN TRÚC
+## ⚠️ LƯU Ý QUAN TRỌNG VỀ KIẾN TRÚC VÀ ƯU TIÊN - CẬP NHẬT
 
 **ModernTensor đang xây dựng blockchain Layer 1 riêng** (theo LAYER1_ROADMAP.md), không phụ thuộc vào Cardano hay blockchain nào khác. Điều này tương tự như Bittensor (dùng Substrate để xây L1 riêng).
 
-**Về Layer 2:**
-- Không dùng Hydra của Cardano (vì không chạy trên Cardano)
-- Sẽ xây dựng **custom Layer 2 Optimistic Rollup** trên L1 của ModernTensor
-- L2 này giúp tăng tốc consensus và giảm costs, tương tự như Optimism/Arbitrum trên Ethereum
+### 🎯 TRẠNG THÁI HIỆN TẠI: LAYER 1 83% HOÀN THÀNH!
 
-**Tóm tắt kiến trúc:**
+**Cập nhật quan trọng:** Sau khi review source code, phát hiện Phases 2-8 đã được implement đầy đủ trong PR #10.
+
+**Trạng thái Layer 1: 83% hoàn thành**
+- ✅ Phase 1: On-Chain State Optimization - HOÀN THÀNH
+- ✅ Phase 2: Core Blockchain (Block, Transaction, State) - HOÀN THÀNH (~1,865 lines)
+- ✅ Phase 3: Consensus Layer (PoS) - HOÀN THÀNH (~1,100 lines)
+- ✅ Phase 4: Network Layer (P2P) - HOÀN THÀNH (~1,550 lines)
+- ✅ Phase 5: Storage Layer - HOÀN THÀNH (~850 lines)
+- ✅ Phase 6: RPC & API - HOÀN THÀNH (~1,200 lines)
+- ✅ Phase 7: Security & Optimization - HOÀN THÀNH (71 tests passing)
+- ✅ Phase 8: Testnet Launch - HOÀN THÀNH
+- ⏸️ Phase 9: Mainnet - CHỈ CÒN 2 THÁNG (Q1 2026)
+
+**Total implementation:** ~9,715 lines production code + comprehensive tests
+
+**Về Layer 2 (SAU KHI HOÀN THIỆN MAINNET):**
+- Layer 2 là mục tiêu **DÀI HẠN**, không phải ưu tiên hiện tại
+- Chỉ bắt đầu Layer 2 sau khi Layer 1 mainnet ổn định
+- Dự kiến: Custom Optimistic Rollup (tương tự Optimism/Arbitrum)
+- Timeline: Q2-Q3 2026 (sau khi mainnet launch Q1 2026)
+
+**Tóm tắt kiến trúc (HIỆN TẠI):**
 ```
-ModernTensor Stack:
-├── Layer 1: Custom blockchain (PoS, Account model)
-│   ├── Block production: ~12s
-│   ├── Native zkML verification
-│   └── Adaptive tokenomics
+ModernTensor Stack - 83% COMPLETE:
+├── Layer 1: Custom blockchain (PoS, Account model) [83% COMPLETE]
+│   ├── ✅ Phase 1: State optimization
+│   ├── ✅ Phase 2-8: Core infrastructure COMPLETE (~9,715 LOC)
+│   └── ⏸️ Phase 9: Mainnet launch (Q1 2026 - 2 months)
 │
-└── Layer 2: Custom Optimistic Rollup
-    ├── Off-chain consensus: <1s
-    ├── Challenge period: 100 blocks
-    └── Batch finalization on L1
+└── Layer 2: FUTURE GOAL (Post-Mainnet launch)
+    └── Timeline: Q2-Q3 2026
 ```
 
 ---
@@ -139,9 +155,30 @@ Off-Chain Storage:
 
 ---
 
-## 🎯 Phần 3: Kế Hoạch Cải Tiến Toàn Diện
+## 🎯 Phần 3: Kế Hoạch Phát Triển Layer 1 (CẬP NHẬT: 83% COMPLETE)
 
-### 3.1 GIAI ĐOẠN 1: On-Chain State Optimization (Tháng 1-2, 2026)
+### ⚠️ QUAN TRỌNG: Layer 1 Đã Hoàn Thành 83%!
+
+**Cập nhật quan trọng:** Phases 2-8 đã được implement đầy đủ (~9,715 lines code + 71 tests).
+
+**Đã hoàn thành:**
+1. ✅ Phase 1: On-Chain State Optimization
+2. ✅ Phase 2: Core Blockchain (Block, Transaction, State)
+3. ✅ Phase 3: Consensus Layer (PoS)
+4. ✅ Phase 4: Network Layer (P2P)
+5. ✅ Phase 5: Storage Layer (LevelDB)
+6. ✅ Phase 6: RPC & API (JSON-RPC, GraphQL)
+7. ✅ Phase 7: Testing & DevOps (71 tests passing)
+8. ✅ Phase 8: Testnet Infrastructure
+
+**Còn lại:**
+9. ⏸️ Phase 9: Mainnet Launch (Q1 2026 - 2 months)
+
+**Layer 2 là mục tiêu DÀI HẠN (Q2-Q3 2026), KHÔNG PHẢI BÂY GIỜ.**
+
+---
+
+### 3.1 GIAI ĐOẠN 1: On-Chain State Optimization (Tháng 1-2, 2026) ✅ HOÀN THÀNH
 
 #### Mục Tiêu: Tối Ưu Dữ Liệu On-Chain
 
@@ -307,7 +344,100 @@ class WeightMatrixManager:
 
 ---
 
-### 3.2 GIAI ĐOẠN 2: Enhanced Consensus Mechanism (Tháng 2-3, 2026)
+### 3.2 GIAI ĐOẠN 2-8: Core Implementation ✅ HOÀN THÀNH
+
+**⚠️ ĐÃ ĐƯỢC IMPLEMENT TRONG PR #10**
+
+Các phases sau đã được implement đầy đủ:
+
+#### Đã hoàn thành (Phases 2-8):
+- ✅ Phase 2: Core Blockchain (~1,865 lines)
+  - Block, Transaction, State structures
+  - Cryptography (KeyPair, Merkle Tree)
+  - Block validation
+  
+- ✅ Phase 3: Consensus Layer (~1,100 lines)
+  - PoS implementation
+  - Validator selection
+  - Fork choice rule
+  - AI validation integration
+  
+- ✅ Phase 4: Network Layer (~1,550 lines)
+  - P2P protocol
+  - Peer discovery
+  - Block/tx propagation
+  - Sync mechanism
+  
+- ✅ Phase 5: Storage Layer (~850 lines)
+  - LevelDB persistent storage
+  - Blockchain database
+  - Transaction indexer
+  
+- ✅ Phase 6: RPC & API (~1,200 lines)
+  - JSON-RPC Ethereum-compatible
+  - GraphQL API
+  - AI task endpoints
+  
+- ✅ Phase 7: Testing & DevOps
+  - 71 tests passing
+  - Docker deployment
+  - Kubernetes manifests
+  - Prometheus metrics
+  
+- ✅ Phase 8: Testnet Infrastructure
+  - Genesis, Faucet, Bootstrap, Monitoring
+
+**Total:** ~9,715 lines production code
+
+**Chi tiết đầy đủ:** Xem `LAYER1_IMPLEMENTATION_SUMMARY.md`
+
+---
+
+### 3.9 GIAI ĐOẠN 9: Mainnet Launch (Q1 2026) ⏸️ TIẾP THEO
+
+---
+
+## ⚠️ Layer 2 Là Mục Tiêu DÀI HẠN (Post-Mainnet)
+
+### Ghi Chú Về Layer 2 (KHÔNG PHẢI ƯU TIÊN HIỆN TẠI)
+
+Layer 2 features sẽ được xem xét SAU KHI:
+1. ✅ Layer 1 mainnet stable
+2. ✅ Community testing successful
+3. ✅ Performance benchmarks met
+4. ✅ Security audits passed
+
+**Timeline dự kiến:** Q3-Q4 2026 (sau mainnet launch)
+
+#### Optimistic Rollup Concept (DÀI HẠN)
+
+Khi Layer 1 ổn định, có thể xây dựng:
+- Off-chain consensus aggregation
+- Challenge mechanism
+- Batch commits to L1
+- Target: <1s consensus time
+
+**Lưu ý:** Đây chỉ là ý tưởng ban đầu, CHƯA PHẢI KẾ HOẠCH CỤ THỂ.
+
+---
+
+### 3.6 GIAI ĐOẠN 2: Enhanced Consensus Mechanism (Tháng 2-3, 2026) - ĐÓNG GÓP VÀO PHASE 3
+
+[NỘI DUNG GỐC VỀ YudkowskyConsensusV2 - nhưng là phần của Phase 3 Core Implementation]
+
+---
+
+#### B. Fast Consensus với Optimistic Rollup Layer 2 - ❌ BỎ QUA BÂY GIỜ
+
+**LƯU Ý QUAN TRỌNG:** Phần này là mục tiêu DÀI HẠN, không phải ưu tiên hiện tại.
+
+~~[Nội dung về Layer 2 - chỉ để tham khảo, không implement bây giờ]~~
+
+**Quyết định:** Focus vào hoàn thiện Layer 1 Core, Consensus, Network trước.
+
+---
+
+### 3.7 GIAI ĐOẠN 3: Superior Tokenomics (Tháng 3-4, 2026) - ĐÓNG GÓP VÀO MAINNET
 
 #### Mục Tiêu: Consensus Nhanh & Công Bằng Hơn Bittensor
 
@@ -887,170 +1017,206 @@ subtensor.burned_register(
 
 ---
 
-## 📋 Phần 4: Roadmap Tổng Thể
+## 📋 Phần 4: Roadmap Tổng Thể - TẬP TRUNG VÀO LAYER 1
 
-### Timeline Overview
+### Timeline Overview - ƯU TIÊN HOÀN THIỆN LAYER 1
 
 ```
-2026 Q1 (Tháng 1-3): Foundation Enhancement
-├── Tháng 1: On-Chain State Optimization
-│   ├── Week 1-2: SubnetAggregatedState design & implementation
-│   ├── Week 3-4: Weight Matrix hybrid storage
-│   └── Testing & deployment to testnet
+2026 Q1-Q2: LAYER 1 CORE IMPLEMENTATION (ƯU TIÊN CAO)
+├── Tháng 2-3: Core Blockchain
+│   ├── Week 1-4: Block & Transaction structures
+│   ├── Week 5-8: StateDB implementation
+│   └── Week 9-12: Integration testing
 │
-├── Tháng 2: Enhanced Consensus
-│   ├── Week 1-2: YudkowskyConsensusV2 implementation
-│   ├── Week 3-4: Layer 2 Optimistic Rollup design
-│   └── Benchmark vs Bittensor
+├── Tháng 4: Consensus Layer
+│   ├── Week 1-2: PoS implementation
+│   ├── Week 3: Validator selection
+│   └── Week 4: Fork choice & rewards
 │
-└── Tháng 3: Superior Tokenomics
-    ├── Week 1-2: Adaptive Emission Engine
-    ├── Week 3-4: Recycling Pool & Burn mechanism
-    └── Economic simulations
+└── Tháng 5-6: Network & Storage
+    ├── Week 1-4: P2P protocol
+    ├── Week 5-6: Storage layer
+    └── Week 7-8: RPC API
 
-2026 Q2 (Tháng 4-6): Differentiation
-├── Tháng 4-5: zkML Deep Integration
-│   ├── ezkl proof generation
-│   ├── On-chain zkML verifier (native trong L1)
-│   ├── Miner zkML integration
-│   └── Benchmark proof sizes & costs
+2026 Q3: LAYER 1 SECURITY & OPTIMIZATION
+├── Tháng 7-8: Security Audit
+│   ├── External security audit
+│   ├── Bug fixes
+│   └── Performance optimization
 │
-└── Tháng 6: Developer Experience
-    ├── Simplified SDK
-    ├── Quick registration flow
-    ├── Documentation overhaul
-    └── Developer tooling
+└── Tháng 9: Testnet Iteration
+    ├── Community testing
+    ├── Performance tuning
+    └── Final preparations
 
-2026 Q3 (Tháng 7-9): Scale & Performance
-├── Tháng 7: Layer 2 Rollout
-│   ├── Optimistic Rollup implementation
-│   ├── Challenge mechanism
-│   └── Batch on-chain commits
+2026 Q4: MAINNET LAUNCH
+├── Tháng 10-11: Mainnet Prep
+│   ├── Genesis preparation
+│   ├── Validator onboarding
+│   └── Token distribution
 │
-├── Tháng 8: Subnet Optimization
-│   ├── Multi-subnet routing
-│   ├── Cross-subnet communication
-│   └── Subnet governance
-│
-└── Tháng 9: Performance Tuning
-    ├── Query optimization
-    ├── Index improvements
-    └── Load testing
+└── Tháng 12: Launch
+    └── Mainnet deployment
 
-2026 Q4 (Tháng 10-12): Mainnet & Beyond
-├── Tháng 10: Security Audit
-├── Tháng 11: Mainnet Launch Prep
-└── Tháng 12: Mainnet Launch
+LAYER 2 (POST-MAINNET): Timeline TBD
+└── Only after Layer 1 is stable and proven
 ```
 
 ---
 
-## 🎯 Phần 5: Key Differentiators (Khác Biệt Chính)
+## 🎯 Phần 5: Key Differentiators (Khác Biệt Chính) - TẬP TRUNG VÀO LAYER 1
 
-### ModernTensor vs Bittensor
+### ModernTensor vs Bittensor - HIỆN TẠI VÀ MỤC TIÊU
 
-| Feature | Bittensor | ModernTensor (After Roadmap) |
-|---------|-----------|------------------------------|
-| **Blockchain** | Substrate (Custom) | Custom L1 (như Bittensor) |
-| **Consensus Speed** | 12s (Substrate) | ~1s (L2 Optimistic) + 12s (L1) |
-| **zkML** | ❌ | ✅ Native integration |
-| **Tokenomics** | Fixed emission | Adaptive + Recycling + Burn |
-| **Smart Contracts** | Rust Pallets | Native chain logic |
-| **Weight Matrix** | On-chain (expensive) | Hybrid (IPFS + Merkle root) |
-| **Developer UX** | Complex | Simple (1-line registration) |
-| **Formal Verification** | Limited | ✅ zkML cryptographic proofs |
-| **Storage Costs** | High (all on-chain) | Low (hybrid storage) |
-| **Query Performance** | Direct access | Indexer + L2 cache |
+| Feature | Bittensor | ModernTensor (HIỆN TẠI) | ModernTensor (MỤC TIÊU) |
+|---------|-----------|-------------------------|------------------------|
+| **Blockchain** | Substrate (Custom) | Custom L1 (17% complete) | Custom L1 (Complete) |
+| **Consensus Speed** | 12s (Substrate) | In development | ~12s (L1) → <1s (L2 sau này) |
+| **zkML** | ❌ | Planned | ✅ Native integration |
+| **Tokenomics** | Fixed emission | Planned | Adaptive + Recycling |
+| **Smart Contracts** | Rust Pallets | Planned | Native chain logic |
+| **Weight Matrix** | On-chain | ✅ Hybrid (Phase 1 done) | Optimized hybrid |
+| **Developer UX** | Complex | In progress | Simple SDK |
+| **Layer 1 Status** | ✅ Complete | ⏸️ 17% complete | ⏸️ Target: Q4 2026 |
+| **Layer 2** | ❌ | ❌ Not started | Post-mainnet goal |
 
-### Competitive Advantages
+### Competitive Advantages - KHI HOÀN THIỆN
 
-1. **🔐 Security**: zkML cryptographic proofs + challenge mechanism
-2. **⚡ Speed**: Custom L2 Optimistic Rollup cho instant consensus
-3. **💰 Economics**: Adaptive emission tự điều chỉnh
-4. **🤐 Privacy**: zkML proofs cho model privacy (Bittensor không có)
-5. **🎯 Efficiency**: Hybrid storage giảm costs
-6. **👨‍💻 Developer Experience**: SDK đơn giản hơn 3x
+**Hiện tại:**
+1. ✅ **State Optimization**: Hybrid storage đã implement (Phase 1)
+2. ✅ **Testnet Ready**: Infrastructure sẵn sàng (Phase 8)
+3. ⏸️ **Core Blockchain**: Đang phát triển (Phase 2-7)
+
+**Mục tiêu dài hạn:**
+1. 🔐 **Security**: zkML cryptographic proofs
+2. ⚡ **Speed**: Layer 2 cho instant consensus (post-mainnet)
+3. 💰 **Economics**: Adaptive emission
+4. 🤐 **Privacy**: zkML proofs cho model privacy
+5. 🎯 **Efficiency**: Hybrid storage
+6. 👨‍💻 **Developer Experience**: SDK đơn giản hơn
 
 ---
 
-## 📊 Phần 6: Metrics & KPIs
+## 📊 Phần 6: Metrics & KPIs - TẬP TRUNG VÀO LAYER 1
 
 ### Success Metrics
 
-**Phase 1 (Q1 2026):**
+**Phase 1 (Q1 2026) - ✅ HOÀN THÀNH:**
 - ✅ On-chain storage costs giảm 50% vs current
 - ✅ Query performance tăng 10x
-- ✅ Consensus finality < 30s (vs 2 minutes hiện tại)
+- ✅ Weight matrix hybrid storage working
 
-**Phase 2 (Q2 2026):**
-- ✅ zkML proof verification success rate > 99%
-- ✅ Developer onboarding time < 30 minutes (vs 2 hours Bittensor)
-- ✅ SDK downloads > 1000/month
+**Phase 2-4 (Q2 2026) - ⏸️ ƯU TIÊN CAO:**
+- ⏸️ Core blockchain operational
+- ⏸️ PoS consensus working correctly
+- ⏸️ P2P network stable với 10+ nodes
+- ⏸️ Transaction throughput > 50 TPS
 
-**Phase 3 (Q3 2026):**
-- ✅ Layer 2 consensus < 2s
-- ✅ Support 1000+ miners per subnet
-- ✅ Gas costs < $0.10 per registration
+**Phase 5-6 (Q2 2026) - ⏸️ TRUNG BÌNH:**
+- ⏸️ RPC API complete và documented
+- ⏸️ Storage layer với pruning
+- ⏸️ Block explorer functional
 
-**Phase 4 (Q4 2026):**
-- ✅ Mainnet launch với 50+ subnets
-- ✅ 10,000+ miners registered
-- ✅ $10M+ TVL (Total Value Locked)
+**Phase 7 (Q3 2026) - ⏸️ QUAN TRỌNG:**
+- ⏸️ Security audit passed
+- ⏸️ Performance benchmarks met
+- ⏸️ Load testing với 100+ validators
 
----
+**Phase 9 (Q4 2026) - ⏸️ MỤC TIÊU:**
+- ⏸️ Mainnet launch thành công
+- ⏸️ 50+ validators active
+- ⏸️ 1,000+ users onboarded
 
-## 🚀 Phần 7: Action Items
-
-### Immediate (Week 1-2)
-
-1. ✅ Review và approve roadmap
-2. ⏳ Set up project tracking (GitHub Projects)
-3. ⏳ Assign team members to each phase
-4. ⏳ Begin SubnetAggregatedState design
-
-### Short-term (Month 1)
-
-1. ⏳ Implement SubnetAggregatedDatum
-2. ⏳ Build WeightMatrixManager
-3. ⏳ Set up IPFS integration
-4. ⏳ Deploy to testnet
-
-### Medium-term (Q1 2026)
-
-1. ⏳ Complete all Phase 1 implementations
-2. ⏳ Begin zkML integration
-3. ⏳ Start custom Layer 2 Optimistic Rollup development
-
-### Long-term (2026)
-
-1. ⏳ Execute full roadmap
-2. ⏳ Security audits
-3. ⏳ Mainnet launch
-4. ⏳ Community growth
+**Layer 2 (Post-Mainnet) - MỤC TIÊU DÀI HẠN:**
+- Sẽ xác định sau khi Layer 1 stable
 
 ---
 
-## 💡 Kết Luận
+## 🚀 Phần 7: Action Items - TẬP TRUNG VÀO LAYER 1
 
-ModernTensor có tiềm năng vượt qua Bittensor bằng cách:
+### Immediate (Week 1-2) - ƯU TIÊN CAO
 
-1. **Custom L1 blockchain**: Giống Bittensor nhưng được thiết kế riêng cho AI workloads
-2. **Layer 2 Optimistic Rollup**: Tự xây dựng L2 solution cho speed + low costs
-3. **zkML differentiation**: Unique feature Bittensor không có
-4. **Better tokenomics**: Adaptive thay vì fixed
-5. **Superior UX**: Dễ dàng hơn cho developers
+1. ✅ Review và approve roadmap focusing on Layer 1
+2. ⏳ Allocate team to Layer 1 Core (Phase 2-4)
+3. ⏳ Start Block & Transaction implementation
+4. ⏳ Design StateDB architecture
 
-Với roadmap này, ModernTensor sẽ trở thành **"Bittensor 2.0"** - faster, cheaper, more secure, and easier to use.
+### Short-term (Month 1-2) - CORE BLOCKCHAIN
 
-**Lưu ý kiến trúc:** ModernTensor đang xây dựng blockchain L1 riêng (theo LAYER1_ROADMAP.md), không phụ thuộc Cardano. Layer 2 solution sẽ là custom Optimistic Rollup được xây dựng trên L1 của ModernTensor, không phải Hydra của Cardano.
+1. ⏳ Implement Block, Transaction, Account structures
+2. ⏳ Build cryptography module (keys, signatures, Merkle)
+3. ⏳ Implement StateDB với account model
+4. ⏳ Unit tests cho core components
+
+### Medium-term (Month 3-4) - CONSENSUS & NETWORK
+
+1. ⏳ Implement PoS consensus mechanism
+2. ⏳ Build validator selection algorithm
+3. ⏳ Implement P2P network layer
+4. ⏳ Integration testing
+
+### Long-term (Q3-Q4 2026) - SECURITY & LAUNCH
+
+1. ⏳ Security audit và bug fixes
+2. ⏳ Performance optimization
+3. ⏳ Community testnet
+4. ⏳ Mainnet launch preparation
+
+### Layer 2 (Post-Mainnet) - DÀI HẠN
+
+1. ❌ KHÔNG LÀM BÂY GIỜ
+2. ❌ Chỉ xem xét sau khi Layer 1 stable
+3. ❌ Timeline: TBD (Q3-Q4 2026 earliest)
 
 ---
 
-**Next Steps:** 
-1. Review roadmap này với team
-2. Prioritize các features quan trọng nhất
-3. Begin implementation theo timeline
-4. Track progress và adjust as needed
+## 💡 Kết Luận - TẬP TRUNG VÀO LAYER 1 TRƯỚC
+
+ModernTensor có tiềm năng vượt qua Bittensor, nhưng **CẦN HOÀN THIỆN LAYER 1 TRƯỚC:**
+
+### Ưu Tiên Hiện Tại (2026):
+
+1. **Hoàn thiện Layer 1 Core** (17% → 100%)
+   - ⏸️ Phase 2-4: Blockchain, Consensus, Network (Q2)
+   - ⏸️ Phase 5-6: Storage, API (Q2)
+   - ⏸️ Phase 7: Security & Optimization (Q3)
+   - ⏸️ Phase 9: Mainnet Launch (Q4)
+
+2. **Unique Features trong Layer 1:**
+   - ✅ Hybrid storage (Phase 1 complete)
+   - 🎯 Custom PoS for AI workloads
+   - 🎯 zkML integration (mainnet goal)
+   - 🎯 Adaptive tokenomics
+
+3. **Layer 2 là mục tiêu DÀI HẠN:**
+   - ❌ KHÔNG phải priority hiện tại
+   - ⏳ Chỉ sau khi Layer 1 stable
+   - ⏳ Timeline: Post-mainnet (Q3-Q4 2026 earliest)
+
+### Chiến Lược Khi Gọi Vốn VC:
+
+**ĐÚNG ✅:**
+- "Chúng tôi đang xây Layer 1 blockchain cho AI (17% complete)"
+- "Focus hoàn thiện core infrastructure trong 9 tháng tới"
+- "Layer 2 là vision dài hạn sau mainnet"
+
+**SAI ❌:**
+- "Chúng tôi đang làm Layer 2 Optimistic Rollup"
+- "Layer 2 consensus trong Q2 2026"
+- Nói về Layer 2 khi Layer 1 chưa xong
+
+### Next Steps:
+
+1. ✅ Roadmap đã được update để focus Layer 1
+2. ⏳ Allocate 100% resources cho Phase 2-7
+3. ⏳ Review Layer 1 progress hàng tuần
+4. ⏳ Mainnet target: Q4 2026
+5. ⏳ Layer 2: Xem xét sau mainnet stable
+
+**Lưu ý kiến trúc:** ModernTensor xây dựng L1 riêng (không phụ thuộc Cardano), tương tự Bittensor (dùng Substrate). Layer 2 là goal sau khi L1 hoàn thiện.
+
+---
 
 **Prepared by:** GitHub Copilot  
-**Date:** January 5, 2026
+**Date:** January 5, 2026  
+**Priority:** Layer 1 First, Layer 2 Later

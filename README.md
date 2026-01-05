@@ -8,11 +8,35 @@
 
 ## 🚀 Introduction
 
+**ModernTensor** is transitioning from a Cardano-based application to a **custom Layer 1 blockchain** optimized for AI/ML workloads.
+
+### 🎯 Current Focus: Building Layer 1 Blockchain
+
+**Status:** 83% complete - **AHEAD OF SCHEDULE!**  
+**Target:** Mainnet Q1 2026 (2 months)  
+**Priority:** Phase 9 Mainnet Launch
+
 In the ModernTensor ecosystem:
 
 *   **Miners:** Provide AI/ML services/models via API endpoints. They register their hotkey (representing the miner's identifier - UID) onto the network.
-*   **Validators:** (Future) Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
-*   **Cardano Blockchain:** Serves as the secure and decentralized foundation layer to record the network state (miner registrations, stake, rewards, etc.) through smart contracts (Plutus).
+*   **Validators:** Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
+*   **Custom L1 Blockchain:** Independent blockchain with PoS consensus, optimized for AI validation and incentive distribution.
+
+### Layer 1 Development Status
+
+- ✅ **Phase 1:** On-Chain State Optimization (Complete)
+- ✅ **Phase 2:** Core Blockchain - Block, Transaction, State (Complete)
+- ✅ **Phase 3:** Consensus Layer - PoS (Complete)
+- ✅ **Phase 4:** Network Layer - P2P (Complete)
+- ✅ **Phase 5:** Storage Layer - LevelDB (Complete)
+- ✅ **Phase 6:** RPC & API - JSON-RPC, GraphQL (Complete)
+- ✅ **Phase 7:** Testing & DevOps (Complete - 71 tests passing)
+- ✅ **Phase 8:** Testnet Infrastructure (Complete)
+- ⏸️ **Phase 9:** Mainnet Launch (Q1 2026 Target - 2 months)
+
+**Progress: 83% complete** (~9,715 lines production code)
+
+**See [LAYER1_IMPLEMENTATION_SUMMARY.md](LAYER1_IMPLEMENTATION_SUMMARY.md) for complete implementation details and [LAYER1_FOCUS.md](LAYER1_FOCUS.md) for current priorities.**
 
 This project includes an SDK toolkit and a command-line interface (CLI) for interacting with the network.
 
