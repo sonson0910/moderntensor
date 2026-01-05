@@ -1,5 +1,6 @@
 # sdk/formulas/trust_score.py
 import math
+from typing import Dict  # Added for type hints
 from .utils import sigmoid, calculate_alpha_effective  # Import helpers
 
 

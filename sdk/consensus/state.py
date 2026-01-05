@@ -7,6 +7,7 @@ import logging
 import math
 import hashlib  # Đảm bảo đã import
 import asyncio
+import json  # Added for JSON serialization
 from typing import List, Dict, Any, Tuple, Optional, Set, Union
 import numpy as np  # Cần cài đặt numpy: pip install numpy
 from collections import defaultdict
@@ -505,7 +506,7 @@ def run_consensus_logic(
     logger.info(
         ":brain: Finished consensus calculations and validator state estimation."
     )
-    return final_miner_scores, calculated_validator_states
+    return final_miner_scores, calculated_validator_states, miner_penalties
 
 
 # --- Logic Kiểm tra và Phạt Validator ---
@@ -687,8 +688,8 @@ async def verify_and_penalize_logic(
 
     except Exception as e:
         logger.exception(f"Error during validator verification/penalization: {e}")
- suspicious_validators
-    return
+    
+    return suspicious_validators
 
 
 # --- Logic Chuẩn bị và Commit Cập nhật ---

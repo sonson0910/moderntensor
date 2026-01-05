@@ -76,14 +76,6 @@ def calculate_fraud_severity_value(
             return 0.0
 
     return severity
-        return 0.8  # Bậc 3
-    elif detected_behavior.get("type") == "Invalid_Data":
-        return 0.3  # Bậc 2
-    elif detected_behavior.get("type") == "Sustained_Deviation":
-        # Kiểm tra thêm chi tiết độ lệch và thời gian trong detected_behavior
-        return 0.1  # Bậc 1
-    else:
-        return 0.0  # Không có gian lận
 
 
 # --- Hàm tính lượng stake bị cắt (Cập nhật để nhận fraud_severity đã tính) ---

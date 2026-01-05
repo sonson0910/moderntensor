@@ -23,7 +23,12 @@ from .performance import (
     calculate_penalty_term
 )
 from .resource_allocation import calculate_subnet_resource
-from .trust_score import update_trust_score, calculate_selection_probability
+from .trust_score import (
+    update_trust_score, 
+    calculate_selection_probability,
+    calculate_consensus_score,  # Added for consensus mechanism
+    calculate_validator_consensus_weight,  # Added for consensus mechanism
+)
 from .validator_weight import calculate_validator_weight
 
 # Optional: Import utility functions if they are intended for public use outside the formulas package
@@ -52,6 +57,8 @@ __all__ = [
     # trust_score
     "update_trust_score",
     "calculate_selection_probability",
+    "calculate_consensus_score",  # Added
+    "calculate_validator_consensus_weight",  # Added
     # validator_weight
     "calculate_validator_weight",
     # Add utils if exported
