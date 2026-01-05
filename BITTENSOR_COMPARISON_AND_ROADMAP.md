@@ -5,6 +5,31 @@
 
 ---
 
+## ⚠️ LƯU Ý QUAN TRỌNG VỀ KIẾN TRÚC
+
+**ModernTensor đang xây dựng blockchain Layer 1 riêng** (theo LAYER1_ROADMAP.md), không phụ thuộc vào Cardano hay blockchain nào khác. Điều này tương tự như Bittensor (dùng Substrate để xây L1 riêng).
+
+**Về Layer 2:**
+- Không dùng Hydra của Cardano (vì không chạy trên Cardano)
+- Sẽ xây dựng **custom Layer 2 Optimistic Rollup** trên L1 của ModernTensor
+- L2 này giúp tăng tốc consensus và giảm costs, tương tự như Optimism/Arbitrum trên Ethereum
+
+**Tóm tắt kiến trúc:**
+```
+ModernTensor Stack:
+├── Layer 1: Custom blockchain (PoS, Account model)
+│   ├── Block production: ~12s
+│   ├── Native zkML verification
+│   └── Adaptive tokenomics
+│
+└── Layer 2: Custom Optimistic Rollup
+    ├── Off-chain consensus: <1s
+    ├── Challenge period: 100 blocks
+    └── Batch finalization on L1
+```
+
+---
+
 ## 📊 Phần 1: Bittensor Ghi Gì Lên Blockchain?
 
 ### 1.1 Kiến Trúc On-Chain của Bittensor
@@ -93,21 +118,21 @@ Off-Chain Storage:
 
 | Tính Năng | ModernTensor | Bittensor |
 |-----------|--------------|-----------|
-| **Blockchain Base** | Cardano (UTXO + eUTXO) | Substrate (Custom) |
-| **Smart Contracts** | Plutus (Formal Verification) | Rust Pallets |
+| **Blockchain Base** | Custom L1 (theo LAYER1_ROADMAP) | Substrate (Custom) |
+| **Smart Contracts** | Native (tích hợp trong chain) | Rust Pallets |
 | **zkML Integration** | ✅ Native (ezkl) | ❌ Chưa có |
 | **Tokenomics** | Adaptive Emission (dựa trên utility) | Fixed Emission |
-| **Storage Model** | UTXO-based (mỗi miner = 1 UTXO) | Account-based |
-| **Layer 2** | Hydra (State Channels) planned | Chưa có |
-| **Formal Verification** | ✅ Plutus có khả năng | Khó hơn với Rust |
+| **Storage Model** | Account-based (Phase 1 đã implement) | Account-based |
+| **Layer 2** | Optimistic Rollup (custom) planned | Chưa có |
+| **Formal Verification** | ✅ zkML proofs | Khó với Substrate |
 
 ### 2.2 Điểm Yếu Cần Cải Thiện
 
 | Vấn Đề | ModernTensor Hiện Tại | Bittensor | Cần Cải Tiến |
 |--------|----------------------|-----------|--------------|
-| **On-Chain State** | Phân tán (mỗi miner 1 UTXO) | Tập trung (Metagraph) | Cần index tốt hơn |
-| **Query Performance** | Phải scan UTXOs | Direct state access | Cần off-chain indexer |
-| **Consensus Speed** | Phụ thuộc Cardano block time | Substrate (6s/block) | Cần Layer 2 |
+| **On-Chain State** | StateDB (Account model) | Metagraph (Account model) | Cần aggregated index |
+| **Query Performance** | Direct state access | Direct state access | Cần off-chain indexer |
+| **Consensus Speed** | PoS (~12s block time) | Substrate (6s/block) | Cần Layer 2 Optimistic Rollup |
 | **Weight Matrix** | Chưa có cơ chế rõ ràng | On-chain sparse matrix | **QUAN TRỌNG** |
 | **Subnet Isolation** | Chưa hoàn thiện | Hoàn toàn isolated | Cần cải thiện |
 | **Registration** | UTXO-based (phức tạp) | Simple on-chain call | Cần đơn giản hóa |
@@ -381,53 +406,157 @@ class YudkowskyConsensusV2:
 
 ---
 
-#### B. Fast Consensus với Layer 2 (Hydra)
+#### B. Fast Consensus với Optimistic Rollup Layer 2
+
+**LƯU Ý QUAN TRỌNG:** Vì ModernTensor đang xây dựng blockchain L1 riêng (theo LAYER1_ROADMAP.md), không sử dụng Cardano nữa, nên ta cần xây dựng Layer 2 solution riêng thay vì dùng Hydra.
 
 ```python
-# sdk/consensus/hydra_consensus.py
-class HydraConsensusChannel:
+# sdk/consensus/optimistic_consensus.py
+class OptimisticConsensusLayer:
     """
-    Off-chain consensus trong Hydra state channel
+    Custom Layer 2 for ModernTensor L1 blockchain
     
-    Flow:
-    1. Validators submit scores off-chain (instant)
-    2. Aggregate trong Hydra head
-    3. Chỉ commit final consensus on-chain (1 tx)
+    Concept: Optimistic Rollup for consensus
+    - Validators submit scores off-chain
+    - Aggregate và publish summary on-chain
+    - Challenge period để dispute nếu có fraud
+    - Finalize sau challenge period
+    
+    Ưu điểm:
+    - 100x nhanh hơn on-chain consensus
+    - Giảm 90% transaction costs
+    - Vẫn có security của L1
     """
     
+    def __init__(self, l1_node, challenge_period: int = 100):  # 100 blocks
+        self.l1 = l1_node
+        self.challenge_period = challenge_period
+        self.pending_consensus = {}
+        
     async def run_consensus_round(
         self,
         subnet_uid: int,
         epoch: int,
         validator_scores: Dict[bytes, List[float]]
     ):
-        # Open Hydra head with all validators
-        head = await self.hydra.open_head(
-            participants=[v for v in validator_scores.keys()]
-        )
-        
-        # Submit scores off-chain (parallel, instant)
-        await asyncio.gather(*[
-            head.submit_score(validator, scores)
-            for validator, scores in validator_scores.items()
-        ])
-        
-        # Calculate consensus off-chain
+        """
+        Optimistic consensus flow:
+        1. Aggregate scores off-chain (instant)
+        2. Publish commitment hash on-chain (1 tx)
+        3. Wait challenge period
+        4. Finalize if no challenges
+        """
+        # Step 1: Calculate consensus off-chain
         consensus = self.calculate_consensus(validator_scores)
         
-        # All validators agree
-        signatures = await self._collect_signatures(head, consensus)
+        # Step 2: Create commitment
+        commitment = self._create_commitment(
+            subnet_uid=subnet_uid,
+            epoch=epoch,
+            consensus=consensus,
+            validator_scores=validator_scores
+        )
         
-        # Close head và commit on-chain (1 transaction)
-        await head.close_and_commit(consensus, signatures)
+        # Step 3: Publish commitment hash on L1 (chỉ 1 tx, rất nhẹ)
+        commitment_hash = self._hash_commitment(commitment)
+        tx_hash = await self.l1.publish_commitment(
+            subnet_uid=subnet_uid,
+            epoch=epoch,
+            commitment_hash=commitment_hash
+        )
         
+        # Step 4: Store for challenge period
+        self.pending_consensus[commitment_hash] = {
+            'commitment': commitment,
+            'consensus': consensus,
+            'finalize_at_block': self.l1.current_block + self.challenge_period,
+            'challenged': False
+        }
+        
+        print(f"✅ Consensus committed. Hash: {commitment_hash.hex()[:16]}...")
+        print(f"⏳ Challenge period: {self.challenge_period} blocks")
+        
+        return consensus, commitment_hash
+    
+    async def challenge_consensus(
+        self,
+        commitment_hash: bytes,
+        fraud_proof: Dict
+    ):
+        """
+        Any validator can challenge nếu phát hiện fraud
+        
+        Fraud proof phải chứng minh:
+        - Consensus calculation sai
+        - Validator scores bị giả mạo
+        - Signature không hợp lệ
+        """
+        if commitment_hash not in self.pending_consensus:
+            raise ValueError("Commitment not found or already finalized")
+        
+        pending = self.pending_consensus[commitment_hash]
+        
+        # Verify fraud proof
+        is_fraud = await self._verify_fraud_proof(
+            pending['commitment'],
+            fraud_proof
+        )
+        
+        if is_fraud:
+            # Slash dishonest validator
+            dishonest_validator = fraud_proof['dishonest_validator']
+            await self.l1.slash_validator(dishonest_validator)
+            
+            # Mark as challenged
+            pending['challenged'] = True
+            
+            print(f"⚠️ Fraud detected! Validator {dishonest_validator.hex()[:16]} slashed")
+            return True
+        
+        return False
+    
+    async def finalize_consensus(self, commitment_hash: bytes):
+        """
+        Finalize consensus sau challenge period
+        """
+        if commitment_hash not in self.pending_consensus:
+            raise ValueError("Commitment not found")
+        
+        pending = self.pending_consensus[commitment_hash]
+        
+        # Check if challenge period passed
+        if self.l1.current_block < pending['finalize_at_block']:
+            raise ValueError("Challenge period not yet passed")
+        
+        # Check if challenged
+        if pending['challenged']:
+            raise ValueError("Consensus was challenged, cannot finalize")
+        
+        # Finalize on L1
+        consensus = pending['consensus']
+        await self.l1.finalize_consensus(commitment_hash, consensus)
+        
+        # Clean up
+        del self.pending_consensus[commitment_hash]
+        
+        print(f"✅ Consensus finalized on L1")
         return consensus
 ```
 
+**So Sánh:**
+
+| Tính Năng | Bittensor | ModernTensor L1 + L2 |
+|-----------|-----------|---------------------|
+| Consensus Time | ~12s (on-chain) | <1s (L2) + finality sau challenge period |
+| Transaction Cost | 1 tx per validator | 1 tx cho tất cả validators |
+| Security | Full on-chain | Optimistic (có challenge period) |
+| Throughput | Limited by blockchain | 100-1000x higher |
+
 **Benefit:**
-- ⚡ Consensus trong vài giây thay vì chờ Cardano blocks
-- 💰 Giảm gas costs (N txs → 1 tx)
-- 🔒 Vẫn có security của Cardano
+- ⚡ Consensus tức thì trong Layer 2
+- 💰 Giảm 90% gas costs 
+- 🔒 Security từ L1 với challenge mechanism
+- 🚀 Không phụ thuộc Cardano hay bất kỳ chain nào khác
 
 ---
 
@@ -771,7 +900,7 @@ subtensor.burned_register(
 │
 ├── Tháng 2: Enhanced Consensus
 │   ├── Week 1-2: YudkowskyConsensusV2 implementation
-│   ├── Week 3-4: Hydra integration for fast consensus
+│   ├── Week 3-4: Layer 2 Optimistic Rollup design
 │   └── Benchmark vs Bittensor
 │
 └── Tháng 3: Superior Tokenomics
@@ -782,7 +911,7 @@ subtensor.burned_register(
 2026 Q2 (Tháng 4-6): Differentiation
 ├── Tháng 4-5: zkML Deep Integration
 │   ├── ezkl proof generation
-│   ├── On-chain Plutus verifier
+│   ├── On-chain zkML verifier (native trong L1)
 │   ├── Miner zkML integration
 │   └── Benchmark proof sizes & costs
 │
@@ -794,8 +923,8 @@ subtensor.burned_register(
 
 2026 Q3 (Tháng 7-9): Scale & Performance
 ├── Tháng 7: Layer 2 Rollout
-│   ├── Hydra state channels production
-│   ├── Off-chain consensus
+│   ├── Optimistic Rollup implementation
+│   ├── Challenge mechanism
 │   └── Batch on-chain commits
 │
 ├── Tháng 8: Subnet Optimization
@@ -822,23 +951,23 @@ subtensor.burned_register(
 
 | Feature | Bittensor | ModernTensor (After Roadmap) |
 |---------|-----------|------------------------------|
-| **Blockchain** | Substrate (Custom) | Cardano (Established) |
-| **Consensus Speed** | 12s (Substrate) | ~1s (Hydra L2) + 20s (L1) |
+| **Blockchain** | Substrate (Custom) | Custom L1 (như Bittensor) |
+| **Consensus Speed** | 12s (Substrate) | ~1s (L2 Optimistic) + 12s (L1) |
 | **zkML** | ❌ | ✅ Native integration |
 | **Tokenomics** | Fixed emission | Adaptive + Recycling + Burn |
-| **Smart Contracts** | Rust Pallets | Plutus (Formal verification) |
+| **Smart Contracts** | Rust Pallets | Native chain logic |
 | **Weight Matrix** | On-chain (expensive) | Hybrid (IPFS + Merkle root) |
 | **Developer UX** | Complex | Simple (1-line registration) |
-| **Formal Verification** | Limited | ✅ Plutus + zkML proofs |
+| **Formal Verification** | Limited | ✅ zkML cryptographic proofs |
 | **Storage Costs** | High (all on-chain) | Low (hybrid storage) |
 | **Query Performance** | Direct access | Indexer + L2 cache |
 
 ### Competitive Advantages
 
-1. **🔐 Security**: Cardano + Plutus formal verification
-2. **⚡ Speed**: Hydra Layer 2 cho instant consensus
+1. **🔐 Security**: zkML cryptographic proofs + challenge mechanism
+2. **⚡ Speed**: Custom L2 Optimistic Rollup cho instant consensus
 3. **💰 Economics**: Adaptive emission tự điều chỉnh
-4. **🤐 Privacy**: zkML proofs cho model privacy
+4. **🤐 Privacy**: zkML proofs cho model privacy (Bittensor không có)
 5. **🎯 Efficiency**: Hybrid storage giảm costs
 6. **👨‍💻 Developer Experience**: SDK đơn giản hơn 3x
 
@@ -890,7 +1019,7 @@ subtensor.burned_register(
 
 1. ⏳ Complete all Phase 1 implementations
 2. ⏳ Begin zkML integration
-3. ⏳ Start Hydra Layer 2 development
+3. ⏳ Start custom Layer 2 Optimistic Rollup development
 
 ### Long-term (2026)
 
@@ -905,13 +1034,15 @@ subtensor.burned_register(
 
 ModernTensor có tiềm năng vượt qua Bittensor bằng cách:
 
-1. **Tận dụng Cardano's strengths**: UTXO model, Plutus, formal verification
-2. **Layer 2 innovation**: Hydra cho speed + low costs
+1. **Custom L1 blockchain**: Giống Bittensor nhưng được thiết kế riêng cho AI workloads
+2. **Layer 2 Optimistic Rollup**: Tự xây dựng L2 solution cho speed + low costs
 3. **zkML differentiation**: Unique feature Bittensor không có
 4. **Better tokenomics**: Adaptive thay vì fixed
 5. **Superior UX**: Dễ dàng hơn cho developers
 
 Với roadmap này, ModernTensor sẽ trở thành **"Bittensor 2.0"** - faster, cheaper, more secure, and easier to use.
+
+**Lưu ý kiến trúc:** ModernTensor đang xây dựng blockchain L1 riêng (theo LAYER1_ROADMAP.md), không phụ thuộc Cardano. Layer 2 solution sẽ là custom Optimistic Rollup được xây dựng trên L1 của ModernTensor, không phải Hydra của Cardano.
 
 ---
 
