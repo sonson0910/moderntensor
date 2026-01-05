@@ -42,7 +42,7 @@ class L1StakingService:
         public_key: bytes,
         private_key: bytes,
         nonce: int,
-        gas_price: int = 1000,
+        gas_price: int = 100,  # Reduced default gas price
         gas_limit: int = 100000
     ) -> Optional[StakingTransaction]:
         """
@@ -77,9 +77,11 @@ class L1StakingService:
         
         # Check balance
         balance = self.state.get_balance(from_address)
-        total_cost = amount + (gas_price * gas_limit)
-        if balance < total_cost:
-            logger.error(f"Insufficient balance: {balance} < {total_cost}")
+        # Only need to cover gas cost upfront, stake is deducted separately
+        gas_cost = gas_price * gas_limit
+        total_needed = amount + gas_cost
+        if balance < total_needed:
+            logger.error(f"Insufficient balance: {balance} < {total_needed}")
             return None
         
         # Create staking transaction
@@ -111,7 +113,7 @@ class L1StakingService:
         amount: int,
         private_key: bytes,
         nonce: int,
-        gas_price: int = 1000,
+        gas_price: int = 100,  # Reduced default gas price
         gas_limit: int = 100000
     ) -> Optional[StakingTransaction]:
         """
@@ -176,7 +178,7 @@ class L1StakingService:
         validator_address: bytes,
         private_key: bytes,
         nonce: int,
-        gas_price: int = 1000,
+        gas_price: int = 100,  # Reduced default gas price
         gas_limit: int = 50000
     ) -> Optional[StakingTransaction]:
         """

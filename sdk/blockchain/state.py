@@ -402,10 +402,21 @@ class StateDB:
         """
         stake_key = b'stake:' + address
         if stake_key in self.cache:
-            return int.from_bytes(self.cache[stake_key], 'big') if isinstance(self.cache[stake_key], bytes) else self.cache[stake_key]
+            cached = self.cache[stake_key]
+            if isinstance(cached, Account):
+                return cached.balance
+            elif isinstance(cached, bytes):
+                return int.from_bytes(cached, 'big')
+            elif isinstance(cached, int):
+                return cached
         if stake_key in self.accounts:
             acc = self.accounts[stake_key]
-            return acc.balance if isinstance(acc, Account) else int.from_bytes(acc, 'big')
+            if isinstance(acc, Account):
+                return acc.balance
+            elif isinstance(acc, bytes):
+                return int.from_bytes(acc, 'big')
+            elif isinstance(acc, int):
+                return acc
         return 0
     
     def add_stake(self, address: bytes, amount: int) -> None:
@@ -458,14 +469,28 @@ class StateDB:
         info_key = b'validator:' + address
         if info_key in self.cache:
             data = self.cache[info_key]
-            if isinstance(data, bytes):
-                return json.loads(data.decode('utf-8'))
-            return data
+            if isinstance(data, Account):
+                # Validator info stored in storage_root as JSON
+                if data.storage_root != b'\x00' * 32:
+                    try:
+                        return json.loads(data.storage_root.decode('utf-8'))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        return None
+            elif isinstance(data, bytes):
+                try:
+                    return json.loads(data.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return None
+            elif isinstance(data, dict):
+                return data
         if info_key in self.accounts:
             acc = self.accounts[info_key]
-            if hasattr(acc, 'storage_root') and acc.storage_root != b'\x00' * 32:
-                # Validator info stored in storage_root as JSON string
-                return json.loads(acc.storage_root.decode('utf-8', errors='ignore'))
+            if isinstance(acc, Account):
+                if acc.storage_root != b'\x00' * 32:
+                    try:
+                        return json.loads(acc.storage_root.decode('utf-8'))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        return None
         return None
     
     def set_validator_info(self, address: bytes, public_key: bytes, active: bool = True) -> None:
@@ -501,10 +526,21 @@ class StateDB:
         """
         reward_key = b'reward:' + address
         if reward_key in self.cache:
-            return int.from_bytes(self.cache[reward_key], 'big') if isinstance(self.cache[reward_key], bytes) else getattr(self.cache[reward_key], 'balance', 0)
+            cached = self.cache[reward_key]
+            if isinstance(cached, Account):
+                return cached.balance
+            elif isinstance(cached, bytes):
+                return int.from_bytes(cached, 'big')
+            elif isinstance(cached, int):
+                return cached
         if reward_key in self.accounts:
             acc = self.accounts[reward_key]
-            return acc.balance if isinstance(acc, Account) else int.from_bytes(acc, 'big')
+            if isinstance(acc, Account):
+                return acc.balance
+            elif isinstance(acc, bytes):
+                return int.from_bytes(acc, 'big')
+            elif isinstance(acc, int):
+                return acc
         return 0
     
     def add_reward(self, address: bytes, amount: int) -> None:
