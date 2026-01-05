@@ -2,6 +2,7 @@
 Genesis Block Configuration and Generation
 
 This module handles the creation and management of genesis blocks for testnet deployment.
+Integrates with the existing blockchain primitives from sdk/blockchain.
 """
 
 import json
@@ -10,6 +11,12 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Import actual blockchain primitives
+from ..blockchain import Block, BlockHeader, Transaction
+from ..blockchain.state import StateDB, Account
+from ..blockchain.crypto import KeyPair
+from ..consensus.pos import ConsensusConfig as PosConsensusConfig, Validator
 
 
 @dataclass
@@ -50,18 +57,30 @@ class AccountConfig:
 
 @dataclass
 class ConsensusConfig:
-    """Consensus mechanism configuration"""
+    """Consensus mechanism configuration - wraps sdk/consensus configuration"""
     type: str = 'pos'
     epoch_length: int = 100  # blocks per epoch
-    slot_duration: int = 12  # seconds per slot
+    slot_duration: int = 12  # seconds per slot (block time)
     validator_count: int = 21  # target validator count
     min_stake: int = 1000000  # minimum stake to become validator
     slash_percentage: int = 10  # percentage of stake slashed for violations
     reward_percentage: int = 5  # annual reward percentage
+    max_missed_blocks: int = 10  # max missed blocks before jailing
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return asdict(self)
+    
+    def to_pos_config(self) -> PosConsensusConfig:
+        """Convert to actual PoS consensus config"""
+        return PosConsensusConfig(
+            epoch_length=self.epoch_length,
+            validator_count=self.validator_count,
+            min_stake=self.min_stake,
+            block_time=self.slot_duration,
+            max_missed_blocks=self.max_missed_blocks,
+            slash_rate=self.slash_percentage / 100.0
+        )
 
 
 @dataclass
@@ -293,44 +312,85 @@ class GenesisGenerator:
         )
         self.config.initial_accounts.append(account)
     
-    def generate_genesis_block(self) -> Dict[str, Any]:
+    def generate_genesis_block(self) -> Block:
         """
-        Generate the actual genesis block from configuration
+        Generate the actual genesis block from configuration using real blockchain primitives
         
         Returns:
-            Dict containing genesis block data
+            Block: Actual genesis block with proper structure
         """
         if not self.config:
             raise ValueError("Genesis config not initialized. Call create_testnet_config first.")
         
-        # Calculate initial state root
-        # In a real implementation, this would compute the Merkle root
-        state_root = "0x" + "0" * 64
+        genesis_time = int(datetime.fromisoformat(self.config.genesis_time).timestamp())
         
-        genesis_block = {
-            'header': {
-                'version': 1,
-                'height': 0,
-                'timestamp': int(datetime.fromisoformat(self.config.genesis_time).timestamp()),
-                'previous_hash': "0x" + "0" * 64,
-                'state_root': state_root,
-                'txs_root': "0x" + "0" * 64,
-                'receipts_root': "0x" + "0" * 64,
-                'validator': "0x" + "0" * 64,  # Genesis has no validator
-                'signature': "0x" + "0" * 128,
-                'gas_used': 0,
-                'gas_limit': self.config.block_gas_limit,
-                'extra_data': json.dumps(self.config.extra_data)
-            },
-            'transactions': [],
-            'config': self.config.to_dict()
-        }
+        # Create genesis block header
+        header = BlockHeader(
+            version=1,
+            height=0,
+            timestamp=genesis_time,
+            previous_hash=b'\x00' * 32,  # Genesis has no previous block
+            state_root=b'\x00' * 32,  # Will be calculated after state initialization
+            txs_root=b'\x00' * 32,  # No transactions in genesis
+            receipts_root=b'\x00' * 32,  # No receipts in genesis
+            validator=b'\x00' * 32,  # Genesis has no validator
+            signature=b'\x00' * 64,  # Genesis has no signature
+            gas_used=0,
+            gas_limit=self.config.block_gas_limit,
+            extra_data=json.dumps(self.config.extra_data).encode('utf-8')
+        )
+        
+        # Create genesis block with no transactions
+        genesis_block = Block(
+            header=header,
+            transactions=[]  # Genesis block has no transactions
+        )
         
         return genesis_block
     
+    def initialize_genesis_state(self) -> StateDB:
+        """
+        Initialize the genesis state with validators and accounts
+        
+        Returns:
+            StateDB: Initialized state database with genesis balances
+        """
+        if not self.config:
+            raise ValueError("Genesis config not initialized. Call create_testnet_config first.")
+        
+        # Create state database
+        state_db = StateDB(storage_path=None)  # In-memory for genesis
+        
+        # Initialize validator accounts with stake
+        for validator_config in self.config.initial_validators:
+            address = bytes.fromhex(validator_config.address[2:])  # Remove 0x prefix
+            account = Account(
+                nonce=0,
+                balance=validator_config.stake,
+                storage_root=b'\x00' * 32,
+                code_hash=b'\x00' * 32
+            )
+            state_db.set_account(address, account)
+        
+        # Initialize regular accounts with balances
+        for account_config in self.config.initial_accounts:
+            address = bytes.fromhex(account_config.address[2:])  # Remove 0x prefix
+            account = Account(
+                nonce=account_config.nonce,
+                balance=account_config.balance,
+                storage_root=b'\x00' * 32,
+                code_hash=b'\x00' * 32
+            )
+            state_db.set_account(address, account)
+        
+        # Commit the state
+        state_db.commit()
+        
+        return state_db
+    
     def export_config(self, output_dir: Path):
         """
-        Export genesis configuration to files
+        Export genesis configuration and initialize state to files
         
         Args:
             output_dir: Directory to save configuration files
@@ -345,11 +405,70 @@ class GenesisGenerator:
         config_path = output_dir / 'genesis.json'
         self.config.save(config_path)
         
-        # Save genesis block
+        # Generate and save genesis block
         block_path = output_dir / 'genesis_block.json'
         genesis_block = self.generate_genesis_block()
+        
+        # Serialize block to JSON
+        block_data = {
+            'header': {
+                'version': genesis_block.header.version,
+                'height': genesis_block.header.height,
+                'timestamp': genesis_block.header.timestamp,
+                'previous_hash': genesis_block.header.previous_hash.hex(),
+                'state_root': genesis_block.header.state_root.hex(),
+                'txs_root': genesis_block.header.txs_root.hex(),
+                'receipts_root': genesis_block.header.receipts_root.hex(),
+                'validator': genesis_block.header.validator.hex(),
+                'signature': genesis_block.header.signature.hex(),
+                'gas_used': genesis_block.header.gas_used,
+                'gas_limit': genesis_block.header.gas_limit,
+                'extra_data': genesis_block.header.extra_data.hex()
+            },
+            'transactions': [],
+            'block_hash': genesis_block.hash().hex()
+        }
+        
         with open(block_path, 'w') as f:
-            json.dump(genesis_block, f, indent=2)
+            json.dump(block_data, f, indent=2)
+        
+        # Initialize and save genesis state
+        state_path = output_dir / 'genesis_state.json'
+        state_db = self.initialize_genesis_state()
+        
+        # Export state data
+        state_data = {
+            'state_root': state_db.get_state_root().hex(),
+            'accounts': {}
+        }
+        
+        # Export all accounts
+        for validator in self.config.initial_validators:
+            address = validator.address
+            addr_bytes = bytes.fromhex(address[2:])
+            account = state_db.get_account(addr_bytes)
+            if account:
+                state_data['accounts'][address] = {
+                    'nonce': account.nonce,
+                    'balance': account.balance,
+                    'type': 'validator',
+                    'stake': validator.stake,
+                    'public_key': validator.public_key
+                }
+        
+        for acc_config in self.config.initial_accounts:
+            address = acc_config.address
+            addr_bytes = bytes.fromhex(address[2:])
+            account = state_db.get_account(addr_bytes)
+            if account:
+                state_data['accounts'][address] = {
+                    'nonce': account.nonce,
+                    'balance': account.balance,
+                    'type': 'regular'
+                }
+        
+        with open(state_path, 'w') as f:
+            json.dump(state_data, f, indent=2)
         
         # Save validator info
         validators_path = output_dir / 'validators.json'
@@ -362,6 +481,7 @@ class GenesisGenerator:
         print(f"✅ Genesis configuration exported to {output_dir}")
         print(f"  - {config_path}")
         print(f"  - {block_path}")
+        print(f"  - {state_path}")
         print(f"  - {validators_path}")
     
     def validate_config(self) -> List[str]:

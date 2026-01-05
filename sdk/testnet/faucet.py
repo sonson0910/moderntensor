@@ -2,6 +2,7 @@
 Test Token Faucet
 
 This module provides a faucet service for distributing test tokens on the testnet.
+Integrates with actual blockchain Transaction primitives.
 """
 
 import time
@@ -11,6 +12,11 @@ from typing import Dict, Optional, Set
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+
+# Import blockchain primitives for creating real transactions
+from ..blockchain import Transaction
+from ..blockchain.crypto import KeyPair
+from ..blockchain.state import StateDB
 
 
 @dataclass
@@ -49,16 +55,23 @@ class Faucet:
     Test token faucet for testnet
     
     Distributes test tokens to users with rate limiting and anti-abuse measures.
+    Creates real blockchain transactions using sdk/blockchain primitives.
     """
     
-    def __init__(self, config: Optional[FaucetConfig] = None):
+    def __init__(self, config: Optional[FaucetConfig] = None, state_db: Optional[StateDB] = None):
         self.config = config or FaucetConfig()
+        self.state_db = state_db  # Connection to blockchain state
         self.request_history: Dict[str, list] = {}  # address -> [timestamps]
         self.ip_history: Dict[str, list] = {}  # ip -> [timestamps]
         self.total_distributed: int = 0
         self.request_count: int = 0
         self.blocked_addresses: Set[str] = set()
         self.blocked_ips: Set[str] = set()
+        
+        # Initialize faucet keypair if private key provided
+        self.keypair: Optional[KeyPair] = None
+        if self.config.faucet_private_key:
+            self.keypair = KeyPair(bytes.fromhex(self.config.faucet_private_key[2:] if self.config.faucet_private_key.startswith('0x') else self.config.faucet_private_key))
         
         self.stats = {
             'total_requests': 0,
@@ -128,14 +141,14 @@ class Faucet:
         ip_address: Optional[str] = None
     ) -> Dict[str, any]:
         """
-        Request test tokens from the faucet
+        Request test tokens from the faucet - creates a real blockchain transaction
         
         Args:
             address: Address to send tokens to
             ip_address: Optional IP address for rate limiting
         
         Returns:
-            Dict with request result
+            Dict with request result and transaction details
         """
         self.stats['total_requests'] += 1
         
@@ -170,8 +183,34 @@ class Faucet:
                 self.ip_history[ip_address] = []
             self.ip_history[ip_address].append(current_time)
         
-        # Create transaction (mock implementation)
-        tx_hash = self._generate_tx_hash(address, current_time)
+        # Create real transaction if keypair is available
+        transaction = None
+        tx_hash = None
+        
+        if self.keypair and self.state_db:
+            # Get faucet account nonce from state
+            faucet_address = bytes.fromhex(self.config.faucet_address[2:])
+            faucet_account = self.state_db.get_account(faucet_address)
+            nonce = faucet_account.nonce if faucet_account else 0
+            
+            # Create transaction
+            to_address = bytes.fromhex(address[2:])
+            transaction = Transaction(
+                nonce=nonce,
+                from_address=faucet_address,
+                to_address=to_address,
+                value=self.config.tokens_per_request,
+                gas_price=self.config.min_gas_price if hasattr(self.config, 'min_gas_price') else 1_000_000_000,
+                gas_limit=21000,  # Standard transfer gas limit
+                data=b'faucet-distribution'  # Mark as faucet transaction
+            )
+            
+            # Sign transaction with faucet private key
+            transaction.sign(self.keypair.private_key)
+            tx_hash = transaction.hash().hex()
+        else:
+            # Fallback to mock transaction hash for testing
+            tx_hash = self._generate_tx_hash(address, current_time)
         
         # Update stats
         self.stats['successful_requests'] += 1
@@ -181,7 +220,8 @@ class Faucet:
         
         return {
             'success': True,
-            'tx_hash': tx_hash,
+            'tx_hash': "0x" + tx_hash if not tx_hash.startswith('0x') else tx_hash,
+            'transaction': transaction,  # Actual Transaction object if created
             'amount': self.config.tokens_per_request,
             'address': address,
             'timestamp': current_time
