@@ -136,11 +136,12 @@ class TestGenesis:
         
         genesis_block = generator.generate_genesis_block()
         
-        assert 'header' in genesis_block
-        assert 'transactions' in genesis_block
-        assert 'config' in genesis_block
-        assert genesis_block['header']['height'] == 0
-        assert len(genesis_block['transactions']) == 0
+        # Verify it's a real Block object from Phase 1
+        assert hasattr(genesis_block, 'header')
+        assert hasattr(genesis_block, 'transactions')
+        assert genesis_block.header.height == 0
+        assert len(genesis_block.transactions) == 0
+        assert genesis_block.header.previous_hash == b'\x00' * 32  # Genesis has no previous block
     
     def test_genesis_export(self):
         """Test exporting genesis configuration"""
