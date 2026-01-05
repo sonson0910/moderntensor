@@ -21,14 +21,12 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-  # Legacy Cardano support (will be deprecated)
-  "pycardano==0.12.2",
+  # Core cryptography - Layer 1 blockchain
   "bip_utils==2.9.3",
-  
-  # Core cryptography
   "cryptography==42.0.8",
   "ecdsa==0.18.0",
   "coincurve>=19.0.1",
+  "pycryptodome==3.23.0",
   
   # Web framework
   "fastapi==0.115.6",
