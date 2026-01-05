@@ -430,8 +430,8 @@ class JSONRPC:
         Returns:
             Gas price as hex string
         """
-        # Return configured gas price
-        return hex(self.chain_config.gas_price)
+        # Return configured minimum gas price
+        return hex(self.chain_config.min_gas_price)
     
     # ===== AI-Specific Methods =====
     

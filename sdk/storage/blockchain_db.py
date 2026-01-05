@@ -183,8 +183,8 @@ class BlockchainDB:
             )
         
         # Write batch
-        self.blocks_db.batch_write(operations[:3])  # Block and header
-        self.index_db.batch_write(operations[3:])   # Indices
+        self.blocks_db.batch_write(operations[:2])  # Block and header only
+        self.index_db.batch_write(operations[2:])   # Height index and transactions
         
         # Update metadata
         self._update_best_block(height, block_hash)
