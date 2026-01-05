@@ -1,26 +1,34 @@
 # sdk/consensus/weight_matrix.py
 """
-Weight Matrix Manager with hybrid storage for Layer 1 blockchain.
+Production-ready Weight Matrix Manager with hybrid storage for Layer 1 blockchain.
 
 This module implements a 3-layer storage strategy for weight matrices:
 1. Layer 1 (On-Chain): Weight matrix hash (Merkle root) for verification
-2. Layer 2 (Database): Full weight matrix for fast queries
-3. Layer 3 (IPFS/Arweave): Historical weight matrices for audit trail
+2. Layer 2 (Database): Full weight matrix for fast queries using LevelDB
+3. Layer 3 (IPFS): Historical weight matrices for audit trail
 
 Key benefits:
-- Fast verification using on-chain Merkle roots
-- Quick queries using local database
-- Permanent archive using decentralized storage
+- Fast verification using on-chain Merkle roots with binary Merkle tree
+- Quick queries using LevelDB
+- Permanent archive using IPFS
 - Reduced on-chain storage costs
 """
 
 import numpy as np
 import hashlib
 import json
+import logging
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, asdict
 import scipy.sparse
 from datetime import datetime
+from pathlib import Path
+
+from sdk.utils.merkle_tree import MerkleTree, MerkleProof
+from sdk.utils.ipfs_client import IPFSClient, IPFSConfig, get_ipfs_client
+from sdk.storage.blockchain_db import LevelDBWrapper
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,32 +43,78 @@ class WeightMatrixMetadata:
     ipfs_hash: str
     is_sparse: bool
     compression_ratio: float
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'subnet_uid': self.subnet_uid,
+            'epoch': self.epoch,
+            'num_validators': self.num_validators,
+            'num_miners': self.num_miners,
+            'timestamp': self.timestamp,
+            'merkle_root': self.merkle_root.hex(),
+            'ipfs_hash': self.ipfs_hash,
+            'is_sparse': self.is_sparse,
+            'compression_ratio': self.compression_ratio
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'WeightMatrixMetadata':
+        """Create from dictionary."""
+        data_copy = data.copy()
+        if isinstance(data_copy['merkle_root'], str):
+            data_copy['merkle_root'] = bytes.fromhex(data_copy['merkle_root'])
+        return cls(**data_copy)
 
 
 class WeightMatrixManager:
     """
-    Manage weight matrices with hybrid storage.
+    Production-ready weight matrix manager with hybrid storage.
     
     Storage layers:
     1. On-chain: Merkle root hash only (32 bytes)
-    2. Database: Full matrix for fast access
+    2. Database: Full matrix for fast access (LevelDB)
     3. IPFS: Historical matrices for audit
     """
     
-    def __init__(self, db=None, ipfs_client=None):
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        ipfs_config: Optional[IPFSConfig] = None,
+        enable_ipfs: bool = True
+    ):
         """
         Initialize the weight matrix manager.
         
         Args:
-            db: Database connection for Layer 2 storage (optional)
-            ipfs_client: IPFS client for Layer 3 storage (optional)
+            db_path: Path to LevelDB database (creates if not exists)
+            ipfs_config: IPFS configuration
+            enable_ipfs: Whether to enable IPFS storage
         """
-        self.db = db or {}  # Simple dict for testing, use real DB in production
-        self.ipfs = ipfs_client
+        # Initialize LevelDB for Layer 2 storage
+        if db_path is None:
+            db_path = str(Path.home() / ".moderntensor" / "weight_matrices")
+        
+        try:
+            self.db = LevelDBWrapper(db_path, create_if_missing=True)
+            logger.info(f"Weight matrix database initialized at {db_path}")
+        except ImportError:
+            logger.warning("LevelDB not available, using in-memory storage")
+            self.db = None
+            self._mem_db: Dict[str, dict] = {}
+        
+        # Initialize IPFS client for Layer 3 storage
+        self.enable_ipfs = enable_ipfs
+        if enable_ipfs:
+            self.ipfs = get_ipfs_client(ipfs_config)
+        else:
+            self.ipfs = None
         
         # In-memory cache for recent matrices
         self.cache: Dict[Tuple[int, int], np.ndarray] = {}
         self.metadata_cache: Dict[Tuple[int, int], WeightMatrixMetadata] = {}
+        
+        logger.info("WeightMatrixManager initialized (production-ready)")
     
     async def store_weight_matrix(
         self,
@@ -71,7 +125,7 @@ class WeightMatrixManager:
     ) -> Tuple[bytes, str]:
         """
         Store weight matrix with 3-layer approach:
-        1. Calculate Merkle root
+        1. Calculate Merkle root using binary tree
         2. Upload full matrix to IPFS (optional)
         3. Store in local DB for fast query
         4. Return root hash for on-chain storage
@@ -104,23 +158,29 @@ class WeightMatrixManager:
             matrix_bytes = weights.tobytes()
             compression_ratio = 1.0
         
-        # Calculate Merkle root
+        # Calculate Merkle root using production binary tree
         merkle_root = self._calculate_merkle_root(weights)
         
         # Upload to IPFS (Layer 3)
-        import logging
         ipfs_hash = ""
-        if upload_to_ipfs and self.ipfs:
+        if upload_to_ipfs and self.enable_ipfs and self.ipfs:
             try:
-                ipfs_hash = await self._upload_to_ipfs(matrix_bytes, metadata={
+                metadata = {
                     'subnet_uid': subnet_uid,
                     'epoch': epoch,
                     'shape': list(weights.shape),
                     'is_sparse': is_sparse,
                     'timestamp': int(datetime.now().timestamp())
-                })
+                }
+                
+                ipfs_hash = await self.ipfs.add(matrix_bytes, metadata)
+                logger.info(f"Uploaded weight matrix to IPFS: {ipfs_hash}")
+                
+                # Pin the content
+                await self.ipfs.pin(ipfs_hash)
+            
             except (ConnectionError, TimeoutError) as e:
-                logging.warning(f"Failed to upload to IPFS: {e}")
+                logger.warning(f"Failed to upload to IPFS: {e}")
                 ipfs_hash = "local_only"
         else:
             ipfs_hash = "local_only"
@@ -145,6 +205,11 @@ class WeightMatrixManager:
         self.cache[(subnet_uid, epoch)] = weights
         self.metadata_cache[(subnet_uid, epoch)] = metadata
         
+        logger.info(
+            f"Stored weight matrix: subnet={subnet_uid}, epoch={epoch}, "
+            f"shape={weights.shape}, sparse={is_sparse}"
+        )
+        
         return merkle_root, ipfs_hash
     
     async def get_weight_matrix(
@@ -167,6 +232,7 @@ class WeightMatrixManager:
         # Check cache first
         key = (subnet_uid, epoch)
         if key in self.cache and not from_ipfs:
+            logger.debug(f"Weight matrix cache hit: {key}")
             return self.cache[key]
         
         # Try database
@@ -174,22 +240,32 @@ class WeightMatrixManager:
             weights = await self._get_from_db(subnet_uid, epoch)
             if weights is not None:
                 self.cache[key] = weights
+                logger.debug(f"Weight matrix retrieved from DB: {key}")
                 return weights
         
         # Try IPFS as fallback
-        if self.ipfs:
-            import logging
+        if self.enable_ipfs and self.ipfs:
             metadata = self.metadata_cache.get(key)
             if metadata and metadata.ipfs_hash != "local_only":
                 try:
-                    weights = await self._download_from_ipfs(metadata.ipfs_hash)
+                    data, _ = await self.ipfs.get_with_metadata(metadata.ipfs_hash)
+                    
+                    # Deserialize
+                    if metadata.is_sparse:
+                        weights = self._deserialize_sparse_matrix(data).toarray()
+                    else:
+                        shape = (metadata.num_validators, metadata.num_miners)
+                        weights = np.frombuffer(data, dtype=np.float64).reshape(shape)
+                    
                     if weights is not None:
                         self.cache[key] = weights
                         # Store in DB for future use
                         await self._store_in_db(subnet_uid, epoch, weights, metadata)
+                        logger.info(f"Weight matrix retrieved from IPFS: {key}")
                         return weights
-                except (ConnectionError, TimeoutError) as e:
-                    logging.warning(f"Failed to download from IPFS: {e}")
+                
+                except (ConnectionError, TimeoutError, FileNotFoundError) as e:
+                    logger.warning(f"Failed to download from IPFS: {e}")
         
         return None
     
@@ -198,8 +274,7 @@ class WeightMatrixManager:
         subnet_uid: int,
         epoch: int,
         weights: np.ndarray,
-        merkle_root: bytes,
-        merkle_proof: Optional[List[bytes]] = None
+        merkle_root: bytes
     ) -> bool:
         """
         Verify weights against on-chain Merkle root.
@@ -209,7 +284,6 @@ class WeightMatrixManager:
             epoch: Epoch number
             weights: Weight matrix to verify
             merkle_root: On-chain Merkle root
-            merkle_proof: Optional Merkle proof for specific entry
             
         Returns:
             True if verification passes
@@ -218,56 +292,67 @@ class WeightMatrixManager:
         calculated_root = self._calculate_merkle_root(weights)
         
         # Compare with on-chain root
-        return calculated_root == merkle_root
+        is_valid = calculated_root == merkle_root
+        
+        if is_valid:
+            logger.info(f"Weight matrix verification passed: subnet={subnet_uid}, epoch={epoch}")
+        else:
+            logger.warning(f"Weight matrix verification FAILED: subnet={subnet_uid}, epoch={epoch}")
+        
+        return is_valid
     
     def _calculate_merkle_root(self, weights: np.ndarray) -> bytes:
         """
-        Calculate Merkle root of weight matrix.
+        Calculate Merkle root of weight matrix using production binary tree.
         
-        IMPORTANT: This is a simplified implementation suitable for development
-        and testing. For production use, implement a proper Merkle tree with:
-        - Binary tree structure with left/right branches
-        - Proof generation capability
-        - Proper leaf node ordering
-        
-        Current approach: Hash each row individually, then hash all row hashes.
-        This provides basic integrity checking but lacks proof generation.
+        Args:
+            weights: Weight matrix
+            
+        Returns:
+            Merkle root (32 bytes)
         """
-        import hashlib
-        
-        # Hash each row
-        row_hashes = []
+        # Create leaf hashes from each row
+        leaves = []
         for row in weights:
             row_bytes = row.tobytes()
-            row_hash = hashlib.sha256(row_bytes).digest()
-            row_hashes.append(row_hash)
+            leaf_hash = hashlib.sha256(row_bytes).digest()
+            leaves.append(leaf_hash)
         
-        # Build simplified root (hash all row hashes together)
-        # TODO: Replace with proper binary Merkle tree for production
-        all_hashes = b''.join(row_hashes)
-        merkle_root = hashlib.sha256(all_hashes).digest()
+        # Build Merkle tree
+        tree = MerkleTree(leaves)
         
-        return merkle_root
+        return tree.get_root()
     
-    def _calculate_merkle_proof(
+    def generate_merkle_proof(
         self,
         weights: np.ndarray,
         row_index: int
-    ) -> List[bytes]:
+    ) -> MerkleProof:
         """
         Generate Merkle proof for a specific row.
         
-        NOTE: This method is not yet implemented. A proper Merkle tree
-        implementation with binary tree structure is needed for production use.
+        Args:
+            weights: Weight matrix
+            row_index: Row index to generate proof for
+            
+        Returns:
+            MerkleProof object
         """
-        raise NotImplementedError(
-            "Merkle proof generation not yet implemented. "
-            "Use _calculate_merkle_root() for basic verification instead."
-        )
+        # Create leaf hashes
+        leaves = []
+        for row in weights:
+            row_bytes = row.tobytes()
+            leaf_hash = hashlib.sha256(row_bytes).digest()
+            leaves.append(leaf_hash)
+        
+        # Build tree and get proof
+        tree = MerkleTree(leaves)
+        proof = tree.get_proof(row_index)
+        
+        return proof
     
     def _serialize_sparse_matrix(self, sparse_matrix: scipy.sparse.csr_matrix) -> bytes:
         """Serialize sparse matrix to bytes."""
-        # Store matrix data in a compact format
         data = {
             'data': sparse_matrix.data.tolist(),
             'indices': sparse_matrix.indices.tolist(),
@@ -283,56 +368,6 @@ class WeightMatrixManager:
             (obj['data'], obj['indices'], obj['indptr']),
             shape=obj['shape']
         )
-    
-    async def _upload_to_ipfs(self, data: bytes, metadata: dict) -> str:
-        """
-        Upload data to IPFS.
-        
-        Args:
-            data: Binary data to upload
-            metadata: Metadata dictionary
-            
-        Returns:
-            IPFS hash (CID)
-        """
-        if not self.ipfs:
-            return "ipfs_not_configured"
-        
-        # Create a JSON object with data and metadata
-        upload_obj = {
-            'data': data.hex(),
-            'metadata': metadata
-        }
-        upload_bytes = json.dumps(upload_obj).encode('utf-8')
-        
-        # Upload to IPFS (mock implementation)
-        # In production, use actual IPFS client
-        # ipfs_hash = await self.ipfs.add(upload_bytes)
-        
-        # For now, return a mock IPFS hash
-        ipfs_hash = f"Qm{hashlib.sha256(upload_bytes).hexdigest()[:44]}"
-        
-        return ipfs_hash
-    
-    async def _download_from_ipfs(self, ipfs_hash: str) -> Optional[np.ndarray]:
-        """
-        Download and deserialize weight matrix from IPFS.
-        
-        Args:
-            ipfs_hash: IPFS CID
-            
-        Returns:
-            Weight matrix or None
-        """
-        if not self.ipfs:
-            return None
-        
-        # Download from IPFS (mock implementation)
-        # In production, use actual IPFS client
-        # data = await self.ipfs.cat(ipfs_hash)
-        
-        # For now, return None (not implemented)
-        return None
     
     async def _store_in_db(
         self,
@@ -351,13 +386,23 @@ class WeightMatrixManager:
         else:
             matrix_bytes = weights.tobytes()
         
-        # Store in DB (simple dict for now)
-        self.db[key] = {
-            'weights': matrix_bytes,
-            'metadata': asdict(metadata),
+        # Prepare data
+        data = {
+            'weights': matrix_bytes.hex() if self.db else matrix_bytes,
+            'metadata': metadata.to_dict(),
             'shape': list(weights.shape),
             'is_sparse': metadata.is_sparse
         }
+        
+        # Store in DB
+        if self.db:
+            try:
+                value = json.dumps(data).encode('utf-8')
+                self.db.put(key.encode('utf-8'), value)
+            except Exception as e:
+                logger.error(f"Failed to store in DB: {e}")
+        else:
+            self._mem_db[key] = data
     
     async def _get_from_db(
         self,
@@ -367,18 +412,37 @@ class WeightMatrixManager:
         """Retrieve weight matrix from database."""
         key = f"weights_{subnet_uid}_{epoch}"
         
-        if key not in self.db:
-            return None
-        
-        data = self.db[key]
+        # Get from DB
+        if self.db:
+            try:
+                value = self.db.get(key.encode('utf-8'))
+                if value is None:
+                    return None
+                data = json.loads(value.decode('utf-8'))
+            except Exception as e:
+                logger.error(f"Failed to get from DB: {e}")
+                return None
+        else:
+            data = self._mem_db.get(key)
+            if data is None:
+                return None
         
         # Deserialize matrix
-        if data['is_sparse']:
-            sparse_matrix = self._deserialize_sparse_matrix(data['weights'])
-            return sparse_matrix.toarray()
-        else:
-            shape = tuple(data['shape'])
-            return np.frombuffer(data['weights'], dtype=np.float64).reshape(shape)
+        try:
+            if isinstance(data['weights'], str):
+                matrix_bytes = bytes.fromhex(data['weights'])
+            else:
+                matrix_bytes = data['weights']
+            
+            if data['is_sparse']:
+                sparse_matrix = self._deserialize_sparse_matrix(matrix_bytes)
+                return sparse_matrix.toarray()
+            else:
+                shape = tuple(data['shape'])
+                return np.frombuffer(matrix_bytes, dtype=np.float64).reshape(shape)
+        except Exception as e:
+            logger.error(f"Failed to deserialize weight matrix: {e}")
+            return None
     
     async def get_metadata(
         self,
@@ -393,24 +457,52 @@ class WeightMatrixManager:
         
         # Try database
         db_key = f"weights_{subnet_uid}_{epoch}"
-        if db_key in self.db:
-            metadata_dict = self.db[db_key]['metadata']
-            metadata = WeightMatrixMetadata(**metadata_dict)
-            self.metadata_cache[key] = metadata
-            return metadata
         
-        return None
+        if self.db:
+            try:
+                value = self.db.get(db_key.encode('utf-8'))
+                if value is None:
+                    return None
+                data = json.loads(value.decode('utf-8'))
+            except Exception:
+                return None
+        else:
+            data = self._mem_db.get(db_key)
+            if data is None:
+                return None
+        
+        metadata = WeightMatrixMetadata.from_dict(data['metadata'])
+        self.metadata_cache[key] = metadata
+        return metadata
     
     def get_storage_stats(self) -> Dict:
         """Get statistics about stored weight matrices."""
-        total_matrices = len(self.db)
-        total_size = sum(len(v['weights']) for v in self.db.values())
+        if self.db:
+            # Count entries in LevelDB
+            count = 0
+            total_size = 0
+            try:
+                for key, value in self.db.iterator(prefix=b'weights_'):
+                    count += 1
+                    total_size += len(value)
+            except Exception:
+                pass
+            
+            total_matrices = count
+            total_size_bytes = total_size
+        else:
+            total_matrices = len(self._mem_db)
+            total_size_bytes = sum(
+                len(v['weights']) if isinstance(v['weights'], bytes) 
+                else len(v['weights'].encode())
+                for v in self._mem_db.values()
+            )
         
         # Calculate average compression ratio
-        compression_ratios = [
-            v['metadata']['compression_ratio'] 
-            for v in self.db.values()
-        ]
+        compression_ratios = []
+        for metadata in self.metadata_cache.values():
+            compression_ratios.append(metadata.compression_ratio)
+        
         avg_compression = (
             sum(compression_ratios) / len(compression_ratios)
             if compression_ratios else 0.0
@@ -418,15 +510,17 @@ class WeightMatrixManager:
         
         return {
             'total_matrices': total_matrices,
-            'total_size_bytes': total_size,
+            'total_size_bytes': total_size_bytes,
             'cache_size': len(self.cache),
-            'avg_compression_ratio': avg_compression
+            'avg_compression_ratio': avg_compression,
+            'ipfs_enabled': self.enable_ipfs
         }
     
     def clear_cache(self) -> None:
         """Clear the in-memory cache."""
         self.cache.clear()
         self.metadata_cache.clear()
+        logger.info("Weight matrix cache cleared")
     
     async def prune_old_matrices(
         self,
@@ -445,13 +539,27 @@ class WeightMatrixManager:
         """
         # Find all epochs for this subnet
         epochs = []
-        for key in list(self.db.keys()):
-            if key.startswith(f"weights_{subnet_uid}_"):
-                epoch_str = key.split('_')[-1]
-                try:
-                    epochs.append(int(epoch_str))
-                except ValueError:
-                    continue
+        prefix = f"weights_{subnet_uid}_"
+        
+        if self.db:
+            try:
+                for key, _ in self.db.iterator(prefix=prefix.encode('utf-8')):
+                    key_str = key.decode('utf-8')
+                    epoch_str = key_str.split('_')[-1]
+                    try:
+                        epochs.append(int(epoch_str))
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+        else:
+            for key in list(self._mem_db.keys()):
+                if key.startswith(prefix):
+                    epoch_str = key.split('_')[-1]
+                    try:
+                        epochs.append(int(epoch_str))
+                    except ValueError:
+                        continue
         
         # Sort and identify old epochs
         epochs.sort(reverse=True)
@@ -461,9 +569,17 @@ class WeightMatrixManager:
         count = 0
         for epoch in epochs_to_remove:
             key = f"weights_{subnet_uid}_{epoch}"
-            if key in self.db:
-                del self.db[key]
-                count += 1
+            
+            if self.db:
+                try:
+                    self.db.delete(key.encode('utf-8'))
+                    count += 1
+                except Exception:
+                    pass
+            else:
+                if key in self._mem_db:
+                    del self._mem_db[key]
+                    count += 1
             
             # Remove from cache too
             cache_key = (subnet_uid, epoch)
@@ -472,4 +588,14 @@ class WeightMatrixManager:
             if cache_key in self.metadata_cache:
                 del self.metadata_cache[cache_key]
         
+        logger.info(f"Pruned {count} old weight matrices for subnet {subnet_uid}")
         return count
+    
+    def close(self):
+        """Close database connection."""
+        if self.db and hasattr(self.db, 'db'):
+            try:
+                self.db.db.close()
+                logger.info("Weight matrix database closed")
+            except Exception as e:
+                logger.error(f"Error closing database: {e}")
