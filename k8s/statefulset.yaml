@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: moderntensor-validator
+  namespace: moderntensor
+  labels:
+    app: moderntensor
+    component: validator
+spec:
+  serviceName: moderntensor-validator
+  replicas: 3
+  selector:
+    matchLabels:
+      app: moderntensor
+      component: validator
+  template:
+    metadata:
+      labels:
+        app: moderntensor
+        component: validator
+    spec:
+      containers:
+      - name: validator
+        image: moderntensor:latest
+        imagePullPolicy: Always
+        ports:
+        - name: p2p
+          containerPort: 30303
+          protocol: TCP
+        - name: rpc
+          containerPort: 8545
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: NODE_TYPE
+          value: "validator"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: MT_DATA_DIR
+          value: "/data"
+        - name: MT_LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8545
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8545
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 100Gi

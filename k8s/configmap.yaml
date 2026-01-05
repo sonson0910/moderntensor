@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: moderntensor-config
+  namespace: moderntensor
+data:
+  node.yaml: |
+    # ModernTensor Node Configuration
+    chain:
+      chain_id: 1
+      network_name: "ModernTensor Mainnet"
+      
+    consensus:
+      epoch_length: 100
+      max_validators: 21
+      min_stake: 1000000
+      block_time: 5  # seconds
+      
+    network:
+      listen_address: "0.0.0.0"
+      listen_port: 30303
+      max_peers: 50
+      
+    rpc:
+      enabled: true
+      listen_address: "0.0.0.0"
+      listen_port: 8545
+      cors_origins: ["*"]
+      
+    storage:
+      data_dir: "/data"
+      cache_size: 1024  # MB
+      
+    logging:
+      level: "INFO"
+      format: "json"
