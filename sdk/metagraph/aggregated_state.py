@@ -81,6 +81,23 @@ class SubnetAggregatedDatum(PlutusData):
     detailed_state_ipfs_hash: bytes  # Full detailed state (64 bytes for IPFS CID)
     historical_data_ipfs_hash: bytes  # Historical data archive (64 bytes)
     
+    # Tokenomics fields (Adaptive emission system)
+    utility_score_scaled: int  # Current utility score (scaled by DATUM_INT_DIVISOR)
+    epoch_emission: int  # Total emission this epoch
+    total_burned: int  # Total tokens burned to date
+    recycling_pool_balance: int  # Current recycling pool balance
+    claim_root: bytes  # Merkle root for reward claims (32 bytes)
+    
+    # Emission breakdown for current epoch
+    dao_allocation_this_epoch: int  # DAO treasury allocation
+    emission_from_pool: int  # Amount sourced from recycling pool
+    emission_from_mint: int  # Amount minted this epoch
+    
+    @property
+    def utility_score(self) -> float:
+        """Return utility score as float."""
+        return self.utility_score_scaled / DATUM_INT_DIVISOR
+    
     @property
     def avg_miner_performance(self) -> float:
         """Return average miner performance as float."""
@@ -122,6 +139,15 @@ class SubnetAggregatedDatum(PlutusData):
             'last_emission_slot': self.last_emission_slot,
             'detailed_state_ipfs_hash': self.detailed_state_ipfs_hash.hex(),
             'historical_data_ipfs_hash': self.historical_data_ipfs_hash.hex(),
+            # Tokenomics fields
+            'utility_score': self.utility_score,
+            'epoch_emission': self.epoch_emission,
+            'total_burned': self.total_burned,
+            'recycling_pool_balance': self.recycling_pool_balance,
+            'claim_root': self.claim_root.hex(),
+            'dao_allocation_this_epoch': self.dao_allocation_this_epoch,
+            'emission_from_pool': self.emission_from_pool,
+            'emission_from_mint': self.emission_from_mint,
         }
     
     @classmethod
@@ -151,6 +177,15 @@ class SubnetAggregatedDatum(PlutusData):
             last_emission_slot=current_slot,
             detailed_state_ipfs_hash=b'\x00' * 64,
             historical_data_ipfs_hash=b'\x00' * 64,
+            # Tokenomics fields
+            utility_score_scaled=0,
+            epoch_emission=0,
+            total_burned=0,
+            recycling_pool_balance=0,
+            claim_root=b'\x00' * 32,
+            dao_allocation_this_epoch=0,
+            emission_from_pool=0,
+            emission_from_mint=0,
         )
 
 
@@ -269,6 +304,45 @@ class SubnetAggregatedStateManager:
         state.miner_reward_pool = miner_pool
         state.validator_reward_pool = validator_pool
         state.last_emission_slot = current_slot
+    
+    def update_tokenomics_data(
+        self,
+        subnet_uid: int,
+        utility_score: float,
+        epoch_emission: int,
+        total_burned: int,
+        recycling_pool_balance: int,
+        claim_root: bytes,
+        dao_allocation: int,
+        from_pool: int,
+        from_mint: int
+    ) -> None:
+        """
+        Update tokenomics data for adaptive emission.
+        
+        Args:
+            subnet_uid: Subnet identifier
+            utility_score: Network utility score (0.0-1.0)
+            epoch_emission: Total emission this epoch
+            total_burned: Cumulative tokens burned
+            recycling_pool_balance: Current pool balance
+            claim_root: Merkle root for claims
+            dao_allocation: DAO treasury allocation
+            from_pool: Amount from recycling pool
+            from_mint: Amount minted
+        """
+        if subnet_uid not in self.states:
+            raise ValueError(f"Subnet {subnet_uid} not found")
+        
+        state = self.states[subnet_uid]
+        state.utility_score_scaled = int(utility_score * DATUM_INT_DIVISOR)
+        state.epoch_emission = epoch_emission
+        state.total_burned = total_burned
+        state.recycling_pool_balance = recycling_pool_balance
+        state.claim_root = claim_root
+        state.dao_allocation_this_epoch = dao_allocation
+        state.emission_from_pool = from_pool
+        state.emission_from_mint = from_mint
     
     def get_state(self, subnet_uid: int) -> Optional[SubnetAggregatedDatum]:
         """Get the aggregated state for a subnet."""

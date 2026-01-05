@@ -6,6 +6,7 @@ This module provides utilities to integrate:
 1. SubnetAggregatedDatum with existing consensus state
 2. WeightMatrixManager with existing scoring mechanisms
 3. Epoch processing with aggregated state updates
+4. Adaptive tokenomics with consensus results
 """
 
 from typing import List, Optional, Dict, Tuple
@@ -18,6 +19,11 @@ from sdk.metagraph.aggregated_state import (
 from sdk.consensus.weight_matrix import WeightMatrixManager
 from sdk.core.datatypes import MinerInfo, ValidatorInfo
 from sdk.metagraph.metagraph_datum import STATUS_ACTIVE
+from sdk.tokenomics import (
+    TokenomicsIntegration,
+    ConsensusData,
+    NetworkMetricsCollector
+)
 
 
 class Layer1ConsensusIntegrator:
@@ -31,7 +37,8 @@ class Layer1ConsensusIntegrator:
     def __init__(
         self,
         state_manager: Optional[SubnetAggregatedStateManager] = None,
-        weight_manager: Optional[WeightMatrixManager] = None
+        weight_manager: Optional[WeightMatrixManager] = None,
+        tokenomics: Optional[TokenomicsIntegration] = None
     ):
         """
         Initialize the integrator.
@@ -39,9 +46,12 @@ class Layer1ConsensusIntegrator:
         Args:
             state_manager: Manager for aggregated subnet states
             weight_manager: Manager for weight matrices
+            tokenomics: Tokenomics integration (created if not provided)
         """
         self.state_manager = state_manager or SubnetAggregatedStateManager()
         self.weight_manager = weight_manager or WeightMatrixManager()
+        self.tokenomics = tokenomics or TokenomicsIntegration()
+        self.metrics_collector = NetworkMetricsCollector()
     
     async def process_consensus_round(
         self,
@@ -114,6 +124,14 @@ class Layer1ConsensusIntegrator:
             consensus_root=consensus_root,
             emission_root=emission_root,
             total_emission=sum(emission_schedule.values())
+        )
+        
+        # Process tokenomics
+        tokenomics_result = self._process_tokenomics(
+            subnet_uid=subnet_uid,
+            epoch=current_epoch,
+            consensus_scores=consensus_scores,
+            validators=validators
         )
         
         return self.state_manager.get_state(subnet_uid)
@@ -389,3 +407,87 @@ class Layer1ConsensusIntegrator:
             return None
         
         return state.to_dict()
+    
+    def _process_tokenomics(
+        self,
+        subnet_uid: int,
+        epoch: int,
+        consensus_scores: Dict[str, float],
+        validators: List[ValidatorInfo]
+    ) -> None:
+        """
+        Process tokenomics for the epoch.
+        
+        This integrates adaptive tokenomics with consensus results.
+        
+        Args:
+            subnet_uid: Subnet identifier
+            epoch: Current epoch number
+            consensus_scores: Miner consensus scores
+            validators: List of validators with stakes
+        """
+        # Get network metrics
+        network_metrics = self.metrics_collector.get_epoch_metrics()
+        
+        # Prepare consensus data
+        validator_stakes = {v.uid: v.stake for v in validators}
+        
+        # Calculate average quality score (simplified - could be more sophisticated)
+        quality_score = sum(consensus_scores.values()) / len(consensus_scores) if consensus_scores else 0.5
+        
+        consensus_data = ConsensusData(
+            miner_scores=consensus_scores,
+            validator_stakes=validator_stakes,
+            quality_score=quality_score
+        )
+        
+        # Process epoch tokenomics
+        tokenomics_result = self.tokenomics.process_epoch_tokenomics(
+            epoch=epoch,
+            consensus_data=consensus_data,
+            network_metrics=network_metrics
+        )
+        
+        # Update aggregated state with tokenomics data
+        self.state_manager.update_tokenomics_data(
+            subnet_uid=subnet_uid,
+            utility_score=tokenomics_result.utility_score,
+            epoch_emission=tokenomics_result.emission_amount,
+            total_burned=self.tokenomics.burn.total_burned,
+            recycling_pool_balance=self.tokenomics.pool.pool_balance,
+            claim_root=tokenomics_result.claim_root,
+            dao_allocation=tokenomics_result.dao_allocation,
+            from_pool=tokenomics_result.from_pool,
+            from_mint=tokenomics_result.from_mint
+        )
+        
+        # Reset metrics for next epoch
+        self.metrics_collector.reset_for_new_epoch()
+    
+    def record_task_submission(self, difficulty: float = 0.5) -> None:
+        """
+        Record a task submission for metrics.
+        
+        Args:
+            difficulty: Task difficulty (0.0-1.0)
+        """
+        self.metrics_collector.record_task_submission(difficulty)
+    
+    def add_to_recycling_pool(self, amount: int, source: str) -> None:
+        """
+        Add tokens to recycling pool.
+        
+        Args:
+            amount: Amount to add
+            source: Source of tokens (e.g., 'registration_fees', 'slashing_penalties')
+        """
+        self.tokenomics.add_to_recycling_pool(amount, source)
+    
+    def get_tokenomics_stats(self) -> Dict:
+        """
+        Get comprehensive tokenomics statistics.
+        
+        Returns:
+            Dictionary with tokenomics metrics
+        """
+        return self.tokenomics.get_stats()
