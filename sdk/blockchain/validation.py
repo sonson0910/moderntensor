@@ -96,7 +96,16 @@ class BlockValidator:
                 logger.error("Block timestamp is not greater than parent timestamp")
                 return False
         
-        # TODO: Check timestamp is not too far in the future
+        # Check timestamp is not too far in the future (max 5 minutes ahead)
+        import time
+        current_time = int(time.time())
+        max_future_time = current_time + 300  # 5 minutes in seconds
+        if block.header.timestamp > max_future_time:
+            logger.error(
+                f"Block timestamp {block.header.timestamp} is too far in the future "
+                f"(current: {current_time}, max allowed: {max_future_time})"
+            )
+            return False
         
         # 4. Verify validator signature (skip for genesis)
         if block.header.height > 0:
@@ -137,7 +146,11 @@ class BlockValidator:
                 logger.error("Transaction merkle root mismatch")
                 return False
         
-        # TODO: 8. Verify state root after executing all transactions
+        # 8. Verify state root after executing all transactions (optional for light validation)
+        # Note: This would require full transaction execution in a temporary state
+        # For now, we skip this for performance reasons in basic validation
+        # Full nodes should execute transactions and verify state root matches
+        # TODO: Add option for full validation mode that executes transactions
         
         logger.info(f"Block {block.header.height} validation passed")
         return True
@@ -273,8 +286,13 @@ class BlockValidator:
             # 5. Handle contract creation or execution
             if tx.is_contract_creation():
                 # Contract creation
-                # TODO: Deploy contract code and execute constructor
-                # For now, just create an account with code
+                # Deploy contract code and execute constructor
+                # Note: Full implementation would require:
+                # 1. WASM or EVM runtime environment
+                # 2. Gas metering during execution
+                # 3. Constructor parameter decoding
+                # 4. State initialization
+                # For now, we store the code without executing constructor
                 contract_address = self._create_contract_address(tx.from_address, tx.nonce - 1)
                 receipt.contract_address = contract_address
                 
@@ -285,12 +303,20 @@ class BlockValidator:
                 logger.info(f"Contract created at {contract_address.hex()}")
             elif tx.to_address and self.state.get_code(tx.to_address):
                 # Contract call
-                # TODO: Execute contract code in VM
-                # For now, just log
-                logger.info(f"Contract call to {tx.to_address.hex()}")
+                # Execute contract code in VM
+                # Note: Full implementation would require:
+                # 1. WASM or EVM execution engine
+                # 2. Function signature decoding from tx.data
+                # 3. Gas metering during execution
+                # 4. State changes from contract execution
+                # 5. Return data handling
+                # For now, we just process as a value transfer
+                logger.info(f"Contract call to {tx.to_address.hex()} (VM execution not implemented)")
             
             # 6. Calculate actual gas used
-            gas_used = intrinsic_gas  # + execution gas (TODO)
+            # TODO: Add execution gas from VM when implemented
+            # execution_gas = vm.execute(...) if contract_call else 0
+            gas_used = intrinsic_gas  # + execution_gas
             receipt.gas_used = gas_used
             
             # 7. Refund unused gas
