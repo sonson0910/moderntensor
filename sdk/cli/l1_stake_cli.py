@@ -13,7 +13,6 @@ from typing import Optional
 from sdk.config.settings import settings, logger
 from sdk.blockchain.state import StateDB
 from sdk.blockchain.l1_staking_service import L1StakingService
-from sdk.blockchain.l1_keymanager import L1KeyManager
 
 
 console = Console()

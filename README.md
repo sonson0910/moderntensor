@@ -56,7 +56,7 @@ This project includes an SDK toolkit and a command-line interface (CLI) for inte
 
 ## 💡 Using the CLI (`mtcli`)
 
-The main command-line tool is `mtcli`. The `w` (`wallet`) subcommand is used for wallet management, `tx` for transactions, and `query` for blockchain information.
+The main command-line tool is `mtcli`. The `w` (`wallet`) subcommand is used for wallet management, `tx` for transactions, `query` for blockchain information, `stake` for Cardano staking, and `l1-stake` for native Layer 1 blockchain staking.
 
 **Help:**
 ```bash
@@ -64,8 +64,11 @@ mtcli --help
 mtcli w --help
 mtcli tx --help
 mtcli query --help
+mtcli stake --help
+mtcli l1-stake --help
 mtcli w <command_name> --help # Example: mtcli w create-coldkey --help
 mtcli query <command_name> --help # Example: mtcli query address --help
+mtcli l1-stake <command_name> --help # Example: mtcli l1-stake add --help
 ```
 
 ### Subnet & Simulation Commands
@@ -213,7 +216,7 @@ mtcli query list-subnets --network testnet
 
 ### Staking Commands (`mtcli stake`)
 
-Manage staking operations for validator participation in the ModernTensor network.
+Manage staking operations for validator participation in the ModernTensor network (Cardano-based).
 
 **Examples:**
 
@@ -237,6 +240,44 @@ mtcli stake info --coldkey my_coldkey --hotkey validator_hk \
     --base-dir ./wallets \
     --network testnet
 ```
+
+### Layer 1 Staking Commands (`mtcli l1-stake`)
+
+Manage native Layer 1 blockchain staking operations for validators.
+
+**Examples:**
+
+```bash
+# 1. Add stake to become a validator on Layer 1 blockchain
+#    - Requires validator address, private key, and public key
+mtcli l1-stake add \
+    --address <validator_address_hex> \
+    --private-key <private_key_hex> \
+    --public-key <public_key_hex> \
+    --amount 1000000 \
+    --yes
+
+# 2. Remove stake from validator
+#    - Returns staked tokens to validator balance
+mtcli l1-stake remove \
+    --address <validator_address_hex> \
+    --private-key <private_key_hex> \
+    --amount 500000 \
+    --yes
+
+# 3. Claim accumulated staking rewards
+#    - Transfers pending rewards to validator balance
+mtcli l1-stake claim \
+    --address <validator_address_hex> \
+    --private-key <private_key_hex> \
+    --yes
+
+# 4. Show staking information for a validator
+#    - Displays stake amount, pending rewards, and validator status
+mtcli l1-stake info \
+    --address <validator_address_hex>
+```
+
 
 ## 🏗️ Architecture
 
