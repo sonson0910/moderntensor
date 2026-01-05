@@ -318,6 +318,17 @@ def run_consensus_logic(
         uid: v.stake for uid, v in validators_info.items()
         if getattr(v, "status", STATUS_ACTIVE) == STATUS_ACTIVE
     }
+    
+    # Apply stake dampening to reduce centralization risk
+    if settings.CONSENSUS_STAKE_DAMPENING_ENABLED:
+        dampening_factor = settings.CONSENSUS_STAKE_DAMPENING_FACTOR
+        # Validate stakes are positive before applying power operation
+        validator_stakes = {
+            uid: max(1e-9, stake) ** dampening_factor  # Ensure positive stake
+            for uid, stake in validator_stakes.items()
+        }
+        logger.debug(f"Applied stake dampening with factor {dampening_factor}")
+    
     total_active_stake = sum(validator_stakes.values())
 
     # Gom điểm từ received_scores
@@ -1297,6 +1308,41 @@ async def commit_updates_logic(
         logger.debug(
             f"{log_prefix}: Set required signer: {owner_payment_key_hash.to_primitive().hex()}"
         )
+
+        # --- Pre-check transaction fee and balance ---
+        try:
+            # Get owner's balance
+            owner_utxos = context.utxos(str(owner_address))
+            owner_balance = sum(utxo.output.amount.coin for utxo in owner_utxos)
+            
+            # Use configured fee estimate
+            estimated_min_fee = settings.CONSENSUS_TRANSACTION_FEE_ESTIMATE
+            required_amount = output_value.coin + estimated_min_fee
+            
+            if owner_balance < required_amount:
+                logger.error(
+                    f"{log_prefix}: Insufficient funds. Owner balance: {owner_balance / 1e6:.2f} ADA, "
+                    f"Required (output + estimated fee): {required_amount / 1e6:.2f} ADA"
+                )
+                failed_updates[self_uid_hex] = "Insufficient funds for transaction"
+                return {
+                    "status": "completed_with_errors",
+                    "submitted_count": 0,
+                    "failed_count": 1,
+                    "skipped_count": 0,
+                    "submitted_txs": {},
+                    "failures": failed_updates,
+                    "skips": {},
+                }
+            
+            logger.debug(
+                f"{log_prefix}: Balance check passed. Owner: {owner_balance / 1e6:.2f} ADA, "
+                f"Required: ~{required_amount / 1e6:.2f} ADA"
+            )
+        except Exception as balance_e:
+            logger.warning(
+                f"{log_prefix}: Could not verify balance pre-check: {balance_e}. Proceeding anyway..."
+            )
 
         # e. Build và Ký Giao dịch
         logger.debug(f"{log_prefix}: Building and signing transaction...")

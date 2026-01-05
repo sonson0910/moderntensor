@@ -135,12 +135,13 @@ class ScoreSubmissionPayload(BaseModel):
         ..., description="UID (dạng hex) của validator gửi điểm"
     )
     cycle: int = Field(..., description="Chu kỳ đồng thuận mà điểm số này thuộc về")
+    timestamp: float = Field(..., description="Unix timestamp khi payload được tạo (replay protection)")
     submitter_vkey_cbor_hex: Optional[str] = Field(
         None, description="Payment Verification Key của người gửi (CBOR hex)"
     )
     signature: Optional[str] = Field(
         None,
-        description="Chữ ký (dạng hex) của hash(canonical_json(scores)) để xác thực người gửi",
+        description="Chữ ký (dạng hex) của hash(canonical_json(scores+cycle+timestamp)) để xác thực người gửi và ngăn replay",
     )
 
 

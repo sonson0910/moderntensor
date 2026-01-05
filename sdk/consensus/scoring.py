@@ -4,6 +4,7 @@ Logic chấm điểm kết quả từ miners.
 Chứa hàm cơ sở cần được kế thừa và triển khai bởi các validator/subnet cụ thể.
 """
 import logging
+import time
 from typing import List, Dict, Any, Optional, Union, cast, TYPE_CHECKING
 from collections import defaultdict
 from sdk.metagraph.metagraph_datum import STATUS_ACTIVE, STATUS_INACTIVE
@@ -159,6 +160,20 @@ def score_results_logic(
         valid_result_found = False
         for result in results:
             if result.miner_uid == assignment.miner_uid:
+                # --- Input Validation ---
+                if not result.result_data:
+                    logger.warning(
+                        f"Scoring skipped: Empty result_data from miner {result.miner_uid} for task {task_id}"
+                    )
+                    continue
+                
+                # Basic type validation
+                if not isinstance(result.result_data, (dict, list, str, int, float)):
+                    logger.warning(
+                        f"Scoring skipped: Invalid result_data type {type(result.result_data)} from miner {result.miner_uid} for task {task_id}"
+                    )
+                    continue
+                
                 # --- Cải tiến: Verify zkML Proof ---
                 penalty = 0.0
                 if result.proof:
@@ -329,8 +344,16 @@ async def broadcast_scores_logic(
 
         submitter_vkey_cbor_hex = payment_vkey.to_cbor_hex()
 
-        # Serialize list điểm ĐÃ LỌC VÀ FLATTEN bằng hàm canonical
-        data_to_sign_str = canonical_json_serialize(local_scores_list)
+        # Create timestamp for replay protection
+        timestamp = time.time()
+        
+        # Serialize payload WITH timestamp and cycle for replay protection
+        payload_with_nonce = {
+            "cycle": current_cycle,
+            "timestamp": timestamp,
+            "scores": local_scores_list
+        }
+        data_to_sign_str = canonical_json_serialize(payload_with_nonce)
         data_to_sign_bytes = data_to_sign_str.encode("utf-8")
 
         # Ký bằng PyNaCl
@@ -368,6 +391,7 @@ async def broadcast_scores_logic(
     payload = ScoreSubmissionPayload(
         submitter_validator_uid=self_uid,
         cycle=current_cycle,
+        timestamp=timestamp,
         scores=local_scores_list,
         signature=signature_hex,
         submitter_vkey_cbor_hex=submitter_vkey_cbor_hex,

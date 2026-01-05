@@ -4,8 +4,10 @@ import logging
 import asyncio
 import json
 import binascii
-import dataclasses  # <<<--- Thêm import dataclasses
-from typing import List, Annotated, Optional
+import time
+import dataclasses
+from typing import List, Annotated, Optional, DefaultDict
+from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Depends, status
 
 from pydantic import BaseModel, Field, ValidationError
@@ -27,13 +29,46 @@ from pycardano import (
     PaymentVerificationKey,
     VerificationKeyHash,
     Network,
-)  # <<<--- Thêm Network
+)
 import nacl.signing
 import nacl.exceptions
 
 # --- Router ---
 router = APIRouter(prefix="/consensus", tags=["Consensus P2P"])
 logger = logging.getLogger(__name__)
+
+# --- Rate Limiting State ---
+# Simple in-memory rate limiter (for production, use Redis or similar)
+# Note: This implementation has limitations:
+# - Not suitable for multi-process deployments
+# - State lost on service restart
+# - Consider implementing Redis-based rate limiter for production
+_request_counts: DefaultDict[str, list] = defaultdict(list)
+_MAX_REQUESTS_PER_MINUTE = 10
+_MAX_SCORES_PER_REQUEST = 1000
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+def _check_rate_limit(submitter_uid: str) -> bool:
+    """
+    Check if submitter is within rate limits.
+    
+    Note: This is a simple implementation. For production use:
+    - Implement Redis-based distributed rate limiter
+    - Use token bucket or sliding window algorithm
+    - Add background cleanup task instead of per-request cleanup
+    """
+    current_time = time.time()
+    # Clean old entries (inefficient - should use background task in production)
+    _request_counts[submitter_uid] = [
+        t for t in _request_counts[submitter_uid]
+        if current_time - t < _RATE_LIMIT_WINDOW
+    ]
+    # Check limit
+    if len(_request_counts[submitter_uid]) >= _MAX_REQUESTS_PER_MINUTE:
+        return False
+    # Record this request
+    _request_counts[submitter_uid].append(current_time)
+    return True
 
 
 # --- Hàm xác thực chữ ký (Đã sửa đổi và thêm logging) ---
@@ -141,6 +176,23 @@ async def verify_payload_signature(
         try:
             # >>> Use payload.scores directly, which is already List[ValidatorScore] <<<
             scores_objects_from_payload = payload.scores
+            
+            # Check timestamp for replay protection
+            current_time = time.time()
+            timestamp_age = current_time - payload.timestamp
+            max_age_seconds = 300  # 5 minutes tolerance for clock skew and network delay
+            
+            if timestamp_age > max_age_seconds:
+                logger.warning(
+                    f"SigVerifyFail (Sender: {submitter_uid}): Payload timestamp too old ({timestamp_age:.1f}s > {max_age_seconds}s). Possible replay attack."
+                )
+                return False
+            
+            if timestamp_age < -60:  # Timestamp in future by more than 1 minute
+                logger.warning(
+                    f"SigVerifyFail (Sender: {submitter_uid}): Payload timestamp in future ({timestamp_age:.1f}s). Clock skew or manipulation."
+                )
+                return False
 
             # Check if the list of scores is empty after Pydantic parsing
             if not scores_objects_from_payload:
@@ -151,11 +203,13 @@ async def verify_payload_signature(
                 # If empty lists are disallowed for signing, return False.
                 # return False
 
-            # Serialize lại list đối tượng scores để có dữ liệu gốc đã ký
-            # canonical_json_serialize handles dataclasses directly
-            data_str_from_payload = canonical_json_serialize(
-                scores_objects_from_payload  # Pass the list of objects
-            )
+            # Serialize WITH timestamp and cycle for verification (must match signing format)
+            payload_with_nonce = {
+                "cycle": payload.cycle,
+                "timestamp": payload.timestamp,
+                "scores": scores_objects_from_payload
+            }
+            data_str_from_payload = canonical_json_serialize(payload_with_nonce)
             data_to_verify_bytes = data_str_from_payload.encode("utf-8")
             signature_bytes = binascii.unhexlify(signature_hex)
 
@@ -216,6 +270,26 @@ async def receive_scores(
     submitter_uid = payload.submitter_validator_uid
     current_cycle = node.current_cycle
     payload_cycle = payload.cycle
+
+    # --- Payload Size Validation ---
+    if len(payload.scores) > _MAX_SCORES_PER_REQUEST:
+        logger.warning(
+            f"API: Rejected oversized payload from {submitter_uid}: {len(payload.scores)} scores (max: {_MAX_SCORES_PER_REQUEST})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Too many scores in payload. Maximum allowed: {_MAX_SCORES_PER_REQUEST}",
+        )
+    
+    # --- Rate Limiting ---
+    if not _check_rate_limit(submitter_uid):
+        logger.warning(
+            f"API: Rate limit exceeded for {submitter_uid}. Rejecting request."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Maximum {_MAX_REQUESTS_PER_MINUTE} requests per minute.",
+        )
 
     logger.info(
         f"API: Received scores submission from V:{submitter_uid} for cycle {payload_cycle} (Node cycle: {current_cycle})"
