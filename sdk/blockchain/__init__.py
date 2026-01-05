@@ -7,11 +7,13 @@ This package contains the core blockchain primitives for the ModernTensor L1:
 - State management (Account model)
 - Cryptography primitives
 - Block validation logic
+- MDT token transaction fees
 """
 
 from .block import Block, BlockHeader
 from .transaction import Transaction
 from .state import StateDB, Account
+from .mdt_transaction_fees import TransactionFeeHandler, MDTTransactionProcessor
 
 __all__ = [
     "Block",
@@ -19,4 +21,6 @@ __all__ = [
     "Transaction",
     "StateDB",
     "Account",
+    "TransactionFeeHandler",
+    "MDTTransactionProcessor",
 ]
