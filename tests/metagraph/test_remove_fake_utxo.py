@@ -1,7 +1,7 @@
 # tests/metagraph/test_remove_fake_utxo.py
 from dataclasses import dataclass
 import pytest
-from pycardano import (
+from sdk.compat.pycardano import (
     Address,
     Network,
     PlutusData,
@@ -9,7 +9,7 @@ from pycardano import (
     TransactionId,
 )
 from typing import List  # <<<--- Thêm List
-from pycardano import UTxO  # <<<--- Thêm UTxO
+from sdk.compat.pycardano import UTxO  # <<<--- Thêm UTxO
 
 # Import các thành phần cần thiết từ SDK
 from sdk.metagraph.remove_fake_utxo import remove_fake_utxos  # Hàm cần test

@@ -64,7 +64,7 @@ from sdk.service.context import get_chain_context
 # Pydantic model for API communication
 # from sdk.network.app.api.v1.endpoints.consensus import ScoreSubmissionPayload
 # PyCardano types
-from pycardano import (
+from sdk.compat.pycardano import (
     Network,
     Address,
     ScriptHash,

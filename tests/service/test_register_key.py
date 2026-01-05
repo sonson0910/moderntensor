@@ -1,6 +1,6 @@
 # tests/service/test_register_key.py
 import pytest
-from pycardano import (
+from sdk.compat.pycardano import (
     Network,
     Address,
     Redeemer,

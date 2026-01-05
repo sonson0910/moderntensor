@@ -19,7 +19,7 @@ from .service.context import get_chain_context
 from .config.settings import (
     settings as sdk_settings,
 )  # Dùng settings SDK cho giá trị mặc định
-from pycardano import ExtendedSigningKey, BlockFrostChainContext, Network
+from sdk.compat.pycardano import ExtendedSigningKey, BlockFrostChainContext, Network
 
 logger = logging.getLogger(__name__)
 

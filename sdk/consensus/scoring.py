@@ -14,7 +14,7 @@ import httpx
 import json
 import nacl.signing
 from nacl.exceptions import CryptoError
-from pycardano import (
+from sdk.compat.pycardano import (
     PaymentVerificationKey,
     ExtendedVerificationKey,
     ExtendedSigningKey,

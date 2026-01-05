@@ -1,7 +1,7 @@
 # sdk/node/cardano_service/query_service.py
 
 from typing import Dict
-from pycardano import Address, Value
+from sdk.compat.pycardano import Address, Value
 
 from sdk.config.settings import logger
 

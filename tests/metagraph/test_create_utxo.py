@@ -1,6 +1,6 @@
 # tests/metagraph/test_create_utxo.py
 import pytest
-from pycardano import (
+from sdk.compat.pycardano import (
     TransactionId,
     Network,
     BlockFrostChainContext,

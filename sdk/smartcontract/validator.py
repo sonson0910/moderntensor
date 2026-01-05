@@ -1,4 +1,4 @@
-from pycardano import (
+from sdk.compat.pycardano import (
     PlutusV3Script,
     ScriptHash,
 )

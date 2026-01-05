@@ -2,7 +2,7 @@
 """
 Định nghĩa các cấu trúc dữ liệu cốt lõi dùng chung trong SDK Moderntensor.
 """
-from pycardano import (
+from sdk.compat.pycardano import (
     PaymentVerificationKey,
 )  # Import ở đây để tránh circular dependency
 from typing import List, Dict, Any, Tuple, Optional
@@ -13,7 +13,7 @@ import time  # Thêm import time
 from pydantic import BaseModel, Field
 
 # --- Import PyCardano ---
-from pycardano import (
+from sdk.compat.pycardano import (
     VerificationKeyHash,
     PaymentVerificationKey,
 )  # Thêm PaymentVerificationKey nếu property dùng

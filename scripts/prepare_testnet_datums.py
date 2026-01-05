@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from typing import Optional, Tuple, List, Type, Dict, Any, cast
 from rich.logging import RichHandler
 
-from pycardano import (
+from sdk.compat.pycardano import (
     TransactionBuilder,
     TransactionOutput,
     Address,

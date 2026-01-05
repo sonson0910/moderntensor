@@ -3,7 +3,7 @@
 import os
 import json
 from cryptography.fernet import Fernet
-from pycardano import Address, Network, ExtendedSigningKey
+from sdk.blockchain import L1Address, L1Network, KeyPair
 from rich.console import Console
 from typing import cast
 import binascii
@@ -20,9 +20,9 @@ class HotKeyManager:
 
     def __init__(
         self,
-        coldkeys_dict: dict,  # {coldkey_name -> {"wallet": HDWallet, "cipher_suite": ..., "hotkeys": {...}}}
+        coldkeys_dict: dict,  # {coldkey_name -> {"wallet": L1HDWallet, "cipher_suite": ..., "hotkeys": {...}}}
         base_dir: str = None,  # type: ignore
-        network: Network = Network.TESTNET,
+        network: L1Network = L1Network.TESTNET,
     ):
         """
         Initializes the HotKeyManager.
@@ -55,7 +55,7 @@ class HotKeyManager:
         # Use cast to satisfy the linter
         self.base_dir = cast(str, final_base_dir)
 
-        self.network = Network.TESTNET
+        self.network = L1Network.TESTNET
 
     def generate_hotkey(self, coldkey_name: str, hotkey_name: str) -> str:
         """

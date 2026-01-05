@@ -1,7 +1,7 @@
 import sys
 import logging
 from typing import Optional, cast, Any, List, Union
-from pycardano import (
+from sdk.compat.pycardano import (
     StakeCredential,
     StakeRegistration,
     StakeDelegation,
@@ -20,7 +20,7 @@ from pycardano import (
     ScriptHash,
 )
 from pycardano.crypto.bech32 import bech32_decode
-from blockfrost import ApiError, ApiUrls, BlockFrostApi, BlockFrostIPFS
+# REMOVED: from blockfrost import ApiError, ApiUrls, BlockFrostApi, BlockFrostIPFS  # Layer 1 does not use Blockfrost
 from sdk.config.settings import settings
 from sdk.keymanager.decryption_utils import decode_hotkey_skey
 from sdk.service.context import get_chain_context

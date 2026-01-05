@@ -1,48 +1,51 @@
 # sdk/service/context.py
 
-from pycardano import BlockFrostChainContext, Network
+from sdk.blockchain import L1ChainContext, L1Network
 from sdk.config.settings import settings, logger
 
 
-def get_chain_context(method="blockfrost"):
+def get_chain_context(method="l1_rpc"):
     """
-    Returns a chain context object for interacting with the Cardano blockchain.
+    Returns a chain context object for interacting with the Layer 1 blockchain.
 
-    Currently, only the "blockfrost" method is supported, which uses the
-    BlockFrostChainContext class from pycardano. The function is designed
-    to be extensible, so additional methods could be implemented in the future.
+    The Layer 1 blockchain uses JSON-RPC instead of Cardano's BlockFrost API.
+    This function creates an L1ChainContext that connects to the appropriate
+    network (mainnet, testnet, or devnet).
 
     Args:
         method (str): The name of the method to use for chain context creation.
-                      Default is "blockfrost".
-        project_id (str): The Blockfrost project ID (API key).
-                          Required if method is "blockfrost".
-        network (Network): The Cardano network to connect to
-                           (MAINNET or TESTNET). Default is TESTNET.
+                      Default is "l1_rpc" (Layer 1 JSON-RPC).
 
     Raises:
         ValueError: If an unsupported method is specified.
 
     Returns:
-        BlockFrostChainContext: If method is "blockfrost", returns a context configured
-                                for the specified network.
+        L1ChainContext: Chain context configured for the specified network.
     """
-    # For now, we only support using Blockfrost
-    if method == "blockfrost":
-        project_id = settings.BLOCKFROST_PROJECT_ID
-        network = "TESTNET"  # This is a pycardano.Network enum
-
-        # Determine the base URL depending on the network
-        if network == "MAINET":
-            base_url = "https://cardano-mainnet.blockfrost.io/api/"
+    if method == "l1_rpc" or method == "blockfrost":  # blockfrost for backward compat
+        # Get network from settings
+        network_str = getattr(settings, 'NETWORK', 'testnet')
+        
+        if network_str.upper() == "MAINNET":
+            network = L1Network.MAINNET
+        elif network_str.upper() == "TESTNET":
+            network = L1Network.TESTNET
         else:
-            base_url = "https://cardano-preprod.blockfrost.io/api/"
+            network = L1Network.DEVNET
+        
+        # Get RPC URL from settings or use default
+        rpc_url = getattr(settings, 'L1_RPC_URL', None)
+        api_key = getattr(settings, 'L1_API_KEY', None)
 
         logger.info(
-            f"Initializing BlockFrostChainContext with network={network}, project_id={project_id}"
+            f"Initializing L1ChainContext with network={network}, rpc_url={rpc_url}"
         )
-        return BlockFrostChainContext(
-            project_id=project_id, network=Network.TESTNET, base_url=base_url
+        
+        return L1ChainContext(
+            rpc_url=rpc_url,
+            network=network,
+            api_key=api_key
         )
     else:
         raise ValueError(f"Unsupported chain context method: {method}")
+

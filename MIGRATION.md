@@ -2,121 +2,146 @@
 
 ## Tổng Quan / Overview
 
-ModernTensor đang chuyển đổi từ một ứng dụng chạy trên Cardano sang một blockchain Layer 1 độc lập. Tài liệu này hướng dẫn quá trình migration.
+**Migration Status: ✅ COMPLETE (January 2026)**
 
-ModernTensor is transitioning from a Cardano-based application to an independent Layer 1 blockchain. This guide explains the migration process.
+ModernTensor has successfully transitioned from a Cardano-based application to an independent Layer 1 blockchain. All Cardano dependencies (pycardano, blockfrost) have been removed and replaced with native Layer 1 blockchain primitives.
 
-## Timeline / Lộ Trình
+ModernTensor has completed its transition from Cardano to an independent Layer 1 blockchain. This document describes the migration that was completed.
 
-### Phase 2.5 (Current) - Dual Mode Operation
-**Status:** ✅ Active  
-**Duration:** 3 months  
-**Mode:** Both Cardano and L1 active
+## Migration Completed ✅
 
-**What's Available:**
-- ✅ New L1 blockchain primitives (blocks, transactions, state)
-- ✅ PoS consensus with AI validation
-- ✅ Bridge layer for Cardano compatibility
-- 🔄 Validators can operate on both systems
+### What Changed
 
-**For Validators:**
-- Continue using Cardano for now
-- Test L1 functionality on testnet
-- Prepare for migration
+**Before (Cardano):**
+- Used pycardano for key management and transactions
+- Used BlockFrost API for chain interaction
+- Cardano-specific UTXO model
+- Cardano derivation paths (m/1852'/1815'/...)
 
-### Phase 3-5 (3-6 months) - L1 Primary
-**Status:** 🔄 Planned  
-**Duration:** 3 months  
-**Mode:** L1 primary, Cardano bridge only
+**After (Layer 1):**
+- Native Layer 1 HD wallet (sdk/blockchain/l1_keymanager.py)
+- JSON-RPC for chain interaction
+- Account-based model
+- Standard BIP44 derivation paths (m/44'/0'/...)
 
-**What Changes:**
-- 🚀 L1 becomes primary network
-- 🌉 Cardano available via bridge only
-- ⚠️ New validators must use L1
-- 📉 Cardano features marked deprecated
+### Timeline (Completed)
 
-**For Validators:**
-- **Required:** Migrate to L1 by end of Phase 5
-- Learn L1 transaction format
-- Update node software
+- ✅ **Phase 1:** Layer 1 blockchain primitives implemented
+- ✅ **Phase 2:** Created L1 key management system
+- ✅ **Phase 3:** Created L1 chain context (RPC)
+- ✅ **Phase 4:** Created compatibility layer (sdk/compat/pycardano.py)
+- ✅ **Phase 5:** Replaced all pycardano imports (50+ files)
+- ✅ **Phase 6:** Removed pycardano from dependencies
 
-### Phase 6+ (6+ months) - Cardano Deprecated
-**Status:** 📅 Future  
-**Duration:** Ongoing  
-**Mode:** L1 only
+## For Developers: Using Layer 1
 
-**What Changes:**
-- ❌ Cardano support removed
-- ✅ Full L1 functionality
-- 🎯 100% independent blockchain
+### Importing Blockchain Components
 
-## For Validators: Migration Steps
-
-### Step 1: Understand the Changes
-
-**Old System (Cardano):**
+**Direct Layer 1 imports (recommended):**
 ```python
-# Cardano UTXO-based
-from sdk.metagraph import ValidatorDatum
-from pycardano import BlockFrostChainContext
-
-# Register on Cardano
-context = BlockFrostChainContext(...)
-# Submit datum to Plutus contract
-```
-
-**New System (L1):**
-```python
-# Account-based blockchain
-from sdk.blockchain import Transaction, StateDB
-from sdk.consensus.pos import ProofOfStake
-
-# Register on L1
-state = StateDB()
-pos = ProofOfStake(state, config)
-pos.validator_set.add_validator(address, pubkey, stake)
-```
-
-### Step 2: Generate L1 Keys
-
-```python
-from sdk.blockchain.crypto import KeyPair
-
-# Generate new L1 keypair
-keypair = KeyPair()
-address = keypair.address()  # 20 bytes
-pubkey = keypair.public_key  # 64 bytes
-
-# Save securely
-private_key_hex = keypair.export_private_key()
-```
-
-### Step 3: Register on L1 (Using Bridge)
-
-```python
-from sdk.bridge.validator_bridge import ValidatorBridge
-from sdk.core.datatypes import ValidatorInfo
-
-# Your existing Cardano validator info
-cardano_validator = ValidatorInfo(
-    uid="your_uid",
-    stake=1000000,
-    address="cardano_addr",
-    # ... other fields
+# Layer 1 blockchain primitives
+from sdk.blockchain import (
+    L1HDWallet,           # HD wallet for key derivation
+    L1Address,            # Layer 1 addresses
+    L1Network,            # Network types (MAINNET, TESTNET, DEVNET)
+    L1ChainContext,       # RPC connection to L1 nodes
+    KeyPair,              # Cryptographic key pairs
+    Transaction,          # Layer 1 transactions
 )
 
-# Sync to L1
-bridge = ValidatorBridge()
-success = bridge.migrate_validator(
-    cardano_uid="your_uid",
-    validator_info=cardano_validator
-)
+# Create wallet
+wallet = L1HDWallet.from_mnemonic("your mnemonic phrase...")
+address = wallet.get_root_address()
+
+# Connect to network
+context = L1ChainContext(network=L1Network.TESTNET)
+balance = context.get_balance(str(address))
 ```
 
-### Step 4: Update Node Configuration
+**Compatibility imports (for gradual migration):**
+```python
+# Uses compatibility layer that wraps Layer 1
+from sdk.compat.pycardano import (
+    HDWallet,                # → L1HDWallet
+    Network,                 # → L1Network
+    BlockFrostChainContext,  # → L1ChainContext
+    Address,                 # → L1Address
+)
 
-```yaml
-# config/node.yaml
+# This code works with minimal changes
+wallet = HDWallet.from_mnemonic("your mnemonic phrase...")
+```
+
+### Key Management
+
+**HD Wallet (Layer 1):**
+```python
+from sdk.blockchain import L1HDWallet
+
+# Generate new wallet
+wallet = L1HDWallet()  # Auto-generates 24-word mnemonic
+print(f"Mnemonic: {wallet.mnemonic}")
+
+# Or restore from mnemonic
+wallet = L1HDWallet.from_mnemonic("word1 word2 ... word24")
+
+# Derive keys using BIP44 standard paths
+hotkey_0 = wallet.derive_hotkey(0)  # m/44'/0'/0'/0/0
+hotkey_1 = wallet.derive_hotkey(1)  # m/44'/0'/0'/0/1
+
+# Get addresses
+address = hotkey_0.address()  # Returns 20-byte address
+address_hex = "0x" + address.hex()
+```
+
+### Network Interaction
+
+**Chain Context (Layer 1):**
+```python
+from sdk.blockchain import L1ChainContext, L1Network
+
+# Connect to testnet
+context = L1ChainContext(
+    network=L1Network.TESTNET,
+    rpc_url="http://testnet-rpc.moderntensor.io:8545"
+)
+
+# Query balance
+balance = context.get_balance(address_hex)
+
+# Get nonce for transactions
+nonce = context.get_nonce(address_hex)
+
+# Submit transaction
+tx_hash = context.submit_tx(signed_transaction)
+```
+
+### Creating Transactions
+
+**Layer 1 Transactions:**
+```python
+from sdk.blockchain import Transaction, KeyPair
+
+# Create transaction
+tx = Transaction(
+    nonce=0,
+    from_address=sender_address,     # 20 bytes
+    to_address=recipient_address,     # 20 bytes
+    value=1000000,                    # Amount in smallest unit
+    gas_price=1000,
+    gas_limit=21000,
+    data=b"",                         # Optional payload
+)
+
+# Sign transaction
+keypair = KeyPair(private_key_bytes)
+tx.sign(keypair.private_key)
+
+# Submit to network
+context = L1ChainContext(network=L1Network.TESTNET)
+tx_hash = context.submit_tx(tx)
+print(f"Transaction hash: {tx_hash}")
+```
 
 # Enable dual mode
 mode: "dual"  # Options: "cardano", "l1", "dual"

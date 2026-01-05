@@ -6,7 +6,7 @@ import time
 import copy  # Để tạo bản sao dữ liệu cho việc sửa đổi
 
 # --- Imports từ pycardano ---
-from pycardano import (
+from sdk.compat.pycardano import (
     PaymentKeyPair,
     PaymentSigningKey,
     PaymentVerificationKey,

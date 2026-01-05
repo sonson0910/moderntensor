@@ -283,7 +283,7 @@ mtcli stake info --coldkey my_coldkey --hotkey validator_hk \
     ```bash
     pip install -r requirements.txt
     ```
-    *(Note: Ensure you have a complete `requirements.txt` file with libraries like `click`, `rich`, `pycardano`, `blockfrost-python`, `cbor2`, `cryptography`, etc...)*
+    *(Note: Ensure you have all dependencies installed, including `click`, `rich`, `bip_utils`, `cryptography`, `ecdsa`, `httpx`, etc...)*
 
 5.  **(Optional) Install in Editable Mode:** If you want the `mtcli` CLI to be runnable from anywhere and reflect code changes immediately. Requires a suitable `setup.py` or `pyproject.toml` file.
     ```bash

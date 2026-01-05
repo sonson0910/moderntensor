@@ -7,13 +7,7 @@ from bip_utils import (
     Bip39Languages,
 )
 from cryptography.fernet import InvalidToken
-from pycardano import (
-    HDWallet,
-    Address,
-    Network,
-    ExtendedSigningKey,
-    ExtendedVerificationKey,
-)
+from sdk.blockchain import L1HDWallet, L1Address, L1Network
 from rich.console import Console
 from typing import cast
 
@@ -134,7 +128,7 @@ class ColdKeyManager:
             f.write(cipher_suite.encrypt(mnemonic.encode("utf-8")))
 
         # 4) Initialize an HDWallet from the generated mnemonic
-        hdwallet = HDWallet.from_mnemonic(mnemonic)
+        hdwallet = L1HDWallet.from_mnemonic(mnemonic)
 
         # 5) Create an empty "hotkeys.json" file if it doesn't already exist
         hotkeys_path = os.path.join(coldkey_dir, "hotkeys.json")
@@ -194,38 +188,22 @@ class ColdKeyManager:
                 encrypted_mnemonic = f.read()
             mnemonic = cipher_suite.decrypt(encrypted_mnemonic).decode("utf-8")
 
-            hdwallet = HDWallet.from_mnemonic(mnemonic)
+            hdwallet = L1HDWallet.from_mnemonic(mnemonic)
 
-            # --- Derive standard extended keys (Account 0, Address 0) ---
-            payment_path = "m/1852'/1815'/0'/0/0"
-            payment_child_wallet = hdwallet.derive_from_path(payment_path)
-            payment_xsk = ExtendedSigningKey.from_hdwallet(payment_child_wallet)
-            payment_xvk = payment_xsk.to_verification_key()
-
-            stake_path = "m/1852'/1815'/0'/2/0"
-            stake_child_wallet = hdwallet.derive_from_path(stake_path)
-            stake_xsk = ExtendedSigningKey.from_hdwallet(stake_child_wallet)
-            stake_xvk = stake_xsk.to_verification_key()
-
-            # --- Derive the base address using extended verification key hashes ---
-            network_obj = settings.CARDANO_NETWORK
-            if not isinstance(network_obj, Network):
-                if isinstance(network_obj, str) and network_obj.lower() == "testnet":
-                    network_obj = Network.TESTNET
-                elif isinstance(network_obj, str) and network_obj.lower() == "mainnet":
-                    network_obj = Network.MAINNET
-                else:
-                    logger.warning(
-                        f"Invalid network type in settings: {network_obj}. Defaulting to TESTNET."
-                    )
-                    network_obj = Network.TESTNET
-
-            payment_address = Address(
-                payment_part=payment_xvk.hash(),  # Use .hash() on XVK
-                staking_part=stake_xvk.hash(),  # Use .hash() on XVK
-                network=network_obj,
-            )
-            # --- End Derivation ---
+            # --- Derive Layer 1 keys using standard BIP44 paths ---
+            # Payment key: m/44'/0'/0'/0/0 (account 0, receiving/sending)
+            payment_keypair = hdwallet.derive_key("m/44'/0'/0'/0/0")
+            
+            # Stake key: m/44'/0'/1'/0/0 (account 1, staking operations)
+            # Using separate account for security (prevents key reuse)
+            stake_keypair = hdwallet.derive_key("m/44'/0'/1'/0/0")
+            
+            # Get Layer 1 address from payment key
+            payment_address = L1Address(address=payment_keypair.address())
+            
+            # For backward compatibility, store keypairs as extended key equivalents
+            payment_xsk = payment_keypair  # Store payment keypair
+            stake_xsk = stake_keypair  # Store stake keypair separately
 
             # Update internal state (Optional - Load hotkeys if needed for other methods)
             hotkeys_data = {}
@@ -315,7 +293,7 @@ class ColdKeyManager:
             )  # Debug normalized
 
             # Initialize HDWallet - this implicitly validates the mnemonic
-            hdwallet = HDWallet.from_mnemonic(normalized_mnemonic)
+            hdwallet = L1HDWallet.from_mnemonic(normalized_mnemonic)
             logger.debug(
                 f"Mnemonic phrase for '{name}' passed validation via HDWallet initialization."
             )

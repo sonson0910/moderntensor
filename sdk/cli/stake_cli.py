@@ -2,8 +2,8 @@
 import click
 from rich.console import Console
 from rich.panel import Panel
-from pycardano import Network, Address
-from blockfrost import ApiError
+from sdk.compat.pycardano import Network, Address
+# REMOVED: from blockfrost import ApiError  # Layer 1 does not use Blockfrost
 from typing import Any
 
 from sdk.config.settings import settings, logger
