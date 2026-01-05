@@ -5,7 +5,7 @@ import time
 import pytest
 from os.path import exists
 
-from pycardano import (
+from sdk.compat.pycardano import (
     PaymentKeyPair,
     PaymentSigningKey,
     PaymentVerificationKey,

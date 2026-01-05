@@ -23,7 +23,7 @@ from sdk.consensus.scoring import canonical_json_serialize
 
 
 # Import các kiểu PyCardano và PyNaCl
-from pycardano import (
+from sdk.compat.pycardano import (
     Address,
     VerificationKey,
     PaymentVerificationKey,

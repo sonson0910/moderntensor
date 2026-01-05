@@ -4,7 +4,7 @@ import os
 import json
 import binascii
 from cryptography.fernet import Fernet, InvalidToken
-from pycardano import ExtendedSigningKey, CBORSerializable
+from sdk.compat.pycardano import ExtendedSigningKey, CBORSerializable
 from rich.console import Console
 from typing import cast, Tuple, Optional
 

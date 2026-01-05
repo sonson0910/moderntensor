@@ -3,7 +3,7 @@
 import os
 import time
 import pytest
-from pycardano import Network
+from sdk.compat.pycardano import Network
 
 from sdk.config.settings import settings, logger  # Global logger & settings
 from sdk.service.context import get_chain_context

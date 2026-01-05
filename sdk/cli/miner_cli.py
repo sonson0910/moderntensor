@@ -4,7 +4,7 @@ import asyncio
 from sdk.agent.miner_agent import MinerAgent
 from sdk.config.settings import settings
 from sdk.keymanager.wallet_manager import WalletManager
-from pycardano import Network
+from sdk.compat.pycardano import Network
 
 
 @click.command(name="run_miner")

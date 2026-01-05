@@ -5,7 +5,7 @@ import json
 import pytest
 import logging
 from unittest.mock import patch
-from pycardano import Network
+from sdk.compat.pycardano import Network
 
 from sdk.config.settings import settings, logger  # Global logger & settings
 from sdk.keymanager.encryption_utils import (

@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pycardano import (
+from sdk.compat.pycardano import (
     TransactionBuilder,
     TransactionOutput,
     Address,

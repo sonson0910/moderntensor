@@ -5,7 +5,7 @@ import json
 import binascii
 import pytest
 from cryptography.fernet import Fernet
-from pycardano import ExtendedSigningKey
+from sdk.compat.pycardano import ExtendedSigningKey
 from sdk.keymanager.encryption_utils import get_or_create_salt, generate_encryption_key
 
 

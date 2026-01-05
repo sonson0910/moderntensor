@@ -2,7 +2,7 @@
 import logging
 from typing import List, Dict, Any, Optional, Type, Tuple, DefaultDict
 from collections import defaultdict  # Import defaultdict
-from pycardano import (
+from sdk.compat.pycardano import (
     Address,
     BlockFrostChainContext,
     UTxO,

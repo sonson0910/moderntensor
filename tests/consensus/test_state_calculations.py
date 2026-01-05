@@ -38,7 +38,7 @@ from sdk.metagraph.metagraph_datum import (
 
 # --- Import Settings và Helpers ---
 from sdk.config.settings import settings
-from pycardano import (
+from sdk.compat.pycardano import (
     Address,
     VerificationKeyHash,
     BlockFrostChainContext,

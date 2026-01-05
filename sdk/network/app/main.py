@@ -18,7 +18,7 @@ from sdk.core.datatypes import ValidatorInfo
 from sdk.config.settings import settings
 from sdk.service.context import get_chain_context
 
-from pycardano import ExtendedSigningKey
+from sdk.compat.pycardano import ExtendedSigningKey
 from typing import Optional
 
 # Lấy logger đã được cấu hình trong settings.py

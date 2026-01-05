@@ -2,7 +2,7 @@ import logging
 import json
 import os
 from typing import Dict, Any, Optional
-from pycardano import (
+from sdk.compat.pycardano import (
     BlockFrostChainContext,
     TransactionBuilder,
     TransactionOutput,
@@ -81,7 +81,7 @@ class SubnetManager:
             # Create Subnet Datum (This needs to match the on-chain Datum structure)
             # For now, we use a placeholder or a generic dictionary if supported
             # In reality, this must be a PlutusData object matching the script's Datum
-            from pycardano import PlutusData, IndefiniteList
+            from sdk.compat.pycardano import PlutusData, IndefiniteList
 
             # Mock Datum: [subnet_name_bytes, owner_pkh, metadata_hash]
             # This is highly dependent on the actual Plutus script logic

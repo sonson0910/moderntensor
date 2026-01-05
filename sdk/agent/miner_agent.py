@@ -28,7 +28,7 @@ from sdk.service.utxos import get_utxo_from_str  # Hàm tìm UTXO theo UID
 from sdk.smartcontract.validator import read_validator  # Để lấy script hash/bytes
 
 # Import các kiểu PyCardano
-from pycardano import (
+from sdk.compat.pycardano import (
     BlockFrostChainContext,
     Network,
     ExtendedSigningKey,

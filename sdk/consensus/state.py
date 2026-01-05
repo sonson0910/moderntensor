@@ -29,7 +29,7 @@ from sdk.formulas import (
 from sdk.metagraph.update_metagraph import update_datum
 from sdk.metagraph.metagraph_data import get_all_validator_data
 from sdk.metagraph.hash.hash_datum import hash_data  # Cần hàm hash
-from pycardano import (
+from sdk.compat.pycardano import (
     BlockFrostChainContext,
     PaymentSigningKey,
     StakeSigningKey,
@@ -56,7 +56,7 @@ from sdk.metagraph.metagraph_datum import (
     STATUS_JAILED,
     STATUS_INACTIVE,
 )
-from blockfrost import ApiError
+# REMOVED: from blockfrost import ApiError  # Layer 1 does not use Blockfrost
 
 from sdk.network.hydra_client import HydraClient  # Import Hydra Client
 

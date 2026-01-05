@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from pycardano import Address, Network, PaymentVerificationKey, StakeVerificationKey
+from sdk.compat.pycardano import Address, Network, PaymentVerificationKey, StakeVerificationKey
 from cryptography.fernet import Fernet
 
 logging.basicConfig(level=logging.INFO)
@@ -42,10 +42,10 @@ class HotKeyManager:
 
         idx = len(hotkeys_dict)  # hotkey index = number of current hotkeys
 
-        payment_wallet = coldkey_wallet.derive_from_path(f"m/1852'/1815'/0'/0/{idx}")
+        payment_wallet = coldkey_wallet.derive_from_path(f"m/44'/0'/0'/0/{idx}")
         payment_vk = PaymentVerificationKey.from_primitive(payment_wallet.public_key)
 
-        stake_wallet = coldkey_wallet.derive_from_path(f"m/1852'/1815'/0'/2/{idx}")
+        stake_wallet = coldkey_wallet.derive_from_path(f"m/44'/0'/0'/0/{idx}")
         stake_vk = StakeVerificationKey.from_primitive(stake_wallet.public_key)
 
         # Create address (pycardano Address)

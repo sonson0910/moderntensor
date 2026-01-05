@@ -5,7 +5,7 @@ import os
 from sdk.consensus.node import ValidatorNode
 from sdk.config.settings import settings
 from sdk.keymanager.wallet_manager import WalletManager
-from pycardano import BlockFrostChainContext, Network, ExtendedSigningKey
+from sdk.compat.pycardano import BlockFrostChainContext, Network, ExtendedSigningKey
 
 
 @click.command(name="run_validator")

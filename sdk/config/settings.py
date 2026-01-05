@@ -9,7 +9,7 @@ import re
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pycardano import Network
+from sdk.compat.pycardano import Network
 
 # ANSI color codes
 RED = "\033[91m"
