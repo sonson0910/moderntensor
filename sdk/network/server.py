@@ -43,6 +43,9 @@ class ResultModel(BaseModel):
     result_data: dict = Field(
         default_factory=dict, description="The actual result payload"
     )
+    proof: Optional[str] = Field(
+        None, description="Optional zkML proof (hex string) verifying the computation"
+    )
 
 
 # Base class for Miner

@@ -91,6 +91,23 @@ class MinerResult:
     miner_uid: str
     result_data: Any
     timestamp_received: float
+    # --- Cải tiến: Verifiable AI ---
+    proof: Optional[str] = None  # zkML proof hoặc hash bằng chứng
+    signature: Optional[str] = None  # Chữ ký số của Miner xác nhận kết quả
+    execution_metadata: Dict[str, Any] = field(
+        default_factory=dict
+    )  # Metadata: thời gian chạy, model hash...
+
+
+@dataclass
+class MinerCommitment:
+    """Lưu trữ cam kết (hash) của Miner trước khi gửi kết quả thực tế (Commit-Reveal)."""
+
+    task_id: str
+    miner_uid: str
+    commitment_hash: str  # SHA256(result_hash + salt)
+    timestamp: float
+    salt: Optional[str] = None  # Sẽ được cập nhật ở giai đoạn Reveal
 
 
 @dataclass
@@ -102,6 +119,7 @@ class ValidatorScore:
     validator_uid: str  # Validator đã chấm điểm này
     score: float  # Điểm P_miner,v
     deviation: Optional[float] = None  # Độ lệch so với điểm đồng thuận (tính sau)
+    penalty: float = 0.0  # Điểm phạt (0.0 = không phạt, 1.0 = phạt nặng/fake proof)
     timestamp: float = field(default_factory=time.time)  # Thời điểm chấm điểm
 
 

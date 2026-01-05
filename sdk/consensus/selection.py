@@ -11,7 +11,8 @@ try:
     from sdk.config.settings import settings
     from sdk.core.datatypes import MinerInfo
     from sdk.metagraph.metagraph_datum import STATUS_ACTIVE
-    from sdk.formulas.trust_score import calculate_selection_probability
+
+    # from sdk.formulas.trust_score import calculate_selection_probability # Deprecated logic
 except ImportError as e:
     raise ImportError(f"Error importing dependencies in selection.py: {e}")
 
@@ -26,25 +27,20 @@ def select_miners_logic(
     max_time_bonus: int,
 ) -> List[MinerInfo]:
     """
-    Logic chọn miners dựa trên trust score và thời gian chờ.
+    Logic chọn miners sử dụng chiến lược lai (Hybrid Strategy): Exploitation + Exploration.
 
-    Selects miners using a weighted random choice mechanism where the probability
-    factor for each miner is calculated based on their trust score and the time
-    since they were last selected (using `calculate_selection_probability`).
-    Only active miners are considered.
-
-    Handles edge cases:
-    - No miners or no active miners: Returns empty list.
-    - Zero total probability factor: Selects randomly among active miners.
-    - Fails to select the requested number of unique miners within max attempts:
-      Returns the miners selected so far with a warning.
+    Mô phỏng cơ chế của Bittensor/Yuma Consensus:
+    1. Exploitation (Top-Tier): Chọn một tỷ lệ lớn (ví dụ 70%) các miner có Trust Score cao nhất.
+       Đảm bảo chất lượng dịch vụ tốt nhất cho mạng lưới.
+    2. Exploration (Random/Weighted): Chọn ngẫu nhiên từ các miner còn lại (bao gồm cả miner mới/trust thấp).
+       Đảm bảo tính công bằng và cơ hội cho các nhân tố mới (tránh "Rich get richer" tuyệt đối).
 
     Args:
         miners_info: Dictionary chứa thông tin các miner hiện có ({uid: MinerInfo}).
         current_cycle: Chu kỳ hiện tại.
-        num_to_select: Số lượng miner cần chọn.
-        beta: Hệ số bonus công bằng (ảnh hưởng đến bonus thời gian chờ).
-        max_time_bonus: Giới hạn bonus thời gian chờ (tính bằng số chu kỳ).
+        num_to_select: Tổng số lượng miner cần chọn.
+        beta: (Không còn dùng trực tiếp trong logic mới, giữ lại để tương thích API).
+        max_time_bonus: (Không còn dùng trực tiếp trong logic mới).
 
     Returns:
         Danh sách các MinerInfo đã được chọn.
@@ -55,91 +51,55 @@ def select_miners_logic(
         )
         return []
 
-    # Chỉ xem xét các miner đang hoạt động
+    # 1. Lọc Active Miners
     active_miners = [
         m
         for m in miners_info.values()
         if getattr(m, "status", STATUS_ACTIVE) == STATUS_ACTIVE
     ]
+
     if not active_miners:
         logger.warning("No active miners found for selection.")
         return []
 
-    logger.debug(f"Found {len(active_miners)} active miners to consider for selection.")
-
-    miner_probabilities = []
-    total_prob_factor = 0.0
-
-    for miner in active_miners:
-        time_since = max(0, current_cycle - miner.last_selected_time)
-        prob_factor = calculate_selection_probability(
-            trust_score=miner.trust_score,
-            time_since_last_selection=time_since,
-            beta=beta,
-            max_time_bonus_effect=max_time_bonus,
-        )
-        prob_factor = max(0.0, prob_factor)  # Đảm bảo không âm
-        miner_probabilities.append((miner, prob_factor))
-        total_prob_factor += prob_factor
-        logger.debug(
-            f"Miner {miner.uid}: Trust={miner.trust_score:.3f}, TimeSince={time_since}, ProbFactor={prob_factor:.4f}"
-        )
-
-    if total_prob_factor <= 1e-9:
-        logger.warning(
-            "Total probability factor is zero or negligible. Selecting randomly among active miners."
-        )
-        k = min(num_to_select, len(active_miners))
-        selected_miners = random.sample(active_miners, k)
+    # Nếu số lượng active ít hơn số cần chọn, chọn tất cả
+    if len(active_miners) <= num_to_select:
         logger.info(
-            f"Randomly selected {len(selected_miners)} miners: {[m.uid for m in selected_miners]}"
+            f"Not enough active miners ({len(active_miners)}) to satisfy request ({num_to_select}). Selecting all."
         )
-        return selected_miners
+        return active_miners
 
-    try:
-        probabilities = [p / total_prob_factor for _, p in miner_probabilities]
-    except ZeroDivisionError:
-        logger.error(
-            "Division by zero during probability normalization. Selecting randomly."
-        )
-        k = min(num_to_select, len(active_miners))
-        selected_miners = random.sample(active_miners, k)
-        logger.info(
-            f"Randomly selected {len(selected_miners)} miners due to normalization error."
-        )
-        return selected_miners
+    # 2. Phân bổ số lượng (70% Top-Tier, 30% Random)
+    # Tỷ lệ này có thể đưa vào settings trong tương lai
+    top_tier_ratio = 0.7
+    num_top = int(num_to_select * top_tier_ratio)
+    num_random = num_to_select - num_top
 
-    miners_population = [m for m, _ in miner_probabilities]
+    # 3. Sắp xếp theo Trust Score giảm dần
+    # Sử dụng uid làm key phụ để đảm bảo thứ tự ổn định (stable sort)
+    sorted_miners = sorted(
+        active_miners, key=lambda m: (m.trust_score, m.uid), reverse=True
+    )
 
-    selected_miners_dict: Dict[str, MinerInfo] = {}
-    attempts = 0
-    max_attempts = num_to_select * 5
-    target_count = min(num_to_select, len(miners_population))
+    # 4. Chọn Top-Tier (Exploitation)
+    selected_miners = sorted_miners[:num_top]
+    remaining_miners = sorted_miners[num_top:]
 
-    while len(selected_miners_dict) < target_count and attempts < max_attempts:
-        try:
-            # Chọn có trọng số, không thay thế (nếu dùng random.sample với weights - cần numpy hoặc logic phức tạp hơn)
-            # random.choices cho phép chọn lại, nên dùng dict để lọc trùng
-            chosen_miner = random.choices(
-                population=miners_population, weights=probabilities, k=1
-            )[0]
-            selected_miners_dict[chosen_miner.uid] = chosen_miner
-        except IndexError:
-            logger.warning("Random choices returned empty list unexpectedly.")
-            break
-        except Exception as e:
-            logger.exception(f"Error during random weighted choice: {e}")
-            break
-        attempts += 1
+    logger.debug(
+        f"Selected {len(selected_miners)} Top-Tier miners (Trust > {selected_miners[-1].trust_score if selected_miners else 0})."
+    )
 
-    selected_miners = list(selected_miners_dict.values())
-
-    if len(selected_miners) < target_count:
-        logger.warning(
-            f"Could only select {len(selected_miners)} unique miners out of {target_count} requested after {max_attempts} attempts."
-        )
+    # 5. Chọn Random (Exploration) từ phần còn lại
+    # Phần này giúp miner mới (trust=0) hoặc miner cũ (trust thấp) có cơ hội được đánh giá lại
+    if remaining_miners and num_random > 0:
+        # Đảm bảo không chọn quá số lượng còn lại
+        k = min(num_random, len(remaining_miners))
+        random_selection = random.sample(remaining_miners, k)
+        selected_miners.extend(random_selection)
+        logger.debug(f"Selected {len(random_selection)} Random miners for exploration.")
 
     logger.info(
-        f"Selected {len(selected_miners)} unique miners: {[m.uid for m in selected_miners]}"
+        f"Selected {len(selected_miners)} unique miners (Top: {num_top}, Rnd: {num_random}). UIDs: {[m.uid for m in selected_miners]}"
     )
+
     return selected_miners

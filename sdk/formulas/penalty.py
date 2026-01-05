@@ -36,18 +36,46 @@ def calculate_fraud_severity_value(
 ) -> float:
     """
     Xác định giá trị fraud_severity (0 đến 1) dựa trên hành vi gian lận được phát hiện.
-    *** Cần logic cụ thể để triển khai việc phân loại theo bậc ***
+    Triển khai logic phân loại theo bậc (Multi-Tier Slashing).
 
     Args:
         detected_behavior: Dictionary chứa thông tin chi tiết về hành vi.
-        threshold_dev1, threshold_dev2, n1_cycles: Các ngưỡng ví dụ.
+                           Keys: 'type', 'details', 'deviation', 'proof_valid', etc.
 
     Returns:
-        Giá trị fraud_severity (ví dụ: 0.1, 0.3, 0.8...).
+        Giá trị fraud_severity (0.0 - 1.0).
     """
-    # ----- LOGIC PHÂN LOẠI THEO BẬC CẦN ĐƯỢC TRIỂN KHAI Ở ĐÂY -----
-    # Ví dụ rất đơn giản (Cần thay thế bằng logic thực tế):
-    if detected_behavior.get("type") == "Severe_Attack":
+    behavior_type = detected_behavior.get("type", "Unknown")
+    severity = 0.0
+
+    # Cấp 3: Nghiêm trọng (Malicious) - Cắt 50% - 100% Stake
+    if behavior_type == "Sybil_Attack":
+        return 1.0
+    elif behavior_type == "Fake_Proof":  # zkML proof invalid
+        return 1.0
+    elif behavior_type == "Malicious_Code":
+        return 1.0
+
+    # Cấp 2: Trung bình (Equivocation/Integrity) - Cắt 1% - 10% Stake
+    elif behavior_type == "Double_Signing":
+        return 0.1
+    elif behavior_type == "Commit_Reveal_Mismatch": # Hash commit không khớp với reveal
+        return 0.2
+    elif behavior_type == "Plagiarism": # Copy kết quả (nếu phát hiện được)
+        return 0.3
+
+    # Cấp 1: Nhẹ (Performance/Availability) - Giảm Trust Score (Severity thấp)
+    elif behavior_type == "Offline":
+        return 0.01
+    elif behavior_type == "Low_Performance":
+        # Tính severity dựa trên độ lệch (deviation)
+        deviation = detected_behavior.get("deviation", 0.0)
+        if deviation > 0.5:
+            return 0.05
+        else:
+            return 0.0
+
+    return severity
         return 0.8  # Bậc 3
     elif detected_behavior.get("type") == "Invalid_Data":
         return 0.3  # Bậc 2
