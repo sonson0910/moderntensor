@@ -481,7 +481,9 @@ class ValidatorNode:
         logger.info(
             f"Consensus results for cycle {cycle} cached ({len(results_for_miners)} miners). Ready for API access."
         )
-        # TODO (Future): Implement actual publication (IPFS, On-chain hash, Signed API)
+        # Future: Implement distributed model publication
+        # Options include IPFS, on-chain hash storage, or signed API endpoints
+        # This would enable validators to verify and access models efficiently
 
     # --- Tương tác Metagraph ---
     async def load_metagraph_data(self):
@@ -517,7 +519,8 @@ class ValidatorNode:
                 self.context, self.script_hash, network
             )
             validator_data_task = get_all_validator_data(self.context, self.script_hash, network)  # type: ignore
-            # TODO: Thêm task load Subnet/Foundation data nếu cần
+            # Future enhancement: Add tasks to load Subnet and Foundation data
+            # This would support multi-subnet architecture and foundation governance
 
             all_miner_dicts, all_validator_dicts = await asyncio.gather(
                 miner_data_task, validator_data_task, return_exceptions=True

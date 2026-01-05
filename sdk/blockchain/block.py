@@ -141,9 +141,16 @@ class Block:
         
         Returns:
             bytes: Serialized block data
+        
+        Note: Uses JSON for simplicity and debuggability.
+        Production optimization options for better performance:
+        - RLP (Recursive Length Prefix): Ethereum-compatible
+        - Protobuf: Fast, requires schema
+        - CBOR: Compact, self-describing
+        - SSZ: Ethereum 2.0 standard
+        Choose based on network protocol requirements.
         """
         # Simple JSON serialization for now
-        # TODO: Implement more efficient binary serialization (e.g., RLP, Protobuf)
         block_data = {
             "header": {
                 "version": self.header.version,

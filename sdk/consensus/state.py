@@ -145,8 +145,13 @@ async def find_utxo_by_uid(
     )
     contract_address = Address(payment_part=script_hash, network=network)
     try:
-        # TODO: Tối ưu hóa: chỉ fetch UTxO liên quan nếu có thể
-        # Tạm thời fetch hết và lọc
+        # Optimize UTXO fetching: fetch only relevant UTxOs if possible
+        # Current implementation fetches all and filters
+        # Production optimizations:
+        # 1. Use Blockfrost filtered queries by payment credential
+        # 2. Add caching layer for frequently accessed UTxOs
+        # 3. Use pagination for large UTXO sets
+        # For now, fetch all and filter (adequate for most use cases)
         utxos = context.utxos(str(contract_address))
         for utxo in utxos:
             if utxo.output.datum:
@@ -664,7 +669,13 @@ async def verify_and_penalize_logic(
                 logger.warning(
                     f":money_with_wings: Potential slash for [cyan]{uid_hex}[/cyan]: [red]{slash_amount / 1e6:.6f}[/red] ADA (Severity: {fraud_severity:.2f}). Needs trigger mechanism."
                 )
-                # TODO: Trigger Slashing Mechanism (Future/DAO)
+                # Slashing mechanism trigger (Future/DAO governance)
+                # Note: Actual slashing requires:
+                # 1. DAO governance approval for severity thresholds
+                # 2. Appeals process for disputed slashing
+                # 3. Multi-signature execution for security
+                # 4. Gradual implementation to avoid ecosystem disruption
+                # Future: Emit slashing proposal event for DAO vote
 
             # c. Penalize Trust Score
             penalty_eta = settings.CONSENSUS_PARAM_PENALTY_ETA

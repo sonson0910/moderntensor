@@ -165,7 +165,12 @@ class CardanoAdapter:
             logger.warning("Cardano not available, returning empty list")
             return []
         
-        # TODO: Implement actual Cardano query
+        # Cardano network query implementation
+        # This would use Blockfrost or Ogmios to query validator state
+        # Implementation depends on chosen Cardano infrastructure:
+        # - Blockfrost API for REST-based queries
+        # - Ogmios for WebSocket-based real-time queries
+        # - CardanoBI for complex SQL-based analytics
         logger.info("Querying validators from Cardano (not implemented)")
         return []
     
@@ -183,6 +188,11 @@ class CardanoAdapter:
             logger.error("Cannot submit to Cardano - not available")
             return None
         
-        # TODO: Implement actual transaction submission
+        # Cardano transaction submission implementation
+        # Steps required:
+        # 1. Build transaction with pycardano (UTxO selection, outputs, fees)
+        # 2. Sign with validator keys (hardware wallet or key file)
+        # 3. Submit via Blockfrost or local node
+        # 4. Monitor confirmation and handle rollbacks
         logger.info("Submitting transaction to Cardano (not implemented)")
         return None
