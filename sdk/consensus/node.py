@@ -263,6 +263,7 @@ class ValidatorNode:
             list
         )  # Điểm tích lũy của cả chu kỳ
         self.miner_is_busy: Set[str] = set()  # UID hex của miner đang bận
+        self.miner_busy_lock = asyncio.Lock()  # Lock for miner_is_busy access
         self.results_buffer: Dict[str, MinerResult] = {}  # {task_id: MinerResult}
         self.results_buffer_lock = asyncio.Lock()
         self.validator_scores: Dict[str, List[ValidatorScore]] = {}  # Điểm do mình chấm
@@ -832,9 +833,13 @@ class ValidatorNode:
             logger.debug("Mini-batch selection: No active miners found.")
             return []
 
-        # 2. Lọc tiếp các miner không bận (uid không có trong self.miner_is_busy)
+        # 2. Create snapshot of busy miners (thread-safe read of set)
+        # Note: For proper async safety, caller should use miner_busy_lock
+        busy_miners_snapshot = self.miner_is_busy.copy()
+        
+        # 3. Lọc tiếp các miner không bận (uid không có trong busy snapshot)
         available_miners = [
-            m for m in active_miners_all if m.uid not in self.miner_is_busy
+            m for m in active_miners_all if m.uid not in busy_miners_snapshot
         ]
 
         if not available_miners:
