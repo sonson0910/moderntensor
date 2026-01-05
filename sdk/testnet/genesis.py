@@ -185,7 +185,7 @@ class GenesisGenerator:
         network_name: str = "moderntensor-testnet",
         validator_count: int = 5,
         validator_stake: int = 10_000_000,
-        faucet_balance: int = 1_000_000_000_000
+        faucet_balance: int = 100_000_000  # Changed to 100M (more reasonable for 1B total supply)
     ) -> GenesisConfig:
         """
         Create a default testnet configuration
@@ -232,10 +232,15 @@ class GenesisGenerator:
             ))
         
         # Create faucet account
+        # Ensure faucet balance doesn't exceed total supply
+        # Reserve some for validator stakes
+        max_faucet_balance = self.config.total_supply if hasattr(self, 'config') and self.config else 1_000_000_000
+        safe_faucet_balance = min(faucet_balance, max_faucet_balance // 2)  # Use max 50% for faucet
+        
         accounts = [
             AccountConfig(
                 address="0xfacf00000000000000000000000000000000acef",
-                balance=faucet_balance,
+                balance=safe_faucet_balance,
                 nonce=0
             )
         ]
