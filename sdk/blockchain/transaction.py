@@ -340,6 +340,16 @@ class StakingTransaction:
         
         Returns:
             bool: True if signature is valid
+            
+        Note:
+            Current implementation is a placeholder that only checks signature format.
+            Full implementation should:
+            1. Recover public key from signature
+            2. Derive address from public key
+            3. Compare with from_address
+            
+            For production use, implement proper ECDSA signature recovery
+            using a library like eth-keys or implement secp256k1 recovery.
         """
         if self.r is None or self.s is None or self.v is None:
             return False

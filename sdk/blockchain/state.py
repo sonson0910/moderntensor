@@ -469,28 +469,22 @@ class StateDB:
         info_key = b'validator:' + address
         if info_key in self.cache:
             data = self.cache[info_key]
-            if isinstance(data, Account):
-                # Validator info stored in storage_root as JSON
-                if data.storage_root != b'\x00' * 32:
-                    try:
-                        return json.loads(data.storage_root.decode('utf-8'))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        return None
+            if isinstance(data, dict):
+                return data
             elif isinstance(data, bytes):
                 try:
                     return json.loads(data.decode('utf-8'))
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     return None
-            elif isinstance(data, dict):
-                return data
         if info_key in self.accounts:
             acc = self.accounts[info_key]
-            if isinstance(acc, Account):
-                if acc.storage_root != b'\x00' * 32:
-                    try:
-                        return json.loads(acc.storage_root.decode('utf-8'))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        return None
+            if isinstance(acc, dict):
+                return acc
+            elif isinstance(acc, bytes):
+                try:
+                    return json.loads(acc.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return None
         return None
     
     def set_validator_info(self, address: bytes, public_key: bytes, active: bool = True) -> None:
@@ -508,10 +502,9 @@ class StateDB:
             "active": active,
         }
         info_key = b'validator:' + address
-        info_json = json.dumps(info, separators=(',', ':')).encode('utf-8')
-        # Store as Account with info in storage_root
-        info_account = Account(storage_root=info_json)
-        self.cache[info_key] = info_account
+        # Store validator info as dict directly in cache (not using Account storage_root)
+        # This avoids conflicts with contract storage management
+        self.cache[info_key] = info
         self.dirty.add(info_key)
     
     def get_pending_rewards(self, address: bytes) -> int:

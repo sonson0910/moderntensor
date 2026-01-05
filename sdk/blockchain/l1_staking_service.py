@@ -42,7 +42,7 @@ class L1StakingService:
         public_key: bytes,
         private_key: bytes,
         nonce: int,
-        gas_price: int = 100,  # Reduced default gas price
+        gas_price: int = 100,  # Gas price reduced from 1000 to 100 to make transactions affordable
         gas_limit: int = 100000
     ) -> Optional[StakingTransaction]:
         """
