@@ -1,39 +1,65 @@
-pycardano==0.12.2
+# Core cryptography and blockchain
 bip_utils==2.9.3
 cryptography==42.0.8
 ecdsa==0.19.1
 pycryptodome==3.23.0
-annotated-types==0.7.0
-anyio==4.7.0
-certifi==2024.12.14
-charset-normalizer==3.4.1
-click==8.1.8
-cmake==3.31.2
-colorama==0.4.6
-coloredlogs==15.0.1
-dependency-injector==4.45.0
-dnspython==2.7.0
-email_validator==2.2.0
+
+# Web framework and API
 fastapi==0.115.6
+uvicorn==0.34.0
+starlette==0.41.3
+httpx==0.28.1
 h11==0.14.0
 httptools==0.6.4
-idna==3.10
-loguru==0.7.3
-numpy==1.26.4
+websockets==13.0
+watchfiles==1.0.3
+
+# Data validation
 pydantic==2.10.4
 pydantic-settings==2.7.1
 pydantic_core==2.27.2
+annotated-types==0.7.0
+
+# CLI and utilities
+click==8.1.8
+colorama==0.4.6
+coloredlogs==15.0.1
+loguru==0.7.3
+
+# Configuration and environment
 python-dotenv==1.0.1
-python-multipart==0.0.20
 PyYAML==6.0.2
+
+# Dependency injection
+dependency-injector==4.45.0
+
+# Data processing
+numpy==1.26.4
+
+# HTTP and networking
 requests==2.32.3
-sniffio==1.3.1
-starlette==0.41.3
-typing_extensions==4.12.2
 urllib3==2.3.0
-uvicorn==0.34.0
-watchfiles==1.0.3
-websockets==13.0
+certifi==2024.12.14
+charset-normalizer==3.4.1
+idna==3.10
+anyio==4.7.0
+sniffio==1.3.1
+dnspython==2.7.0
+
+# Multipart form data
+python-multipart==0.0.20
+email_validator==2.2.0
+
+# Build tools
+cmake==3.31.2
+
+# Platform-specific (Windows)
 win32_setctime==1.2.0
-httpx==0.28.1
-blockfrost-python==0.6.0
+
+# GraphQL (optional for API)
+strawberry-graphql==0.219.0
+
+# Testing (dev dependencies)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+

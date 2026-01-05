@@ -2,13 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Or Apache 2.0, depending on your choice -->
 
-**ModernTensor** is a decentralized machine intelligence network built on the Cardano blockchain, inspired by the architecture and vision of Bittensor. The project aims to create an open marketplace for AI/ML services, where models compete and are rewarded based on their performance and contribution value to the network, leveraging Cardano's unique features like the EUTXO model and native assets.
+**ModernTensor** is an independent Layer 1 blockchain designed for decentralized machine intelligence. The network enables AI/ML models to compete, validate, and earn rewards through zero-knowledge proofs and Proof of Stake consensus, inspired by the vision of Bittensor but with a custom blockchain optimized for AI workloads.
 
 ![moderntensor.png](https://github.com/sonson0910/moderntensor/blob/main/moderntensor.png)
 
 ## 🚀 Introduction
 
-**ModernTensor** is transitioning from a Cardano-based application to a **custom Layer 1 blockchain** optimized for AI/ML workloads.
+**ModernTensor** is a **custom Layer 1 blockchain** optimized for AI/ML workloads with native support for zero-knowledge machine learning and decentralized AI validation.
 
 ### 🎯 Current Focus: Building Layer 1 Blockchain
 
@@ -36,7 +36,7 @@ In the ModernTensor ecosystem:
 
 **Progress: 83% complete** (~9,715 lines production code)
 
-**See [LAYER1_IMPLEMENTATION_SUMMARY.md](LAYER1_IMPLEMENTATION_SUMMARY.md) for complete implementation details and [LAYER1_FOCUS.md](LAYER1_FOCUS.md) for current priorities.**
+**See [docs/implementation/LAYER1_IMPLEMENTATION_SUMMARY.md](docs/implementation/LAYER1_IMPLEMENTATION_SUMMARY.md) for complete implementation details and [LAYER1_FOCUS.md](LAYER1_FOCUS.md) for current priorities.**
 
 This project includes an SDK toolkit and a command-line interface (CLI) for interacting with the network.
 
@@ -122,8 +122,8 @@ mtcli w regen-hotkey --coldkey my_coldkey --hotkey-name miner_hk1 --index 0 --ba
 mtcli w list --base-dir ./wallets
 
 # 7. Register hotkey 'miner_hk1' as a miner for subnet 1 on testnet
-#    - Sends a transaction to the subnet's smart contract.
-#    - Requires 10 ADA (10,000,000 Lovelace) initial stake and an API endpoint.
+#    - Sends a transaction to register on the network.
+#    - Requires initial stake (in native tokens) and an API endpoint.
 #    - You will be prompted for the password of 'my_coldkey'.
 #    - Use '--yes' to skip the final confirmation.
 mtcli w register-hotkey --coldkey my_coldkey --hotkey miner_hk1 \
@@ -159,22 +159,19 @@ Create and send transactions.
 **Examples:**
 
 ```bash
-# 1. Send 5 ADA (5,000,000 Lovelace) from 'miner_hk1' to a recipient address on testnet
+# 1. Send tokens from 'miner_hk1' to a recipient address on testnet
 #    - You will be prompted for the password of 'my_coldkey'.
 mtcli tx send --coldkey my_coldkey --hotkey miner_hk1 \
-    --to addr_test1...recipient_address... \
+    --to recipient_address... \
     --amount 5000000 \
-    --token lovelace \
     --base-dir ./wallets \
     --network testnet
 
-# 2. Send 100 units of a native token from 'miner_hk1' to another wallet ('other_coldkey/other_hk')
-#    - Replace policy_id and asset_name_hex with actual values.
+# 2. Send tokens to another wallet
 #    - You will be prompted for the password of 'my_coldkey'.
 mtcli tx send --coldkey my_coldkey --hotkey miner_hk1 \
     --to other_coldkey/other_hk \
     --amount 100 \
-    --token your_policy_id.YOUR_ASSET_NAME_HEX \
     --base-dir ./wallets \
     --network testnet
 ```
@@ -186,8 +183,8 @@ Query blockchain information.
 **Examples:**
 
 ```bash
-# 1. Get detailed info (ADA, tokens, UTxO count) for any Cardano address on testnet
-mtcli query address addr_test1...some_address... --network testnet
+# 1. Get detailed info for any address on testnet
+mtcli query address address_here... --network testnet
 
 # 2. Get the balance (ADA, tokens) for the 'miner_hk1' hotkey on testnet
 #    - You will be prompted for the password of 'my_coldkey'.
@@ -216,53 +213,52 @@ mtcli query list-subnets --network testnet
 
 ### Staking Commands (`mtcli stake`)
 
-Manage Cardano staking operations (delegation, withdrawal). Requires hotkeys generated with stake keys.
+Manage staking operations for validator participation in the ModernTensor network.
 
 **Examples:**
 
 ```bash
-# 1. Delegate stake from 'staker_hotkey' to a specific pool on testnet
-#    - Registers the stake key if needed first.
+# 1. Stake tokens to become a validator or increase validator stake
 #    - You will be prompted for the password of 'my_coldkey'.
-mtcli stake delegate --coldkey my_coldkey --hotkey staker_hotkey \
-    --pool-id pool1...pool_id_bech32_or_hex... \
+mtcli stake add --coldkey my_coldkey --hotkey validator_hk \
+    --amount 1000000 \
     --base-dir ./wallets \
     --network testnet
 
-# 2. Change delegation for 'staker_hotkey' to a different pool on testnet
+# 2. Withdraw staking rewards
 #    - You will be prompted for the password of 'my_coldkey'.
-mtcli stake redelegate --coldkey my_coldkey --hotkey staker_hotkey \
-    --pool-id pool1...new_pool_id_bech32_or_hex... \
+mtcli stake withdraw --coldkey my_coldkey --hotkey validator_hk \
     --base-dir ./wallets \
     --network testnet
 
-# 3. Withdraw available staking rewards for 'staker_hotkey' to its main address on testnet
+# 3. Show current staking info and rewards
 #    - You will be prompted for the password of 'my_coldkey'.
-mtcli stake withdraw --coldkey my_coldkey --hotkey staker_hotkey \
-    --base-dir ./wallets \
-    --network testnet
-
-# 4. Show current staking info (delegated pool, rewards) for 'staker_hotkey' on testnet
-#    - You will be prompted for the password of 'my_coldkey'.
-mtcli stake info --coldkey my_coldkey --hotkey staker_hotkey \
+mtcli stake info --coldkey my_coldkey --hotkey validator_hk \
     --base-dir ./wallets \
     --network testnet
 ```
 
-## 🏗️ Architecture (Preliminary)
+## 🏗️ Architecture
 
 *   `sdk/`: Core toolkit (Python SDK)
-    *   `keymanager/`: Logic for managing coldkeys, hotkeys, encryption, derivation.
-    *   `cli/`: Command-line interface (`mtcli`).
-    *   `service/`: High-level interaction services (e.g., key registration).
-    *   `smartcontract/`: Interaction with Plutus scripts (reading, transaction building).
-    *   `metagraph/`: Logic related to network state (datum, hashing,...).
-    *   `config/`: Project configuration.
-    *   `consensus/`, `agent/`: (Potential) Components related to consensus and agent behavior.
-*   `contracts/`: (Potential) Location for Plutus script source code.
-*   `README.md`: This documentation.
-*   `requirements.txt`: List of required Python libraries.
-*   `.env`, `settings.toml`: (Potential) Environment configuration files.
+    *   `blockchain/`: Core blockchain primitives (Block, Transaction, State, Validation)
+    *   `consensus/`: Proof of Stake consensus mechanism, validator management
+    *   `network/`: P2P networking, synchronization
+    *   `storage/`: Blockchain database and indexing
+    *   `api/`: JSON-RPC and GraphQL APIs
+    *   `keymanager/`: Coldkey/hotkey management, encryption, derivation
+    *   `cli/`: Command-line interface (`mtcli`)
+    *   `testnet/`: Testnet infrastructure (Genesis, Faucet, Bootstrap)
+    *   `tokenomics/`: Token emission, rewards, burning
+    *   `security/`: Security auditing and validation
+    *   `optimization/`: Performance optimizations
+    *   `monitoring/`: Metrics collection
+*   `docs/`: Comprehensive documentation
+    *   `implementation/`: Implementation details and phase summaries
+    *   `architecture/`: System design and diagrams
+    *   `reports/`: Audit reports and verification results
+*   `tests/`: Test suite
+*   `examples/`: Example scripts and demos
 
 ## ⚙️ Installation
 
@@ -303,6 +299,20 @@ We welcome contributions from the community! Please refer to `CONTRIBUTING.md` (
 3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
 4.  Push to the branch (`git push origin feature/AmazingFeature`).
 5.  Open a Pull Request.
+
+## 📚 Documentation
+
+Comprehensive documentation is available in the [`docs/`](docs/) directory:
+
+- **[Implementation Docs](docs/implementation/)** - Phase summaries, implementation details
+- **[Architecture Docs](docs/architecture/)** - System design, diagrams, technical specifications
+- **[Reports](docs/reports/)** - Audit reports, verification results (Vietnamese)
+
+Key documents:
+- [Layer 1 Roadmap](LAYER1_ROADMAP.md) - Development roadmap and milestones
+- [Layer 1 Focus](LAYER1_FOCUS.md) - Current development priorities
+- [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
+- [Changelog](CHANGELOG.md) - Version history
 
 ## 📄 License
 
