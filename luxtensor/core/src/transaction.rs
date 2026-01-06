@@ -69,7 +69,8 @@ impl Transaction {
     
     /// Calculate transaction hash
     pub fn hash(&self) -> Hash {
-        let serialized = bincode::serialize(self).expect("Serialization should not fail");
+        let serialized = bincode::serialize(self)
+            .expect("Failed to serialize transaction for hashing - this should never fail for valid Transaction");
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         let result = hasher.finalize();

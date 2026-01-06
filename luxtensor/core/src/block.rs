@@ -44,7 +44,8 @@ pub struct BlockHeader {
 impl BlockHeader {
     /// Calculate the hash of this block header
     pub fn hash(&self) -> Hash {
-        let serialized = bincode::serialize(self).expect("Serialization should not fail");
+        let serialized = bincode::serialize(self)
+            .expect("Failed to serialize block header for hashing - this should never fail for valid BlockHeader");
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         let result = hasher.finalize();
