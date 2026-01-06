@@ -1,0 +1,153 @@
+# LuxTensor Testnet Configuration
+# Chain ID: 9999 (testnet)
+
+[node]
+name = "luxtensor-testnet"
+chain_id = 9999
+data_dir = "./data"
+is_validator = false
+
+# Validator settings (only if is_validator = true)
+# validator_key_path = "./validator.key"
+
+[consensus]
+# Block time in seconds
+block_time = 3
+
+# Number of blocks per epoch (for validator rotation)
+epoch_length = 100
+
+# Minimum stake required to become a validator (in wei)
+# 10 LUX = 10_000_000_000_000_000_000 wei
+min_stake = 10000000000000000000
+
+# Maximum number of validators in the active set
+max_validators = 21
+
+# Fast finality threshold (percentage of validators needed)
+finality_threshold = 67  # 67% = 2/3
+
+[network]
+# P2P listening address
+listen_addr = "0.0.0.0"
+
+# P2P listening port
+listen_port = 30303
+
+# Bootstrap nodes for initial peer discovery
+# Replace with actual testnet seed nodes
+bootstrap_nodes = [
+    # Testnet seed nodes will be added here
+    # "/ip4/seed1.testnet.luxtensor.io/tcp/30303/p2p/12D3KooW...",
+    # "/ip4/seed2.testnet.luxtensor.io/tcp/30303/p2p/12D3KooW...",
+]
+
+# Maximum number of connected peers
+max_peers = 50
+
+# Enable mDNS peer discovery on local network
+# Set to false for production deployments
+enable_mdns = true
+
+# Gossipsub configuration
+[network.gossipsub]
+mesh_n = 8
+mesh_n_low = 6
+mesh_n_high = 12
+gossip_lazy = 6
+
+[storage]
+# Database directory
+db_path = "./data/db"
+
+# Enable database compression (LZ4)
+enable_compression = true
+
+# Maximum number of open database files
+max_open_files = 1000
+
+# Database cache size in MB
+cache_size = 256
+
+# Enable pruning of old state (keep last N blocks)
+enable_pruning = true
+pruning_history = 1000000  # Keep 1M blocks
+
+[rpc]
+# Enable JSON-RPC HTTP server
+enabled = true
+
+# RPC listening address
+# Use 127.0.0.1 for local only
+# Use 0.0.0.0 to accept connections from all interfaces
+listen_addr = "0.0.0.0"
+
+# RPC listening port
+listen_port = 8545
+
+# Number of RPC worker threads
+threads = 4
+
+# CORS allowed origins
+# Use ["*"] for development, specific origins for production
+cors_origins = ["*"]
+
+# Maximum request size in bytes (10 MB)
+max_request_size = 10485760
+
+# Request timeout in seconds
+request_timeout = 30
+
+# Rate limiting
+enable_rate_limit = true
+max_requests_per_minute = 1000
+
+[rpc.websocket]
+# Enable WebSocket server
+enabled = true
+
+# WebSocket listening port
+listen_port = 8546
+
+# Maximum number of concurrent subscriptions per connection
+max_subscriptions_per_connection = 100
+
+# Ping interval in seconds
+ping_interval = 30
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: human, json
+format = "human"
+
+# Log to file instead of stdout
+log_to_file = false
+
+# Log file path (only if log_to_file = true)
+# log_file = "./data/node.log"
+
+# Log file rotation
+# max_log_size = 100  # MB
+# max_log_files = 10
+
+[metrics]
+# Enable Prometheus metrics endpoint
+enabled = true
+
+# Metrics listening address
+listen_addr = "0.0.0.0"
+
+# Metrics listening port
+listen_port = 9090
+
+[telemetry]
+# Enable telemetry reporting
+enabled = false
+
+# Telemetry endpoint
+# endpoint = "https://telemetry.luxtensor.io"
+
+# Node name to display in telemetry
+# name = "my-node"
