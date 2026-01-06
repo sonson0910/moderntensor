@@ -25,6 +25,7 @@ luxtensor-core = { path = "crates/luxtensor-core" }
 luxtensor-crypto = { path = "crates/luxtensor-crypto" }
 luxtensor-storage = { path = "crates/luxtensor-storage" }
 luxtensor-contracts = { path = "crates/luxtensor-contracts" }
+tokio = { workspace = true }
 hex = { workspace = true }
 tempfile = { workspace = true }
 
@@ -35,6 +36,10 @@ path = "examples/full_transaction_example.rs"
 [[example]]
 name = "smart_contract_example"
 path = "examples/smart_contract_example.rs"
+
+[[example]]
+name = "data_sync_demo"
+path = "examples/data_sync_demo.rs"
 
 [workspace.package]
 version = "0.1.0"
