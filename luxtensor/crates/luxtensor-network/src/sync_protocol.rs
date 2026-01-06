@@ -1,7 +1,6 @@
 // Enhanced block synchronization protocol
 // Implements a complete multi-peer sync strategy with parallel downloads
 
-use crate::error::NetworkError;
 use libp2p::PeerId;
 use luxtensor_core::block::{Block, BlockHeader};
 use luxtensor_core::types::Hash;

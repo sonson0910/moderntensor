@@ -241,13 +241,20 @@ impl WebSocketServer {
                     }
                 };
 
-                // Generate subscription ID
-                let sub_id = format!("0x{}", hex::encode(&rand::random::<[u8; 16]>()));
+                // Generate subscription ID (using timestamp + counter for uniqueness)
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let sub_id = format!("0x{:016x}{:016x}", timestamp, counter);
 
                 // Store subscription
                 let subscription = Subscription {
                     id: sub_id.clone(),
-                    sub_type,
+                    sub_type: sub_type.clone(),
                     tx: tx.clone(),
                 };
 

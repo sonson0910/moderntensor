@@ -100,13 +100,13 @@ impl ValidatorRotation {
         // Validate minimum stake
         if validator.stake < self.config.min_stake {
             return Err(ConsensusError::InsufficientStake {
+                provided: validator.stake,
                 required: self.config.min_stake,
-                actual: validator.stake,
             });
         }
 
         // Check if validator already exists
-        if self.current_validators.contains(&validator.address) {
+        if self.current_validators.get_validator(&validator.address).is_some() {
             return Err(ConsensusError::ValidatorAlreadyExists(validator.address));
         }
 
@@ -138,7 +138,7 @@ impl ValidatorRotation {
     /// Request validator exit
     pub fn request_validator_exit(&mut self, address: Address) -> Result<u64, ConsensusError> {
         // Check if validator exists
-        if !self.current_validators.contains(&address) {
+        if self.current_validators.get_validator(&address).is_none() {
             return Err(ConsensusError::ValidatorNotFound(address));
         }
 
@@ -180,8 +180,8 @@ impl ValidatorRotation {
         for address in ready_to_activate {
             if let Some(pending) = self.pending_validators.remove(&address) {
                 // Check if we have room for more validators
-                if self.current_validators.count() < self.config.max_validators {
-                    self.current_validators.add(pending.validator);
+                if self.current_validators.len() < self.config.max_validators {
+                    self.current_validators.add_validator(pending.validator).ok();
                     activated.push(address);
                     info!(
                         "Activated validator {} at epoch {}",
@@ -209,7 +209,7 @@ impl ValidatorRotation {
         let ready_to_exit: Vec<Address> = self.exiting_validators.iter().copied().collect();
 
         for address in ready_to_exit {
-            self.current_validators.remove(&address);
+            self.current_validators.remove_validator(&address).ok();
             self.exiting_validators.remove(&address);
             exited.push(address);
             info!(
@@ -245,7 +245,7 @@ impl ValidatorRotation {
     pub fn get_stats(&self) -> RotationStats {
         RotationStats {
             current_epoch: self.current_epoch,
-            active_validators: self.current_validators.count(),
+            active_validators: self.current_validators.len(),
             pending_validators: self.pending_validators.len(),
             exiting_validators: self.exiting_validators.len(),
             total_stake: self.current_validators.total_stake(),
@@ -261,7 +261,7 @@ impl ValidatorRotation {
         // Get validator
         let validator = self
             .current_validators
-            .get(address)
+            .get_validator(address)
             .ok_or(ConsensusError::ValidatorNotFound(*address))?;
 
         let new_stake = validator
@@ -282,8 +282,8 @@ impl ValidatorRotation {
         let mut updated_validator = validator.clone();
         updated_validator.stake = new_stake;
 
-        self.current_validators.remove(address);
-        self.current_validators.add(updated_validator);
+        self.current_validators.remove_validator(address).ok();
+        self.current_validators.add_validator(updated_validator).ok();
 
         // If stake falls below minimum, schedule for exit
         if new_stake < self.config.min_stake {
@@ -315,10 +315,16 @@ mod tests {
 
     fn create_test_validator(stake: u128) -> Validator {
         let keypair = KeyPair::generate();
+        let mut public_key = [0u8; 32];
+        let pk_bytes = keypair.public_key_bytes();
+        public_key.copy_from_slice(&pk_bytes[..32.min(pk_bytes.len())]);
+        
         Validator {
             address: keypair.address(),
             stake,
-            public_key: keypair.public_key_bytes().to_vec(),
+            public_key,
+            active: true,
+            rewards: 0,
         }
     }
 
@@ -367,7 +373,7 @@ mod tests {
         let result = rotation.process_epoch_transition(config.activation_delay_epochs);
 
         assert_eq!(result.activated_validators.len(), 1);
-        assert_eq!(rotation.current_validators().count(), 1);
+        assert_eq!(rotation.current_validators().len(), 1);
         assert_eq!(rotation.pending_count(), 0);
     }
 
@@ -378,7 +384,7 @@ mod tests {
         let address = validator.address;
 
         let mut validator_set = ValidatorSet::new();
-        validator_set.add(validator);
+        validator_set.add_validator(validator).unwrap();
 
         let mut rotation = ValidatorRotation::with_validators(config.clone(), validator_set);
 
@@ -395,14 +401,14 @@ mod tests {
         let address = validator.address;
 
         let mut validator_set = ValidatorSet::new();
-        validator_set.add(validator);
+        validator_set.add_validator(validator).unwrap();
 
         let mut rotation = ValidatorRotation::with_validators(config.clone(), validator_set);
 
         let slash_amount = config.min_stake / 2;
         rotation.slash_validator(&address, slash_amount).unwrap();
 
-        let validator = rotation.current_validators().get(&address).unwrap();
+        let validator = rotation.current_validators().get_validator(&address).unwrap();
         assert_eq!(validator.stake, config.min_stake * 2 - slash_amount);
     }
 
@@ -413,7 +419,7 @@ mod tests {
         let address = validator.address;
 
         let mut validator_set = ValidatorSet::new();
-        validator_set.add(validator);
+        validator_set.add_validator(validator).unwrap();
 
         let mut rotation = ValidatorRotation::with_validators(config.clone(), validator_set);
 
@@ -430,7 +436,7 @@ mod tests {
         let validator = create_test_validator(config.min_stake);
 
         let mut validator_set = ValidatorSet::new();
-        validator_set.add(validator);
+        validator_set.add_validator(validator).unwrap();
 
         let rotation = ValidatorRotation::with_validators(config, validator_set);
         let stats = rotation.get_stats();
