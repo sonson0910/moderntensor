@@ -1,0 +1,14 @@
+[package]
+name = "luxtensor-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+luxtensor-types = { workspace = true }
+luxtensor-crypto = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
