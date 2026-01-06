@@ -15,6 +15,11 @@ thiserror = { workspace = true }
 parking_lot = { workspace = true }
 hex = { workspace = true }
 
+# WebSocket support
+tokio-tungstenite = "0.21"
+futures = { workspace = true }
+tracing = { workspace = true }
+
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-storage = { path = "../luxtensor-storage" }
 

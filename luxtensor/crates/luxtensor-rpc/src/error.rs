@@ -25,6 +25,15 @@ pub enum RpcError {
     
     #[error("Server error: {0}")]
     ServerError(String),
+
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+
+    #[error("Method not found: {0}")]
+    MethodNotFound(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
 }
 
 impl From<luxtensor_storage::StorageError> for RpcError {

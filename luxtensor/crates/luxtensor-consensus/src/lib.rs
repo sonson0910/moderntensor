@@ -5,8 +5,10 @@ pub mod error;
 pub mod validator;
 pub mod pos;
 pub mod fork_choice;
+pub mod rotation;
 
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};
 pub use pos::{ProofOfStake, ConsensusConfig};
 pub use fork_choice::ForkChoice;
+pub use rotation::{ValidatorRotation, RotationConfig, RotationStats, EpochTransitionResult};
