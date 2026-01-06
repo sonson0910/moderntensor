@@ -257,9 +257,28 @@ impl NodeService {
         // Get transactions from mempool (up to 1000 per block)
         let transactions = mempool.get_transactions_for_block(1000);
         
+        // Create preliminary header to get block hash
+        let preliminary_header = luxtensor_core::BlockHeader {
+            version: 1,
+            height: new_height,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            previous_hash: previous_block.hash(),
+            state_root: [0u8; 32], // Will be updated after execution
+            txs_root: [0u8; 32],    // Will be updated after execution
+            receipts_root: [0u8; 32], // Will be updated after execution
+            validator: [0u8; 32],
+            signature: vec![0u8; 64],
+            gas_used: 0,
+            gas_limit: 10_000_000,
+            extra_data: vec![],
+        };
+        let preliminary_block = Block::new(preliminary_header, vec![]);
+        let block_hash = preliminary_block.hash();
+        
         // Execute transactions and collect receipts
         let mut state = state_db.write();
-        let block_hash = [0u8; 32]; // Will be updated after block creation
         let receipts = executor.execute_batch(&transactions, &mut state, new_height, block_hash);
         
         // Filter successful transactions and receipts

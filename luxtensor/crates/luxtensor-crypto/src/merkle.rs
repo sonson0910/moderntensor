@@ -117,21 +117,20 @@ impl MerkleTree {
         
         let mut current_hash = *leaf;
         
+        // For each sibling in the proof, try both left and right positions
         for sibling in proof {
-            // Try both left and right positions
-            let hash_left = Self::hash_pair(&current_hash, sibling);
-            let hash_right = Self::hash_pair(sibling, &current_hash);
+            // Try hashing with sibling on the left
+            let hash_left = Self::hash_pair(sibling, &current_hash);
+            // Try hashing with sibling on the right  
+            let hash_right = Self::hash_pair(&current_hash, sibling);
             
-            // We don't know which side the sibling is on, so we try both
-            // In a real implementation, we'd encode this information in the proof
-            current_hash = hash_left;
-            
-            // If we're at the last step, check both possibilities
-            if sibling == proof.last().unwrap() {
-                if &hash_left == root || &hash_right == root {
-                    return true;
-                }
-            }
+            // For simplicity, we'll use the lexicographically smaller hash
+            // In a production implementation, position should be encoded in the proof
+            current_hash = if sibling < &current_hash {
+                hash_left
+            } else {
+                hash_right
+            };
         }
         
         &current_hash == root

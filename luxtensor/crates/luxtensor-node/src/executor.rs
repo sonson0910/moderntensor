@@ -77,8 +77,18 @@ impl TransactionExecutor {
             ));
         }
 
-        // Calculate total cost (value + gas)
-        let total_cost = tx.value + (gas_cost as u128 * tx.gas_price as u128);
+        // Calculate total cost with overflow protection
+        let gas_fee = (gas_cost as u128)
+            .checked_mul(tx.gas_price as u128)
+            .ok_or_else(|| CoreError::InvalidTransaction(
+                "Gas fee calculation overflow".to_string()
+            ))?;
+        
+        let total_cost = gas_fee
+            .checked_add(tx.value)
+            .ok_or_else(|| CoreError::InvalidTransaction(
+                "Total cost calculation overflow".to_string()
+            ))?;
         
         // Check balance
         if sender.balance < total_cost {

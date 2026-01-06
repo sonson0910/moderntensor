@@ -52,8 +52,9 @@ impl StateDB {
         let mut data = Vec::new();
         for (address, account) in items {
             data.extend_from_slice(address.as_bytes());
-            // Serialize account data
-            let account_bytes = bincode::serialize(account).unwrap_or_default();
+            // Serialize account data - this should never fail for valid Account structs
+            let account_bytes = bincode::serialize(account)
+                .expect("Failed to serialize Account - this indicates a critical bug");
             data.extend_from_slice(&account_bytes);
         }
         
