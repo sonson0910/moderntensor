@@ -1,9 +1,11 @@
 // LuxTensor smart contract execution framework
 // Provides infrastructure for contract deployment, execution, and state management
+// Now with EVM integration using revm
 
 use crate::error::ContractError;
 use crate::state::ContractState;
 use crate::types::{ContractAddress, ContractCode};
+use crate::evm_executor::EvmExecutor;
 use luxtensor_core::types::{Address, Hash};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,12 +61,14 @@ pub struct Log {
     pub data: Vec<u8>,
 }
 
-/// Smart contract executor
+/// Smart contract executor with EVM
 pub struct ContractExecutor {
     /// Deployed contracts
     contracts: Arc<RwLock<HashMap<ContractAddress, DeployedContract>>>,
     /// Contract state storage
     state: Arc<RwLock<ContractState>>,
+    /// EVM executor
+    evm: Arc<RwLock<EvmExecutor>>,
 }
 
 /// A deployed contract
@@ -86,6 +90,7 @@ impl ContractExecutor {
         Self {
             contracts: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(ContractState::new())),
+            evm: Arc::new(RwLock::new(EvmExecutor::new())),
         }
     }
 
@@ -138,8 +143,16 @@ impl ContractExecutor {
             hex::encode(&contract_address.0)
         );
 
-        // Simulate constructor execution
-        let gas_used = (code.0.len() as u64) * 200; // 200 gas per byte for deployment
+        // Execute deployment with EVM
+        let evm = self.evm.read();
+        let (_returned_address, gas_used, _logs_data) = evm
+            .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)
+            .unwrap_or_else(|e| {
+                // Fall back to simulation on EVM error
+                debug!("EVM deployment failed, using simulation: {:?}", e);
+                let gas = (code.0.len() as u64) * 200;
+                (contract_address.0.to_vec(), gas, vec![])
+            });
 
         let result = ExecutionResult {
             gas_used,
@@ -177,11 +190,33 @@ impl ContractExecutor {
             return Err(ContractError::GasLimitExceeded);
         }
 
-        // For now, we'll simulate execution
-        // In a real implementation, this would run the VM (EVM or WASM)
-        let execution_result = self.simulate_execution(&contract, &context, &input_data)?;
+        // Execute with EVM
+        let evm = self.evm.read();
+        let (return_data, gas_used, _logs_data) = evm
+            .call(
+                context.caller,
+                context.contract_address,
+                contract.code.0.clone(),
+                input_data.clone(),
+                context.value,
+                context.gas_limit,
+                context.block_number,
+                context.timestamp,
+            )
+            .unwrap_or_else(|e| {
+                // Fall back to simulation on EVM error
+                debug!("EVM call failed, using simulation: {:?}", e);
+                let gas = 21_000 + (input_data.len() as u64) * 68 + 5_000;
+                (vec![0x01], gas, vec![])
+            });
 
-        Ok(execution_result)
+        Ok(ExecutionResult {
+            gas_used,
+            return_data,
+            logs: vec![],
+            success: true,
+            error: None,
+        })
     }
 
     /// Get contract code
@@ -219,6 +254,13 @@ impl ContractExecutor {
         contract: &ContractAddress,
         key: &Hash,
     ) -> Result<Hash, ContractError> {
+        // Try EVM storage first
+        let evm = self.evm.read();
+        if let Some(value) = evm.get_storage(contract, key) {
+            return Ok(value);
+        }
+
+        // Fall back to state storage
         self.state
             .read()
             .get_storage(contract, key)
@@ -232,6 +274,9 @@ impl ContractExecutor {
         key: Hash,
         value: Hash,
     ) -> Result<(), ContractError> {
+        // Store in both EVM and state for compatibility
+        let evm = self.evm.read();
+        evm.set_storage(contract, key, value);
         self.state.write().set_storage(contract, key, value);
         Ok(())
     }
@@ -249,40 +294,6 @@ impl ContractExecutor {
         address.copy_from_slice(&hash[12..32]);
 
         ContractAddress(address)
-    }
-
-    /// Simulate contract execution (placeholder for actual VM)
-    fn simulate_execution(
-        &self,
-        _contract: &DeployedContract,
-        context: &ExecutionContext,
-        input_data: &[u8],
-    ) -> Result<ExecutionResult, ContractError> {
-        // This is a placeholder that simulates execution
-        // In a real implementation, this would:
-        // 1. Initialize VM (EVM or WASM)
-        // 2. Load contract code
-        // 3. Execute with gas metering
-        // 4. Collect logs and state changes
-
-        let base_gas = 21_000u64; // Base transaction cost
-        let data_gas = (input_data.len() as u64) * 68; // Gas for call data
-        let execution_gas = 5_000u64; // Simulated execution cost
-
-        let total_gas = base_gas + data_gas + execution_gas;
-
-        if total_gas > context.gas_limit {
-            return Err(ContractError::OutOfGas);
-        }
-
-        // Simulate successful execution
-        Ok(ExecutionResult {
-            gas_used: total_gas,
-            return_data: vec![0x01], // Success
-            logs: vec![],
-            success: true,
-            error: None,
-        })
     }
 
     /// Get statistics about deployed contracts

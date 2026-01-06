@@ -15,6 +15,10 @@ hex = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
 
+# EVM integration
+revm = "14.0"
+revm-primitives = "10.0"
+
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 
