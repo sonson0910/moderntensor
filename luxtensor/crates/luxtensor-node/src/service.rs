@@ -1,11 +1,12 @@
 use crate::config::Config;
 use crate::mempool::Mempool;
+use crate::executor::{TransactionExecutor, Receipt, calculate_receipts_root};
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake};
-use luxtensor_core::{Block, Transaction};
+use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::MerkleTree;
 use luxtensor_rpc::RpcServer;
-use luxtensor_storage::{BlockchainDB, StateDB};
+use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -16,9 +17,10 @@ use tracing::{error, info, warn};
 pub struct NodeService {
     config: Config,
     storage: Arc<BlockchainDB>,
-    state_db: Arc<StateDB>,
+    state_db: Arc<RwLock<StateDB>>,
     consensus: Arc<RwLock<ProofOfStake>>,
     mempool: Arc<Mempool>,
+    executor: Arc<TransactionExecutor>,
     shutdown_tx: broadcast::Sender<()>,
     tasks: Vec<JoinHandle<Result<()>>>,
 }
@@ -46,8 +48,13 @@ impl NodeService {
         
         // Initialize state database
         info!("💾 Initializing state database...");
-        let state_db = Arc::new(StateDB::new(storage.inner_db()));
+        let state_db = Arc::new(RwLock::new(StateDB::new()));
         info!("  ✓ State database initialized");
+        
+        // Initialize transaction executor
+        info!("⚡ Initializing transaction executor...");
+        let executor = Arc::new(TransactionExecutor::new());
+        info!("  ✓ Transaction executor initialized");
         
         // Initialize consensus
         info!("⚖️  Initializing consensus...");
@@ -87,6 +94,7 @@ impl NodeService {
             state_db,
             consensus,
             mempool,
+            executor,
             shutdown_tx,
             tasks: Vec::new(),
         })
@@ -137,6 +145,7 @@ impl NodeService {
             let storage = self.storage.clone();
             let state_db = self.state_db.clone();
             let mempool = self.mempool.clone();
+            let executor = self.executor.clone();
             let block_time = self.config.consensus.block_time;
             let shutdown_rx = self.shutdown_tx.subscribe();
             
@@ -146,6 +155,7 @@ impl NodeService {
                     storage,
                     state_db,
                     mempool,
+                    executor,
                     block_time,
                     shutdown_rx,
                 ).await
@@ -200,8 +210,9 @@ impl NodeService {
     async fn block_production_loop(
         consensus: Arc<RwLock<ProofOfStake>>,
         storage: Arc<BlockchainDB>,
-        state_db: Arc<StateDB>,
+        state_db: Arc<RwLock<StateDB>>,
         mempool: Arc<Mempool>,
+        executor: Arc<TransactionExecutor>,
         block_time: u64,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
@@ -211,7 +222,9 @@ impl NodeService {
             tokio::select! {
                 _ = interval.tick() => {
                     // Produce a block
-                    if let Err(e) = Self::produce_block(&consensus, &storage, &state_db, &mempool).await {
+                    if let Err(e) = Self::produce_block(
+                        &consensus, &storage, &state_db, &mempool, &executor
+                    ).await {
                         error!("Failed to produce block: {}", e);
                     }
                 }
@@ -229,8 +242,9 @@ impl NodeService {
     async fn produce_block(
         _consensus: &Arc<RwLock<ProofOfStake>>,
         storage: &Arc<BlockchainDB>,
-        state_db: &Arc<StateDB>,
+        state_db: &Arc<RwLock<StateDB>>,
         mempool: &Arc<Mempool>,
+        executor: &Arc<TransactionExecutor>,
     ) -> Result<()> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -243,19 +257,41 @@ impl NodeService {
         // Get transactions from mempool (up to 1000 per block)
         let transactions = mempool.get_transactions_for_block(1000);
         
+        // Execute transactions and collect receipts
+        let mut state = state_db.write();
+        let block_hash = [0u8; 32]; // Will be updated after block creation
+        let receipts = executor.execute_batch(&transactions, &mut state, new_height, block_hash);
+        
+        // Filter successful transactions and receipts
+        let mut valid_transactions = Vec::new();
+        let mut valid_receipts = Vec::new();
+        let mut total_gas = 0u64;
+        
+        for (tx, receipt_result) in transactions.iter().zip(receipts.into_iter()) {
+            if let Ok(receipt) = receipt_result {
+                total_gas += receipt.gas_used;
+                valid_transactions.push(tx.clone());
+                valid_receipts.push(receipt);
+            }
+        }
+        
         // Calculate transaction merkle root
-        let txs_root = if transactions.is_empty() {
+        let txs_root = if valid_transactions.is_empty() {
             [0u8; 32]
         } else {
-            let tx_hashes: Vec<_> = transactions.iter()
+            let tx_hashes: Vec<_> = valid_transactions.iter()
                 .map(|tx| tx.hash())
                 .collect();
             let merkle_tree = MerkleTree::new(tx_hashes);
             merkle_tree.root()
         };
         
+        // Calculate receipts root
+        let receipts_root = calculate_receipts_root(&valid_receipts);
+        
         // Calculate state root
-        let state_root = state_db.commit()?;
+        let state_root = state.commit()?;
+        drop(state); // Release lock
         
         // Create new block header
         let header = luxtensor_core::BlockHeader {
@@ -267,26 +303,26 @@ impl NodeService {
             previous_hash: previous_block.hash(),
             state_root,
             txs_root,
-            receipts_root: [0u8; 32],
+            receipts_root,
             validator: [0u8; 32],
             signature: vec![0u8; 64],
-            gas_used: 0,
+            gas_used: total_gas,
             gas_limit: 10_000_000,
             extra_data: vec![],
         };
         
         // Create new block
-        let block = Block::new(header, transactions.clone());
+        let block = Block::new(header, valid_transactions.clone());
         
         // Store block
         storage.store_block(&block)?;
         
         // Remove transactions from mempool
-        let tx_hashes: Vec<_> = transactions.iter().map(|tx| tx.hash()).collect();
+        let tx_hashes: Vec<_> = valid_transactions.iter().map(|tx| tx.hash()).collect();
         mempool.remove_transactions(&tx_hashes);
         
-        info!("📦 Produced block #{} with {} transactions, hash {:?}", 
-            new_height, transactions.len(), block.hash());
+        info!("📦 Produced block #{} with {} transactions, {} gas used, hash {:?}", 
+            new_height, valid_transactions.len(), total_gas, block.hash());
         
         Ok(())
     }

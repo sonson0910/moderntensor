@@ -1,6 +1,7 @@
 mod config;
 mod service;
 mod mempool;
+mod executor;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
