@@ -321,7 +321,7 @@ class ProofOfStake:
         # - Performance metrics (uptime, missed blocks)
         
         total_stake = self.validator_set.get_total_stake()
-        base_reward = 100  # Base reward per epoch (configurable)
+        base_reward = 100_000  # Base reward per epoch (100k tokens)
         
         if total_stake > 0:
             for validator in self.validator_set.get_active_validators():
@@ -336,8 +336,10 @@ class ProofOfStake:
                 # Calculate final reward
                 reward = int(base_reward * stake_ratio * performance)
                 
-                # Distribute reward (would update state in production)
-                logger.debug(f"Validator {validator.address.hex()[:8]} reward: {reward}")
+                # Add reward to state (pending rewards)
+                if reward > 0:
+                    self.state.add_reward(validator.address, reward)
+                    logger.debug(f"Validator {validator.address.hex()[:8]}... reward: {reward}")
         
         logger.info(f"Distributed rewards for epoch {epoch}")
     

@@ -21,31 +21,35 @@ from sdk.formulas import update_trust_score  # Import hàm cập nhật trust
 from sdk.metagraph.hash.hash_datum import hash_data
 from sdk.metagraph.hash.verify_hash import verify_hash
 
+# DEPRECATED: Cardano-specific functionality removed in favor of Layer 1 blockchain
+# This file contains legacy Cardano integration code that is being phased out.
+# For Layer 1 blockchain functionality, use sdk.blockchain.* modules instead.
+
 # Import các tiện ích tương tác Cardano
 from sdk.keymanager.decryption_utils import decode_hotkey_skey
 from sdk.service.context import get_chain_context
 from sdk.service.utxos import get_utxo_from_str  # Hàm tìm UTXO theo UID
-from sdk.smartcontract.validator import read_validator  # Để lấy script hash/bytes
+# from sdk.smartcontract.validator import read_validator  # REMOVED: Cardano-only
 
-# Import các kiểu PyCardano
-from sdk.compat.pycardano import (
-    BlockFrostChainContext,
-    Network,
-    ExtendedSigningKey,
-    Address,
-    UTxO,
-    PlutusData,
-    Redeemer,
-    ScriptHash,
-    TransactionBuilder,
-    TransactionOutput,
-    Value,
-    TransactionId,
-    PaymentSigningKey,
-    StakeSigningKey,
-    PlutusV3Script,
-    SigningKey,  # Import SigningKey nếu dùng trong build_and_sign
-)
+# Import các kiểu PyCardano - DEPRECATED
+# from sdk.compat.pycardano import (
+#     BlockFrostChainContext,
+#     Network,
+#     ExtendedSigningKey,
+#     Address,
+#     UTxO,
+#     PlutusData,
+#     Redeemer,
+#     ScriptHash,
+#     TransactionBuilder,
+#     TransactionOutput,
+#     Value,
+#     TransactionId,
+#     PaymentSigningKey,
+#     StakeSigningKey,
+#     PlutusV3Script,
+#     SigningKey,
+# )
 
 # Lấy logger đã cấu hình
 logger = logging.getLogger(__name__)

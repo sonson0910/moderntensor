@@ -388,3 +388,186 @@ class StateDB:
             return False
         self.add_balance(to_addr, amount)
         return True
+    
+    # Staking state management methods
+    def get_staked_amount(self, address: bytes) -> int:
+        """
+        Get staked amount for an address.
+        
+        Args:
+            address: Validator address
+            
+        Returns:
+            int: Staked amount
+        """
+        stake_key = b'stake:' + address
+        if stake_key in self.cache:
+            cached = self.cache[stake_key]
+            if isinstance(cached, Account):
+                return cached.balance
+            elif isinstance(cached, bytes):
+                return int.from_bytes(cached, 'big')
+            elif isinstance(cached, int):
+                return cached
+        if stake_key in self.accounts:
+            acc = self.accounts[stake_key]
+            if isinstance(acc, Account):
+                return acc.balance
+            elif isinstance(acc, bytes):
+                return int.from_bytes(acc, 'big')
+            elif isinstance(acc, int):
+                return acc
+        return 0
+    
+    def add_stake(self, address: bytes, amount: int) -> None:
+        """
+        Add staked amount for a validator.
+        
+        Args:
+            address: Validator address
+            amount: Amount to stake
+        """
+        current_stake = self.get_staked_amount(address)
+        new_stake = current_stake + amount
+        stake_key = b'stake:' + address
+        # Store as Account with balance = stake
+        stake_account = Account(balance=new_stake)
+        self.cache[stake_key] = stake_account
+        self.dirty.add(stake_key)
+    
+    def sub_stake(self, address: bytes, amount: int) -> bool:
+        """
+        Subtract staked amount for a validator.
+        
+        Args:
+            address: Validator address
+            amount: Amount to unstake
+            
+        Returns:
+            bool: True if successful, False if insufficient stake
+        """
+        current_stake = self.get_staked_amount(address)
+        if current_stake < amount:
+            return False
+        new_stake = current_stake - amount
+        stake_key = b'stake:' + address
+        stake_account = Account(balance=new_stake)
+        self.cache[stake_key] = stake_account
+        self.dirty.add(stake_key)
+        return True
+    
+    def get_validator_info(self, address: bytes) -> Optional[Dict]:
+        """
+        Get validator information.
+        
+        Args:
+            address: Validator address
+            
+        Returns:
+            Optional[Dict]: Validator info or None
+        """
+        info_key = b'validator:' + address
+        if info_key in self.cache:
+            data = self.cache[info_key]
+            if isinstance(data, dict):
+                return data
+            elif isinstance(data, bytes):
+                try:
+                    return json.loads(data.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return None
+        if info_key in self.accounts:
+            acc = self.accounts[info_key]
+            if isinstance(acc, dict):
+                return acc
+            elif isinstance(acc, bytes):
+                try:
+                    return json.loads(acc.decode('utf-8'))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return None
+        return None
+    
+    def set_validator_info(self, address: bytes, public_key: bytes, active: bool = True) -> None:
+        """
+        Set validator information.
+        
+        Args:
+            address: Validator address
+            public_key: Validator public key
+            active: Whether validator is active
+        """
+        info = {
+            "address": address.hex(),
+            "public_key": public_key.hex(),
+            "active": active,
+        }
+        info_key = b'validator:' + address
+        # Store validator info as dict directly in cache (not using Account storage_root)
+        # This avoids conflicts with contract storage management
+        self.cache[info_key] = info
+        self.dirty.add(info_key)
+    
+    def get_pending_rewards(self, address: bytes) -> int:
+        """
+        Get pending rewards for a validator.
+        
+        Args:
+            address: Validator address
+            
+        Returns:
+            int: Pending reward amount
+        """
+        reward_key = b'reward:' + address
+        if reward_key in self.cache:
+            cached = self.cache[reward_key]
+            if isinstance(cached, Account):
+                return cached.balance
+            elif isinstance(cached, bytes):
+                return int.from_bytes(cached, 'big')
+            elif isinstance(cached, int):
+                return cached
+        if reward_key in self.accounts:
+            acc = self.accounts[reward_key]
+            if isinstance(acc, Account):
+                return acc.balance
+            elif isinstance(acc, bytes):
+                return int.from_bytes(acc, 'big')
+            elif isinstance(acc, int):
+                return acc
+        return 0
+    
+    def add_reward(self, address: bytes, amount: int) -> None:
+        """
+        Add pending reward for a validator.
+        
+        Args:
+            address: Validator address
+            amount: Reward amount to add
+        """
+        current_rewards = self.get_pending_rewards(address)
+        new_rewards = current_rewards + amount
+        reward_key = b'reward:' + address
+        reward_account = Account(balance=new_rewards)
+        self.cache[reward_key] = reward_account
+        self.dirty.add(reward_key)
+    
+    def claim_rewards(self, address: bytes) -> int:
+        """
+        Claim all pending rewards for a validator.
+        
+        Args:
+            address: Validator address
+            
+        Returns:
+            int: Amount of rewards claimed
+        """
+        rewards = self.get_pending_rewards(address)
+        if rewards > 0:
+            # Transfer rewards to validator balance
+            self.add_balance(address, rewards)
+            # Clear pending rewards
+            reward_key = b'reward:' + address
+            reward_account = Account(balance=0)
+            self.cache[reward_key] = reward_account
+            self.dirty.add(reward_key)
+        return rewards
