@@ -1,10 +1,11 @@
 // LuxTensor smart contracts module
-// Provides infrastructure for smart contract deployment and execution
+// Provides infrastructure for smart contract deployment and execution with EVM
 
 pub mod error;
 pub mod executor;
 pub mod state;
 pub mod types;
+pub mod evm_executor;
 
 pub use error::*;
 pub use executor::{
@@ -15,3 +16,4 @@ pub use state::ContractState;
 pub use types::{
     ContractAddress, ContractCode, ContractABI, FunctionSignature, EventSignature, ABIType,
 };
+pub use evm_executor::EvmExecutor;

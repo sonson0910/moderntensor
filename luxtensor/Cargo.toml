@@ -13,6 +13,29 @@ members = [
 ]
 resolver = "2"
 
+# Root package for examples
+[package]
+name = "luxtensor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+luxtensor-core = { path = "crates/luxtensor-core" }
+luxtensor-crypto = { path = "crates/luxtensor-crypto" }
+luxtensor-storage = { path = "crates/luxtensor-storage" }
+luxtensor-contracts = { path = "crates/luxtensor-contracts" }
+hex = { workspace = true }
+tempfile = { workspace = true }
+
+[[example]]
+name = "full_transaction_example"
+path = "examples/full_transaction_example.rs"
+
+[[example]]
+name = "smart_contract_example"
+path = "examples/smart_contract_example.rs"
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
