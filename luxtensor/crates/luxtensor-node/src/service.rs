@@ -2,12 +2,11 @@ use crate::config::Config;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake};
 use luxtensor_core::{Block, Transaction};
-use luxtensor_network::{P2PConfig, P2PNode};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::{BlockchainDB, StateDB};
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
@@ -116,16 +115,11 @@ impl NodeService {
         
         // Start P2P network
         info!("🌐 Starting P2P network...");
-        let p2p_config = P2PConfig {
-            listen_addr: self.config.network.listen_addr.clone(),
-            listen_port: self.config.network.listen_port,
-            bootstrap_nodes: self.config.network.bootstrap_nodes.clone(),
-            max_peers: self.config.network.max_peers,
-            enable_mdns: self.config.network.enable_mdns,
-        };
-        
-        info!("  ⏳ P2P node configured for port {}", p2p_config.listen_port);
-        // Note: P2P implementation is stubbed for now
+        // Note: P2P is currently stubbed. Will be fully implemented in future
+        info!("  ⏳ P2P network configuration prepared");
+        info!("    Listen address: {}:{}", self.config.network.listen_addr, self.config.network.listen_port);
+        info!("    Max peers: {}", self.config.network.max_peers);
+
         
         // Start block production if validator
         if self.config.node.is_validator {
@@ -134,7 +128,7 @@ impl NodeService {
             let storage = self.storage.clone();
             let state_db = self.state_db.clone();
             let block_time = self.config.consensus.block_time;
-            let mut shutdown_rx = self.shutdown_tx.subscribe();
+            let shutdown_rx = self.shutdown_tx.subscribe();
             
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
@@ -172,7 +166,7 @@ impl NodeService {
         info!("🛑 Shutting down node services...");
         
         // Send shutdown signal to all tasks
-        let _ = self.shutdown_tx.send(()).await;
+        let _ = self.shutdown_tx.send(());
         
         // Wait for all tasks to complete
         for task in self.tasks.drain(..) {

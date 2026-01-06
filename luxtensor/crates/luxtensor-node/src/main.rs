@@ -104,17 +104,12 @@ fn init_logging(config: &Config) -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.logging.level));
     
-    if config.logging.json_format {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_target(false)
-            .init();
-    }
+    // Note: JSON formatting requires additional features
+    // For now, use standard formatting
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .init();
     
     Ok(())
 }
