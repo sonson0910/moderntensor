@@ -1,0 +1,82 @@
+{
+  "chain_id": 9999,
+  "network_name": "luxtensor-testnet",
+  "genesis_time": "2026-01-06T00:00:00Z",
+  "consensus": {
+    "type": "pos",
+    "block_time": 3,
+    "epoch_length": 100,
+    "min_stake": "10000000000000000000",
+    "max_validators": 21,
+    "finality_threshold": 67
+  },
+  "initial_validators": [
+    {
+      "address": "0x0000000000000000000000000000000000000001",
+      "pubkey": "0x04...",
+      "stake": "100000000000000000000",
+      "commission": 10,
+      "name": "Genesis Validator 1"
+    },
+    {
+      "address": "0x0000000000000000000000000000000000000002",
+      "pubkey": "0x04...",
+      "stake": "100000000000000000000",
+      "commission": 10,
+      "name": "Genesis Validator 2"
+    },
+    {
+      "address": "0x0000000000000000000000000000000000000003",
+      "pubkey": "0x04...",
+      "stake": "100000000000000000000",
+      "commission": 10,
+      "name": "Genesis Validator 3"
+    }
+  ],
+  "initial_balances": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "balance": "10000000000000000000000",
+      "comment": "Testnet faucet"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "balance": "1000000000000000000000",
+      "comment": "Development account 1"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "balance": "1000000000000000000000",
+      "comment": "Development account 2"
+    }
+  ],
+  "token": {
+    "name": "LuxTensor",
+    "symbol": "LUX",
+    "decimals": 18,
+    "total_supply": "1000000000000000000000000000",
+    "initial_emission_rate": "100000000000000000000000"
+  },
+  "governance": {
+    "voting_period": 86400,
+    "quorum": 51,
+    "proposal_threshold": "1000000000000000000000"
+  },
+  "gas": {
+    "base_fee": "1000000000",
+    "max_gas_per_block": "10000000",
+    "target_gas_per_block": "5000000"
+  },
+  "features": {
+    "smart_contracts": true,
+    "ai_validation": true,
+    "zkml_proofs": true,
+    "evm_compatibility": true
+  },
+  "metadata": {
+    "version": "0.1.0",
+    "git_commit": "dev",
+    "build_timestamp": "2026-01-06T00:00:00Z",
+    "description": "LuxTensor Testnet Genesis Configuration"
+  }
+}
