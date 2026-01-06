@@ -6,6 +6,7 @@ members = [
     "crates/luxtensor-network",
     "crates/luxtensor-storage",
     "crates/luxtensor-rpc",
+    "crates/luxtensor-contracts",
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
