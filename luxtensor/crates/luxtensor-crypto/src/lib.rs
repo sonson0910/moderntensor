@@ -137,15 +137,25 @@ impl MerkleTree {
     }
 
     /// Get proof for leaf at index
-    pub fn get_proof(&self, _index: usize) -> Vec<Hash> {
+    /// 
+    /// # Note
+    /// This is a placeholder implementation. Real Merkle proofs will be implemented in Phase 1.
+    pub fn get_proof(&self, _index: usize) -> Result<Vec<Hash>> {
         // TODO: Implement Merkle proof generation
-        vec![]
+        Err(LuxTensorError::InternalError(
+            "Merkle proof generation not yet implemented".to_string()
+        ))
     }
 
     /// Verify Merkle proof
-    pub fn verify_proof(_leaf: &Hash, _proof: &[Hash], _root: &Hash) -> bool {
+    /// 
+    /// # Note
+    /// This is a placeholder implementation. Real Merkle proof verification will be implemented in Phase 1.
+    pub fn verify_proof(_leaf: &Hash, _proof: &[Hash], _root: &Hash) -> Result<bool> {
         // TODO: Implement Merkle proof verification
-        true
+        Err(LuxTensorError::InternalError(
+            "Merkle proof verification not yet implemented".to_string()
+        ))
     }
 }
 

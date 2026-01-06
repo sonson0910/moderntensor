@@ -89,6 +89,8 @@ pub struct ChainConfig {
 impl Default for ChainConfig {
     fn default() -> Self {
         Self {
+            // TODO: Update chain_id before mainnet launch
+            // 9999 is used for development/testnet
             chain_id: 9999,
             block_time: 3, // 3 seconds
             epoch_length: 100,
