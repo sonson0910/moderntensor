@@ -4,7 +4,7 @@
 **Dự án:** LuxTensor (ModernTensor Rust Implementation)  
 **Ngày tạo:** 6 Tháng 1, 2026  
 **Trạng thái:** Kế hoạch migration  
-**Timeline:** 6-8 tháng  
+**Timeline:** 10-11 tháng (42 tuần)  
 **Team:** 3-4 Rust engineers
 
 ---
@@ -1386,7 +1386,7 @@ Migration từ Python sang Rust sẽ đem lại:
 ✅ **Scalability:** Better concurrency  
 ✅ **Production-ready:** Enterprise-grade code  
 
-**Timeline:** 10 tháng (42 tuần)  
+**Timeline:** 10.5 tháng (42 tuần)  
 **Budget:** ~$750k  
 **Team:** 3-4 Rust engineers  
 
