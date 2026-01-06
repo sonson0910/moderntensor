@@ -1,8 +1,12 @@
 // LuxTensor storage module
-// TODO: Implement RocksDB storage and Merkle Patricia Trie
+// Phase 4: Storage Layer implementation
 
+pub mod db;
 pub mod error;
+pub mod state_db;
+pub mod trie;
 
+pub use db::BlockchainDB;
 pub use error::*;
-
-// Placeholder for future implementation
+pub use state_db::StateDB;
+pub use trie::MerkleTrie;

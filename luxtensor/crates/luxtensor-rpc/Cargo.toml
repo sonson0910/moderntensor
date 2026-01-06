@@ -13,9 +13,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+hex = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-storage = { path = "../luxtensor-storage" }
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3.8"
+rocksdb = { workspace = true }
