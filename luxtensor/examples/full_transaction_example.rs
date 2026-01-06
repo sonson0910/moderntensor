@@ -15,22 +15,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1️⃣  Initializing database and state...");
     let temp_dir = TempDir::new()?;
     let db = Arc::new(BlockchainDB::open(temp_dir.path().to_str().unwrap())?);
-    let mut state_db = StateDB::new(db.clone());
+    let state_db = StateDB::new(db.inner_db());
     println!("   ✅ Database initialized\n");
 
     // 2. Generate keypairs
     println!("2️⃣  Generating keypairs...");
     let sender_keypair = KeyPair::generate();
     let receiver_keypair = KeyPair::generate();
-    let sender = sender_keypair.address();
-    let receiver = receiver_keypair.address();
-    println!("   Sender:   {:?}", hex::encode(sender.as_bytes()));
-    println!("   Receiver: {:?}\n", hex::encode(receiver.as_bytes()));
+    let sender_addr = Address::from(sender_keypair.address());
+    let receiver_addr = Address::from(receiver_keypair.address());
+    println!("   Sender:   {}", sender_addr);
+    println!("   Receiver: {}\n", receiver_addr);
 
     // 3. Setup initial balances
     println!("3️⃣  Setting up initial balances...");
-    state_db.set_balance(&sender, 1_000_000)?;
-    state_db.set_balance(&receiver, 0)?;
+    state_db.set_balance(&sender_addr, 1_000_000)?;
+    state_db.set_balance(&receiver_addr, 0)?;
     let initial_state_root = state_db.commit()?;
     println!("   ✅ Balances set\n");
 
@@ -52,8 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transfer_amount = 100_000u128;
     let tx = Transaction {
         nonce: 0,
-        from: sender,
-        to: Some(receiver),
+        from: sender_addr,
+        to: Some(receiver_addr),
         value: transfer_amount,
         gas_price: 1,
         gas_limit: 21_000,
@@ -66,8 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Execute transaction
     println!("6️⃣  Executing transaction...");
-    state_db.transfer(&sender, &receiver, transfer_amount)?;
-    state_db.increment_nonce(&sender)?;
+    state_db.transfer(&sender_addr, &receiver_addr, transfer_amount)?;
+    state_db.increment_nonce(&sender_addr)?;
     let new_state_root = state_db.commit()?;
     println!("   ✅ Transaction executed\n");
 

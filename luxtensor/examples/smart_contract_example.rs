@@ -62,8 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("6️⃣  Getting statistics...");
     let stats = executor.get_stats();
     println!("   Contracts: {}", stats.total_contracts);
-    println!("   Code size: {} bytes", stats.total_code_size);
-    println!("   Gas used:  {}\n", stats.total_gas_used);
+    println!("   Code size: {} bytes\n", stats.total_code_size);
 
     println!("🎉 Example completed successfully!");
     Ok(())
