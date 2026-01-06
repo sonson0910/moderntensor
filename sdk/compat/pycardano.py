@@ -178,6 +178,11 @@ class Address:
             address_str = address_str[2:]
         
         try:
+            # Ensure we have at least 40 hex characters
+            if len(address_str) < 40:
+                # Pad with zeros if too short
+                address_str = address_str.ljust(40, '0')
+            
             payment_bytes = bytes.fromhex(address_str[:40])  # 20 bytes = 40 hex chars
             return cls(payment_part=payment_bytes)
         except ValueError:
