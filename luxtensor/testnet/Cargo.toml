@@ -1,0 +1,11 @@
+[package]
+name = "luxtensor-testnet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+luxtensor-core = { path = "../core" }
+
+serde = { workspace = true }

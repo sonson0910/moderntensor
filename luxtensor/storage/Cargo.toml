@@ -1,0 +1,12 @@
+[package]
+name = "luxtensor-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+luxtensor-core = { path = "../core" }
+
+serde = { workspace = true }
+rocksdb = { workspace = true }
