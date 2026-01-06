@@ -1,4 +1,4 @@
-use secp256k1::{Secp256k1, SecretKey, PublicKey, Message};
+use secp256k1::{Secp256k1, SecretKey, PublicKey, Message, ecdsa::Signature};
 use crate::{Hash, Result, CryptoError, keccak256};
 
 /// Key pair for signing and verification
@@ -60,6 +60,72 @@ impl KeyPair {
         address.copy_from_slice(&hash[12..]);
         address
     }
+}
+
+/// Verify a signature against a message hash and public key
+pub fn verify_signature(message_hash: &Hash, signature: &[u8; 64], public_key: &[u8]) -> Result<bool> {
+    let secp = Secp256k1::new();
+    
+    // Parse the signature
+    let sig = Signature::from_compact(signature)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Parse the public key
+    let pubkey = PublicKey::from_slice(public_key)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Parse the message
+    let message = Message::from_digest_slice(message_hash)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Verify the signature
+    match secp.verify_ecdsa(&message, &sig, &pubkey) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Recover public key from signature
+pub fn recover_public_key(message_hash: &Hash, signature: &[u8; 64], recovery_id: u8) -> Result<Vec<u8>> {
+    let secp = Secp256k1::new();
+    
+    // Parse the signature
+    let sig = Signature::from_compact(signature)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Parse the message
+    let message = Message::from_digest_slice(message_hash)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Create recovery ID
+    let rec_id = secp256k1::ecdsa::RecoveryId::from_i32(recovery_id as i32)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Create recoverable signature
+    let rec_sig = secp256k1::ecdsa::RecoverableSignature::from_compact(signature, rec_id)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    // Recover the public key
+    let pubkey = secp.recover_ecdsa(&message, &rec_sig)
+        .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    
+    Ok(pubkey.serialize_uncompressed().to_vec())
+}
+
+/// Derive address from public key bytes
+pub fn address_from_public_key(public_key: &[u8]) -> Result<[u8; 20]> {
+    if public_key.len() != 65 || public_key[0] != 0x04 {
+        return Err(CryptoError::InvalidPublicKey);
+    }
+    
+    // Skip first byte (0x04 prefix)
+    let hash = keccak256(&public_key[1..]);
+    
+    // Take last 20 bytes
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&hash[12..]);
+    
+    Ok(address)
 }
 
 #[cfg(test)]

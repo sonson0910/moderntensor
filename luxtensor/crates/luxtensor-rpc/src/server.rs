@@ -1,19 +1,20 @@
 use crate::{types::*, RpcError, Result};
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
-use luxtensor_core::Address;
-use luxtensor_storage::{BlockchainDB, StateDB};
+use luxtensor_core::{Address, StateDB};
+use luxtensor_storage::BlockchainDB;
+use parking_lot::RwLock;
 use std::sync::Arc;
 
 /// JSON-RPC server for LuxTensor blockchain
 pub struct RpcServer {
     db: Arc<BlockchainDB>,
-    state: Arc<StateDB>,
+    state: Arc<RwLock<StateDB>>,
 }
 
 impl RpcServer {
     /// Create a new RPC server
-    pub fn new(db: Arc<BlockchainDB>, state: Arc<StateDB>) -> Self {
+    pub fn new(db: Arc<BlockchainDB>, state: Arc<RwLock<StateDB>>) -> Self {
         Self { db, state }
     }
 
@@ -162,10 +163,8 @@ impl RpcServer {
 
             let address = parse_address(&parsed[0])?;
 
-            match state.get_balance(&address) {
-                Ok(balance) => Ok(Value::String(format!("0x{:x}", balance))),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
-            }
+            let balance = state.read().get_balance(&address);
+            Ok(Value::String(format!("0x{:x}", balance)))
         });
 
         let state = self.state.clone();
@@ -179,10 +178,8 @@ impl RpcServer {
 
             let address = parse_address(&parsed[0])?;
 
-            match state.get_nonce(&address) {
-                Ok(nonce) => Ok(Value::String(format!("0x{:x}", nonce))),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
-            }
+            let nonce = state.read().get_nonce(&address);
+            Ok(Value::String(format!("0x{:x}", nonce)))
         });
 
         // eth_sendRawTransaction - Submit raw signed transaction
@@ -300,21 +297,15 @@ mod tests {
     use super::*;
     use luxtensor_core::{Block, BlockHeader, Transaction};
     use luxtensor_storage::BlockchainDB;
-    use rocksdb::{Options, DB};
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn create_test_setup() -> (TempDir, Arc<BlockchainDB>, Arc<StateDB>) {
+    fn create_test_setup() -> (TempDir, Arc<BlockchainDB>, Arc<RwLock<StateDB>>) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("blockchain");
-        let state_path = temp_dir.path().join("state");
 
         let blockchain_db = Arc::new(BlockchainDB::open(&db_path).unwrap());
-
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        let state_db_raw = Arc::new(DB::open(&opts, state_path).unwrap());
-        let state_db = Arc::new(StateDB::new(state_db_raw));
+        let state_db = Arc::new(RwLock::new(StateDB::new()));
 
         (temp_dir, blockchain_db, state_db)
     }
