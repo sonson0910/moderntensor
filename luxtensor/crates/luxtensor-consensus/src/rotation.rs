@@ -320,7 +320,7 @@ mod tests {
         public_key.copy_from_slice(&pk_bytes[..32.min(pk_bytes.len())]);
         
         Validator {
-            address: keypair.address(),
+            address: Address::from(keypair.address()),
             stake,
             public_key,
             active: true,

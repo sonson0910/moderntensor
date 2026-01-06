@@ -398,7 +398,7 @@ mod tests {
     fn test_subscription_type_serialization() {
         let sub_type = SubscriptionType::NewHeads;
         let json = serde_json::to_string(&sub_type).unwrap();
-        assert_eq!(json, r#""NewHeads""#);
+        assert_eq!(json, r#""newHeads""#);
 
         let deserialized: SubscriptionType = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, SubscriptionType::NewHeads);
