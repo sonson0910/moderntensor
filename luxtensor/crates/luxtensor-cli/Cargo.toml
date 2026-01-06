@@ -1,0 +1,18 @@
+[package]
+name = "luxtensor-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "luxtensor-cli"
+path = "src/main.rs"
+
+[dependencies]
+luxtensor-types = { workspace = true }
+luxtensor-crypto = { workspace = true }
+clap = { workspace = true }
+console = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

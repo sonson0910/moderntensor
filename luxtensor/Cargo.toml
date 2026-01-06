@@ -42,7 +42,7 @@ serde_json = "1.0"
 bincode = "1.3"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "mdns", "noise", "mplex", "yamux", "gossipsub"] }
+libp2p = { version = "0.53", features = ["tcp", "mdns", "noise", "yamux", "gossipsub"] }
 
 # Database
 rocksdb = "0.21"

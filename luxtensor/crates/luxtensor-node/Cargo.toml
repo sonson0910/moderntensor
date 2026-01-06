@@ -1,0 +1,22 @@
+[package]
+name = "luxtensor-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "luxtensor-node"
+path = "src/main.rs"
+
+[dependencies]
+luxtensor-types = { workspace = true }
+luxtensor-core = { workspace = true }
+luxtensor-consensus = { workspace = true }
+luxtensor-network = { workspace = true }
+luxtensor-storage = { workspace = true }
+luxtensor-api = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

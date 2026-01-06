@@ -8,60 +8,55 @@
 //! - Hash functions (SHA3, Blake3)
 //! - Merkle trees
 
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signer, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, SignatureError};
 use luxtensor_types::{Address, Hash, Signature, Result, LuxTensorError};
 use rand::rngs::OsRng;
 use sha3::{Digest, Keccak256};
 
 /// Key pair for signing transactions
 pub struct KeyPair {
-    keypair: Keypair,
+    signing_key: SigningKey,
 }
 
 impl KeyPair {
     /// Generate new random keypair
     pub fn generate() -> Self {
-        let mut csprng = OsRng;
-        let keypair = Keypair::generate(&mut csprng);
-        Self { keypair }
+        let mut secret_bytes = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut OsRng, &mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        Self { signing_key }
     }
 
     /// Create from secret key bytes
     pub fn from_secret_bytes(secret: &[u8; 32]) -> Result<Self> {
-        let secret_key = SecretKey::from_bytes(secret)
-            .map_err(|e| LuxTensorError::InternalError(e.to_string()))?;
-        let public_key = PublicKey::from(&secret_key);
-        let keypair = Keypair {
-            secret: secret_key,
-            public: public_key,
-        };
-        Ok(Self { keypair })
+        let signing_key = SigningKey::from_bytes(secret);
+        Ok(Self { signing_key })
     }
 
     /// Sign message
     pub fn sign(&self, message: &[u8]) -> Signature {
-        let sig = self.keypair.sign(message);
+        let sig = self.signing_key.sign(message);
         sig.to_bytes()
     }
 
     /// Get public key
-    pub fn public_key(&self) -> &PublicKey {
-        &self.keypair.public
+    pub fn verifying_key(&self) -> VerifyingKey {
+        self.signing_key.verifying_key()
     }
 
     /// Derive address from public key
     pub fn address(&self) -> Address {
-        derive_address(&self.keypair.public)
+        derive_address(&self.signing_key.verifying_key())
     }
 
     /// Get secret key bytes
     pub fn secret_bytes(&self) -> [u8; 32] {
-        self.keypair.secret.to_bytes()
+        self.signing_key.to_bytes()
     }
 }
 
 /// Derive address from public key (last 20 bytes of keccak256 hash)
-pub fn derive_address(public_key: &PublicKey) -> Address {
+pub fn derive_address(public_key: &VerifyingKey) -> Address {
     let public_key_bytes = public_key.as_bytes();
     let hash = Keccak256::digest(public_key_bytes);
     let mut address = [0u8; 20];
@@ -73,10 +68,9 @@ pub fn derive_address(public_key: &PublicKey) -> Address {
 pub fn verify_signature(
     message: &[u8],
     signature: &Signature,
-    public_key: &PublicKey,
+    public_key: &VerifyingKey,
 ) -> Result<()> {
-    let sig = ed25519_dalek::Signature::from_bytes(signature)
-        .map_err(|_| LuxTensorError::InvalidSignature)?;
+    let sig = ed25519_dalek::Signature::from_bytes(signature);
     
     public_key
         .verify(message, &sig)
@@ -143,13 +137,13 @@ impl MerkleTree {
     }
 
     /// Get proof for leaf at index
-    pub fn get_proof(&self, index: usize) -> Vec<Hash> {
+    pub fn get_proof(&self, _index: usize) -> Vec<Hash> {
         // TODO: Implement Merkle proof generation
         vec![]
     }
 
     /// Verify Merkle proof
-    pub fn verify_proof(leaf: &Hash, proof: &[Hash], root: &Hash) -> bool {
+    pub fn verify_proof(_leaf: &Hash, _proof: &[Hash], _root: &Hash) -> bool {
         // TODO: Implement Merkle proof verification
         true
     }
@@ -172,7 +166,7 @@ mod tests {
         let message = b"Hello, LuxTensor!";
         
         let signature = keypair.sign(message);
-        let result = verify_signature(message, &signature, keypair.public_key());
+        let result = verify_signature(message, &signature, &keypair.verifying_key());
         
         assert!(result.is_ok());
     }

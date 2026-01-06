@@ -11,7 +11,6 @@
 //! - `Result<T>` - Result type alias
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// 32-byte hash (256-bit)
 pub type Hash = [u8; 32];
