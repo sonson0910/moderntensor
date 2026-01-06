@@ -1,0 +1,18 @@
+[package]
+name = "luxtensor-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "luxtensor"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+luxtensor-core = { path = "../luxtensor-core" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
