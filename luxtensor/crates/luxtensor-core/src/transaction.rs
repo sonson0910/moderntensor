@@ -66,7 +66,38 @@ impl Transaction {
     
     /// Verify transaction signature
     pub fn verify_signature(&self) -> Result<()> {
-        // TODO: Implement signature verification
+        use luxtensor_crypto::{verify_signature, address_from_public_key, recover_public_key};
+        
+        // Get signing message
+        let message = self.signing_message();
+        let message_hash = luxtensor_crypto::keccak256(&message);
+        
+        // Combine r and s into signature
+        let mut signature = [0u8; 64];
+        signature[..32].copy_from_slice(&self.r);
+        signature[32..].copy_from_slice(&self.s);
+        
+        // Recover public key from signature
+        let public_key = recover_public_key(&message_hash, &signature, self.v)
+            .map_err(|_| crate::CoreError::InvalidSignature)?;
+        
+        // Derive address from public key
+        let recovered_address = address_from_public_key(&public_key)
+            .map_err(|_| crate::CoreError::InvalidSignature)?;
+        
+        // Verify the recovered address matches the from address
+        if recovered_address != *self.from.as_bytes() {
+            return Err(crate::CoreError::InvalidSignature);
+        }
+        
+        // Also verify signature directly
+        let is_valid = verify_signature(&message_hash, &signature, &public_key)
+            .map_err(|_| crate::CoreError::InvalidSignature)?;
+        
+        if !is_valid {
+            return Err(crate::CoreError::InvalidSignature);
+        }
+        
         Ok(())
     }
 }

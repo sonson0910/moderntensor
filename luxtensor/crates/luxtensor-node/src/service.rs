@@ -1,7 +1,9 @@
 use crate::config::Config;
+use crate::mempool::Mempool;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake};
 use luxtensor_core::{Block, Transaction};
+use luxtensor_crypto::MerkleTree;
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::{BlockchainDB, StateDB};
 use parking_lot::RwLock;
@@ -16,6 +18,7 @@ pub struct NodeService {
     storage: Arc<BlockchainDB>,
     state_db: Arc<StateDB>,
     consensus: Arc<RwLock<ProofOfStake>>,
+    mempool: Arc<Mempool>,
     shutdown_tx: broadcast::Sender<()>,
     tasks: Vec<JoinHandle<Result<()>>>,
 }
@@ -60,6 +63,11 @@ impl NodeService {
         info!("    - Max validators: {}", config.consensus.max_validators);
         info!("    - Epoch length: {} blocks", config.consensus.epoch_length);
         
+        // Initialize mempool
+        info!("📝 Initializing transaction mempool...");
+        let mempool = Arc::new(Mempool::new(10000)); // Max 10k transactions
+        info!("  ✓ Mempool initialized (max size: 10000)");
+        
         // Check if genesis block exists, create if not
         if storage.get_block_by_height(0)?.is_none() {
             info!("🌱 Creating genesis block...");
@@ -78,6 +86,7 @@ impl NodeService {
             storage,
             state_db,
             consensus,
+            mempool,
             shutdown_tx,
             tasks: Vec::new(),
         })
@@ -127,6 +136,7 @@ impl NodeService {
             let consensus = self.consensus.clone();
             let storage = self.storage.clone();
             let state_db = self.state_db.clone();
+            let mempool = self.mempool.clone();
             let block_time = self.config.consensus.block_time;
             let shutdown_rx = self.shutdown_tx.subscribe();
             
@@ -135,6 +145,7 @@ impl NodeService {
                     consensus,
                     storage,
                     state_db,
+                    mempool,
                     block_time,
                     shutdown_rx,
                 ).await
@@ -190,6 +201,7 @@ impl NodeService {
         consensus: Arc<RwLock<ProofOfStake>>,
         storage: Arc<BlockchainDB>,
         state_db: Arc<StateDB>,
+        mempool: Arc<Mempool>,
         block_time: u64,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
@@ -199,7 +211,7 @@ impl NodeService {
             tokio::select! {
                 _ = interval.tick() => {
                     // Produce a block
-                    if let Err(e) = Self::produce_block(&consensus, &storage, &state_db).await {
+                    if let Err(e) = Self::produce_block(&consensus, &storage, &state_db, &mempool).await {
                         error!("Failed to produce block: {}", e);
                     }
                 }
@@ -218,6 +230,7 @@ impl NodeService {
         _consensus: &Arc<RwLock<ProofOfStake>>,
         storage: &Arc<BlockchainDB>,
         state_db: &Arc<StateDB>,
+        mempool: &Arc<Mempool>,
     ) -> Result<()> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -227,8 +240,19 @@ impl NodeService {
         let previous_block = storage.get_block_by_height(height)?
             .ok_or_else(|| anyhow::anyhow!("Previous block not found"))?;
         
-        // TODO: Get transactions from mempool
-        let transactions: Vec<Transaction> = vec![];
+        // Get transactions from mempool (up to 1000 per block)
+        let transactions = mempool.get_transactions_for_block(1000);
+        
+        // Calculate transaction merkle root
+        let txs_root = if transactions.is_empty() {
+            [0u8; 32]
+        } else {
+            let tx_hashes: Vec<_> = transactions.iter()
+                .map(|tx| tx.hash())
+                .collect();
+            let merkle_tree = MerkleTree::new(tx_hashes);
+            merkle_tree.root()
+        };
         
         // Calculate state root
         let state_root = state_db.commit()?;
@@ -242,7 +266,7 @@ impl NodeService {
                 .as_secs(),
             previous_hash: previous_block.hash(),
             state_root,
-            txs_root: [0u8; 32], // TODO: Calculate merkle root of transactions
+            txs_root,
             receipts_root: [0u8; 32],
             validator: [0u8; 32],
             signature: vec![0u8; 64],
@@ -252,12 +276,17 @@ impl NodeService {
         };
         
         // Create new block
-        let block = Block::new(header, transactions);
+        let block = Block::new(header, transactions.clone());
         
         // Store block
         storage.store_block(&block)?;
         
-        info!("📦 Produced block #{} with hash {:?}", new_height, block.hash());
+        // Remove transactions from mempool
+        let tx_hashes: Vec<_> = transactions.iter().map(|tx| tx.hash()).collect();
+        mempool.remove_transactions(&tx_hashes);
+        
+        info!("📦 Produced block #{} with {} transactions, hash {:?}", 
+            new_height, transactions.len(), block.hash());
         
         Ok(())
     }
@@ -303,13 +332,26 @@ impl NodeService {
             let consensus = self.consensus.read();
             consensus.validator_count()
         };
+        let mempool_size = self.mempool.len();
         
         Ok(NodeStats {
             height,
             validator_count,
             is_validator: self.config.node.is_validator,
             chain_id: self.config.node.chain_id,
+            mempool_size,
         })
+    }
+    
+    /// Add transaction to mempool
+    pub fn add_transaction(&self, tx: Transaction) -> Result<()> {
+        self.mempool.add_transaction(tx)
+            .map_err(|e| anyhow::anyhow!("Failed to add transaction: {}", e))
+    }
+    
+    /// Get mempool
+    pub fn mempool(&self) -> &Arc<Mempool> {
+        &self.mempool
     }
 }
 
@@ -320,6 +362,7 @@ pub struct NodeStats {
     pub validator_count: usize,
     pub is_validator: bool,
     pub chain_id: u64,
+    pub mempool_size: usize,
 }
 
 #[cfg(test)]

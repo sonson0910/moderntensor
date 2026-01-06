@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub type Hash = [u8; 32];
 
 /// 20-byte address type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct Address([u8; 20]);
 
 impl Address {

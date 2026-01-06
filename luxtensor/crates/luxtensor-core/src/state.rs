@@ -39,8 +39,25 @@ impl StateDB {
     
     /// Calculate state root (placeholder)
     pub fn root_hash(&self) -> Hash {
-        // TODO: Implement Merkle Patricia Trie
-        [0u8; 32]
+        // Calculate hash from all accounts in cache
+        if self.cache.is_empty() {
+            return luxtensor_crypto::keccak256(b"");
+        }
+        
+        // Collect all accounts and sort by address
+        let mut items: Vec<_> = self.cache.iter().collect();
+        items.sort_by(|a, b| a.0.cmp(b.0));
+        
+        // Serialize all account data
+        let mut data = Vec::new();
+        for (address, account) in items {
+            data.extend_from_slice(address.as_bytes());
+            // Serialize account data
+            let account_bytes = bincode::serialize(account).unwrap_or_default();
+            data.extend_from_slice(&account_bytes);
+        }
+        
+        luxtensor_crypto::keccak256(&data)
     }
     
     /// Commit changes (placeholder)

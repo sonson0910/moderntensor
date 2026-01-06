@@ -8,6 +8,9 @@ pub enum CoreError {
     #[error("Invalid transaction: {0}")]
     InvalidTransaction(String),
     
+    #[error("Invalid signature")]
+    InvalidSignature,
+    
     #[error("Invalid state: {0}")]
     InvalidState(String),
     

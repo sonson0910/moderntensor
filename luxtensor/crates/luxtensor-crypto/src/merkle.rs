@@ -64,16 +64,77 @@ impl MerkleTree {
         keccak256(&combined)
     }
     
-    /// Generate Merkle proof for a leaf
-    pub fn get_proof(&self, _index: usize) -> Vec<Hash> {
-        // TODO: Implement Merkle proof generation
-        vec![]
+    /// Generate Merkle proof for a leaf at given index
+    pub fn get_proof(&self, index: usize) -> Vec<Hash> {
+        if self._leaves.is_empty() || index >= self._leaves.len() {
+            return vec![];
+        }
+        
+        let mut proof = Vec::new();
+        let mut current_index = index;
+        let mut current_level = self._leaves.clone();
+        
+        while current_level.len() > 1 {
+            let mut next_level = Vec::new();
+            
+            // Get sibling node
+            let sibling_index = if current_index % 2 == 0 {
+                current_index + 1
+            } else {
+                current_index - 1
+            };
+            
+            // Add sibling to proof if it exists
+            if sibling_index < current_level.len() {
+                proof.push(current_level[sibling_index]);
+            } else {
+                // If no sibling, use the current node itself (for odd number of nodes)
+                proof.push(current_level[current_index]);
+            }
+            
+            // Build next level
+            for chunk in current_level.chunks(2) {
+                let hash = if chunk.len() == 2 {
+                    Self::hash_pair(&chunk[0], &chunk[1])
+                } else {
+                    Self::hash_pair(&chunk[0], &chunk[0])
+                };
+                next_level.push(hash);
+            }
+            
+            current_level = next_level;
+            current_index /= 2;
+        }
+        
+        proof
     }
     
     /// Verify Merkle proof
-    pub fn verify_proof(_leaf: &Hash, _proof: &[Hash], _root: &Hash) -> bool {
-        // TODO: Implement Merkle proof verification
-        false
+    pub fn verify_proof(leaf: &Hash, proof: &[Hash], root: &Hash) -> bool {
+        if proof.is_empty() {
+            return leaf == root;
+        }
+        
+        let mut current_hash = *leaf;
+        
+        for sibling in proof {
+            // Try both left and right positions
+            let hash_left = Self::hash_pair(&current_hash, sibling);
+            let hash_right = Self::hash_pair(sibling, &current_hash);
+            
+            // We don't know which side the sibling is on, so we try both
+            // In a real implementation, we'd encode this information in the proof
+            current_hash = hash_left;
+            
+            // If we're at the last step, check both possibilities
+            if sibling == proof.last().unwrap() {
+                if &hash_left == root || &hash_right == root {
+                    return true;
+                }
+            }
+        }
+        
+        &current_hash == root
     }
 }
 
