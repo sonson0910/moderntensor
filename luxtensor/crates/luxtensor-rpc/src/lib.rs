@@ -1,8 +1,10 @@
 // LuxTensor RPC module
-// TODO: Implement JSON-RPC API server
+// Phase 5: JSON-RPC API implementation
 
 pub mod error;
+pub mod server;
+pub mod types;
 
 pub use error::*;
-
-// Placeholder for future implementation
+pub use server::RpcServer;
+pub use types::*;
