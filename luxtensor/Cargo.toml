@@ -8,6 +8,7 @@ members = [
     "crates/luxtensor-rpc",
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
+    "crates/luxtensor-tests",
 ]
 resolver = "2"
 
@@ -68,6 +69,7 @@ parking_lot = "0.12"
 # Testing
 criterion = "0.5"
 proptest = "1.4"
+tempfile = "3.8"
 
 [profile.release]
 opt-level = 3

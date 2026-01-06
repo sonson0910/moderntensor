@@ -1,0 +1,29 @@
+[package]
+name = "luxtensor-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+luxtensor-core = { path = "../luxtensor-core" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
+luxtensor-storage = { path = "../luxtensor-storage" }
+tempfile = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "performance_benchmarks"
+harness = false
+
+[[test]]
+name = "integration_tests"
+path = "integration_tests.rs"
+
+[lib]
+name = "luxtensor_tests"
+path = "src/lib.rs"
