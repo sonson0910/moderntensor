@@ -1,8 +1,14 @@
 // LuxTensor network module
-// TODO: Implement P2P networking with libp2p
+// Phase 3: Network Layer Implementation
 
 pub mod error;
+pub mod messages;
+pub mod peer;
+pub mod p2p;
+pub mod sync;
 
 pub use error::*;
-
-// Placeholder for future implementation
+pub use messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS};
+pub use peer::{PeerInfo, PeerManager};
+pub use p2p::{P2PConfig, P2PEvent, P2PNode};
+pub use sync::{SyncManager, SyncStatus};
