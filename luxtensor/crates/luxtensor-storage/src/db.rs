@@ -40,6 +40,11 @@ impl BlockchainDB {
         Ok(Self { db: Arc::new(db) })
     }
 
+    /// Get the inner DB reference for state database
+    pub fn inner_db(&self) -> Arc<DB> {
+        self.db.clone()
+    }
+
     /// Store a block and index its transactions
     pub fn store_block(&self, block: &Block) -> Result<()> {
         let block_hash = block.hash();
