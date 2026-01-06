@@ -38,6 +38,21 @@ pub enum ConsensusError {
     
     #[error("Consensus error: {0}")]
     General(String),
+
+    #[error("Validator not found: {0:?}")]
+    ValidatorNotFound(Address),
+
+    #[error("Validator already exists: {0:?}")]
+    ValidatorAlreadyExists(Address),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
+    #[error("No validators available")]
+    NoValidatorsAvailable,
+
+    #[error("Epoch transition error: {0}")]
+    EpochTransition(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConsensusError>;

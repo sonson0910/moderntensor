@@ -12,6 +12,7 @@ bincode = { workspace = true }
 thiserror = { workspace = true }
 bytes = { workspace = true }
 hex = { workspace = true }
+parking_lot = { workspace = true }
 
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 

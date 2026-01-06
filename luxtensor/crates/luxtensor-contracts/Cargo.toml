@@ -1,5 +1,5 @@
 [package]
-name = "luxtensor-rpc"
+name = "luxtensor-contracts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,23 +7,16 @@ repository.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
-jsonrpc-core = { workspace = true }
-jsonrpc-http-server = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-parking_lot = { workspace = true }
+bytes = { workspace = true }
 hex = { workspace = true }
-
-# WebSocket support
-tokio-tungstenite = "0.21"
-futures = { workspace = true }
 tracing = { workspace = true }
+parking_lot = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
-luxtensor-storage = { path = "../luxtensor-storage" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
 
 [dev-dependencies]
-tokio = { workspace = true }
-tempfile = "3.8"
-rocksdb = { workspace = true }
+proptest = { workspace = true }
