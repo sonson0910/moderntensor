@@ -26,18 +26,16 @@
 
 **Created sdk.compat Module:**
 - `sdk/compat/__init__.py` - Module exports
-- `sdk/compat/pycardano.py` (353 lines) - Backward compatibility layer
+- `sdk/compat/pycardano.py` (221 lines) - Pure Layer 1 data structures
 
-**Compatibility Classes Created:**
+**Native Layer 1 Classes Created:**
 ```python
-class PlutusData:           # Base class for datum structures
-class Redeemer:             # Smart contract redeemers
-class Address:              # L1 blockchain addresses
-class TransactionOutput:    # Transaction outputs
-class BlockFrostChainContext:  # Chain context stub
-class Network:              # Network types
-class ScriptHash:           # Contract identifiers
-class UTxO:                 # UTXO compatibility stub
+class L1Data:                # Base class for on-chain data structures
+class L1TransactionData:     # Transaction payloads
+class L1TransactionOutput:   # Transaction outputs  
+class L1ContractAddress:     # Contract identifiers
+# Plus aliases for backward compatibility:
+# PlutusData = L1Data (for gradual migration)
 ```
 
 **Dependencies Fixed:**

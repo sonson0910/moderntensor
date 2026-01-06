@@ -1,40 +1,37 @@
 """
-Backward-compatible wrapper for pycardano interfaces.
+Layer 1 Blockchain Data Structures
 
-This module provides pycardano-like interfaces wrapping Layer 1 primitives
-to enable gradual migration from Cardano to the custom Layer 1 blockchain.
+This module provides native Layer 1 blockchain data structures for ModernTensor.
+Pure Layer 1 implementation - no Cardano/pycardano references.
 
-As documented in CARDANO_MIGRATION_COMPLETE.md, this compatibility layer
-allows existing code (especially metagraph modules) to work without
-immediate refactoring while we complete the Layer 1 migration.
+These classes are used for on-chain data storage and serialization in the
+ModernTensor custom blockchain.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 import json
 
+# Import Layer 1 primitives
+from sdk.blockchain.l1_keymanager import L1Address, L1Network
+from sdk.blockchain.l1_context import L1ChainContext, L1UTxO
+from sdk.blockchain.transaction import Transaction
 
-class PlutusData:
+
+class L1Data:
     """
-    Base class for Plutus datum structures.
+    Base class for Layer 1 blockchain data structures.
     
-    In the Layer 1 blockchain, this acts as a simple dataclass
-    that can be serialized to JSON for on-chain storage.
-    
-    Original Cardano/Plutus context:
-    - Used for smart contract data structures
-    - Serialized using CBOR for on-chain storage
-    
-    Layer 1 blockchain context:
-    - Uses JSON serialization instead of CBOR
-    - Stored in the state database
-    - Backward compatible interface for existing code
+    Used for on-chain data storage in ModernTensor Layer 1 blockchain.
+    - JSON serialization for state database storage
+    - Simple dataclass pattern
+    - No legacy Cardano/Plutus constructs
     
     Note: Not using @dataclass decorator to avoid field ordering issues.
     Child classes should use @dataclass and inherit from this.
     """
     
-    CONSTR_ID: int = 0  # Plutus constructor ID (preserved for compatibility)
+    CONSTR_ID: int = 0  # Constructor ID for data versioning
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -43,13 +40,13 @@ class PlutusData:
             if key.startswith('_') or key == 'CONSTR_ID':
                 continue
             
-            # Handle nested PlutusData
-            if isinstance(value, PlutusData):
+            # Handle nested L1Data
+            if isinstance(value, L1Data):
                 result[key] = value.to_dict()
             # Handle lists
             elif isinstance(value, list):
                 result[key] = [
-                    item.to_dict() if isinstance(item, PlutusData) else item
+                    item.to_dict() if isinstance(item, L1Data) else item
                     for item in value
                 ]
             # Handle bytes
@@ -61,16 +58,16 @@ class PlutusData:
         return result
     
     def to_json(self) -> str:
-        """Convert to JSON string."""
+        """Convert to JSON string for Layer 1 storage."""
         return json.dumps(self.to_dict())
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PlutusData':
+    def from_dict(cls, data: Dict[str, Any]) -> 'L1Data':
         """Create instance from dictionary."""
         # Convert hex strings back to bytes for byte fields
         processed_data = {}
         for key, value in data.items():
-            if isinstance(value, str) and key.endswith('_hash') or key.endswith('_root'):
+            if isinstance(value, str) and (key.endswith('_hash') or key.endswith('_root')):
                 try:
                     processed_data[key] = bytes.fromhex(value)
                 except (ValueError, TypeError):
@@ -81,49 +78,23 @@ class PlutusData:
         return cls(**processed_data)
     
     @classmethod
-    def from_json(cls, json_str: str) -> 'PlutusData':
+    def from_json(cls, json_str: str) -> 'L1Data':
         """Create instance from JSON string."""
         return cls.from_dict(json.loads(json_str))
-    
-    def to_cbor(self) -> bytes:
-        """
-        Compatibility method for CBOR serialization.
-        
-        In Layer 1 blockchain, we use JSON instead of CBOR,
-        so this converts to JSON bytes for now.
-        """
-        return self.to_json().encode('utf-8')
-    
-    @classmethod
-    def from_cbor(cls, cbor_bytes: bytes) -> 'PlutusData':
-        """
-        Compatibility method for CBOR deserialization.
-        
-        In Layer 1 blockchain, we use JSON instead of CBOR,
-        so this expects JSON bytes.
-        """
-        return cls.from_json(cbor_bytes.decode('utf-8'))
 
 
 @dataclass
-class Redeemer:
+class L1TransactionData:
     """
-    Redeemer for Plutus script execution.
+    Layer 1 transaction additional data.
     
-    In Cardano context:
-    - Used to provide arguments to smart contract validators
-    - Determines which validation path to execute
-    
-    In Layer 1 blockchain context:
-    - Simplified to just hold data and tag
-    - Used for backward compatibility with existing code
-    - Actual validation logic is in native Layer 1 contracts
+    Used for contract calls and data payloads in transactions.
     """
     
-    tag: int = 0  # Redeemer tag (e.g., 0=Spend, 1=Mint, 2=Cert, 3=Reward)
-    index: int = 0  # Index within the transaction
-    data: Any = None  # Redeemer data (can be PlutusData or simple types)
-    ex_units: Optional[Dict[str, int]] = None  # Execution units (mem, steps)
+    tag: int = 0  # Data tag for categorization
+    index: int = 0  # Index for ordering
+    data: Any = None  # Payload data (can be L1Data or simple types)
+    gas_limit: Optional[int] = None  # Gas limit for execution
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -133,76 +104,33 @@ class Redeemer:
         }
         
         if self.data is not None:
-            if isinstance(self.data, PlutusData):
+            if isinstance(self.data, L1Data):
                 result['data'] = self.data.to_dict()
             else:
                 result['data'] = self.data
         
-        if self.ex_units is not None:
-            result['ex_units'] = self.ex_units
+        if self.gas_limit is not None:
+            result['gas_limit'] = self.gas_limit
         
         return result
     
     def to_json(self) -> str:
         """Convert to JSON string."""
         return json.dumps(self.to_dict())
-    
-    def to_cbor(self) -> bytes:
-        """Compatibility method - converts to JSON bytes."""
-        return self.to_json().encode('utf-8')
-
-
-# Additional compatibility classes that may be needed
-
-@dataclass  
-class Address:
-    """
-    Simplified address class for Layer 1 blockchain.
-    
-    In Layer 1, addresses are Ethereum-style 20-byte hex strings.
-    This class provides Cardano-like interface for compatibility.
-    """
-    
-    payment_part: bytes = field(default_factory=lambda: b'\x00' * 20)
-    staking_part: Optional[bytes] = None
-    network: str = "mainnet"
-    
-    def __str__(self) -> str:
-        """Return hex address string."""
-        return '0x' + self.payment_part.hex()
-    
-    @classmethod
-    def from_primitive(cls, address_str: str) -> 'Address':
-        """Create from address string."""
-        if address_str.startswith('0x'):
-            address_str = address_str[2:]
-        
-        try:
-            # Ensure we have at least 40 hex characters
-            if len(address_str) < 40:
-                # Pad with zeros if too short
-                address_str = address_str.ljust(40, '0')
-            
-            payment_bytes = bytes.fromhex(address_str[:40])  # 20 bytes = 40 hex chars
-            return cls(payment_part=payment_bytes)
-        except ValueError:
-            # Fallback for invalid addresses
-            return cls()
 
 
 @dataclass
-class TransactionOutput:
+class L1TransactionOutput:
     """
-    Transaction output for Layer 1 blockchain.
+    Layer 1 transaction output.
     
-    Provides Cardano UTXO-like interface for compatibility.
-    In Layer 1, this maps to account-based transactions.
+    Represents destination and amount in account-based model.
     """
     
-    address: Address
+    address: L1Address
     amount: int = 0
-    datum: Optional[PlutusData] = None
-    datum_hash: Optional[bytes] = None
+    data: Optional[L1Data] = None
+    data_hash: Optional[bytes] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -211,138 +139,78 @@ class TransactionOutput:
             'amount': self.amount,
         }
         
-        if self.datum is not None:
-            result['datum'] = self.datum.to_dict()
+        if self.data is not None:
+            result['data'] = self.data.to_dict()
         
-        if self.datum_hash is not None:
-            result['datum_hash'] = self.datum_hash.hex()
+        if self.data_hash is not None:
+            result['data_hash'] = self.data_hash.hex()
         
         return result
 
 
-class BlockFrostChainContext:
+@dataclass  
+class L1ContractAddress:
     """
-    Compatibility stub for BlockFrost chain context.
+    Layer 1 contract address.
     
-    In the original Cardano integration, this was used to interact with
-    Blockfrost API for querying blockchain data.
-    
-    In Layer 1 blockchain, this is replaced by L1ChainContext (JSON-RPC).
-    This stub exists only for backward compatibility during migration.
+    Identifies smart contracts on Layer 1 blockchain.
     """
     
-    def __init__(self, project_id: str = "", network: str = "mainnet", base_url: Optional[str] = None):
-        """Initialize stub context."""
-        self.project_id = project_id
-        self.network = network
-        self.base_url = base_url
-        
-        # For Layer 1 migration, redirect to L1ChainContext if available
-        try:
-            from sdk.blockchain.l1_context import L1ChainContext
-            self._l1_context = L1ChainContext()
-        except ImportError:
-            self._l1_context = None
-    
-    def utxos(self, address: str) -> List[Any]:
-        """
-        Get UTXOs for an address (compatibility method).
-        
-        In Layer 1, this would query account balance instead.
-        """
-        if self._l1_context:
-            # Delegate to L1 context if available
-            try:
-                balance = self._l1_context.get_balance(address)
-                # Return empty list for now (UTXO model not used in L1)
-                return []
-            except Exception:
-                pass
-        
-        return []
-    
-    def submit_tx(self, tx_cbor: bytes) -> str:
-        """
-        Submit transaction (compatibility method).
-        
-        In Layer 1, transactions are submitted via JSON-RPC.
-        """
-        if self._l1_context:
-            try:
-                # In real implementation, would convert tx_cbor to L1 transaction
-                # For now, return placeholder
-                return "0x" + "0" * 64
-            except Exception:
-                pass
-        
-        raise NotImplementedError("BlockFrost compatibility layer - use L1ChainContext instead")
-
-
-class Network:
-    """
-    Network type compatibility class.
-    
-    In Cardano: MAINNET, TESTNET, etc.
-    In Layer 1: Similar network types
-    """
-    
-    MAINNET = "mainnet"
-    TESTNET = "testnet"
-    DEVNET = "devnet"
-    
-    def __init__(self, name: str = "mainnet"):
-        self.name = name
+    address: bytes
     
     def __str__(self) -> str:
-        return self.name
-
-
-class ScriptHash:
-    """
-    Script hash compatibility class.
-    
-    In Cardano, script hashes identify smart contracts.
-    In Layer 1, contract addresses are used instead.
-    """
-    
-    def __init__(self, hash_bytes: bytes):
-        self.payload = hash_bytes
-    
-    def __str__(self) -> str:
-        return self.payload.hex()
+        return '0x' + self.address.hex()
     
     def __bytes__(self) -> bytes:
-        return self.payload
+        return self.address
     
     @classmethod
-    def from_primitive(cls, value: Union[str, bytes]) -> 'ScriptHash':
+    def from_hex(cls, hex_str: str) -> 'L1ContractAddress':
+        """Create from hex string."""
+        if hex_str.startswith('0x'):
+            hex_str = hex_str[2:]
+        return cls(address=bytes.fromhex(hex_str))
+    
+    @classmethod
+    def from_primitive(cls, value: Union[str, bytes]) -> 'L1ContractAddress':
         """Create from hex string or bytes."""
         if isinstance(value, str):
-            return cls(bytes.fromhex(value))
-        return cls(value)
+            return cls.from_hex(value)
+        return cls(address=value)
 
 
-class UTxO:
-    """
-    UTXO compatibility class.
-    
-    In Layer 1 blockchain (account-based), UTXOs don't exist.
-    This is a compatibility stub.
-    """
-    
-    def __init__(self, input_ref: Any = None, output: Any = None):
-        self.input = input_ref
-        self.output = output
+# Aliases for backward compatibility during transition
+# These allow existing code to use old names while we migrate
+PlutusData = L1Data  # Alias for gradual migration
+Redeemer = L1TransactionData  # Alias for gradual migration
+Address = L1Address  # Use native Layer 1 address
+TransactionOutput = L1TransactionOutput  # Use native Layer 1 output
+ScriptHash = L1ContractAddress  # Contract address alias
+Network = L1Network  # Use native Layer 1 network
+BlockFrostChainContext = L1ChainContext  # Use native Layer 1 context
+UTxO = L1UTxO  # Use native Layer 1 UTXO (account model)
 
 
-# Export compatibility types
+# Export all classes
 __all__ = [
+    # Native Layer 1 classes
+    'L1Data',
+    'L1TransactionData',
+    'L1TransactionOutput',
+    'L1ContractAddress',
+    'L1Address',
+    'L1Network',
+    'L1ChainContext',
+    'L1UTxO',
+    'Transaction',
+    
+    # Aliases for backward compatibility
     'PlutusData',
-    'Redeemer', 
+    'Redeemer',
     'Address',
     'TransactionOutput',
-    'BlockFrostChainContext',
-    'Network',
     'ScriptHash',
+    'Network',
+    'BlockFrostChainContext',
     'UTxO',
 ]

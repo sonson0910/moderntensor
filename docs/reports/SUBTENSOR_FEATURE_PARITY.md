@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-ModernTensor Layer 1 blockchain has achieved **feature parity** with Bittensor's Subtensor in all critical areas, with several enhancements and improvements. This document provides a detailed comparison of both systems.
+ModernTensor Layer 1 blockchain has achieved **feature parity** with Bittensor's Subtensor in all critical areas, with several enhancements and improvements. The system uses **pure Layer 1 blockchain logic** with no dependencies on Cardano or external blockchain frameworks.
 
 ---
 
@@ -66,7 +66,7 @@ pub struct SubnetworkMetadata {
 **ModernTensor Layer 1:**
 ```python
 @dataclass
-class SubnetAggregatedDatum(PlutusData):
+class SubnetAggregatedDatum(L1Data):  # Pure Layer 1 base class
     # Identification
     subnet_uid: int
     current_epoch: int
