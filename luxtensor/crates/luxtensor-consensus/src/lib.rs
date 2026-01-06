@@ -1,8 +1,12 @@
 // LuxTensor consensus module
-// TODO: Implement PoS consensus, validator selection, fork choice
+// Phase 2: Consensus Layer Implementation
 
 pub mod error;
+pub mod validator;
+pub mod pos;
+pub mod fork_choice;
 
 pub use error::*;
-
-// Placeholder for future implementation
+pub use validator::{Validator, ValidatorSet};
+pub use pos::{ProofOfStake, ConsensusConfig};
+pub use fork_choice::ForkChoice;

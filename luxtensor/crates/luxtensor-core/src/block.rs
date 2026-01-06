@@ -24,6 +24,36 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
+    pub fn new(
+        version: u32,
+        height: u64,
+        timestamp: u64,
+        previous_hash: Hash,
+        state_root: Hash,
+        txs_root: Hash,
+        receipts_root: Hash,
+        validator: [u8; 32],
+        signature: [u8; 64],
+        gas_used: u64,
+        gas_limit: u64,
+        extra_data: Vec<u8>,
+    ) -> Self {
+        Self {
+            version,
+            height,
+            timestamp,
+            previous_hash,
+            state_root,
+            txs_root,
+            receipts_root,
+            validator,
+            signature: signature.to_vec(),
+            gas_used,
+            gas_limit,
+            extra_data,
+        }
+    }
+    
     pub fn hash(&self) -> Hash {
         let bytes = bincode::serialize(self).unwrap();
         keccak256(&bytes)
@@ -55,6 +85,14 @@ impl Block {
     
     pub fn timestamp(&self) -> u64 {
         self.header.timestamp
+    }
+    
+    pub fn header(&self) -> &BlockHeader {
+        &self.header
+    }
+    
+    pub fn header_mut(&mut self) -> &mut BlockHeader {
+        &mut self.header
     }
     
     /// Create genesis block
