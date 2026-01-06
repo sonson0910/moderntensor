@@ -1,0 +1,19 @@
+[package]
+name = "luxtensor-consensus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+parking_lot = { workspace = true }
+
+luxtensor-core = { path = "../luxtensor-core" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
+
+[dev-dependencies]
+proptest = { workspace = true }

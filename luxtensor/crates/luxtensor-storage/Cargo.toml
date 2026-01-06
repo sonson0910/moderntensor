@@ -1,0 +1,19 @@
+[package]
+name = "luxtensor-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rocksdb = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+
+luxtensor-core = { path = "../luxtensor-core" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
+
+[dev-dependencies]
+tempfile = "3.8"
