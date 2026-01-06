@@ -33,6 +33,25 @@ impl ForkResolver {
         current_chain: &[Block],
         new_chain: &[Block],
     ) -> Result<Option<ReorgInfo>, ConsensusError> {
+        // If chains are identical or new chain is same as current, no reorg needed
+        if current_chain.is_empty() || new_chain.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if the chains are already the same
+        if current_chain.len() == new_chain.len() {
+            let mut same = true;
+            for i in 0..current_chain.len() {
+                if current_chain[i].hash() != new_chain[i].hash() {
+                    same = false;
+                    break;
+                }
+            }
+            if same {
+                return Ok(None);
+            }
+        }
+
         // Find common ancestor
         let common_ancestor = self.find_common_ancestor(current_chain, new_chain)?;
 
@@ -53,7 +72,7 @@ impl ForkResolver {
             }
 
             // Check if any finalized blocks would be affected
-            for block in &current_chain[(ancestor_height as usize)..] {
+            for block in &current_chain[(ancestor_height as usize + 1)..] {
                 if self.is_finalized(&block.hash()) {
                     return Err(ConsensusError::ForkChoice(
                         "Cannot reorg finalized blocks".to_string(),
@@ -66,6 +85,11 @@ impl ForkResolver {
                 [(ancestor_height as usize + 1)..]
                 .to_vec();
             let blocks_to_add: Vec<Block> = new_chain[(ancestor_height as usize + 1)..].to_vec();
+
+            // If nothing to remove or add, no reorg needed
+            if blocks_to_remove.is_empty() && blocks_to_add.is_empty() {
+                return Ok(None);
+            }
 
             info!(
                 "Reorg detected: depth={}, removing {} blocks, adding {} blocks",
@@ -81,7 +105,7 @@ impl ForkResolver {
                 blocks_to_add,
             }))
         } else {
-            // No common ancestor or already on correct chain
+            // No common ancestor - chains are completely different
             Ok(None)
         }
     }
@@ -361,17 +385,36 @@ mod tests {
         let resolver = ForkResolver::default();
         let main_chain = create_test_chain(10);
 
-        // Create a fork at height 7
-        let mut fork_chain = main_chain[..7].to_vec();
-        let fork_block = create_test_block(7, main_chain[6].hash());
+        // Create a fork: take first 8 blocks (0-7), then create different block at height 8
+        let mut fork_chain = main_chain[..8].to_vec();
+        
+        // Create a different block 8 by using a different state_root
+        let mut different_state_root = [1u8; 32]; // Different from normal
+        let fork_block_header = BlockHeader::new(
+            1,
+            8,
+            1000 + 8,
+            main_chain[7].hash(),
+            different_state_root,
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 64],
+            0,
+            1000000,
+            vec![],
+        );
+        let fork_block = Block::new(fork_block_header, vec![]);
         fork_chain.push(fork_block);
 
         let result = resolver.detect_reorg(&main_chain, &fork_chain);
         assert!(result.is_ok());
 
         if let Some(reorg) = result.unwrap() {
-            assert_eq!(reorg.common_ancestor_height, 6);
-            assert_eq!(reorg.reorg_depth, 3); // Blocks 7, 8, 9 need to be removed
+            assert_eq!(reorg.common_ancestor_height, 7); // Block at height 7 is common
+            assert_eq!(reorg.reorg_depth, 2); // Blocks 8, 9 need to be removed
+            assert_eq!(reorg.blocks_to_remove.len(), 2); // Blocks 8 and 9
+            assert_eq!(reorg.blocks_to_add.len(), 1); // New block 8
         }
     }
 
