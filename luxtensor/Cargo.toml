@@ -1,0 +1,87 @@
+[workspace]
+members = [
+    "crates/luxtensor-core",
+    "crates/luxtensor-consensus",
+    "crates/luxtensor-network",
+    "crates/luxtensor-storage",
+    "crates/luxtensor-api",
+    "crates/luxtensor-crypto",
+    "crates/luxtensor-types",
+    "crates/luxtensor-node",
+    "crates/luxtensor-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["LuxTensor Team <contact@luxtensor.io>"]
+repository = "https://github.com/sonson0910/luxtensor"
+homepage = "https://luxtensor.io"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Internal crates
+luxtensor-types = { path = "crates/luxtensor-types" }
+luxtensor-crypto = { path = "crates/luxtensor-crypto" }
+luxtensor-core = { path = "crates/luxtensor-core" }
+luxtensor-consensus = { path = "crates/luxtensor-consensus" }
+luxtensor-network = { path = "crates/luxtensor-network" }
+luxtensor-storage = { path = "crates/luxtensor-storage" }
+luxtensor-api = { path = "crates/luxtensor-api" }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1.77"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Networking
+libp2p = { version = "0.53", features = ["tcp", "mdns", "noise", "mplex", "yamux", "gossipsub"] }
+
+# Database
+rocksdb = "0.21"
+sled = "0.34"
+
+# Cryptography
+ed25519-dalek = { version = "2.1", features = ["serde"] }
+sha3 = "0.10"
+blake3 = "1.5"
+rand = "0.8"
+hex = "0.4"
+
+# Web framework (for RPC/API)
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# GraphQL
+async-graphql = { version = "7.0", features = ["dataloader"] }
+async-graphql-axum = "7.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+console = "0.15"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging/Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Testing
+proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+# Utilities
+bytes = "1.5"
+parking_lot = "0.12"
+dashmap = "5.5"
+once_cell = "1.19"
