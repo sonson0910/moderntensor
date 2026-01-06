@@ -19,10 +19,11 @@ from sdk.metagraph.metagraph_datum import (
     SubnetDynamicDatum,
     DATUM_INT_DIVISOR,
 )  # Assuming this is the default datum for contract queries
-from sdk.smartcontract.validator import (
-    read_validator_static_subnet,
-    read_validator_dynamic_subnet,
-)
+# REMOVED: Cardano smartcontract imports
+# from sdk.smartcontract.validator import (
+#     read_validator_static_subnet,
+#     read_validator_dynamic_subnet,
+# )
 from rich.panel import Panel
 
 

@@ -11,7 +11,7 @@ from rich import box
 from .wallet_cli import wallet_cli
 from .tx_cli import tx_cli
 from .query_cli import query_cli
-from .stake_cli import stake_cli
+# from .stake_cli import stake_cli  # REMOVED: Old Cardano staking CLI
 from .l1_stake_cli import l1_stake_cli  # Import Layer 1 staking CLI
 from .subnet_cli import subnet_cli  # Import Subnet CLI
 from .validator_cli import run_validator  # Import Validator Runner
@@ -98,7 +98,8 @@ def cli(ctx):
 cli.add_command(wallet_cli, name="w")
 cli.add_command(tx_cli, name="tx")
 cli.add_command(query_cli, name="query")
-cli.add_command(stake_cli, name="stake")
+# NOTE: Old Cardano staking CLI has been removed. Use 'l1-stake' instead.
+# cli.add_command(stake_cli, name="stake")  # REMOVED: Cardano staking
 cli.add_command(l1_stake_cli, name="l1-stake")  # Layer 1 staking commands
 cli.add_command(subnet_cli, name="subnet")  # Register subnet command
 cli.add_command(run_validator, name="run_validator")  # Register validator runner

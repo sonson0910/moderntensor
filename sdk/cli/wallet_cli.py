@@ -35,7 +35,7 @@ from sdk.service.register_key import register_key
 from sdk.service.context import get_chain_context  # Needed for context
 
 # Import function to read validator details
-from sdk.smartcontract.validator import read_validator
+# from sdk.smartcontract.validator import read_validator  # REMOVED: Cardano-only
 
 # Import Datum definition
 from sdk.metagraph.metagraph_datum import MinerDatum, STATUS_ACTIVE

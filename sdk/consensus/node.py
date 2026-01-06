@@ -37,7 +37,7 @@ from sdk.metagraph.metagraph_datum import (
     STATUS_JAILED,
     STATUS_INACTIVE,
 )
-from sdk.smartcontract.validator import read_validator
+# from sdk.smartcontract.validator import read_validator  # REMOVED: Cardano-only
 from sdk.metagraph.hash.hash_datum import hash_data  # Import hàm hash thật sự
 from sdk.keymanager.decryption_utils import decode_hotkey_skey
 
