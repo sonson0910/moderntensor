@@ -1,0 +1,14 @@
+[package]
+name = "luxtensor-consensus"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+luxtensor-core = { path = "../core" }
+luxtensor-primitives = { path = "../primitives" }
+
+serde = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }

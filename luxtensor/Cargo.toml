@@ -42,7 +42,7 @@ futures = "0.3"
 async-trait = "0.1"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "dns", "noise", "mplex", "gossipsub", "kad", "mdns", "identify"] }
+libp2p = { version = "0.53", features = ["tcp", "dns", "noise", "gossipsub", "kad", "mdns", "identify", "yamux"] }
 hyper = { version = "0.14", features = ["full"] }
 tower = { version = "0.4", features = ["full"] }
 
@@ -53,7 +53,7 @@ patricia-trie = "0.3"
 # RPC & API
 jsonrpsee = { version = "0.21", features = ["server", "ws-client"] }
 axum = "0.7"
-async-graphql = { version = "7.0", optional = true }
+async-graphql = "7.0"
 
 # Error handling
 thiserror = "1.0"
