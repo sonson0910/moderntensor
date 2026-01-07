@@ -4,7 +4,7 @@ import time
 from typing import Type
 from rich.console import Console
 from rich.table import Table
-from sdk.subnets.protocol import SubnetProtocol
+from sdk.ai_ml.core.protocol import SubnetProtocol
 
 console = Console()
 logger = logging.getLogger(__name__)
