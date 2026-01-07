@@ -1,5 +1,25 @@
 # Bittensor vs ModernTensor SDK Comparison
 
+## ⚠️ Architecture Clarification
+
+**Important:** This comparison is between the **Python SDK layers** of both systems, NOT the blockchain layers.
+
+### Architecture Overview
+
+**Bittensor:**
+```
+Python SDK (135+ files) → Subtensor Blockchain (Substrate/Rust)
+```
+
+**ModernTensor:**
+```
+Python SDK (179 files) → Luxtensor Blockchain (Custom Rust)
+```
+
+**This document compares the Python SDK layers only.**
+
+---
+
 ## Quick Reference Chart
 
 ### Overall Statistics
@@ -9,18 +29,21 @@
 | **Total Python Files** | 135+ | 179 |
 | **Lines of Code** | ~50,000+ | ~30,000+ (estimated) |
 | **Core Module Size** | ~1.1MB | ~500KB (estimated) |
-| **Maturity** | Production-ready (3+ years) | Development (83% Layer 1) |
-| **Primary Language** | Python | Python + Rust (Luxtensor) |
-| **Blockchain Backend** | Substrate (Polkadot) | Custom Layer 1 (Luxtensor) |
+| **Maturity** | Production-ready (3+ years) | Development, needs enhancement |
+| **Primary Language** | Python (SDK) | Python (SDK) |
+| **Blockchain Backend** | Substrate (Rust) | Luxtensor (Custom Rust) ✅ |
+
+**Note:** Luxtensor blockchain (Phase 1 complete) is separate from SDK development.
 
 ---
 
 ## Component-by-Component Comparison
 
-### 1. Core Blockchain Interface
+### 1. Python Blockchain Client
 
 #### Bittensor
 - **Files:** `subtensor.py` (367KB), `async_subtensor.py` (434KB)
+- **Purpose:** Python client to interact with Subtensor blockchain
 - **Features:**
   - Full Substrate RPC integration
   - Sync and async operations
@@ -30,14 +53,16 @@
 - **Status:** ✅ Production-ready
 
 #### ModernTensor
-- **Files:** `sdk/blockchain/*.py`
+- **Files:** `sdk/blockchain/*.py`, `sdk/api/rpc.py`
+- **Purpose:** Python client to interact with Luxtensor blockchain
 - **Features:**
-  - Basic blockchain primitives
-  - Transaction system
-  - State management
-  - JSON-RPC API
-- **Status:** ⚠️ Needs async layer and comprehensive queries
-- **Gap:** Missing async interface, batch operations
+  - Basic RPC operations
+  - Some query methods
+  - Transaction primitives
+- **Status:** ⚠️ Needs comprehensive Python client for Luxtensor
+- **Gap:** Missing full sync/async client, batch operations, comprehensive queries
+
+**Action:** Build Python client similar to `subtensor.py` but for Luxtensor RPC APIs
 
 ---
 

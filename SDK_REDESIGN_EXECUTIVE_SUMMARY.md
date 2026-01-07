@@ -6,22 +6,42 @@
 
 ---
 
+## ⚠️ Critical Architecture Clarification
+
+**ModernTensor has TWO separate layers:**
+
+1. **Luxtensor (Blockchain Layer)** - Custom Rust-based Layer 1 blockchain
+   - Location: `/luxtensor/` directory
+   - Status: Phase 1 complete, ongoing separate development
+   - Role: Equivalent to Subtensor in Bittensor
+
+2. **ModernTensor SDK (Python Layer)** - Python interaction and AI/ML framework
+   - Location: `/sdk/` directory
+   - Status: Needs enhancement (this project's focus)
+   - Role: Equivalent to Bittensor Python SDK
+
+**This project focuses ONLY on the Python SDK layer, NOT blockchain development.**
+
+---
+
 ## Project Overview
 
-This document provides an executive summary of the comprehensive analysis comparing Bittensor SDK with ModernTensor SDK, identifying gaps, and creating a complete redesign roadmap.
+This document provides an executive summary of the comprehensive analysis comparing Bittensor Python SDK with ModernTensor Python SDK, identifying gaps, and creating a complete redesign roadmap for the SDK layer.
 
 ---
 
 ## Current State Assessment
 
-### ModernTensor SDK Strengths ✅
+### ModernTensor Strengths ✅
 
-1. **Custom Layer 1 Blockchain (83% Complete)**
+1. **Luxtensor Blockchain (Separate Layer) ✅**
+   - Rust-based custom Layer 1 blockchain
    - Proof of Stake consensus
    - Block and transaction system
-   - P2P networking with LevelDB storage
-   - JSON-RPC and GraphQL APIs
-   - 71 passing tests
+   - P2P networking with RocksDB storage
+   - JSON-RPC API server
+   - Phase 1 complete, ongoing development
+   - **Note:** Blockchain development is separate from this SDK project
 
 2. **Excellent CLI (`mtcli`)**
    - Comprehensive wallet management
@@ -29,12 +49,9 @@ This document provides an executive summary of the comprehensive analysis compar
    - Dual staking system (Cardano + Layer 1)
    - Well-designed command structure
 
-3. **Strong Foundation**
-   - Luxtensor (Rust-based blockchain)
-   - Production-ready infrastructure
-   - Security-first design
-
-4. **Unique Features**
+3. **Strong SDK Foundation**
+   - 179 Python files
+   - AI/ML integration framework
    - Native zkML integration (ezkl)
    - Dynamic subnets
    - Vietnamese community support
@@ -43,10 +60,10 @@ This document provides an executive summary of the comprehensive analysis compar
 
 Based on Bittensor SDK analysis (135+ files, ~50,000+ lines), we identified:
 
-1. **Async Operations Layer** (Critical Priority)
-   - No dedicated async blockchain interface
-   - Missing batch query operations
-   - No async transaction submission
+1. **Python Client for Luxtensor** (Critical Priority)
+   - No comprehensive Python client to interact with Luxtensor RPC
+   - Missing sync/async blockchain operations
+   - No batch query operations
 
 2. **Communication Pattern** (Critical Priority)
    - Incomplete server (Axon) implementation

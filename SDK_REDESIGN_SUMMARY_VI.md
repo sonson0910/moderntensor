@@ -6,9 +6,27 @@
 
 ---
 
+## ⚠️ Làm rõ Kiến trúc Quan trọng
+
+**ModernTensor có HAI lớp riêng biệt:**
+
+1. **Luxtensor (Lớp Blockchain)** - Custom Layer 1 blockchain bằng Rust
+   - Vị trí: Thư mục `/luxtensor/`
+   - Trạng thái: Phase 1 hoàn thành, đang phát triển riêng
+   - Vai trò: Tương đương Subtensor trong Bittensor
+
+2. **ModernTensor SDK (Lớp Python)** - Python interaction và AI/ML framework
+   - Vị trí: Thư mục `/sdk/`
+   - Trạng thái: Cần cải thiện (tập trung của dự án này)
+   - Vai trò: Tương đương Bittensor Python SDK
+
+**Dự án này tập trung CHỈ vào lớp Python SDK, KHÔNG phải phát triển blockchain.**
+
+---
+
 ## 📋 Giới thiệu Nhanh
 
-Dự án này tạo ra lộ trình toàn diện để thiết kế lại ModernTensor SDK dựa trên phân tích Bittensor SDK, xác định khoảng trống, và lên kế hoạch triển khai trong 8 tháng.
+Dự án này tạo ra lộ trình toàn diện để thiết kế lại ModernTensor Python SDK dựa trên phân tích Bittensor SDK, xác định khoảng trống, và lên kế hoạch triển khai trong 6-8 tháng cho lớp SDK.
 
 ---
 
@@ -16,36 +34,37 @@ Dự án này tạo ra lộ trình toàn diện để thiết kế lại ModernT
 
 **Câu hỏi ban đầu:** "Đây là sdk của bittensor, đối chiếu vào xem mình thiếu nhiều thứ không, từ đó lên kế hoạch xây cho tôi một roadmap tái thiết lại sdk một cách hoàn chỉnh dựa theo luxtensor làm lớp blockchain trước đó"
 
-**Giải pháp:** Phân tích toàn diện Bittensor SDK, so sánh với ModernTensor, xác định khoảng trống, và tạo lộ trình 8 tháng chi tiết.
+**Giải pháp:** Phân tích toàn diện Bittensor Python SDK, so sánh với ModernTensor Python SDK, xác định khoảng trống, và tạo lộ trình chi tiết cho lớp tương tác Python.
+
+**Làm rõ:** Luxtensor (blockchain) đã có và đang phát triển riêng. SDK chỉ là lớp Python để tương tác với Luxtensor.
 
 ---
 
 ## 📚 Tài liệu Đã tạo
 
-### 5 Tài liệu Chính:
+### 6 Tài liệu Chính:
 
 1. **[SDK_REDESIGN_EXECUTIVE_SUMMARY.md](SDK_REDESIGN_EXECUTIVE_SUMMARY.md)** (Tiếng Anh)
    - Tóm tắt điều hành cho lãnh đạo
+   - Làm rõ kiến trúc SDK vs Blockchain
    - Yêu cầu nguồn lực và chi phí
    - Đánh giá rủi ro
-   - Chỉ số thành công
    - **10+ trang**
 
 2. **[SDK_REDESIGN_ROADMAP.md](SDK_REDESIGN_ROADMAP.md)** (Tiếng Anh)
-   - Lộ trình triển khai 8 tháng hoàn chỉnh
+   - Lộ trình Python SDK 6-8 tháng
+   - Tập trung vào Python client cho Luxtensor
    - 7 giai đoạn với nhiệm vụ chi tiết
-   - Đặc tả kỹ thuật
-   - Chiến lược triển khai
    - **22+ trang**
 
 3. **[SDK_REDESIGN_ROADMAP_VI.md](SDK_REDESIGN_ROADMAP_VI.md)** (Tiếng Việt) ⭐
    - Bản dịch đầy đủ sang tiếng Việt
+   - Làm rõ SDK ≠ Blockchain
    - Tài liệu tập trung vào cộng đồng
-   - Phù hợp văn hóa cho developers Việt Nam
    - **23+ trang**
 
 4. **[BITTENSOR_VS_MODERNTENSOR_COMPARISON.md](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** (Tiếng Anh)
-   - So sánh từng thành phần
+   - So sánh Python SDK layers
    - Ma trận tương đồng tính năng với ưu tiên
    - Phân tích khoảng trống
    - Ước tính nỗ lực triển khai
