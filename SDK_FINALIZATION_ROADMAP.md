@@ -1,4 +1,4 @@
-# ModernTensor SDK - Lộ trình Hoàn thiện Cuối cùng
+# ModernTensor SDK - Final Completion Roadmap
 
 **Ngày:** 2026-01-07  
 **Trạng thái:** Ready for Implementation  
@@ -609,7 +609,9 @@ class NeuronInfo(BaseModel):
 - Code review tools: $2k
 - **Total Services:** ~$27k
 
-**GRAND TOTAL:** ~$339k (±20%)
+**Subtotal:** ~$339k
+**Contingency (20%):** ~$68k
+**GRAND TOTAL:** ~$407k
 
 ### ROI Justification
 

@@ -165,7 +165,7 @@
 - **Timeline:** 11-14 tuần
 - **Chi phí:** ~$90k-120k
 
-**TỔNG:** 46-61 tuần (6-8 tháng), ~$380k-540k
+**TỔNG:** 46-61 tuần (6-8 tháng), ~$407k (±20% = $326k-$488k)
 
 ---
 
@@ -586,7 +586,7 @@
 - [ ] **Approve budget** (~$400k total)
 - [ ] **Approve timeline** (6-8 months)
 - [ ] **Approve priorities** (Phases 1, 3, 7 first)
-- [ ] **Approve team size** (3-5 developers)
+- [ ] **Phê duyệt quy mô team** (3-5 developers/nhà phát triển)
 - [ ] **Commit to quality gates** (80% coverage, security audit)
 
 ### Next Steps After Approval
