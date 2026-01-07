@@ -1,13 +1,38 @@
 # Lộ trình Thiết kế lại SDK ModernTensor 🚀
 
+## ⚠️ Làm rõ Kiến trúc Quan trọng
+
+**ModernTensor có HAI lớp riêng biệt:**
+
+### 1. Luxtensor (Lớp Blockchain) - Rust ✅
+- **Vị trí:** Thư mục `/luxtensor/`
+- **Ngôn ngữ:** Rust (Cargo workspace)
+- **Vai trò:** Custom Layer 1 blockchain (tương đương Subtensor trong Bittensor)
+- **Trạng thái:** Phase 1 hoàn thành, đang phát triển tích cực
+- **Cung cấp:** Block/Transaction/State, PoS consensus, P2P networking, RocksDB storage, JSON-RPC APIs
+- **Lộ trình:** Kế hoạch phát triển blockchain riêng 42 tuần
+
+### 2. ModernTensor SDK (Lớp Tương tác Python) - Python ⚠️
+- **Vị trí:** Thư mục `/sdk/`
+- **Ngôn ngữ:** Python
+- **Vai trò:** Python client để tương tác với Luxtensor + AI/ML framework (tương đương Bittensor Python SDK)
+- **Trạng thái:** Cần cải thiện để đạt được các tính năng của Bittensor SDK
+- **Cung cấp:** Python RPC client, Axon/Dendrite, Metagraph, AI/ML scoring, CLI tools
+- **Lộ trình:** TÀI LIỆU NÀY tập trung CHỈ vào SDK, KHÔNG phải phát triển blockchain
+
+**Lộ trình này tập trung CHỈ vào lớp Python SDK, KHÔNG phải phát triển blockchain.**
+
+---
+
 ## Tóm tắt Điều hành
 
-Tài liệu này cung cấp phân tích toàn diện về Bittensor SDK và tạo lộ trình hoàn chỉnh để thiết kế lại ModernTensor SDK. Phân tích xác định các khoảng trống, tính năng thiếu, và đưa ra kế hoạch chiến lược để xây dựng SDK sẵn sàng cho production dựa trên lớp blockchain Luxtensor.
+Tài liệu này cung cấp phân tích toàn diện về Bittensor SDK và tạo lộ trình hoàn chỉnh để thiết kế lại ModernTensor Python SDK. Phân tích xác định các khoảng trống, tính năng thiếu, và đưa ra kế hoạch chiến lược để xây dựng SDK sẵn sàng production tương tác với lớp blockchain Luxtensor.
 
 **Trạng thái Hiện tại:**
 - **Bittensor SDK:** 135+ files Python, trưởng thành và sẵn sàng cho production
-- **ModernTensor SDK:** 179 files Python, blockchain Layer 1 tùy chỉnh hoàn thành 83%
-- **Mục tiêu:** Xây dựng SDK hoàn chỉnh, sẵn sàng production tận dụng Luxtensor làm nền tảng blockchain
+- **ModernTensor SDK:** 179 files Python, cần cải thiện cho tương tác Luxtensor và AI/ML framework
+- **Luxtensor Blockchain:** Phase 1 hoàn thành (riêng biệt với SDK)
+- **Mục tiêu:** Xây dựng Python SDK hoàn chỉnh, sẵn sàng production tận dụng Luxtensor blockchain qua RPC
 
 ---
 

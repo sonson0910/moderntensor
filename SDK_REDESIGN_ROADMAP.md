@@ -1,13 +1,38 @@
 # ModernTensor SDK Redesign Roadmap 🚀
 
+## ⚠️ Important Architecture Clarification
+
+**ModernTensor has TWO separate layers:**
+
+### 1. Luxtensor (Blockchain Layer) - Rust ✅
+- **Location:** `/luxtensor/` directory
+- **Language:** Rust (Cargo workspace)
+- **Role:** Custom Layer 1 blockchain (equivalent to Subtensor in Bittensor)
+- **Status:** Phase 1 complete, actively developing
+- **Provides:** Block/Transaction/State, PoS consensus, P2P networking, RocksDB storage, JSON-RPC APIs
+- **Roadmap:** Separate 42-week blockchain development plan
+
+### 2. ModernTensor SDK (Python Interaction Layer) - Python ⚠️
+- **Location:** `/sdk/` directory  
+- **Language:** Python
+- **Role:** Python client to interact with Luxtensor + AI/ML framework (equivalent to Bittensor Python SDK)
+- **Status:** Needs enhancement to match Bittensor SDK features
+- **Provides:** Python RPC client, Axon/Dendrite, Metagraph, AI/ML scoring, CLI tools
+- **Roadmap:** THIS DOCUMENT focuses on SDK only, NOT blockchain
+
+**This roadmap focuses ONLY on the Python SDK layer, NOT the blockchain development.**
+
+---
+
 ## Executive Summary
 
-This document provides a comprehensive analysis of the Bittensor SDK and creates a complete roadmap for redesigning the ModernTensor SDK. The analysis identifies gaps, missing features, and provides a strategic plan for building a production-ready SDK based on the Luxtensor blockchain layer.
+This document provides a comprehensive analysis of the Bittensor SDK and creates a complete roadmap for redesigning the ModernTensor Python SDK. The analysis identifies gaps, missing features, and provides a strategic plan for building a production-ready SDK that interacts with the Luxtensor blockchain layer.
 
 **Current Status:**
 - **Bittensor SDK:** 135+ Python files, mature and production-ready
-- **ModernTensor SDK:** 179 Python files, custom Layer 1 blockchain at 83% completion
-- **Goal:** Build a complete, production-ready SDK that leverages Luxtensor as the blockchain foundation
+- **ModernTensor SDK:** 179 Python files, needs enhancement for Luxtensor interaction and AI/ML framework
+- **Luxtensor Blockchain:** Phase 1 complete (separate from SDK)
+- **Goal:** Build a complete, production-ready Python SDK that leverages Luxtensor blockchain via RPC
 
 ---
 
@@ -15,32 +40,39 @@ This document provides a comprehensive analysis of the Bittensor SDK and creates
 
 ### 1.1 Core Components (`bittensor/core/`)
 
-#### A. **Subtensor (Blockchain Interface)**
+#### A. **Subtensor (Python Blockchain Client)**
 - **File:** `subtensor.py` (367KB, ~9,000+ lines)
-- **Purpose:** Main interface to interact with the Bittensor blockchain
+- **Purpose:** Python client to interact with the Bittensor blockchain (Substrate)
 - **Key Features:**
-  - Chain connection management
-  - Extrinsic (transaction) submission
+  - RPC connection management to blockchain
+  - Transaction submission to blockchain
   - Query methods for blockchain state
   - Network switching (mainnet/testnet)
   - Substrate RPC integration
   
-**Status in ModernTensor:** ✅ Partially Complete
-- Has: `sdk/blockchain/` with basic blockchain primitives
-- Missing: Full RPC integration, comprehensive query methods
+**Status in ModernTensor:** ⚠️ Needs Python Client for Luxtensor
+- Has: Luxtensor blockchain with RPC APIs (Rust)
+- Has: `sdk/blockchain/` with some Python primitives
+- Missing: Comprehensive Python client to interact with Luxtensor RPC
+- Missing: Full async/sync Python interface to Luxtensor
 
-#### B. **Async Subtensor**
+**Action Needed:** Create Python client similar to `subtensor.py` but for Luxtensor blockchain
+
+#### B. **Async Subtensor (Async Python Client)**
 - **File:** `async_subtensor.py` (434KB, ~10,000+ lines)
-- **Purpose:** Asynchronous blockchain operations
+- **Purpose:** Asynchronous Python client for blockchain operations
 - **Key Features:**
-  - Non-blocking blockchain calls
+  - Non-blocking RPC calls to blockchain
   - Batch query operations
   - High-performance data fetching
   - Concurrent transaction submission
 
 **Status in ModernTensor:** ⚠️ Needs Implementation
 - Has: Basic async patterns in network layer
-- Missing: Dedicated async blockchain interface
+- Missing: Dedicated async Python client for Luxtensor blockchain
+- Missing: Async RPC connection pooling
+
+**Action Needed:** Create async Python client for Luxtensor RPC
 
 #### C. **Metagraph**
 - **File:** `metagraph.py` (85KB, ~2,000+ lines)
@@ -202,36 +234,32 @@ This document provides a comprehensive analysis of the Bittensor SDK and creates
 
 ### 2.1 Strengths ✅
 
-1. **Custom Layer 1 Blockchain (83% Complete)**
+1. **Luxtensor Blockchain (Separate Layer) ✅**
+   - Rust-based custom Layer 1 blockchain
    - PoS consensus mechanism
    - Block and transaction system
    - State management
    - P2P networking
-   - LevelDB storage
-   - JSON-RPC and GraphQL APIs
-   - 71 tests passing
+   - RocksDB storage
+   - JSON-RPC API server
+   - Phase 1 complete, ongoing development
+   - **Note:** Blockchain layer is separate from SDK
 
-2. **Luxtensor Foundation**
-   - Rust-based blockchain core
-   - Strong security foundation
-   - Production-ready infrastructure
-
-3. **Comprehensive CLI (`mtcli`)**
+2. **SDK Python Layer**
+   - 179 Python files
+   - Comprehensive CLI (`mtcli`)
    - Wallet management (coldkey/hotkey)
    - Transaction operations
    - Query commands
    - Staking operations
-   - Layer 1 native staking
-
-4. **AI/ML Integration**
+   - AI/ML integration framework
    - zkML support with ezkl
    - Subnet framework
    - Validator/miner architecture
    - Simulation tools
 
-5. **Advanced Features**
+3. **Advanced Features**
    - Dynamic subnets
-   - Smart contract integration (Cardano-based)
    - Tokenomics system
    - Monitoring and metrics
 
@@ -239,10 +267,12 @@ This document provides a comprehensive analysis of the Bittensor SDK and creates
 
 #### Critical Gaps (High Priority)
 
-1. **Async Operations**
-   - No dedicated async blockchain interface
-   - Missing async query batch operations
-   - No async transaction submission
+1. **Python Client for Luxtensor**
+   - No comprehensive Python client to interact with Luxtensor RPC
+   - Missing sync/async RPC connection management
+   - No batch query operations
+   - Missing comprehensive query methods
+   - Need equivalent of `subtensor.py` and `async_subtensor.py`
 
 2. **Axon/Dendrite Pattern**
    - Incomplete server (Axon) implementation
@@ -302,42 +332,42 @@ This document provides a comprehensive analysis of the Bittensor SDK and creates
 
 ## 3. Comprehensive Roadmap
 
-### Phase 1: Foundation Enhancement (Months 1-2)
+**Note:** This roadmap focuses on Python SDK development only. Luxtensor blockchain development follows its own separate 42-week roadmap.
 
-**Goal:** Complete core blockchain functionality and establish solid foundation
+### Phase 1: Python Blockchain Client (Months 1-2)
 
-#### 1.1 Complete Layer 1 Blockchain (Priority: CRITICAL)
-- [ ] **Mainnet Launch** (Q1 2026 - 2 months)
-  - Complete Phase 9 of Layer 1 implementation
-  - Production hardening and security audit
-  - Performance optimization
-  - Launch mainnet with Luxtensor
+**Goal:** Build comprehensive Python client to interact with Luxtensor blockchain
 
-#### 1.2 Async Operations Layer (Priority: HIGH)
-- [ ] **Async Subtensor Implementation**
-  - Create `sdk/blockchain/async_blockchain.py`
-  - Implement async query methods
-  - Add batch operation support
-  - Connection pooling and management
+#### 1.1 Python Client for Luxtensor (Priority: CRITICAL)
+- [ ] **Sync Luxtensor Client** (`sdk/luxtensor_client.py`)
+  - RPC connection to Luxtensor (JSON-RPC/WebSocket)
+  - Transaction submission methods
+  - Blockchain state query methods
+  - Network switching (testnet/mainnet)
+  - Error handling and retries
+  - Estimated: 3-4 weeks
+  
+- [ ] **Async Luxtensor Client** (`sdk/async_luxtensor_client.py`)
+  - Async RPC operations
+  - Batch query support
+  - Connection pooling
+  - Concurrent transaction submission
+  - Non-blocking operations
   - Estimated: 2-3 weeks
 
-- [ ] **Async Transaction System**
-  - Non-blocking transaction submission
-  - Transaction status tracking
-  - Concurrent transaction handling
-  - Estimated: 1-2 weeks
+**Deliverable:** Python developers can interact with Luxtensor blockchain just like Bittensor developers use `subtensor.py`
 
-#### 1.3 Enhanced Metagraph (Priority: HIGH)
+#### 1.2 Enhanced Metagraph (Priority: HIGH)
 - [ ] **Metagraph Optimization**
   - Implement caching layer
   - Add advanced query methods
   - Optimize memory usage
-  - Real-time synchronization
+  - Real-time synchronization with Luxtensor
   - Estimated: 2 weeks
 
 ### Phase 2: Communication Layer (Months 2-3)
 
-**Goal:** Implement complete Axon/Dendrite/Synapse pattern
+**Goal:** Implement complete Axon/Dendrite/Synapse pattern for AI/ML communication
 
 #### 2.1 Axon (Server) Implementation (Priority: HIGH)
 - [ ] **Core Axon Server**
