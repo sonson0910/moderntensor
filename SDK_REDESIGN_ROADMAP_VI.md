@@ -686,7 +686,7 @@ Tài liệu này cung cấp phân tích toàn diện về Bittensor SDK và tạ
 4. **Code Quality**
    - Type hints bắt buộc
    - Linting (flake8, black, mypy)
-  - Code reviews
+   - Code reviews
 
 ---
 
