@@ -13,9 +13,48 @@ from typing import Any, Dict, List, Optional, Union
 import json
 
 # Import Layer 1 primitives
-from sdk.blockchain.l1_keymanager import L1Address, L1Network
-from sdk.blockchain.l1_context import L1ChainContext, L1UTxO
-from sdk.blockchain.transaction import Transaction
+# Temporarily commented out to fix missing module issue
+# from sdk.blockchain.l1_keymanager import L1Address, L1Network
+# from sdk.blockchain.l1_context import L1ChainContext, L1UTxO
+# from sdk.blockchain.transaction import Transaction
+
+# Placeholder types until blockchain module is created
+class L1Address:
+    pass
+
+class L1Network:
+    TESTNET = "testnet"
+    MAINNET = "mainnet"
+
+class L1ChainContext:
+    pass
+
+class L1UTxO:
+    pass
+
+class Transaction:
+    pass
+
+# Placeholder verification key classes
+class PaymentVerificationKey:
+    @staticmethod
+    def from_primitive(data):
+        return PaymentVerificationKey()
+    
+    def hash(self):
+        return b"payment_hash"
+
+class StakeVerificationKey:
+    @staticmethod
+    def from_primitive(data):
+        return StakeVerificationKey()
+    
+    def hash(self):
+        return b"stake_hash"
+
+# Re-export common names
+Address = L1Address
+Network = L1Network
 
 
 class L1Data:

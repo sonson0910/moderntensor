@@ -123,3 +123,4 @@ class HotKeyManager:
         logging.info(
             f"[import_hotkey] Hot Key '{hotkey_name}' has been successfully imported."
         )
+__version__ = "0.1.0"
