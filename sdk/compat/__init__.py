@@ -1,12 +1,12 @@
 """
-Layer 1 Blockchain Compatibility Module
+Luxtensor Layer 1 Blockchain Compatibility Module
 
-This module provides native Layer 1 blockchain data structures.
-All Cardano/pycardano references have been replaced with pure Layer 1 logic.
+This module provides native Luxtensor Layer 1 blockchain data structures.
+All Cardano/pycardano references have been completely removed and replaced with pure Luxtensor logic.
 """
 
-from sdk.compat.pycardano import (
-    # Native Layer 1 classes
+from sdk.compat.luxtensor_types import (
+    # Native Luxtensor Layer 1 classes
     L1Data,
     L1TransactionData,
     L1TransactionOutput,
@@ -17,7 +17,7 @@ from sdk.compat.pycardano import (
     L1UTxO,
     Transaction,
     
-    # Aliases for backward compatibility
+    # Aliases for backward compatibility during migration
     PlutusData,
     Redeemer,
     Address,
@@ -29,7 +29,7 @@ from sdk.compat.pycardano import (
 )
 
 __all__ = [
-    # Native Layer 1 classes
+    # Native Luxtensor Layer 1 classes
     'L1Data',
     'L1TransactionData',
     'L1TransactionOutput',
@@ -40,7 +40,7 @@ __all__ = [
     'L1UTxO',
     'Transaction',
     
-    # Aliases for backward compatibility
+    # Aliases for backward compatibility during migration
     'PlutusData',
     'Redeemer',
     'Address',

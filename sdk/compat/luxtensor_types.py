@@ -1,31 +1,78 @@
 """
-Layer 1 Blockchain Data Structures
+Luxtensor Layer 1 Blockchain Data Structures
 
-This module provides native Layer 1 blockchain data structures for ModernTensor.
-Pure Layer 1 implementation - no Cardano/pycardano references.
+This module provides native Luxtensor Layer 1 blockchain data structures for ModernTensor.
+Pure Luxtensor implementation - completely removed Cardano/pycardano dependencies.
 
 These classes are used for on-chain data storage and serialization in the
-ModernTensor custom blockchain.
+ModernTensor Luxtensor-based blockchain.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 import json
 
-# Import Layer 1 primitives
-from sdk.blockchain.l1_keymanager import L1Address, L1Network
-from sdk.blockchain.l1_context import L1ChainContext, L1UTxO
-from sdk.blockchain.transaction import Transaction
+# Luxtensor Layer 1 primitives
+# Temporarily using placeholder classes until full Luxtensor blockchain module is implemented
+# TODO: Replace with actual Luxtensor blockchain implementation
+# from sdk.blockchain.luxtensor_keymanager import LuxtensorAddress, LuxtensorNetwork
+# from sdk.blockchain.luxtensor_context import LuxtensorChainContext, LuxtensorUTxO
+# from sdk.blockchain.luxtensor_transaction import LuxtensorTransaction
+
+# Placeholder types for Luxtensor until blockchain module is created
+class L1Address:
+    """Placeholder for Luxtensor Address until full Luxtensor blockchain module implementation."""
+    pass
+
+class L1Network:
+    """Placeholder for Luxtensor Network until full Luxtensor blockchain module implementation."""
+    TESTNET = "testnet"
+    MAINNET = "mainnet"
+
+class L1ChainContext:
+    """Placeholder for Luxtensor ChainContext until full Luxtensor blockchain module implementation."""
+    pass
+
+class L1UTxO:
+    """Placeholder for Luxtensor UTxO until full Luxtensor blockchain module implementation."""
+    pass
+
+class Transaction:
+    """Placeholder for Luxtensor Transaction until full Luxtensor blockchain module implementation."""
+    pass
+
+# Placeholder verification key classes
+class PaymentVerificationKey:
+    """Placeholder for Luxtensor PaymentVerificationKey until full blockchain module implementation."""
+    @staticmethod
+    def from_primitive(data):
+        return PaymentVerificationKey()
+    
+    def hash(self):
+        return b"payment_hash"
+
+class StakeVerificationKey:
+    """Placeholder for Luxtensor StakeVerificationKey until full blockchain module implementation."""
+    @staticmethod
+    def from_primitive(data):
+        return StakeVerificationKey()
+    
+    def hash(self):
+        return b"stake_hash"
+
+# Re-export common names
+Address = L1Address
+Network = L1Network
 
 
 class L1Data:
     """
-    Base class for Layer 1 blockchain data structures.
+    Base class for Luxtensor Layer 1 blockchain data structures.
     
-    Used for on-chain data storage in ModernTensor Layer 1 blockchain.
+    Used for on-chain data storage in ModernTensor Luxtensor blockchain.
     - JSON serialization for state database storage
     - Simple dataclass pattern
-    - No legacy Cardano/Plutus constructs
+    - Pure Luxtensor implementation (no Cardano/Plutus legacy)
     
     Note: Not using @dataclass decorator to avoid field ordering issues.
     Child classes should use @dataclass and inherit from this.
