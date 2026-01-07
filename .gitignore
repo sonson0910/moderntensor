@@ -188,3 +188,13 @@ __pycache__/
 # Temporary files
 *.tmp
 *.temp
+
+# Wallet and key files (SECURITY: Never commit these)
+moderntensor/kickoff/
+**/hotkeys.json
+**/mnemonic.enc
+**/salt.bin
+*.key
+*.wallet
+coldkey*
+hotkey*
