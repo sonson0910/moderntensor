@@ -9,11 +9,12 @@ Features that Bittensor doesn't have:
 """
 
 from .advanced_scorer import AdvancedScorer, ScoringMethod
-from .consensus import ConsensusAggregator, ConsensusMethod
+from .consensus import ConsensusAggregator, ConsensusMethod, ValidatorScore
 
 __all__ = [
     "AdvancedScorer",
     "ScoringMethod",
     "ConsensusAggregator",
     "ConsensusMethod",
+    "ValidatorScore",
 ]

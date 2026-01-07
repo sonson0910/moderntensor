@@ -1,0 +1,35 @@
+# Cleanup and Completion Plan
+
+## 1. Remove Redundant Documentation (59 root MD files -> ~10 essential)
+Keep:
+- README.md (main)
+- AI_ML_IMPLEMENTATION_GUIDE.md (usage guide)
+- COMPLETE_AI_ML_IMPLEMENTATION.md (final report)
+- MODERNTENSOR_WHITEPAPER_VI.md (whitepaper)
+- LAYER1_ROADMAP.md (roadmap)
+- CHANGELOG.md (changes)
+- LICENSE (license)
+
+Remove (outdated/redundant completion summaries):
+- *COMPLETION*.md files (20+)
+- *SUMMARY*.md files (duplicates)
+- *PHASE*.md files (outdated)
+- Old migration docs
+
+## 2. Add Missing AI/ML Agent Module
+- MinerAIAgent: Clean AI task handling
+- ValidatorAIAgent: Clean validation logic
+- Separate from blockchain concerns
+
+## 3. Clean Up Deprecated Code
+- Remove Cardano comments from miner_agent.py
+- Mark deprecated functions
+- Add migration guide
+
+## 4. Consolidate Empty __init__.py Files
+- Add proper exports
+- Remove truly empty ones
+
+## 5. Final Documentation
+- Create single DOCUMENTATION.md index
+- Update README with new structure
