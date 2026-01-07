@@ -76,7 +76,7 @@ from sdk.compat.pycardano import (
     ExtendedSigningKey,
 )
 
-from sdk.subnets.protocol import SubnetProtocol
+from sdk.ai_ml.core.protocol import SubnetProtocol
 
 # --- Import các hàm logic đã tách ra ---
 from .selection import select_miners_logic

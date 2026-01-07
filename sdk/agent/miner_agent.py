@@ -60,7 +60,7 @@ MINER_SELF_UPDATE_REDEEMER_TAG = 1  # Ví dụ: Tag 1 cho hành động miner t�
 # ---------------------------------------------------
 
 
-from sdk.subnets.protocol import SubnetProtocol
+from sdk.ai_ml.core.protocol import SubnetProtocol
 from sdk.utils.zkml import ZkmlManager
 from fastapi import FastAPI, BackgroundTasks
 import uvicorn
