@@ -98,8 +98,8 @@ fn call_contract_example(
 ) -> Result<(), ContractError> {
     // 1. Tạo execution context
     let context = ExecutionContext {
-        caller: caller,
-        contract_address: contract_address,
+        caller,
+        contract_address,
         value: 0,
         gas_limit: 100_000,
         gas_price: 1,
@@ -484,6 +484,7 @@ fn register_ai_miner(
 
 ```rust
 use luxtensor_contracts::{ContractExecutor, ExecutionContext};
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
 struct ValidationResult {
