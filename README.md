@@ -4,6 +4,8 @@
 
 **ModernTensor** is an independent Layer 1 blockchain designed for decentralized machine intelligence. The network enables AI/ML models to compete, validate, and earn rewards through zero-knowledge proofs and Proof of Stake consensus, inspired by the vision of Bittensor but with a custom blockchain optimized for AI workloads.
 
+📄 **[Read the full Whitepaper (Vietnamese)](MODERNTENSOR_WHITEPAPER_VI.md)** - Comprehensive project overview
+
 ![moderntensor.png](https://github.com/sonson0910/moderntensor/blob/main/moderntensor.png)
 
 ## 🚀 Introduction
@@ -350,11 +352,12 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - **[Reports](docs/reports/)** - Audit reports, verification results (Vietnamese)
 
 Key documents:
+- **[ModernTensor Whitepaper (Vietnamese)](MODERNTENSOR_WHITEPAPER_VI.md)** - Complete project whitepaper
+- **[LuxTensor Technical FAQ (Vietnamese)](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Smart contracts, PoS vs Yuma, AI/ML integration
 - [Layer 1 Roadmap](LAYER1_ROADMAP.md) - Development roadmap and milestones
 - [Layer 1 Focus](LAYER1_FOCUS.md) - Current development priorities
 - [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
 - [Changelog](CHANGELOG.md) - Version history
-- **[LuxTensor Technical FAQ (Vietnamese)](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Smart contracts, PoS vs Yuma, AI/ML integration
 
 ## 📄 License
 
