@@ -6,10 +6,17 @@ multiple validators.
 """
 
 import logging
-import numpy as np
 from enum import Enum
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+
+# Try to import numpy, fallback to stdlib if not available
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    import statistics
 
 from ..core.protocol import Score
 
@@ -102,13 +109,13 @@ class ConsensusAggregator:
             return Score(value=0.0, confidence=0.0, metadata={"error": "insufficient_validators"})
         
         # Extract score values and weights
-        scores = np.array([vs.score.value for vs in validator_scores])
-        confidences = np.array([vs.score.confidence for vs in validator_scores])
-        stakes = np.array([vs.stake for vs in validator_scores])
+        scores = self._to_array([vs.score.value for vs in validator_scores])
+        confidences = self._to_array([vs.score.confidence for vs in validator_scores])
+        stakes = self._to_array([vs.stake for vs in validator_scores])
         
         # Detect and filter outliers
         outlier_mask = self._detect_outliers(scores)
-        num_outliers = np.sum(outlier_mask)
+        num_outliers = self._sum(outlier_mask)
         
         # Aggregate based on method
         if self.method == ConsensusMethod.MEDIAN:
@@ -126,7 +133,7 @@ class ConsensusAggregator:
                 scores, confidences, stakes, outlier_mask
             )
         else:
-            consensus_value = float(np.mean(scores))
+            consensus_value = float(self._mean(scores))
         
         # Estimate consensus confidence
         consensus_confidence = self._estimate_consensus_confidence(
@@ -138,8 +145,8 @@ class ConsensusAggregator:
             "method": self.method.value,
             "num_validators": len(validator_scores),
             "num_outliers": int(num_outliers),
-            "score_std": float(np.std(scores)),
-            "score_range": [float(np.min(scores)), float(np.max(scores))],
+            "score_std": float(self._std(scores)),
+            "score_range": [float(self._min(scores)), float(self._max(scores))],
         }
         
         if return_details:
@@ -160,7 +167,7 @@ class ConsensusAggregator:
             metadata=metadata,
         )
     
-    def _detect_outliers(self, scores: np.ndarray) -> np.ndarray:
+    def _detect_outliers(self, scores: Any) -> Any:
         """
         Detect outliers using modified Z-score.
         
@@ -170,8 +177,8 @@ class ConsensusAggregator:
         if len(scores) < 3:
             return np.zeros(len(scores), dtype=bool)
         
-        median = np.median(scores)
-        mad = np.median(np.abs(scores - median))
+        median = self._median(scores)
+        mad = self._median(self._abs(scores - median))
         
         if mad == 0:
             return np.zeros(len(scores), dtype=bool)
@@ -179,79 +186,79 @@ class ConsensusAggregator:
         # Modified Z-score
         modified_z = 0.6745 * (scores - median) / mad
         
-        return np.abs(modified_z) > self.outlier_threshold
+        return self._abs(modified_z) > self.outlier_threshold
     
-    def _median_consensus(self, scores: np.ndarray) -> float:
+    def _median_consensus(self, scores: Any) -> float:
         """Simple median consensus"""
-        return float(np.median(scores))
+        return float(self._median(scores))
     
     def _weighted_median_consensus(
         self,
-        scores: np.ndarray,
-        confidences: np.ndarray,
+        scores: Any,
+        confidences: Any,
     ) -> float:
         """Weighted median using confidences"""
         # Sort by score
-        sorted_indices = np.argsort(scores)
+        sorted_indices = self._argsort(scores)
         sorted_scores = scores[sorted_indices]
         sorted_weights = confidences[sorted_indices]
         
         # Normalize weights
-        sorted_weights = sorted_weights / np.sum(sorted_weights)
+        sorted_weights = sorted_weights / self._sum(sorted_weights)
         
         # Find weighted median
-        cumsum = np.cumsum(sorted_weights)
-        median_idx = np.searchsorted(cumsum, 0.5)
+        cumsum = self._cumsum(sorted_weights)
+        median_idx = self._searchsorted(cumsum, 0.5)
         
         return float(sorted_scores[median_idx])
     
     def _trimmed_mean_consensus(
         self,
-        scores: np.ndarray,
-        outlier_mask: np.ndarray,
+        scores: Any,
+        outlier_mask: Any,
     ) -> float:
         """Trimmed mean (remove outliers)"""
         clean_scores = scores[~outlier_mask]
         
         if len(clean_scores) == 0:
-            return float(np.mean(scores))
+            return float(self._mean(scores))
         
-        return float(np.mean(clean_scores))
+        return float(self._mean(clean_scores))
     
     def _stake_weighted_consensus(
         self,
-        scores: np.ndarray,
-        stakes: np.ndarray,
+        scores: Any,
+        stakes: Any,
     ) -> float:
         """Stake-weighted average"""
-        total_stake = np.sum(stakes)
+        total_stake = self._sum(stakes)
         
         if total_stake == 0:
-            return float(np.mean(scores))
+            return float(self._mean(scores))
         
-        weighted_sum = np.sum(scores * stakes)
+        weighted_sum = self._sum(scores * stakes)
         return float(weighted_sum / total_stake)
     
     def _confidence_weighted_consensus(
         self,
-        scores: np.ndarray,
-        confidences: np.ndarray,
+        scores: Any,
+        confidences: Any,
     ) -> float:
         """Confidence-weighted average"""
-        total_confidence = np.sum(confidences)
+        total_confidence = self._sum(confidences)
         
         if total_confidence == 0:
-            return float(np.mean(scores))
+            return float(self._mean(scores))
         
-        weighted_sum = np.sum(scores * confidences)
+        weighted_sum = self._sum(scores * confidences)
         return float(weighted_sum / total_confidence)
     
     def _robust_consensus(
         self,
-        scores: np.ndarray,
-        confidences: np.ndarray,
-        stakes: np.ndarray,
-        outlier_mask: np.ndarray,
+        scores: Any,
+        confidences: Any,
+        stakes: Any,
+        outlier_mask: Any,
     ) -> float:
         """
         Robust consensus combining multiple methods.
@@ -265,23 +272,23 @@ class ConsensusAggregator:
         
         if len(clean_scores) == 0:
             # Fallback to simple mean
-            return float(np.mean(scores))
+            return float(self._mean(scores))
         
         # Combine confidence and stake weights
-        weights = clean_confidences * np.sqrt(clean_stakes)
-        total_weight = np.sum(weights)
+        weights = clean_confidences * self._sqrt(clean_stakes)
+        total_weight = self._sum(weights)
         
         if total_weight == 0:
-            return float(np.mean(clean_scores))
+            return float(self._mean(clean_scores))
         
-        weighted_sum = np.sum(clean_scores * weights)
+        weighted_sum = self._sum(clean_scores * weights)
         return float(weighted_sum / total_weight)
     
     def _estimate_consensus_confidence(
         self,
-        scores: np.ndarray,
-        confidences: np.ndarray,
-        outlier_mask: np.ndarray,
+        scores: Any,
+        confidences: Any,
+        outlier_mask: Any,
     ) -> float:
         """
         Estimate confidence in consensus.
@@ -292,14 +299,14 @@ class ConsensusAggregator:
         - Few outliers
         """
         # Score agreement (low variance = high confidence)
-        score_std = np.std(scores)
+        score_std = self._std(scores)
         agreement = 1.0 - min(score_std * 2, 0.5)  # Normalize variance to confidence
         
         # Average validator confidence
-        avg_confidence = float(np.mean(confidences))
+        avg_confidence = float(self._mean(confidences))
         
         # Outlier penalty
-        outlier_ratio = np.sum(outlier_mask) / len(scores)
+        outlier_ratio = self._sum(outlier_mask) / len(scores)
         outlier_penalty = 1.0 - (outlier_ratio * 0.3)  # Max 30% penalty
         
         # Combine factors
@@ -318,3 +325,80 @@ class ConsensusAggregator:
             "outlier_threshold": self.outlier_threshold,
             "min_validators": self.min_validators,
         }
+    
+    # Helper methods for numpy compatibility
+    def _to_array(self, data):
+        """Convert to array"""
+        if HAS_NUMPY:
+            return np.array(data)
+        return list(data)
+    
+    def _median(self, data):
+        """Calculate median"""
+        if HAS_NUMPY:
+            return np.median(data)
+        return statistics.median(data)
+    
+    def _sum(self, data):
+        """Calculate sum"""
+        return sum(data)
+    
+    def _std(self, data):
+        """Calculate standard deviation"""
+        if HAS_NUMPY:
+            return np.std(data)
+        return statistics.stdev(data) if len(data) > 1 else 0
+    
+    def _min(self, data):
+        """Calculate minimum"""
+        return min(data)
+    
+    def _max(self, data):
+        """Calculate maximum"""
+        return max(data)
+    
+    def _mean(self, data):
+        """Calculate mean"""
+        if HAS_NUMPY:
+            return np.mean(data)
+        return statistics.mean(data)
+    
+    def _abs(self, data):
+        """Calculate absolute values"""
+        if HAS_NUMPY:
+            return np.abs(data)
+        return [abs(x) for x in data]
+    
+    def _argsort(self, data):
+        """Get indices that would sort array"""
+        if HAS_NUMPY:
+            return np.argsort(data)
+        return sorted(range(len(data)), key=lambda i: data[i])
+    
+    def _cumsum(self, data):
+        """Calculate cumulative sum"""
+        if HAS_NUMPY:
+            return np.cumsum(data)
+        result = []
+        total = 0
+        for x in data:
+            total += x
+            result.append(total)
+        return result
+    
+    def _searchsorted(self, data, value):
+        """Find index where value should be inserted"""
+        if HAS_NUMPY:
+            return np.searchsorted(data, value)
+        for i, x in enumerate(data):
+            if x >= value:
+                return i
+        return len(data)
+    
+    def _sqrt(self, data):
+        """Calculate square root"""
+        if HAS_NUMPY:
+            return np.sqrt(data)
+        if isinstance(data, (list, tuple)):
+            return [x ** 0.5 for x in data]
+        return data ** 0.5

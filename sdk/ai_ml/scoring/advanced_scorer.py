@@ -9,10 +9,17 @@ Provides sophisticated scoring mechanisms beyond simple consensus:
 """
 
 import logging
-import numpy as np
 from enum import Enum
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass
+
+# Try to import numpy, fallback to stdlib if not available
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    import statistics
 
 from ..core.protocol import Task, Result, Score
 
@@ -217,7 +224,10 @@ class AdvancedScorer:
         scores = [c["normalized"] for c in criterion_scores.values()]
         
         # Median for robustness
-        median = float(np.median(scores))
+        if HAS_NUMPY:
+            median = float(np.median(scores))
+        else:
+            median = statistics.median(scores)
         
         # Weighted average
         weighted_avg = self._weighted_score(criterion_scores)
@@ -228,7 +238,10 @@ class AdvancedScorer:
     def _simple_score(self, criterion_scores: Dict) -> float:
         """Simple average score"""
         scores = [c["normalized"] for c in criterion_scores.values()]
-        return float(np.mean(scores))
+        if HAS_NUMPY:
+            return float(np.mean(scores))
+        else:
+            return statistics.mean(scores)
     
     def _estimate_confidence(self, criterion_scores: Dict) -> float:
         """
@@ -243,7 +256,10 @@ class AdvancedScorer:
             return 0.8
         
         # Calculate variance
-        variance = float(np.var(scores))
+        if HAS_NUMPY:
+            variance = float(np.var(scores))
+        else:
+            variance = statistics.variance(scores)
         
         # Convert to confidence (inverse relationship)
         # variance=0 -> confidence=1.0
