@@ -359,6 +359,12 @@ Key documents:
 - [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
 - [Changelog](CHANGELOG.md) - Version history
 
+SDK Redesign Documentation:
+- **[SDK Redesign Executive Summary](SDK_REDESIGN_EXECUTIVE_SUMMARY.md)** - Executive overview and project approval document
+- **[SDK Redesign Roadmap](SDK_REDESIGN_ROADMAP.md)** - Complete 8-month roadmap for SDK redesign
+- **[SDK Redesign Roadmap (Vietnamese)](SDK_REDESIGN_ROADMAP_VI.md)** - Lộ trình thiết kế lại SDK (Tiếng Việt)
+- **[Bittensor vs ModernTensor Comparison](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Detailed feature comparison and gap analysis
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the `LICENSE` file (if available) for details. (Or change to your chosen license, e.g., Apache 2.0)
