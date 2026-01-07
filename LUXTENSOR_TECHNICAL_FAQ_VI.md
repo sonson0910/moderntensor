@@ -53,6 +53,12 @@ LuxTensor đã có **framework hoàn chỉnh** để deploy và thực thi smart
 
 ### 💻 Cách Deploy Smart Contract
 
+> **Lưu ý:** Các ví dụ code dưới đây là **ví dụ minh họa** (conceptual examples) để hiểu cách sử dụng API. Trong production, bạn cần:
+> - Import đầy đủ các types từ crates tương ứng
+> - Handle errors properly với context cụ thể
+> - Sử dụng async/await cho network operations
+> - Refer to actual API documentation với `cargo doc --open -p luxtensor-contracts`
+
 #### Ví Dụ 1: Deploy Contract Đơn Giản
 
 ```rust
@@ -588,10 +594,16 @@ fn verify_zkml_proof(
     input_hash: &Hash,
     output_hash: &Hash,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    // 1. Build Merkle tree from proof
+    // NOTE: This is a SIMPLIFIED example for illustration
+    // Real zkML proof verification would use:
+    // - Specialized zkSNARK/zkSTARK libraries (e.g., bellman, ark-snark)
+    // - Proper circuit verification
+    // - Groth16/PLONK/STARK proof systems
+    
+    // Simplified Merkle tree verification (for demonstration)
     let merkle = MerkleTree::new(vec![input_hash.to_vec(), output_hash.to_vec()]);
     
-    // 2. Verify proof against root
+    // Verify proof against root
     let root = merkle.root();
     let proof_hash = keccak256(proof);
     
@@ -763,11 +775,15 @@ from moderntensor import Blockchain
 
 blockchain = Blockchain(network="luxtensor-testnet")
 # API giống nhau, chỉ khác backend!
+
+# NOTE: Cần update moderntensor SDK để support LuxTensor backend
+# Hoặc dùng LuxTensorClient trực tiếp (xem ví dụ dưới)
 ```
 
 **Compatibility layer:**
 ```python
 # sdk/blockchain/luxtensor_client.py
+# This is the actual client implementation that will be added to ModernTensor SDK
 class LuxTensorClient:
     """Client for LuxTensor blockchain (Rust backend)"""
     
