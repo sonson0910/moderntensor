@@ -56,7 +56,7 @@ LuxTensor đã có **framework hoàn chỉnh** để deploy và thực thi smart
 #### Ví Dụ 1: Deploy Contract Đơn Giản
 
 ```rust
-use luxtensor_contracts::{ContractExecutor, ContractCode};
+use luxtensor_contracts::{ContractExecutor, ContractCode, ContractError};
 use luxtensor_core::types::Address;
 
 fn deploy_example() -> Result<(), ContractError> {
@@ -89,7 +89,8 @@ fn deploy_example() -> Result<(), ContractError> {
 #### Ví Dụ 2: Gọi Contract Function
 
 ```rust
-use luxtensor_contracts::ExecutionContext;
+use luxtensor_contracts::{ContractExecutor, ExecutionContext, ContractAddress, ContractError};
+use luxtensor_core::types::Address;
 
 fn call_contract_example(
     executor: &ContractExecutor,
@@ -130,6 +131,7 @@ fn call_contract_example(
 #### Ví Dụ 3: Contract Storage
 
 ```rust
+use luxtensor_contracts::{ContractExecutor, ContractAddress, ContractError};
 use luxtensor_core::types::Hash;
 
 fn storage_example(
@@ -440,6 +442,9 @@ AI/ML integration **hoàn toàn khả thi** và đã được thiết kế sẵn
 use luxtensor_core::{Transaction, Address};
 use serde::{Serialize, Deserialize};
 
+// Note: Blockchain and Error types would come from your specific implementation
+// This is a conceptual example showing the integration pattern
+
 #[derive(Serialize, Deserialize)]
 struct MinerMetadata {
     uid: u64,
@@ -450,10 +455,10 @@ struct MinerMetadata {
 }
 
 fn register_ai_miner(
-    blockchain: &mut Blockchain,
+    blockchain: &mut Blockchain,  // Your blockchain implementation
     miner_address: Address,
     metadata: MinerMetadata,
-) -> Result<(), Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Serialize metadata
     let data = serde_json::to_vec(&metadata)?;
     
@@ -483,8 +488,13 @@ fn register_ai_miner(
 #### Ví Dụ 2: Validator Scoring Logic
 
 ```rust
-use luxtensor_contracts::{ContractExecutor, ExecutionContext};
+use luxtensor_contracts::{ContractExecutor, ExecutionContext, ContractAddress};
+use luxtensor_core::types::Address;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+
+// Note: This is a conceptual example showing the integration pattern
+// scoring_contract, current_block, current_time would be provided by your context
 
 #[derive(Serialize, Deserialize)]
 struct ValidationResult {
@@ -498,8 +508,11 @@ struct ValidationResult {
 async fn validate_ai_response(
     executor: &ContractExecutor,
     validator_address: Address,
+    scoring_contract: ContractAddress,
+    current_block: u64,
+    current_time: u64,
     result: ValidationResult,
-) -> Result<(), Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Prepare validation data
     let validation_data = serde_json::to_vec(&result)?;
     
@@ -532,6 +545,11 @@ async fn validate_ai_response(
 
 ```rust
 use luxtensor_crypto::{keccak256, MerkleTree};
+use luxtensor_core::types::Hash;
+use serde::{Serialize, Deserialize};
+
+// Note: Blockchain type would come from your specific implementation
+// This is a conceptual example showing the integration pattern
 
 #[derive(Serialize, Deserialize)]
 struct MLProof {
@@ -542,9 +560,9 @@ struct MLProof {
 }
 
 fn verify_ml_proof(
-    blockchain: &Blockchain,
+    blockchain: &Blockchain,  // Your blockchain implementation
     proof: MLProof,
-) -> Result<bool, Error> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     // 1. Verify model hash
     let registered_model = blockchain.get_registered_model(&proof.model_hash)?;
     
@@ -569,7 +587,7 @@ fn verify_zkml_proof(
     proof: &[u8],
     input_hash: &Hash,
     output_hash: &Hash,
-) -> Result<bool, Error> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     // 1. Build Merkle tree from proof
     let merkle = MerkleTree::new(vec![input_hash.to_vec(), output_hash.to_vec()]);
     
