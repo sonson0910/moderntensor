@@ -11,7 +11,9 @@ tokio = { workspace = true }
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 luxtensor-storage = { path = "../luxtensor-storage" }
+luxtensor-network = { path = "../luxtensor-network" }
 tempfile = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -23,6 +25,10 @@ harness = false
 [[test]]
 name = "integration_tests"
 path = "integration_tests.rs"
+
+[[test]]
+name = "data_sync_integration_test"
+path = "data_sync_integration_test.rs"
 
 [lib]
 name = "luxtensor_tests"
