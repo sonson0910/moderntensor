@@ -12,6 +12,18 @@ from typing import List, Dict, Any, Tuple, Optional, Set, Union
 import numpy as np  # Cần cài đặt numpy: pip install numpy
 from collections import defaultdict
 
+# Import safety utilities
+from sdk.consensus.safety_utils import (
+    safe_divide,
+    safe_mean,
+    clamp,
+    validate_score,
+    validate_uid,
+    ValidationError,
+    ConsensusError,
+    EPSILON as SAFETY_EPSILON
+)
+
 from sdk.config.settings import settings
 from sdk.core.datatypes import MinerInfo, ValidatorInfo, ValidatorScore, TaskAssignment
 from sdk.formulas import (
@@ -60,7 +72,8 @@ from sdk.metagraph.metagraph_datum import (
 
 from sdk.network.hydra_client import HydraClient  # Import Hydra Client
 
-EPSILON = 1e-9
+# Use EPSILON from safety_utils for consistency
+EPSILON = SAFETY_EPSILON
 logger = logging.getLogger(__name__)
 
 # Global Hydra Client instance (lazy init)
@@ -357,7 +370,11 @@ def run_consensus_logic(
     # Normalize penalties
     if total_active_stake > 0:
         for miner_uid in miner_penalties:
-            miner_penalties[miner_uid] /= total_active_stake
+            miner_penalties[miner_uid] = safe_divide(
+                miner_penalties[miner_uid],
+                total_active_stake,
+                default=0.0
+            )
             if miner_penalties[miner_uid] > 0.5: # Threshold > 50% stake flags penalty
                 logger.warning(f"Miner {miner_uid} flagged for slashing! Penalty Score: {miner_penalties[miner_uid]:.4f}")
 
@@ -399,7 +416,8 @@ def run_consensus_logic(
         if getattr(v, "status", STATUS_ACTIVE) == STATUS_ACTIVE
     }
     total_active_stake = sum(v.stake for v in active_validators_info.values())
-    e_avg_weighted = 0.0
+    e_avg_weighted = 0.5  # Default value
+    
     if total_active_stake > EPSILON:
         # Tính E_v trung bình dựa trên trạng thái *đầu chu kỳ* (last_performance từ ValidatorInfo)
         valid_e_validators_for_avg = [
@@ -407,12 +425,14 @@ def run_consensus_logic(
             for v in active_validators_info.values()
         ]
         if valid_e_validators_for_avg:
-            e_avg_weighted = (
-                sum(stake * perf for stake, perf in valid_e_validators_for_avg)
-                / total_active_stake
+            weighted_sum = sum(stake * perf for stake, perf in valid_e_validators_for_avg)
+            e_avg_weighted = safe_divide(
+                weighted_sum,
+                total_active_stake,
+                default=0.5
             )
     else:
-        e_avg_weighted = 0.5  # Default nếu không có ai active hoặc stake=0
+        logger.warning("No active validator stake found. Using default E_avg_weighted = 0.5")
 
     logger.info(
         f"  Weighted E_avg (based on start-of-cycle active validator stake): {e_avg_weighted:.4f}"
@@ -421,7 +441,7 @@ def run_consensus_logic(
     # Tính toán cho từng validator (kể cả inactive/jailed để có trạng thái dự kiến nếu họ quay lại)
     for validator_uid_hex, validator_info in validators_info.items():
         deviations = validator_deviations.get(validator_uid_hex, [])
-        avg_dev = sum(deviations) / len(deviations) if deviations else 0.0
+        avg_dev = safe_mean(deviations, default=0.0)
 
         # Nếu validator không chấm điểm nào thì avg_dev = 0.
         # Cân nhắc: Có nên phạt validator không tham gia chấm điểm không? (Hiện tại thì không)
