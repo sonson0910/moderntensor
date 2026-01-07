@@ -5,6 +5,7 @@ Validates transactions before submission.
 """
 
 import logging
+import hashlib
 from typing import List, Dict, Any, Optional
 from sdk.transactions.types import (
     BaseTransaction,
@@ -203,8 +204,9 @@ class TransactionValidator:
         Returns:
             True if duplicate detected
         """
-        # Simple hash-based duplicate detection
-        tx_hash = hash(transaction.json())
+        # Use cryptographic hash for reliable duplicate detection
+        tx_json = transaction.model_dump_json()
+        tx_hash = hashlib.sha256(tx_json.encode()).hexdigest()
         
         if tx_hash in self._seen_hashes:
             logger.warning("Duplicate transaction detected")

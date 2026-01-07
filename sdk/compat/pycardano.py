@@ -20,23 +20,29 @@ import json
 
 # Placeholder types until blockchain module is created
 class L1Address:
+    """Placeholder for L1Address until blockchain module implementation."""
     pass
 
 class L1Network:
+    """Placeholder for L1Network until blockchain module implementation."""
     TESTNET = "testnet"
     MAINNET = "mainnet"
 
 class L1ChainContext:
+    """Placeholder for L1ChainContext until blockchain module implementation."""
     pass
 
 class L1UTxO:
+    """Placeholder for L1UTxO until blockchain module implementation."""
     pass
 
 class Transaction:
+    """Placeholder for Transaction until blockchain module implementation."""
     pass
 
 # Placeholder verification key classes
 class PaymentVerificationKey:
+    """Placeholder for PaymentVerificationKey until blockchain module implementation."""
     @staticmethod
     def from_primitive(data):
         return PaymentVerificationKey()
@@ -45,6 +51,7 @@ class PaymentVerificationKey:
         return b"payment_hash"
 
 class StakeVerificationKey:
+    """Placeholder for StakeVerificationKey until blockchain module implementation."""
     @staticmethod
     def from_primitive(data):
         return StakeVerificationKey()

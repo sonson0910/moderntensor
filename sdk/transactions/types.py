@@ -6,7 +6,7 @@ Defines all transaction types supported by ModernTensor network.
 
 from enum import Enum
 from typing import Optional, Dict, Any, List, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict, ValidationInfo
 
 
 class TransactionType(str, Enum):
@@ -42,14 +42,13 @@ class TransactionType(str, Enum):
 class BaseTransaction(BaseModel):
     """Base class for all transactions."""
     
+    model_config = ConfigDict(use_enum_values=True)
+    
     transaction_type: TransactionType
     from_address: str = Field(..., description="Sender address")
     nonce: Optional[int] = Field(default=None, description="Transaction nonce")
     fee: Optional[float] = Field(default=None, description="Transaction fee")
     memo: Optional[str] = Field(default=None, description="Optional memo")
-    
-    class Config:
-        use_enum_values = True
 
 
 class TransferTransaction(BaseTransaction):
@@ -119,7 +118,7 @@ class WeightTransaction(BaseTransaction):
     
     @field_validator('weights')
     @classmethod
-    def validate_weights(cls, v, info):
+    def validate_weights(cls, v, info: ValidationInfo):
         if 'uids' in info.data and len(v) != len(info.data['uids']):
             raise ValueError("Number of weights must match number of UIDs")
         
