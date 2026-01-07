@@ -216,7 +216,10 @@ class BatchProcessor:
         
         avg_batch_size = sum(self.batch_sizes) / len(self.batch_sizes)
         avg_latency = sum(self.batch_latencies) / len(self.batch_latencies)
-        throughput = (self.total_tasks / sum(self.batch_latencies)) * 1000  # tasks/sec
+        total_latency = sum(self.batch_latencies)
+        
+        # Prevent division by zero
+        throughput = (self.total_tasks / total_latency) * 1000 if total_latency > 0 else 0  # tasks/sec
         
         return {
             "total_tasks": self.total_tasks,

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Optional
 from collections import deque
 import heapq
+import itertools
 
 from ..core.protocol import Task
 
@@ -43,6 +44,7 @@ class TaskQueue:
         self.lock = asyncio.Lock()
         self.not_empty = asyncio.Condition(self.lock)
         self.size = 0
+        self.counter = itertools.count()  # For tie-breaking in priority queue
         
         logger.info(f"TaskQueue initialized: {config}")
     
@@ -59,7 +61,9 @@ class TaskQueue:
                 raise RuntimeError("Queue is full")
             
             if self.config.enable_priority:
-                heapq.heappush(self.tasks, (priority, task))
+                # Use counter for tie-breaking to avoid Task comparison
+                count = next(self.counter)
+                heapq.heappush(self.tasks, (priority, count, task))
             else:
                 self.tasks.append(task)
             
@@ -73,7 +77,7 @@ class TaskQueue:
                 await self.not_empty.wait()
             
             if self.config.enable_priority:
-                _, task = heapq.heappop(self.tasks)
+                _, _, task = heapq.heappop(self.tasks)
             else:
                 task = self.tasks.popleft()
             
@@ -87,3 +91,4 @@ class TaskQueue:
     def empty(self) -> bool:
         """Check if queue is empty"""
         return self.size == 0
+

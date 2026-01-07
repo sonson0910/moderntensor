@@ -372,9 +372,15 @@ class ModelManager:
                 for chunk in iter(lambda: f.read(8192), b""):
                     sha256.update(chunk)
         else:
-            # For directories, hash all files
+            # For directories, hash all files (skip very large files)
+            MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB limit
             for file_path in sorted(path.rglob("*")):
                 if file_path.is_file():
+                    # Skip very large files for efficiency
+                    if file_path.stat().st_size > MAX_FILE_SIZE:
+                        logger.warning(f"Skipping large file in checksum: {file_path}")
+                        continue
+                    
                     with open(file_path, "rb") as f:
                         for chunk in iter(lambda: f.read(8192), b""):
                             sha256.update(chunk)

@@ -114,7 +114,7 @@ class AdvancedTextSubnet(BaseSubnet):
         prompt = task.task_data["prompt"]
         max_length = task.task_data.get("max_length", 100)
         
-        # Simulate processing time
+        # Simulate processing time (mock - in production use actual model)
         time.sleep(0.1)
         
         output = f"Generated response to '{prompt}': " + "Lorem ipsum " * max_length
