@@ -354,6 +354,7 @@ Key documents:
 - [Layer 1 Focus](LAYER1_FOCUS.md) - Current development priorities
 - [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
 - [Changelog](CHANGELOG.md) - Version history
+- **[LuxTensor Technical FAQ (Vietnamese)](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Smart contracts, PoS vs Yuma, AI/ML integration
 
 ## 📄 License
 
