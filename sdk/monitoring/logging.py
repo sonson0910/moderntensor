@@ -55,7 +55,7 @@ class JSONFormatter(logging.Formatter):
         """
         # Base log data
         log_data = {
-            "@timestamp": datetime.utcnow().isoformat() + "Z",
+            "@timestamp": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

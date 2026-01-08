@@ -390,7 +390,7 @@ class AccessControl:
         # Check cache
         if uid in self._permission_cache:
             cache_time = self._cache_timestamps.get(uid)
-            if cache_time and datetime.now() - cache_time < self._cache_ttl:
+            if cache_time and datetime.utcnow() - cache_time < self._cache_ttl:
                 return self._permission_cache[uid].copy()
         
         user = self.get_user(uid)
@@ -407,7 +407,7 @@ class AccessControl:
         
         # Cache result
         self._permission_cache[uid] = permissions
-        self._cache_timestamps[uid] = datetime.now()
+        self._cache_timestamps[uid] = datetime.utcnow()
         
         return permissions.copy()
     

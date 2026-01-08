@@ -121,14 +121,14 @@ class AlertRule:
         """
         # Check cooldown
         if self.last_fired:
-            elapsed = (datetime.now() - self.last_fired).total_seconds()
+            elapsed = (datetime.utcnow() - self.last_fired).total_seconds()
             if elapsed < self.cooldown_seconds:
                 return None
         
         # Evaluate condition
         try:
             if self.condition(data):
-                self.last_fired = datetime.now()
+                self.last_fired = datetime.utcnow()
                 return Alert(
                     name=self.name,
                     severity=self.severity,
@@ -459,7 +459,7 @@ class AlertManager:
         if name in self.active_alerts:
             alert = self.active_alerts[name]
             alert.status = AlertStatus.RESOLVED
-            alert.resolved_at = datetime.now()
+            alert.resolved_at = datetime.utcnow()
             del self.active_alerts[name]
             logger.info(f"Resolved alert: {name}")
     
@@ -473,7 +473,7 @@ class AlertManager:
         if name in self.active_alerts:
             alert = self.active_alerts[name]
             alert.status = AlertStatus.ACKNOWLEDGED
-            alert.acknowledged_at = datetime.now()
+            alert.acknowledged_at = datetime.utcnow()
             logger.info(f"Acknowledged alert: {name}")
     
     def get_active_alerts(

@@ -6,6 +6,7 @@ enabling end-to-end request tracking across the ModernTensor network.
 """
 
 import logging
+import asyncio
 from typing import Optional, Dict, Any, Callable
 from contextlib import contextmanager
 from functools import wraps
@@ -254,7 +255,6 @@ class DistributedTracer:
                         raise
             
             # Return appropriate wrapper based on function type
-            import asyncio
             if asyncio.iscoroutinefunction(func):
                 return async_wrapper
             return wrapper
