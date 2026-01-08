@@ -1,0 +1,300 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Subnet Development Guide &mdash; ModernTensor SDK 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Transaction Usage Guide" href="transaction_usage.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            ModernTensor SDK
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../getting_started.html">Getting Started with ModernTensor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../transactions.html">Transaction System API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../axon.html">Axon Server API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dendrite.html">Dendrite Client API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../metagraph.html">Metagraph API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="transaction_usage.html">Transaction Usage Guide</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Subnet Development Guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#what-is-a-subnet">What is a Subnet?</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#getting-started">Getting Started</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#clone-the-subnet-template">1. Clone the Subnet Template</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#implement-your-validator">2. Implement Your Validator</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#implement-your-miner">3. Implement Your Miner</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#deploy-your-subnet">4. Deploy Your Subnet</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#best-practices">Best Practices</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#design-clear-validation-logic">1. Design Clear Validation Logic</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#handle-errors-gracefully">2. Handle Errors Gracefully</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#optimize-performance">3. Optimize Performance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#test-thoroughly">4. Test Thoroughly</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#advanced-topics">Advanced Topics</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#custom-reward-mechanisms">Custom Reward Mechanisms</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#integration-with-external-services">Integration with External Services</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#see-also">See Also</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">ModernTensor SDK</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Subnet Development Guide</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/guides/subnet_development.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="subnet-development-guide">
+<h1>Subnet Development Guide<a class="headerlink" href="#subnet-development-guide" title="Link to this heading"></a></h1>
+<p>This guide covers how to develop and deploy subnets on ModernTensor.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This guide is under development as subnet framework is being enhanced in Phase 5.</p>
+</div>
+<section id="what-is-a-subnet">
+<h2>What is a Subnet?<a class="headerlink" href="#what-is-a-subnet" title="Link to this heading"></a></h2>
+<p>A subnet in ModernTensor is a specialized network within the main network, focused on a specific task or domain. Each subnet:</p>
+<ul class="simple">
+<li><p>Has its own set of miners and validators</p></li>
+<li><p>Implements custom validation logic</p></li>
+<li><p>Can have unique tokenomics parameters</p></li>
+<li><p>Operates independently while connected to the main chain</p></li>
+</ul>
+</section>
+<section id="getting-started">
+<h2>Getting Started<a class="headerlink" href="#getting-started" title="Link to this heading"></a></h2>
+<section id="clone-the-subnet-template">
+<h3>1. Clone the Subnet Template<a class="headerlink" href="#clone-the-subnet-template" title="Link to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/sonson0910/moderntensor.git
+<span class="nb">cd</span><span class="w"> </span>moderntensor/examples/subnet_template
+</pre></div>
+</div>
+</section>
+<section id="implement-your-validator">
+<h3>2. Implement Your Validator<a class="headerlink" href="#implement-your-validator" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.subnets</span> <span class="kn">import</span> <span class="n">BaseValidator</span>
+
+<span class="k">class</span> <span class="nc">MyValidator</span><span class="p">(</span><span class="n">BaseValidator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">synapse</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Process incoming requests.&quot;&quot;&quot;</span>
+        <span class="c1"># Your validation logic here</span>
+        <span class="k">return</span> <span class="n">response</span>
+
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">score_responses</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">responses</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Score miner responses.&quot;&quot;&quot;</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">response</span> <span class="ow">in</span> <span class="n">responses</span><span class="p">:</span>
+            <span class="n">score</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calculate_score</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+            <span class="n">scores</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">score</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">scores</span>
+</pre></div>
+</div>
+</section>
+<section id="implement-your-miner">
+<h3>3. Implement Your Miner<a class="headerlink" href="#implement-your-miner" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.subnets</span> <span class="kn">import</span> <span class="n">BaseMiner</span>
+
+<span class="k">class</span> <span class="nc">MyMiner</span><span class="p">(</span><span class="n">BaseMiner</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">synapse</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Process validator requests.&quot;&quot;&quot;</span>
+        <span class="c1"># Your mining logic here</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">synapse</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+</pre></div>
+</div>
+</section>
+<section id="deploy-your-subnet">
+<h3>4. Deploy Your Subnet<a class="headerlink" href="#deploy-your-subnet" title="Link to this heading"></a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Register subnet</span>
+mtcli<span class="w"> </span>subnet<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;My Subnet&quot;</span><span class="w"> </span>--netuid<span class="w"> </span><span class="m">1</span>
+
+<span class="c1"># Start validator</span>
+python<span class="w"> </span>validator.py<span class="w"> </span>--subnet<span class="w"> </span><span class="m">1</span><span class="w"> </span>--hotkey<span class="w"> </span>validator_key
+
+<span class="c1"># Start miner</span>
+python<span class="w"> </span>miner.py<span class="w"> </span>--subnet<span class="w"> </span><span class="m">1</span><span class="w"> </span>--hotkey<span class="w"> </span>miner_key
+</pre></div>
+</div>
+</section>
+</section>
+<section id="best-practices">
+<h2>Best Practices<a class="headerlink" href="#best-practices" title="Link to this heading"></a></h2>
+<section id="design-clear-validation-logic">
+<h3>1. Design Clear Validation Logic<a class="headerlink" href="#design-clear-validation-logic" title="Link to this heading"></a></h3>
+<p>Make your scoring mechanism transparent and fair:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">calculate_score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">response</span><span class="p">):</span>
+    <span class="c1"># Clear, measurable criteria</span>
+    <span class="n">accuracy</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">check_accuracy</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+    <span class="n">speed</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">check_speed</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+
+    <span class="c1"># Weighted combination</span>
+    <span class="n">score</span> <span class="o">=</span> <span class="mf">0.7</span> <span class="o">*</span> <span class="n">accuracy</span> <span class="o">+</span> <span class="mf">0.3</span> <span class="o">*</span> <span class="n">speed</span>
+    <span class="k">return</span> <span class="n">score</span>
+</pre></div>
+</div>
+</section>
+<section id="handle-errors-gracefully">
+<h3>2. Handle Errors Gracefully<a class="headerlink" href="#handle-errors-gracefully" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">synapse</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">synapse</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+</pre></div>
+</div>
+</section>
+<section id="optimize-performance">
+<h3>3. Optimize Performance<a class="headerlink" href="#optimize-performance" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p>Use async/await for I/O operations</p></li>
+<li><p>Implement caching where appropriate</p></li>
+<li><p>Monitor resource usage</p></li>
+</ul>
+</section>
+<section id="test-thoroughly">
+<h3>4. Test Thoroughly<a class="headerlink" href="#test-thoroughly" title="Link to this heading"></a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Test your validator</span>
+<span class="n">pytest</span> <span class="n">tests</span><span class="o">/</span><span class="n">test_validator</span><span class="o">.</span><span class="n">py</span>
+
+<span class="c1"># Test your miner</span>
+<span class="n">pytest</span> <span class="n">tests</span><span class="o">/</span><span class="n">test_miner</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="advanced-topics">
+<h2>Advanced Topics<a class="headerlink" href="#advanced-topics" title="Link to this heading"></a></h2>
+<section id="custom-reward-mechanisms">
+<h3>Custom Reward Mechanisms<a class="headerlink" href="#custom-reward-mechanisms" title="Link to this heading"></a></h3>
+<p>Implement custom reward distribution:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">distribute_rewards</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scores</span><span class="p">):</span>
+    <span class="c1"># Normalize scores</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+    <span class="n">normalized</span> <span class="o">=</span> <span class="p">[</span><span class="n">s</span> <span class="o">/</span> <span class="n">total</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">scores</span><span class="p">]</span>
+
+    <span class="c1"># Apply custom distribution</span>
+    <span class="n">rewards</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">score</span> <span class="ow">in</span> <span class="n">normalized</span><span class="p">:</span>
+        <span class="n">reward</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calculate_reward</span><span class="p">(</span><span class="n">score</span><span class="p">)</span>
+        <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">reward</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rewards</span>
+</pre></div>
+</div>
+</section>
+<section id="integration-with-external-services">
+<h3>Integration with External Services<a class="headerlink" href="#integration-with-external-services" title="Link to this heading"></a></h3>
+<p>Connect your subnet to external APIs or databases:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_external_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">):</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;https://api.example.com/data?q=</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="see-also">
+<h2>See Also<a class="headerlink" href="#see-also" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><span class="xref std std-doc">transactions</span> - Transaction usage guide</p></li>
+<li><p>Examples directory in the repository</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="transaction_usage.html" class="btn btn-neutral float-left" title="Transaction Usage Guide" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, ModernTensor Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -191,19 +191,18 @@ class TestTransactionValidator:
     
     def test_validate_invalid_weight_sum(self):
         """Test weight validation with invalid sum."""
-        validator = TransactionValidator(strict=False)
+        # This should fail at Pydantic level during creation
+        with pytest.raises(ValueError) as exc_info:
+            tx = WeightTransaction(
+                from_address="addr1234567890",
+                subnet_id=1,
+                uids=[1, 2],
+                weights=[0.6, 0.6],  # Invalid sum
+                version_key=1
+            )
         
-        # This should fail at Pydantic level, but let's test post-validation
-        tx = WeightTransaction(
-            from_address="addr1234567890",
-            subnet_id=1,
-            uids=[1, 2],
-            weights=[0.6, 0.6],  # Invalid sum
-            version_key=1
-        )
-        
-        errors = validator.validate(tx)
-        assert len(errors) > 0
+        # Verify the error message mentions weight sum
+        assert "sum" in str(exc_info.value).lower() or "weight" in str(exc_info.value).lower()
     
     def test_validate_strict_mode(self):
         """Test strict validation mode."""
