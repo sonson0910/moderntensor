@@ -1,8 +1,27 @@
 # sdk/metagraph/metagraph_datum.py
 """
-Định nghĩa cấu trúc Datum cho các thành phần trong Metagraph (Miner, Validator, Subnet)
-sử dụng pycardano và kế thừa PlutusData.
-(Phiên bản cập nhật theo gợi ý và sử dụng settings)
+DEPRECATED: Legacy Cardano/PlutusData structures
+===============================================
+
+This module contains DEPRECATED code from Cardano Layer 2 implementation.
+These structures are being migrated to native Luxtensor Layer 1 data models.
+
+Status: MIGRATION IN PROGRESS
+- Legacy: Uses PlutusData (Cardano concept) via compatibility layer
+- Current: Placeholder compatibility using L1Data aliases
+- Future: Native Luxtensor JSON/RPC data structures (see SDK_FINALIZATION_ROADMAP.md)
+
+For new code, use:
+- sdk.models.neuron.py - NeuronInfo for Luxtensor
+- sdk.models.validator.py - ValidatorInfo for Luxtensor
+- sdk.models.subnet.py - SubnetInfo for Luxtensor
+
+Migration Path: These Datum classes will be replaced by:
+1. Luxtensor RPC data structures (Phase 1)
+2. Native Pydantic models in sdk.models.* (Phase 3)
+3. Remove this file entirely (Phase 4)
+
+See: CARDANO_DEPRECATION_NOTICE.md for full migration guide
 """
 from sdk.compat.luxtensor_types import PlutusData, Redeemer
 from dataclasses import dataclass, field

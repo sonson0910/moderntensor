@@ -1,16 +1,50 @@
 # sdk/metagraph/metagraph_data.py
+"""
+DEPRECATED: Legacy Cardano blockchain integration
+=================================================
+
+This module contains DEPRECATED code for Cardano BlockFrost integration.
+All Cardano/PyCardano infrastructure has been removed from ModernTensor.
+
+Status: LEGACY CODE - DO NOT USE FOR NEW FEATURES
+- This code references BlockFrost, UTxO, CBOR (all Cardano-specific)
+- Maintained temporarily for backward compatibility only
+- Will be completely removed in Phase 2 (see SDK_FINALIZATION_ROADMAP.md)
+
+Migration Path:
+1. Use sdk.luxtensor_client.py for blockchain queries (Phase 1 - IN PROGRESS)
+2. Use sdk.metagraph.metagraph.py with Luxtensor RPC backend (Phase 2)
+3. Remove this file entirely (Phase 2 completion)
+
+For new code, use:
+- LuxtensorClient for blockchain queries
+- Metagraph class with Luxtensor backend
+- Native Luxtensor data models (sdk.models.*)
+
+See: CARDANO_DEPRECATION_NOTICE.md for migration guide
+"""
+
 import logging
+import warnings
 from typing import List, Dict, Any, Optional, Type, Tuple, DefaultDict
 from collections import defaultdict  # Import defaultdict
+
+# DEPRECATED: Cardano compatibility layer - do not use for new code
 from sdk.compat.luxtensor_types import (
     Address,
-    BlockFrostChainContext,
-    UTxO,
-    PlutusData,
-    ScriptHash,
+    BlockFrostChainContext,  # DEPRECATED - was Cardano BlockFrost
+    UTxO,  # DEPRECATED - was Cardano UTXO
+    PlutusData,  # DEPRECATED - was Cardano PlutusData
+    ScriptHash,  # DEPRECATED - was Cardano script hash
     Network,
 )
-import cbor2  # Vẫn cần cho trường hợp datum không chuẩn
+
+# DEPRECATED: CBOR is Cardano-specific, not needed for Luxtensor
+try:
+    import cbor2  # Only for legacy compatibility
+except ImportError:
+    cbor2 = None  # type: ignore
+    warnings.warn("cbor2 not installed - legacy Cardano compatibility disabled", DeprecationWarning)
 
 # Import các lớp Datum đã cập nhật
 from .metagraph_datum import (
