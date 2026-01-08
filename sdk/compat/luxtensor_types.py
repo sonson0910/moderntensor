@@ -6,6 +6,15 @@ Pure Luxtensor implementation - completely removed Cardano/pycardano dependencie
 
 These classes are used for on-chain data storage and serialization in the
 ModernTensor Luxtensor-based blockchain.
+
+MIGRATION STATUS: Phase 1 - Placeholder Implementation
+- Current: Placeholder classes for compatibility during transition
+- Next: Full Luxtensor blockchain integration via RPC (see SDK_REDESIGN_ROADMAP.md)
+- Legacy: All Cardano/PyCardano code removed
+- Future: Replace with actual luxtensor blockchain types from Rust implementation
+
+For Luxtensor blockchain (Rust), see: /luxtensor/ directory
+For SDK roadmap, see: SDK_REDESIGN_ROADMAP.md, SDK_FINALIZATION_ROADMAP.md
 """
 
 from dataclasses import dataclass, field
