@@ -1,7 +1,36 @@
-# 📚 Documentation Index - Repository Separation Guide
+# 📚 Documentation Index - ModernTensor
 
 **Created:** January 7, 2026  
-**Purpose:** Navigate all documentation for separating LuxTensor from ModernTensor
+**Updated:** January 8, 2026  
+**Purpose:** Navigate all ModernTensor documentation
+
+---
+
+## 🆕 Latest Updates (January 8, 2026)
+
+### Tokenomics Architecture & Roadmap
+
+**NEW:** Complete tokenomics architecture analysis and implementation roadmap
+
+**1. Tokenomics Architecture (English)** → **TOKENOMICS_ARCHITECTURE_ROADMAP.md** (20KB)
+   - Where tokenomics is implemented (Blockchain vs AI/ML layer)
+   - Detailed comparison with Bittensor
+   - Two-layer architecture explanation
+   - 3-month completion roadmap
+   - Best practices and recommendations
+
+**2. Kiến Trúc Tokenomics (Vietnamese)** → **TOKENOMICS_ARCHITECTURE_ROADMAP_VI.md** (44KB)
+   - Tokenomics triển khai ở đâu (Blockchain vs AI/ML layer)
+   - So sánh chi tiết với Bittensor
+   - Giải thích kiến trúc 2 lớp
+   - Lộ trình hoàn thiện 3 tháng
+   - Best practices và recommendations
+
+**Read these if:**
+- You want to understand tokenomics implementation
+- You need comparison with Bittensor
+- You're planning tokenomics development
+- You want to see the roadmap
 
 ---
 
