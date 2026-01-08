@@ -1,3 +1,0 @@
-pycardano>=0.12.2
-bip_utils>=2.9.3
-cryptography>=42.0.8

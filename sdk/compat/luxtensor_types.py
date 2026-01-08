@@ -4,8 +4,14 @@ Luxtensor Layer 1 Blockchain Data Structures
 This module provides native Luxtensor Layer 1 blockchain data structures for ModernTensor.
 Pure Luxtensor implementation - completely removed Cardano/pycardano dependencies.
 
-These classes are used for on-chain data storage and serialization in the
-ModernTensor Luxtensor-based blockchain.
+**Important Notes:**
+- Luxtensor uses an ACCOUNT-BASED model (like Ethereum), not UTXO-based (like Cardano)
+- These are compatibility placeholders during migration to full Luxtensor integration
+- For actual blockchain interaction, use `sdk.luxtensor_client.LuxtensorClient`
+- Cardano-specific concepts (UTxO, PlutusData, Datum, Redeemer) are deprecated
+
+These classes are used for backward compatibility during the migration period.
+Real blockchain operations should use the LuxtensorClient and account-based transactions.
 """
 
 from dataclasses import dataclass, field
@@ -34,7 +40,11 @@ class L1ChainContext:
     pass
 
 class L1UTxO:
-    """Placeholder for Luxtensor UTxO until full Luxtensor blockchain module implementation."""
+    """
+    DEPRECATED: Luxtensor uses account-based model, not UTXO model.
+    This is kept only for backward compatibility during migration.
+    Use LuxtensorClient.get_balance() and account-based transactions instead.
+    """
     pass
 
 class Transaction:
@@ -75,6 +85,35 @@ class ExtendedSigningKey:
     def from_mnemonic(mnemonic: str):
         """Placeholder from_mnemonic method."""
         return ExtendedSigningKey(data=mnemonic)
+
+
+# Additional placeholder types for backward compatibility
+class PlutusV3Script:
+    """DEPRECATED: Plutus scripts are Cardano-specific. Luxtensor uses Rust smart contracts."""
+    pass
+
+
+class Asset:
+    """DEPRECATED: Cardano asset type. Luxtensor uses native token model."""
+    pass
+
+
+class Value:
+    """DEPRECATED: Cardano value type. Luxtensor uses simple integer amounts."""
+    pass
+
+
+def plutus_script_hash(*args, **kwargs):
+    """DEPRECATED: Plutus script hashing is Cardano-specific."""
+    raise NotImplementedError("plutus_script_hash is deprecated. Luxtensor uses different contract addressing.")
+
+
+def hash(*args, **kwargs):
+    """DEPRECATED: Use standard hashlib or Luxtensor crypto functions instead."""
+    import hashlib
+    if args and isinstance(args[0], bytes):
+        return hashlib.sha256(args[0]).digest()
+    raise NotImplementedError("Use hashlib or Luxtensor crypto functions for hashing.")
 
 # Re-export common names
 Address = L1Address
@@ -244,14 +283,15 @@ class L1ContractAddress:
 
 # Aliases for backward compatibility during transition
 # These allow existing code to use old names while we migrate
-PlutusData = L1Data  # Alias for gradual migration
-Redeemer = L1TransactionData  # Alias for gradual migration
+# WARNING: These are deprecated and will be removed once migration is complete
+PlutusData = L1Data  # DEPRECATED: Cardano concept, use Pydantic models instead
+Redeemer = L1TransactionData  # DEPRECATED: Cardano concept, not needed in account-based chains
 Address = L1Address  # Use native Layer 1 address
 TransactionOutput = L1TransactionOutput  # Use native Layer 1 output
 ScriptHash = L1ContractAddress  # Contract address alias
 Network = L1Network  # Use native Layer 1 network
-BlockFrostChainContext = L1ChainContext  # Use native Layer 1 context
-UTxO = L1UTxO  # Use native Layer 1 UTXO (account model)
+BlockFrostChainContext = L1ChainContext  # DEPRECATED: Use LuxtensorClient instead
+UTxO = L1UTxO  # DEPRECATED: Luxtensor is account-based, not UTXO-based
 
 
 # Export all classes
@@ -271,6 +311,13 @@ __all__ = [
     'PaymentVerificationKey',
     'StakeVerificationKey',
     'ExtendedSigningKey',
+    
+    # Deprecated Cardano types (for import compatibility)
+    'PlutusV3Script',
+    'Asset',
+    'Value',
+    'plutus_script_hash',
+    'hash',
     
     # Aliases for backward compatibility
     'PlutusData',

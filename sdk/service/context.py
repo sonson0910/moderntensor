@@ -12,15 +12,25 @@ def get_chain_context(method="l1_rpc"):
     This function creates an L1ChainContext that connects to the appropriate
     network (mainnet, testnet, or devnet).
 
+    **DEPRECATION NOTICE:**
+    This function returns a placeholder L1ChainContext. For actual blockchain
+    interaction with Luxtensor, use `LuxtensorClient` directly:
+    
+        from sdk.luxtensor_client import LuxtensorClient
+        client = LuxtensorClient("http://localhost:9944")
+        balance = client.get_balance(address)
+
     Args:
         method (str): The name of the method to use for chain context creation.
                       Default is "l1_rpc" (Layer 1 JSON-RPC).
+                      "blockfrost" is kept for backward compatibility only.
 
     Raises:
         ValueError: If an unsupported method is specified.
 
     Returns:
         L1ChainContext: Chain context configured for the specified network.
+                        This is a placeholder - use LuxtensorClient for real operations.
     """
     if method == "l1_rpc" or method == "blockfrost":  # blockfrost for backward compat
         # Get network from settings

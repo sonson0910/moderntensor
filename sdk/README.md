@@ -2,6 +2,18 @@
 
 Python SDK for interacting with Luxtensor blockchain and building AI/ML subnets.
 
+## ⚠️ Important Migration Notice
+
+**ModernTensor has migrated from Cardano to Luxtensor blockchain.**
+
+- ✅ **Luxtensor** is now the official Layer 1 blockchain (account-based, Ethereum-style)
+- ❌ **Cardano/PyCardano** dependencies have been removed (UTXO-based, incompatible)
+
+If you're upgrading from an older version that used Cardano:
+- See [CARDANO_DEPRECATION.md](../CARDANO_DEPRECATION.md) for migration guide
+- Old UTXO/Datum/Redeemer code will not work with Luxtensor
+- Use `LuxtensorClient` for all blockchain interactions
+
 ## Architecture
 
 ModernTensor consists of two layers:
