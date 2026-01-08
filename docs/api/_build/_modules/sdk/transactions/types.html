@@ -1,0 +1,370 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>sdk.transactions.types &mdash; ModernTensor SDK 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            ModernTensor SDK
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../getting_started.html">Getting Started with ModernTensor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../transactions.html">Transaction System API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../axon.html">Axon Server API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../dendrite.html">Dendrite Client API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../metagraph.html">Metagraph API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/transaction_usage.html">Transaction Usage Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/subnet_development.html">Subnet Development Guide</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">ModernTensor SDK</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">sdk.transactions.types</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for sdk.transactions.types</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Transaction Types and Data Models</span>
+
+<span class="sd">Defines all transaction types supported by ModernTensor network.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span> <span class="nn">enum</span> <span class="kn">import</span> <span class="n">Enum</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Literal</span>
+<span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span><span class="p">,</span> <span class="n">field_validator</span><span class="p">,</span> <span class="n">ConfigDict</span><span class="p">,</span> <span class="n">ValidationInfo</span>
+
+
+<div class="viewcode-block" id="TransactionType">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.TransactionType">[docs]</a>
+<span class="k">class</span> <span class="nc">TransactionType</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transaction types supported by ModernTensor.&quot;&quot;&quot;</span>
+    
+    <span class="c1"># Basic Operations</span>
+    <span class="n">TRANSFER</span> <span class="o">=</span> <span class="s2">&quot;transfer&quot;</span>
+    <span class="n">STAKE</span> <span class="o">=</span> <span class="s2">&quot;stake&quot;</span>
+    <span class="n">UNSTAKE</span> <span class="o">=</span> <span class="s2">&quot;unstake&quot;</span>
+    
+    <span class="c1"># Network Operations</span>
+    <span class="n">REGISTER</span> <span class="o">=</span> <span class="s2">&quot;register&quot;</span>
+    <span class="n">DEREGISTER</span> <span class="o">=</span> <span class="s2">&quot;deregister&quot;</span>
+    
+    <span class="c1"># Subnet Operations</span>
+    <span class="n">SET_WEIGHTS</span> <span class="o">=</span> <span class="s2">&quot;set_weights&quot;</span>
+    <span class="n">SERVE_AXON</span> <span class="o">=</span> <span class="s2">&quot;serve_axon&quot;</span>
+    <span class="n">SERVE_PROMETHEUS</span> <span class="o">=</span> <span class="s2">&quot;serve_prometheus&quot;</span>
+    
+    <span class="c1"># Hotkey Operations</span>
+    <span class="n">SWAP_HOTKEY</span> <span class="o">=</span> <span class="s2">&quot;swap_hotkey&quot;</span>
+    
+    <span class="c1"># Governance</span>
+    <span class="n">PROPOSE</span> <span class="o">=</span> <span class="s2">&quot;propose&quot;</span>
+    <span class="n">VOTE</span> <span class="o">=</span> <span class="s2">&quot;vote&quot;</span>
+    
+    <span class="c1"># Advanced</span>
+    <span class="n">DELEGATE</span> <span class="o">=</span> <span class="s2">&quot;delegate&quot;</span>
+    <span class="n">UNDELEGATE</span> <span class="o">=</span> <span class="s2">&quot;undelegate&quot;</span>
+    <span class="n">PROXY</span> <span class="o">=</span> <span class="s2">&quot;proxy&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="BaseTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.BaseTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">BaseTransaction</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Base class for all transactions.&quot;&quot;&quot;</span>
+    
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">use_enum_values</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">TransactionType</span>
+    <span class="n">from_address</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Sender address&quot;</span><span class="p">)</span>
+    <span class="n">nonce</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Transaction nonce&quot;</span><span class="p">)</span>
+    <span class="n">fee</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Transaction fee&quot;</span><span class="p">)</span>
+    <span class="n">memo</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Optional memo&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="TransferTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.TransferTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">TransferTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transfer tokens to another address.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">TRANSFER</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">TRANSFER</span>
+    <span class="n">to_address</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Recipient address&quot;</span><span class="p">)</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Amount to transfer&quot;</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="TransferTransaction.validate_amount">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.TransferTransaction.validate_amount">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_amount</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Transfer amount must be positive&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="StakeTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.StakeTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">StakeTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Stake tokens to a hotkey.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">STAKE</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">STAKE</span>
+    <span class="n">hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Hotkey to stake to&quot;</span><span class="p">)</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Amount to stake&quot;</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID&quot;</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="StakeTransaction.validate_amount">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.StakeTransaction.validate_amount">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_amount</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Stake amount must be positive&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="UnstakeTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.UnstakeTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">UnstakeTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Unstake tokens from a hotkey.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">UNSTAKE</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">UNSTAKE</span>
+    <span class="n">hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Hotkey to unstake from&quot;</span><span class="p">)</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Amount to unstake&quot;</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID&quot;</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="UnstakeTransaction.validate_amount">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.UnstakeTransaction.validate_amount">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_amount</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Unstake amount must be positive&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="RegisterTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.RegisterTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">RegisterTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Register a neuron on a subnet.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">REGISTER</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">REGISTER</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID to register on&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Hotkey for the neuron&quot;</span><span class="p">)</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Registration metadata&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="WeightTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.WeightTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">WeightTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Set weights for validator.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">SET_WEIGHTS</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">SET_WEIGHTS</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">uids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;List of neuron UIDs&quot;</span><span class="p">)</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;List of weights (must sum to 1.0)&quot;</span><span class="p">)</span>
+    <span class="n">version_key</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Weight version key&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="WeightTransaction.validate_weights">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.WeightTransaction.validate_weights">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;weights&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_weights</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="n">ValidationInfo</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s1">&#39;uids&#39;</span> <span class="ow">in</span> <span class="n">info</span><span class="o">.</span><span class="n">data</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;uids&#39;</span><span class="p">]):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Number of weights must match number of UIDs&quot;</span><span class="p">)</span>
+        
+        <span class="n">weight_sum</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mf">0.99</span> <span class="o">&lt;=</span> <span class="n">weight_sum</span> <span class="o">&lt;=</span> <span class="mf">1.01</span><span class="p">):</span>  <span class="c1"># Allow small floating point error</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Weights must sum to 1.0, got </span><span class="si">{</span><span class="n">weight_sum</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">w</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">v</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;All weights must be non-negative&quot;</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="ProposalTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.ProposalTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">ProposalTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Submit a governance proposal.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">PROPOSE</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">PROPOSE</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Proposal title&quot;</span><span class="p">,</span> <span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Proposal description&quot;</span><span class="p">,</span> <span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">proposal_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Type of proposal&quot;</span><span class="p">)</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Voting options&quot;</span><span class="p">)</span>
+    <span class="n">duration_blocks</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Proposal duration in blocks&quot;</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="ProposalTransaction.validate_options">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.ProposalTransaction.validate_options">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;options&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_options</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Proposal must have at least 2 options&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="VoteTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.VoteTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">VoteTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Vote on a proposal.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">VOTE</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">VOTE</span>
+    <span class="n">proposal_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Proposal ID&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">option</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Selected option&quot;</span><span class="p">)</span>
+    <span class="n">voting_power</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Voting power to use&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="DelegateTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.DelegateTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">DelegateTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Delegate stake to another validator.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">DELEGATE</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">DELEGATE</span>
+    <span class="n">validator_hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Validator hotkey to delegate to&quot;</span><span class="p">)</span>
+    <span class="n">amount</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Amount to delegate&quot;</span><span class="p">,</span> <span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="DelegateTransaction.validate_amount">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.DelegateTransaction.validate_amount">[docs]</a>
+    <span class="nd">@field_validator</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">)</span>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">validate_amount</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">v</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Delegation amount must be positive&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="ServeAxonTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.ServeAxonTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">ServeAxonTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Update Axon serving information.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">SERVE_AXON</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">SERVE_AXON</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">ip</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;IP address&quot;</span><span class="p">)</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Port number&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">65535</span><span class="p">)</span>
+    <span class="n">protocol</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="s2">&quot;http&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Protocol (http/https)&quot;</span><span class="p">)</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Version number&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="SwapHotkeyTransaction">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.types.SwapHotkeyTransaction">[docs]</a>
+<span class="k">class</span> <span class="nc">SwapHotkeyTransaction</span><span class="p">(</span><span class="n">BaseTransaction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Swap hotkey for a neuron.&quot;&quot;&quot;</span>
+    
+    <span class="n">transaction_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="n">TransactionType</span><span class="o">.</span><span class="n">SWAP_HOTKEY</span><span class="p">]</span> <span class="o">=</span> <span class="n">TransactionType</span><span class="o">.</span><span class="n">SWAP_HOTKEY</span>
+    <span class="n">subnet_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Subnet ID&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">old_hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Current hotkey&quot;</span><span class="p">)</span>
+    <span class="n">new_hotkey</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;New hotkey&quot;</span><span class="p">)</span></div>
+
+
+
+<span class="c1"># Type alias for all transaction types</span>
+<span class="n">Transaction</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">TransferTransaction</span> <span class="o">|</span>
+    <span class="n">StakeTransaction</span> <span class="o">|</span>
+    <span class="n">UnstakeTransaction</span> <span class="o">|</span>
+    <span class="n">RegisterTransaction</span> <span class="o">|</span>
+    <span class="n">WeightTransaction</span> <span class="o">|</span>
+    <span class="n">ProposalTransaction</span> <span class="o">|</span>
+    <span class="n">VoteTransaction</span> <span class="o">|</span>
+    <span class="n">DelegateTransaction</span> <span class="o">|</span>
+    <span class="n">ServeAxonTransaction</span> <span class="o">|</span>
+    <span class="n">SwapHotkeyTransaction</span>
+<span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, ModernTensor Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

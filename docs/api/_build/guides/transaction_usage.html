@@ -1,0 +1,383 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transaction Usage Guide &mdash; ModernTensor SDK 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Subnet Development Guide" href="subnet_development.html" />
+    <link rel="prev" title="Metagraph API" href="../metagraph.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            ModernTensor SDK
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../getting_started.html">Getting Started with ModernTensor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../transactions.html">Transaction System API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../axon.html">Axon Server API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dendrite.html">Dendrite Client API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../metagraph.html">Metagraph API</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Transaction Usage Guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#basic-transactions">Basic Transactions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#transfer-tokens">Transfer Tokens</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#stake-tokens">Stake Tokens</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#register-neuron">Register Neuron</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#advanced-patterns">Advanced Patterns</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#batch-processing">Batch Processing</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#transaction-validation">Transaction Validation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#transaction-monitoring">Transaction Monitoring</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#best-practices">Best Practices</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#always-validate">1. Always Validate</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#use-batch-processing">2. Use Batch Processing</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#set-appropriate-fees">3. Set Appropriate Fees</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#monitor-important-transactions">4. Monitor Important Transactions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#handle-errors-gracefully">5. Handle Errors Gracefully</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#common-pitfalls">Common Pitfalls</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#not-checking-balance">1. Not Checking Balance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ignoring-validation-errors">2. Ignoring Validation Errors</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#blocking-async-code">3. Blocking Async Code</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#not-setting-timeouts">4. Not Setting Timeouts</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="subnet_development.html">Subnet Development Guide</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">ModernTensor SDK</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Transaction Usage Guide</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/guides/transaction_usage.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="transaction-usage-guide">
+<h1>Transaction Usage Guide<a class="headerlink" href="#transaction-usage-guide" title="Link to this heading"></a></h1>
+<p>This guide covers common transaction patterns and best practices for the ModernTensor SDK.</p>
+<section id="basic-transactions">
+<h2>Basic Transactions<a class="headerlink" href="#basic-transactions" title="Link to this heading"></a></h2>
+<section id="transfer-tokens">
+<h3>Transfer Tokens<a class="headerlink" href="#transfer-tokens" title="Link to this heading"></a></h3>
+<p>The simplest transaction type is a token transfer:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.transactions</span> <span class="kn">import</span> <span class="n">TransactionBuilder</span>
+
+<span class="n">tx</span> <span class="o">=</span> <span class="n">TransactionBuilder</span><span class="p">()</span> \
+    <span class="o">.</span><span class="n">transfer</span><span class="p">(</span>
+        <span class="n">from_address</span><span class="o">=</span><span class="s2">&quot;your_address&quot;</span><span class="p">,</span>
+        <span class="n">to_address</span><span class="o">=</span><span class="s2">&quot;recipient_address&quot;</span><span class="p">,</span>
+        <span class="n">amount</span><span class="o">=</span><span class="mf">100.0</span>
+    <span class="p">)</span> \
+    <span class="o">.</span><span class="n">with_fee</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span> \
+    <span class="o">.</span><span class="n">with_memo</span><span class="p">(</span><span class="s2">&quot;Payment&quot;</span><span class="p">)</span> \
+    <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="stake-tokens">
+<h3>Stake Tokens<a class="headerlink" href="#stake-tokens" title="Link to this heading"></a></h3>
+<p>Stake tokens to a hotkey for subnet participation:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tx</span> <span class="o">=</span> <span class="n">TransactionBuilder</span><span class="p">()</span> \
+    <span class="o">.</span><span class="n">stake</span><span class="p">(</span>
+        <span class="n">from_address</span><span class="o">=</span><span class="s2">&quot;your_address&quot;</span><span class="p">,</span>
+        <span class="n">hotkey</span><span class="o">=</span><span class="s2">&quot;hotkey_address&quot;</span><span class="p">,</span>
+        <span class="n">amount</span><span class="o">=</span><span class="mf">1000.0</span><span class="p">,</span>
+        <span class="n">subnet_id</span><span class="o">=</span><span class="mi">1</span>
+    <span class="p">)</span> \
+    <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="register-neuron">
+<h3>Register Neuron<a class="headerlink" href="#register-neuron" title="Link to this heading"></a></h3>
+<p>Register a neuron on a subnet:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tx</span> <span class="o">=</span> <span class="n">TransactionBuilder</span><span class="p">()</span> \
+    <span class="o">.</span><span class="n">register</span><span class="p">(</span>
+        <span class="n">from_address</span><span class="o">=</span><span class="s2">&quot;your_address&quot;</span><span class="p">,</span>
+        <span class="n">hotkey</span><span class="o">=</span><span class="s2">&quot;hotkey_address&quot;</span><span class="p">,</span>
+        <span class="n">subnet_id</span><span class="o">=</span><span class="mi">1</span>
+    <span class="p">)</span> \
+    <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="advanced-patterns">
+<h2>Advanced Patterns<a class="headerlink" href="#advanced-patterns" title="Link to this heading"></a></h2>
+<section id="batch-processing">
+<h3>Batch Processing<a class="headerlink" href="#batch-processing" title="Link to this heading"></a></h3>
+<p>Process multiple transactions efficiently:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.transactions</span> <span class="kn">import</span> <span class="n">BatchTransactionBuilder</span>
+
+<span class="c1"># Create batch</span>
+<span class="n">batch</span> <span class="o">=</span> <span class="n">BatchTransactionBuilder</span><span class="p">(</span><span class="n">max_concurrent</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+
+<span class="c1"># Add multiple transactions</span>
+<span class="n">addresses</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">&quot;addr1&quot;</span><span class="p">,</span> <span class="s2">&quot;addr2&quot;</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;addr3&quot;</span><span class="p">,</span> <span class="s2">&quot;addr4&quot;</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;addr5&quot;</span><span class="p">,</span> <span class="s2">&quot;addr6&quot;</span><span class="p">)]</span>
+<span class="k">for</span> <span class="n">from_addr</span><span class="p">,</span> <span class="n">to_addr</span> <span class="ow">in</span> <span class="n">addresses</span><span class="p">:</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">TransactionBuilder</span><span class="p">()</span> \
+        <span class="o">.</span><span class="n">transfer</span><span class="p">(</span><span class="n">from_addr</span><span class="p">,</span> <span class="n">to_addr</span><span class="p">,</span> <span class="mf">100.0</span><span class="p">)</span> \
+        <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+    <span class="n">batch</span><span class="o">.</span><span class="n">add_transaction</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+
+<span class="c1"># Submit with progress tracking</span>
+<span class="k">def</span> <span class="nf">on_progress</span><span class="p">(</span><span class="n">completed</span><span class="p">,</span> <span class="n">total</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Progress: </span><span class="si">{</span><span class="n">completed</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">completed</span><span class="o">/</span><span class="n">total</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%)&quot;</span><span class="p">)</span>
+
+<span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">batch</span><span class="o">.</span><span class="n">submit_all_async</span><span class="p">(</span>
+    <span class="n">submit_fn</span><span class="o">=</span><span class="n">client</span><span class="o">.</span><span class="n">submit_transaction</span><span class="p">,</span>
+    <span class="n">on_progress</span><span class="o">=</span><span class="n">on_progress</span>
+<span class="p">)</span>
+
+<span class="c1"># Check results</span>
+<span class="n">successes</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Completed: </span><span class="si">{</span><span class="n">successes</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> transactions&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="transaction-validation">
+<h3>Transaction Validation<a class="headerlink" href="#transaction-validation" title="Link to this heading"></a></h3>
+<p>Validate transactions before submission:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.transactions</span> <span class="kn">import</span> <span class="n">TransactionValidator</span><span class="p">,</span> <span class="n">ValidationError</span>
+
+<span class="n">validator</span> <span class="o">=</span> <span class="n">TransactionValidator</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">errors</span> <span class="o">=</span> <span class="n">validator</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">transaction</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Validation errors:&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">error</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Transaction is valid, submit it</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">submit_transaction</span><span class="p">(</span><span class="n">transaction</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">ValidationError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Validation failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="transaction-monitoring">
+<h3>Transaction Monitoring<a class="headerlink" href="#transaction-monitoring" title="Link to this heading"></a></h3>
+<p>Monitor transaction status in real-time:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">sdk.transactions</span> <span class="kn">import</span> <span class="n">TransactionMonitor</span><span class="p">,</span> <span class="n">TransactionStatus</span>
+
+<span class="c1"># Create monitor</span>
+<span class="n">monitor</span> <span class="o">=</span> <span class="n">TransactionMonitor</span><span class="p">(</span><span class="n">required_confirmations</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># Submit and track</span>
+<span class="n">tx_hash</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">submit_transaction</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="n">record</span> <span class="o">=</span> <span class="n">monitor</span><span class="o">.</span><span class="n">track</span><span class="p">(</span>
+    <span class="n">tx_hash</span><span class="p">,</span>
+    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;transfer&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;amount&quot;</span><span class="p">:</span> <span class="mf">100.0</span><span class="p">,</span>
+        <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+
+<span class="c1"># Wait for confirmation with timeout</span>
+<span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">monitor</span><span class="o">.</span><span class="n">wait_for_confirmation</span><span class="p">(</span>
+    <span class="n">tx_hash</span><span class="p">,</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span>
+    <span class="n">poll_interval</span><span class="o">=</span><span class="mf">5.0</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span><span class="p">:</span>
+    <span class="n">record</span> <span class="o">=</span> <span class="n">monitor</span><span class="o">.</span><span class="n">get_record</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">)</span>
+    <span class="n">duration</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">duration_seconds</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Confirmed in </span><span class="si">{</span><span class="n">duration</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds&quot;</span><span class="p">)</span>
+<span class="k">elif</span> <span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">TIMEOUT</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Transaction timed out&quot;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction failed: </span><span class="si">{</span><span class="n">record</span><span class="o">.</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="best-practices">
+<h2>Best Practices<a class="headerlink" href="#best-practices" title="Link to this heading"></a></h2>
+<section id="always-validate">
+<h3>1. Always Validate<a class="headerlink" href="#always-validate" title="Link to this heading"></a></h3>
+<p>Validate transactions before submission to catch errors early:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">validator</span> <span class="o">=</span> <span class="n">TransactionValidator</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">errors</span> <span class="o">=</span> <span class="n">validator</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+    <span class="c1"># Handle validation errors</span>
+    <span class="k">return</span>
+</pre></div>
+</div>
+</section>
+<section id="use-batch-processing">
+<h3>2. Use Batch Processing<a class="headerlink" href="#use-batch-processing" title="Link to this heading"></a></h3>
+<p>For multiple transactions, use batch processing for better performance:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Good: Use batch processing</span>
+<span class="n">batch</span> <span class="o">=</span> <span class="n">BatchTransactionBuilder</span><span class="p">(</span><span class="n">max_concurrent</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">tx</span> <span class="ow">in</span> <span class="n">transactions</span><span class="p">:</span>
+    <span class="n">batch</span><span class="o">.</span><span class="n">add_transaction</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">batch</span><span class="o">.</span><span class="n">submit_all_async</span><span class="p">(</span><span class="n">submit_fn</span><span class="p">)</span>
+
+<span class="c1"># Avoid: Sequential submission</span>
+<span class="c1"># for tx in transactions:</span>
+<span class="c1">#     await submit_fn(tx)  # Slow!</span>
+</pre></div>
+</div>
+</section>
+<section id="set-appropriate-fees">
+<h3>3. Set Appropriate Fees<a class="headerlink" href="#set-appropriate-fees" title="Link to this heading"></a></h3>
+<p>Always set transaction fees to ensure timely processing:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tx</span> <span class="o">=</span> <span class="n">TransactionBuilder</span><span class="p">()</span> \
+    <span class="o">.</span><span class="n">transfer</span><span class="p">(</span><span class="n">from_addr</span><span class="p">,</span> <span class="n">to_addr</span><span class="p">,</span> <span class="n">amount</span><span class="p">)</span> \
+    <span class="o">.</span><span class="n">with_fee</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>  <span class="c1"># Set appropriate fee \</span>
+    <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="monitor-important-transactions">
+<h3>4. Monitor Important Transactions<a class="headerlink" href="#monitor-important-transactions" title="Link to this heading"></a></h3>
+<p>Use transaction monitoring for critical operations:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">monitor</span> <span class="o">=</span> <span class="n">TransactionMonitor</span><span class="p">(</span><span class="n">required_confirmations</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">tx_hash</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">submit_transaction</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="n">monitor</span><span class="o">.</span><span class="n">track</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">)</span>
+
+<span class="c1"># Wait for confirmation</span>
+<span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">monitor</span><span class="o">.</span><span class="n">wait_for_confirmation</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="handle-errors-gracefully">
+<h3>5. Handle Errors Gracefully<a class="headerlink" href="#handle-errors-gracefully" title="Link to this heading"></a></h3>
+<p>Always handle transaction errors:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">try</span><span class="p">:</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">submit_transaction</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid transaction: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">ConnectionError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Network error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unexpected error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="common-pitfalls">
+<h2>Common Pitfalls<a class="headerlink" href="#common-pitfalls" title="Link to this heading"></a></h2>
+<section id="not-checking-balance">
+<h3>1. Not Checking Balance<a class="headerlink" href="#not-checking-balance" title="Link to this heading"></a></h3>
+<p>Always ensure sufficient balance before creating transactions.</p>
+</section>
+<section id="ignoring-validation-errors">
+<h3>2. Ignoring Validation Errors<a class="headerlink" href="#ignoring-validation-errors" title="Link to this heading"></a></h3>
+<p>Don’t skip validation - it catches errors before they reach the blockchain.</p>
+</section>
+<section id="blocking-async-code">
+<h3>3. Blocking Async Code<a class="headerlink" href="#blocking-async-code" title="Link to this heading"></a></h3>
+<p>When using async methods, don’t block the event loop:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Good: Use async properly</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">process_transactions</span><span class="p">():</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">batch</span><span class="o">.</span><span class="n">submit_all_async</span><span class="p">(</span><span class="n">submit_fn</span><span class="p">)</span>
+
+<span class="c1"># Bad: Mixing sync and async</span>
+<span class="c1"># results = batch.submit_all_async(submit_fn)  # Missing await!</span>
+</pre></div>
+</div>
+</section>
+<section id="not-setting-timeouts">
+<h3>4. Not Setting Timeouts<a class="headerlink" href="#not-setting-timeouts" title="Link to this heading"></a></h3>
+<p>Always set timeouts when waiting for confirmations:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Good: Set timeout</span>
+<span class="n">status</span> <span class="o">=</span> <span class="k">await</span> <span class="n">monitor</span><span class="o">.</span><span class="n">wait_for_confirmation</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">60.0</span><span class="p">)</span>
+
+<span class="c1"># Bad: No timeout (could wait forever)</span>
+<span class="c1"># status = await monitor.wait_for_confirmation(tx_hash)</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../metagraph.html" class="btn btn-neutral float-left" title="Metagraph API" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="subnet_development.html" class="btn btn-neutral float-right" title="Subnet Development Guide" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, ModernTensor Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

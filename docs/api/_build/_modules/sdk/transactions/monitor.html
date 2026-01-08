@@ -1,0 +1,457 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>sdk.transactions.monitor &mdash; ModernTensor SDK 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            ModernTensor SDK
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../getting_started.html">Getting Started with ModernTensor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../transactions.html">Transaction System API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../axon.html">Axon Server API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../dendrite.html">Dendrite Client API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../metagraph.html">Metagraph API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/transaction_usage.html">Transaction Usage Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/subnet_development.html">Subnet Development Guide</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">ModernTensor SDK</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">sdk.transactions.monitor</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for sdk.transactions.monitor</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Transaction Monitor</span>
+
+<span class="sd">Monitors transaction status and provides real-time updates.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">List</span>
+<span class="kn">from</span> <span class="nn">enum</span> <span class="kn">import</span> <span class="n">Enum</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="TransactionStatus">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionStatus">[docs]</a>
+<span class="k">class</span> <span class="nc">TransactionStatus</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transaction status states.&quot;&quot;&quot;</span>
+    
+    <span class="n">PENDING</span> <span class="o">=</span> <span class="s2">&quot;pending&quot;</span>
+    <span class="n">SUBMITTED</span> <span class="o">=</span> <span class="s2">&quot;submitted&quot;</span>
+    <span class="n">CONFIRMED</span> <span class="o">=</span> <span class="s2">&quot;confirmed&quot;</span>
+    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span>
+    <span class="n">TIMEOUT</span> <span class="o">=</span> <span class="s2">&quot;timeout&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="TransactionRecord">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionRecord">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">TransactionRecord</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Record of a monitored transaction.&quot;&quot;&quot;</span>
+    
+    <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="n">TransactionStatus</span> <span class="o">=</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">PENDING</span>
+    <span class="n">submitted_at</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">datetime</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">confirmed_at</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">datetime</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">block_number</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">confirmations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    
+<div class="viewcode-block" id="TransactionRecord.duration_seconds">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionRecord.duration_seconds">[docs]</a>
+    <span class="k">def</span> <span class="nf">duration_seconds</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get duration from submission to confirmation.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">submitted_at</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">confirmed_at</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">confirmed_at</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">submitted_at</span><span class="p">)</span><span class="o">.</span><span class="n">total_seconds</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="TransactionMonitor">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor">[docs]</a>
+<span class="k">class</span> <span class="nc">TransactionMonitor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Monitor transaction status and lifecycle.</span>
+<span class="sd">    </span>
+<span class="sd">    Tracks:</span>
+<span class="sd">    - Transaction submission</span>
+<span class="sd">    - Confirmation status</span>
+<span class="sd">    - Block inclusion</span>
+<span class="sd">    - Failures and retries</span>
+<span class="sd">    </span>
+<span class="sd">    Example:</span>
+<span class="sd">        ```python</span>
+<span class="sd">        monitor = TransactionMonitor()</span>
+<span class="sd">        </span>
+<span class="sd">        # Submit transaction</span>
+<span class="sd">        tx_hash = await client.submit_transaction(tx)</span>
+<span class="sd">        monitor.track(tx_hash, metadata={&quot;type&quot;: &quot;transfer&quot;})</span>
+<span class="sd">        </span>
+<span class="sd">        # Wait for confirmation</span>
+<span class="sd">        status = await monitor.wait_for_confirmation(tx_hash, timeout=60)</span>
+<span class="sd">        ```</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    
+<div class="viewcode-block" id="TransactionMonitor.__init__">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.__init__">[docs]</a>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">required_confirmations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize monitor.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            required_confirmations: Number of confirmations required</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">required_confirmations</span> <span class="o">=</span> <span class="n">required_confirmations</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">TransactionRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span></div>
+
+        
+<div class="viewcode-block" id="TransactionMonitor.track">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.track">[docs]</a>
+    <span class="k">def</span> <span class="nf">track</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TransactionRecord</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Start tracking a transaction.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            metadata: Optional metadata to store</span>
+<span class="sd">            </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            Transaction record</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">record</span> <span class="o">=</span> <span class="n">TransactionRecord</span><span class="p">(</span>
+            <span class="n">tx_hash</span><span class="o">=</span><span class="n">tx_hash</span><span class="p">,</span>
+            <span class="n">submitted_at</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(),</span>
+            <span class="n">metadata</span><span class="o">=</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span> <span class="o">=</span> <span class="n">record</span>
+        
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Started tracking transaction: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">record</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.update_status">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.update_status">[docs]</a>
+    <span class="k">def</span> <span class="nf">update_status</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">status</span><span class="p">:</span> <span class="n">TransactionStatus</span><span class="p">,</span>
+        <span class="n">block_number</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Update transaction status.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            status: New status</span>
+<span class="sd">            block_number: Block number if confirmed</span>
+<span class="sd">            error: Error message if failed</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">tx_hash</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction not tracked: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+        
+        <span class="n">record</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">status</span>
+        
+        <span class="k">if</span> <span class="n">block_number</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">block_number</span> <span class="o">=</span> <span class="n">block_number</span>
+        
+        <span class="k">if</span> <span class="n">error</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">error</span> <span class="o">=</span> <span class="n">error</span>
+        
+        <span class="k">if</span> <span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">confirmed_at</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updated transaction </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.update_confirmations">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.update_confirmations">[docs]</a>
+    <span class="k">def</span> <span class="nf">update_confirmations</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">confirmations</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Update confirmation count.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            confirmations: Number of confirmations</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">tx_hash</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">:</span>
+            <span class="k">return</span>
+        
+        <span class="n">record</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">confirmations</span> <span class="o">=</span> <span class="n">confirmations</span>
+        
+        <span class="k">if</span> <span class="n">confirmations</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">required_confirmations</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">record</span><span class="o">.</span><span class="n">confirmed_at</span><span class="p">:</span>
+                <span class="n">record</span><span class="o">.</span><span class="n">confirmed_at</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.get_status">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.get_status">[docs]</a>
+    <span class="k">def</span> <span class="nf">get_status</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">TransactionStatus</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get transaction status.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            Transaction status or None if not tracked</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">tx_hash</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span><span class="o">.</span><span class="n">status</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.get_record">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.get_record">[docs]</a>
+    <span class="k">def</span> <span class="nf">get_record</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">TransactionRecord</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get full transaction record.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            Transaction record or None if not tracked</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">)</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.wait_for_confirmation">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.wait_for_confirmation">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">wait_for_confirmation</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tx_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+        <span class="n">poll_interval</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+        <span class="n">check_fn</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TransactionStatus</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Wait for transaction confirmation.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx_hash: Transaction hash</span>
+<span class="sd">            timeout: Maximum wait time in seconds</span>
+<span class="sd">            poll_interval: Polling interval in seconds</span>
+<span class="sd">            check_fn: Optional async function to check transaction status</span>
+<span class="sd">            </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            Final transaction status</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">tx_hash</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction not tracked: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">FAILED</span>
+        
+        <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Waiting for confirmation: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="k">while</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span> <span class="o">&lt;</span> <span class="n">timeout</span><span class="p">:</span>
+            <span class="n">record</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span>
+            
+            <span class="c1"># Check if already confirmed or failed</span>
+            <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction confirmed: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span>
+            
+            <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">FAILED</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction failed: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">FAILED</span>
+            
+            <span class="c1"># Poll status if check function provided</span>
+            <span class="k">if</span> <span class="n">check_fn</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">check_fn</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
+                        <span class="c1"># Update based on result</span>
+                        <span class="c1"># Implementation depends on what check_fn returns</span>
+                        <span class="k">pass</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error checking transaction status: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            
+            <span class="c1"># Wait before next poll</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">poll_interval</span><span class="p">)</span>
+        
+        <span class="c1"># Timeout</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Transaction confirmation timeout: </span><span class="si">{</span><span class="n">tx_hash</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">update_status</span><span class="p">(</span><span class="n">tx_hash</span><span class="p">,</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">TIMEOUT</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">TIMEOUT</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.get_statistics">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.get_statistics">[docs]</a>
+    <span class="k">def</span> <span class="nf">get_statistics</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Get monitoring statistics.</span>
+<span class="sd">        </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            Statistics dictionary</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">total</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                <span class="s2">&quot;by_status&quot;</span><span class="p">:</span> <span class="p">{},</span>
+                <span class="s2">&quot;average_confirmation_time&quot;</span><span class="p">:</span> <span class="kc">None</span>
+            <span class="p">}</span>
+        
+        <span class="c1"># Count by status</span>
+        <span class="n">by_status</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">value</span>
+            <span class="n">by_status</span><span class="p">[</span><span class="n">status</span><span class="p">]</span> <span class="o">=</span> <span class="n">by_status</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">status</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        
+        <span class="c1"># Calculate average confirmation time</span>
+        <span class="n">confirmed</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span> <span class="ow">and</span> <span class="n">r</span><span class="o">.</span><span class="n">duration_seconds</span><span class="p">()</span>
+        <span class="p">]</span>
+        
+        <span class="n">avg_time</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">confirmed</span><span class="p">:</span>
+            <span class="n">avg_time</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">duration_seconds</span><span class="p">()</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">confirmed</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">confirmed</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">total</span><span class="p">,</span>
+            <span class="s2">&quot;by_status&quot;</span><span class="p">:</span> <span class="n">by_status</span><span class="p">,</span>
+            <span class="s2">&quot;average_confirmation_time&quot;</span><span class="p">:</span> <span class="n">avg_time</span><span class="p">,</span>
+            <span class="s2">&quot;confirmed_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">confirmed</span><span class="p">)</span>
+        <span class="p">}</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.get_pending_transactions">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.get_pending_transactions">[docs]</a>
+    <span class="k">def</span> <span class="nf">get_pending_transactions</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">TransactionRecord</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get all pending transactions.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span>
+            <span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">status</span> <span class="ow">in</span> <span class="p">(</span><span class="n">TransactionStatus</span><span class="o">.</span><span class="n">PENDING</span><span class="p">,</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">SUBMITTED</span><span class="p">)</span>
+        <span class="p">]</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.clear_completed">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.clear_completed">[docs]</a>
+    <span class="k">def</span> <span class="nf">clear_completed</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove completed transactions from monitoring.&quot;&quot;&quot;</span>
+        <span class="n">to_remove</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">tx_hash</span> <span class="k">for</span> <span class="n">tx_hash</span><span class="p">,</span> <span class="n">record</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">status</span> <span class="ow">in</span> <span class="p">(</span><span class="n">TransactionStatus</span><span class="o">.</span><span class="n">CONFIRMED</span><span class="p">,</span> <span class="n">TransactionStatus</span><span class="o">.</span><span class="n">FAILED</span><span class="p">)</span>
+        <span class="p">]</span>
+        
+        <span class="k">for</span> <span class="n">tx_hash</span> <span class="ow">in</span> <span class="n">to_remove</span><span class="p">:</span>
+            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">[</span><span class="n">tx_hash</span><span class="p">]</span>
+        
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cleared </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">to_remove</span><span class="p">)</span><span class="si">}</span><span class="s2"> completed transactions&quot;</span><span class="p">)</span></div>
+
+    
+<div class="viewcode-block" id="TransactionMonitor.clear_all">
+<a class="viewcode-back" href="../../../transactions.html#sdk.transactions.monitor.TransactionMonitor.clear_all">[docs]</a>
+    <span class="k">def</span> <span class="nf">clear_all</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clear all transactions.&quot;&quot;&quot;</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_transactions</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cleared all </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> transactions&quot;</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, ModernTensor Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,274 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>sdk.metagraph.metagraph_datum &mdash; ModernTensor SDK 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            ModernTensor SDK
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../getting_started.html">Getting Started with ModernTensor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../transactions.html">Transaction System API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../axon.html">Axon Server API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../dendrite.html">Dendrite Client API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../metagraph.html">Metagraph API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/transaction_usage.html">Transaction Usage Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../guides/subnet_development.html">Subnet Development Guide</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">ModernTensor SDK</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">sdk.metagraph.metagraph_datum</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for sdk.metagraph.metagraph_datum</h1><div class="highlight"><pre>
+<span></span><span class="c1"># sdk/metagraph/metagraph_datum.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Định nghĩa cấu trúc Datum cho các thành phần trong Metagraph (Miner, Validator, Subnet)</span>
+<span class="sd">sử dụng pycardano và kế thừa PlutusData.</span>
+<span class="sd">(Phiên bản cập nhật theo gợi ý và sử dụng settings)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">from</span> <span class="nn">sdk.compat.pycardano</span> <span class="kn">import</span> <span class="n">PlutusData</span><span class="p">,</span> <span class="n">Redeemer</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="c1"># --- Import settings để lấy divisor ---</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">sdk.config.settings</span> <span class="kn">import</span> <span class="n">settings</span>
+
+    <span class="n">DATUM_INT_DIVISOR</span> <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="n">METAGRAPH_DATUM_INT_DIVISOR</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="s2">&quot;Warning: Could not import settings for DATUM_INT_DIVISOR. Using default 1_000_000.0&quot;</span>
+    <span class="p">)</span>
+    <span class="n">DATUM_INT_DIVISOR</span> <span class="o">=</span> <span class="mf">1_000_000.0</span>
+
+<span class="c1"># --- Định nghĩa các hằng số trạng thái ---</span>
+<span class="n">STATUS_INACTIVE</span> <span class="o">=</span> <span class="mi">0</span>  <span class="c1"># Chưa đăng ký hoặc đã hủy đăng ký</span>
+<span class="n">STATUS_ACTIVE</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># Đang hoạt động</span>
+<span class="n">STATUS_JAILED</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># Bị phạt, tạm khóa hoạt động</span>
+
+
+<div class="viewcode-block" id="MinerDatum">
+<a class="viewcode-back" href="../../../metagraph.html#sdk.metagraph.metagraph_datum.MinerDatum">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">MinerDatum</span><span class="p">(</span><span class="n">PlutusData</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Datum lưu trữ trạng thái của một Miner trên blockchain.&quot;&quot;&quot;</span>
+
+    <span class="n">CONSTR_ID</span> <span class="o">=</span> <span class="mi">0</span> <span class="c1"># type: ignore</span>
+    <span class="n">uid</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">subnet_uid</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">stake</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">scaled_last_performance</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">scaled_trust_score</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">accumulated_rewards</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">last_update_slot</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Slot cuối cùng Datum này được cập nhật</span>
+    <span class="n">performance_history_hash</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">wallet_addr_hash</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># 0: Inactive, 1: Active, 2: Jailed</span>
+    <span class="n">registration_slot</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">api_endpoint</span><span class="p">:</span> <span class="nb">bytes</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">trust_score</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về trust score dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_trust_score</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">last_performance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về performance dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_last_performance</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span></div>
+
+
+
+<div class="viewcode-block" id="ValidatorDatum">
+<a class="viewcode-back" href="../../../metagraph.html#sdk.metagraph.metagraph_datum.ValidatorDatum">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">ValidatorDatum</span><span class="p">(</span><span class="n">PlutusData</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Datum lưu trữ trạng thái của một Validator trên blockchain.&quot;&quot;&quot;</span>
+
+    <span class="n">CONSTR_ID</span> <span class="o">=</span> <span class="mi">0</span> <span class="c1"># type: ignore</span>
+    <span class="n">uid</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">subnet_uid</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">stake</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">scaled_last_performance</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">scaled_trust_score</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">accumulated_rewards</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">last_update_slot</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">performance_history_hash</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">wallet_addr_hash</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># 0: Inactive, 1: Active, 2: Jailed</span>
+    <span class="n">registration_slot</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">api_endpoint</span><span class="p">:</span> <span class="nb">bytes</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">trust_score</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về trust score dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_trust_score</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">last_performance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về performance dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_last_performance</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span></div>
+
+
+
+<div class="viewcode-block" id="SubnetStaticDatum">
+<a class="viewcode-back" href="../../../metagraph.html#sdk.metagraph.metagraph_datum.SubnetStaticDatum">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">SubnetStaticDatum</span><span class="p">(</span><span class="n">PlutusData</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Datum lưu trữ thông tin tĩnh, ít thay đổi của một Subnet.&quot;&quot;&quot;</span>
+
+    <span class="n">CONSTR_ID</span> <span class="o">=</span> <span class="mi">0</span> <span class="c1"># type: ignore</span>
+    <span class="n">net_uid</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">owner_addr_hash</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">max_miners</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">max_validators</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">immunity_period_slots</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">creation_slot</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">bytes</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">min_stake_miner</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">min_stake_validator</span><span class="p">:</span> <span class="nb">int</span></div>
+
+    <span class="c1"># governance_mechanism: int</span>
+    <span class="c1"># consensus_params_hash: Optional[bytes]</span>
+
+
+<div class="viewcode-block" id="SubnetDynamicDatum">
+<a class="viewcode-back" href="../../../metagraph.html#sdk.metagraph.metagraph_datum.SubnetDynamicDatum">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">SubnetDynamicDatum</span><span class="p">(</span><span class="n">PlutusData</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Datum lưu trữ thông tin động, thường xuyên thay đổi của một Subnet.&quot;&quot;&quot;</span>
+
+    <span class="n">CONSTR_ID</span> <span class="o">=</span> <span class="mi">0</span> <span class="c1"># type: ignore</span>
+    <span class="n">net_uid</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">scaled_weight</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">scaled_performance</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">current_epoch</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">registration_open</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">reg_cost</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">scaled_incentive_ratio</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># Đã scale (x DIVISOR)</span>
+    <span class="n">last_update_slot</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">total_stake</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">validator_count</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">miner_count</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="c1"># emission_per_epoch: int</span>
+    <span class="c1"># activity_score: int</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">weight</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về weight dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_weight</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">performance</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Trả về performance dạng float.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaled_performance</span> <span class="o">/</span> <span class="n">DATUM_INT_DIVISOR</span>
+        <span class="p">)</span>  <span class="c1"># &lt;&lt;&lt;--- Sử dụng divisor từ settings</span></div>
+
+
+
+<span class="c1"># --- Redeemer Definitions (Ví dụ) ---</span>
+<span class="c1"># @dataclass</span>
+<span class="c1"># class UpdateMinerRedeemer(Redeemer):</span>
+<span class="c1">#     # Redeemer tag (0, 1, 2...) for different actions</span>
+<span class="c1">#     tag: int = 0</span>
+<span class="c1">#     # Data needed by the script for this action</span>
+<span class="c1">#     new_performance: int</span>
+<span class="c1">#     new_trust_score: int</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, ModernTensor Team.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
