@@ -9,7 +9,7 @@ import traceback
 from rich.console import Console
 from cryptography.fernet import Fernet
 
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Network,
     Address,
     Asset,

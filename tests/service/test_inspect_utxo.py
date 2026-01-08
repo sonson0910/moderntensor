@@ -2,7 +2,7 @@
 
 import os
 import pytest
-from sdk.compat.pycardano import Address
+from sdk.compat.luxtensor_types import Address
 from sdk.config.settings import settings, logger  # Global logger/settings
 from sdk.service.context import get_chain_context
 

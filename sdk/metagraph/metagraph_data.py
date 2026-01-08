@@ -2,7 +2,7 @@
 import logging
 from typing import List, Dict, Any, Optional, Type, Tuple, DefaultDict
 from collections import defaultdict  # Import defaultdict
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Address,
     BlockFrostChainContext,
     UTxO,

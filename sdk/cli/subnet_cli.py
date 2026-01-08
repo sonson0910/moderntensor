@@ -3,7 +3,7 @@ import os
 from sdk.config.settings import settings
 from sdk.service.subnet_manager import SubnetManager
 from sdk.keymanager.wallet_manager import WalletManager
-from sdk.compat.pycardano import BlockFrostChainContext, Network
+from sdk.compat.luxtensor_types import BlockFrostChainContext, Network
 
 
 @click.group(name="subnet")

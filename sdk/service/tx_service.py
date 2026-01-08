@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Address,
     ExtendedSigningKey,
     Network,
@@ -229,7 +229,7 @@ def send_token(
     pid_bytes = bytes.fromhex(policy_id_hex)
     aname_bytes = asset_name.encode("utf-8")
 
-    from sdk.compat.pycardano import ScriptHash, AssetName
+    from sdk.compat.luxtensor_types import ScriptHash, AssetName
 
     policy_obj = ScriptHash.from_primitive(pid_bytes)
     asset_obj = AssetName(aname_bytes)

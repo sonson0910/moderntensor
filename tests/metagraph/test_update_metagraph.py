@@ -1,6 +1,6 @@
 # tests/metagraph/test_update_metagraph.py
 import pytest
-from sdk.compat.pycardano import TransactionId, Network, BlockFrostChainContext, Address, Redeemer
+from sdk.compat.luxtensor_types import TransactionId, Network, BlockFrostChainContext, Address, Redeemer
 
 # Import các thành phần đã cập nhật
 from sdk.metagraph.metagraph_datum import MinerDatum, STATUS_ACTIVE  # Import STATUS_*

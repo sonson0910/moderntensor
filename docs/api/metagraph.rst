@@ -130,7 +130,7 @@ Fetching Miner Data
 .. code-block:: python
 
    from sdk.metagraph import get_all_miner_data
-   from sdk.compat.pycardano import BlockFrostChainContext, ScriptHash, Network
+   from sdk.compat.luxtensor_types import BlockFrostChainContext, ScriptHash, Network
    
    async def fetch_miners():
        # Connect to blockchain
@@ -378,7 +378,7 @@ Production Example: Metagraph Sync Service
 
    import asyncio
    from sdk.metagraph import get_all_miner_data, get_all_validator_data
-   from sdk.compat.pycardano import BlockFrostChainContext, ScriptHash, Network
+   from sdk.compat.luxtensor_types import BlockFrostChainContext, ScriptHash, Network
    import logging
    
    logging.basicConfig(level=logging.INFO)

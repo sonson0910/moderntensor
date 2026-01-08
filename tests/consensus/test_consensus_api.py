@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock  # Dùng để mock ValidatorNode
 from fastapi.testclient import TestClient
 
 # --- PyCardano imports ---
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     PaymentKeyPair,
     PaymentSigningKey,
     PaymentVerificationKey,

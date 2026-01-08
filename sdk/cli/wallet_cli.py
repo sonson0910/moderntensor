@@ -15,7 +15,7 @@ from collections import defaultdict
 # This ensures logging is configured before other modules get loggers
 from sdk.config.settings import settings, logger  # Load settings for defaults
 
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Network,
     PlutusV3Script,
     ScriptHash,

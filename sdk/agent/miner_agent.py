@@ -32,7 +32,7 @@ from sdk.service.utxos import get_utxo_from_str  # Hàm tìm UTXO theo UID
 # from sdk.smartcontract.validator import read_validator  # REMOVED: Cardano-only
 
 # Import các kiểu PyCardano - DEPRECATED
-# from sdk.compat.pycardano import (
+# from sdk.compat.luxtensor_types import (
 #     BlockFrostChainContext,
 #     Network,
 #     ExtendedSigningKey,
