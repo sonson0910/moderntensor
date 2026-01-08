@@ -10,12 +10,12 @@ from .balance import (
     BalanceError,
     format_balance,
     parse_balance,
-    tao_to_rao,
-    rao_to_tao,
+    mdt_to_wei,
+    wei_to_mdt,
     validate_balance,
     calculate_percentage,
     sum_balances,
-    RAO_PER_TAO,
+    WEI_PER_MDT,
 )
 
 # Weight utilities
@@ -56,12 +56,12 @@ __all__ = [
     "BalanceError",
     "format_balance",
     "parse_balance",
-    "tao_to_rao",
-    "rao_to_tao",
+    "mdt_to_wei",
+    "wei_to_mdt",
     "validate_balance",
     "calculate_percentage",
     "sum_balances",
-    "RAO_PER_TAO",
+    "WEI_PER_MDT",
     # Weight
     "WeightError",
     "normalize_weights",

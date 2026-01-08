@@ -2,7 +2,7 @@
 Balance Utilities Module
 
 Provides utilities for token calculations, balance formatting, and unit conversions.
-Supports TAO token operations with RAO (smallest unit) conversions.
+Supports MDT (ModernTensor Token) operations with wei (smallest unit) conversions.
 """
 
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
@@ -11,9 +11,9 @@ import re
 
 
 # Constants
-RAO_PER_TAO = 10**9  # 1 TAO = 1,000,000,000 RAO
+WEI_PER_MDT = 10**9  # 1 MDT = 1,000,000,000 wei
 MIN_BALANCE = 0
-MAX_BALANCE = 21_000_000 * RAO_PER_TAO  # Maximum supply in RAO
+MAX_BALANCE = 21_000_000 * WEI_PER_MDT  # Maximum supply in wei
 
 
 class BalanceError(Exception):
@@ -25,108 +25,108 @@ class Balance:
     """
     Represents a token balance with precise decimal arithmetic.
     
-    Internally stores balance in RAO (smallest unit) to avoid floating point errors.
+    Internally stores balance in wei (smallest unit) to avoid floating point errors.
     Provides methods for arithmetic operations and conversions.
     
     Examples:
-        >>> balance = Balance.from_tao(100.5)
-        >>> print(balance.tao)
+        >>> balance = Balance.from_mdt(100.5)
+        >>> print(balance.mdt)
         100.5
-        >>> print(balance.rao)
+        >>> print(balance.wei)
         100500000000
         
-        >>> b1 = Balance.from_tao(50)
-        >>> b2 = Balance.from_tao(25.5)
+        >>> b1 = Balance.from_mdt(50)
+        >>> b2 = Balance.from_mdt(25.5)
         >>> total = b1 + b2
-        >>> print(total.tao)
+        >>> print(total.mdt)
         75.5
     """
     
-    def __init__(self, rao: int = 0):
+    def __init__(self, wei: int = 0):
         """
-        Initialize Balance with RAO amount.
+        Initialize Balance with wei amount.
         
         Args:
-            rao: Amount in RAO (smallest unit)
+            wei: Amount in wei (smallest unit)
             
         Raises:
-            BalanceError: If rao is negative or exceeds maximum supply
+            BalanceError: If wei is negative or exceeds maximum supply
         """
-        if rao < MIN_BALANCE:
-            raise BalanceError(f"Balance cannot be negative: {rao}")
-        if rao > MAX_BALANCE:
-            raise BalanceError(f"Balance exceeds maximum supply: {rao}")
-        self._rao = int(rao)
+        if wei < MIN_BALANCE:
+            raise BalanceError(f"Balance cannot be negative: {wei}")
+        if wei > MAX_BALANCE:
+            raise BalanceError(f"Balance exceeds maximum supply: {wei}")
+        self._wei = int(wei)
     
     @classmethod
-    def from_tao(cls, tao: Union[float, str, Decimal]) -> "Balance":
+    def from_mdt(cls, mdt: Union[float, str, Decimal]) -> "Balance":
         """
-        Create Balance from TAO amount.
+        Create Balance from MDT amount.
         
         Args:
-            tao: Amount in TAO
+            mdt: Amount in MDT
             
         Returns:
             Balance instance
             
         Examples:
-            >>> Balance.from_tao(1.5)
-            Balance(1500000000 RAO)
-            >>> Balance.from_tao("0.000000001")
-            Balance(1 RAO)
+            >>> Balance.from_mdt(1.5)
+            Balance(1500000000 wei)
+            >>> Balance.from_mdt("0.000000001")
+            Balance(1 wei)
         """
         try:
-            decimal_tao = Decimal(str(tao))
-            rao = int(decimal_tao * RAO_PER_TAO)
-            return cls(rao)
+            decimal_mdt = Decimal(str(mdt))
+            wei = int(decimal_mdt * WEI_PER_MDT)
+            return cls(wei)
         except (InvalidOperation, ValueError) as e:
-            raise BalanceError(f"Invalid TAO amount: {tao}") from e
+            raise BalanceError(f"Invalid MDT amount: {mdt}") from e
     
     @classmethod
-    def from_rao(cls, rao: int) -> "Balance":
+    def from_wei(cls, wei: int) -> "Balance":
         """
-        Create Balance from RAO amount.
+        Create Balance from wei amount.
         
         Args:
-            rao: Amount in RAO
+            wei: Amount in wei
             
         Returns:
             Balance instance
         """
-        return cls(rao)
+        return cls(wei)
     
     @property
-    def rao(self) -> int:
-        """Get balance in RAO."""
-        return self._rao
+    def wei(self) -> int:
+        """Get balance in wei."""
+        return self._wei
     
     @property
-    def tao(self) -> Decimal:
-        """Get balance in TAO with full precision."""
-        return Decimal(self._rao) / Decimal(RAO_PER_TAO)
+    def mdt(self) -> Decimal:
+        """Get balance in MDT with full precision."""
+        return Decimal(self._wei) / Decimal(WEI_PER_MDT)
     
     @property
-    def tao_float(self) -> float:
-        """Get balance in TAO as float (may lose precision)."""
-        return float(self.tao)
+    def mdt_float(self) -> float:
+        """Get balance in MDT as float (may lose precision)."""
+        return float(self.mdt)
     
     def __add__(self, other: "Balance") -> "Balance":
         """Add two balances."""
         if not isinstance(other, Balance):
             raise TypeError(f"Cannot add Balance with {type(other)}")
-        return Balance(self._rao + other._rao)
+        return Balance(self._wei + other._wei)
     
     def __sub__(self, other: "Balance") -> "Balance":
         """Subtract two balances."""
         if not isinstance(other, Balance):
             raise TypeError(f"Cannot subtract {type(other)} from Balance")
-        return Balance(self._rao - other._rao)
+        return Balance(self._wei - other._wei)
     
     def __mul__(self, multiplier: Union[int, float, Decimal]) -> "Balance":
         """Multiply balance by a scalar."""
         try:
-            result_rao = int(Decimal(self._rao) * Decimal(str(multiplier)))
-            return Balance(result_rao)
+            result_wei = int(Decimal(self._wei) * Decimal(str(multiplier)))
+            return Balance(result_wei)
         except (InvalidOperation, ValueError) as e:
             raise BalanceError(f"Invalid multiplier: {multiplier}") from e
     
@@ -135,8 +135,8 @@ class Balance:
         try:
             if Decimal(str(divisor)) == 0:
                 raise BalanceError("Cannot divide by zero")
-            result_rao = int(Decimal(self._rao) / Decimal(str(divisor)))
-            return Balance(result_rao)
+            result_wei = int(Decimal(self._wei) / Decimal(str(divisor)))
+            return Balance(result_wei)
         except (InvalidOperation, ValueError) as e:
             raise BalanceError(f"Invalid divisor: {divisor}") from e
     
@@ -144,13 +144,13 @@ class Balance:
         """Check equality."""
         if not isinstance(other, Balance):
             return False
-        return self._rao == other._rao
+        return self._wei == other._wei
     
     def __lt__(self, other: "Balance") -> bool:
         """Less than comparison."""
         if not isinstance(other, Balance):
             raise TypeError(f"Cannot compare Balance with {type(other)}")
-        return self._rao < other._rao
+        return self._wei < other._wei
     
     def __le__(self, other: "Balance") -> bool:
         """Less than or equal comparison."""
@@ -160,28 +160,28 @@ class Balance:
         """Greater than comparison."""
         if not isinstance(other, Balance):
             raise TypeError(f"Cannot compare Balance with {type(other)}")
-        return self._rao > other._rao
+        return self._wei > other._wei
     
     def __ge__(self, other: "Balance") -> bool:
         """Greater than or equal comparison."""
         return self == other or self > other
     
     def __str__(self) -> str:
-        """String representation in TAO."""
-        return format_balance(self._rao, unit="TAO")
+        """String representation in MDT."""
+        return format_balance(self._wei, unit="MDT")
     
     def __repr__(self) -> str:
         """Detailed representation."""
-        return f"Balance({self._rao} RAO)"
+        return f"Balance({self._wei} wei)"
     
     def __hash__(self) -> int:
         """Hash for use in sets and dicts."""
-        return hash(self._rao)
+        return hash(self._wei)
 
 
 def format_balance(
     amount: Union[int, float, Decimal, Balance],
-    unit: str = "TAO",
+    unit: str = "MDT",
     decimals: int = 9,
     include_unit: bool = True,
     thousands_separator: bool = True
@@ -190,9 +190,9 @@ def format_balance(
     Format balance for display.
     
     Args:
-        amount: Amount to format (RAO if int, TAO if float/Decimal, or Balance object)
-        unit: Unit to display ("TAO" or "RAO")
-        decimals: Number of decimal places (only for TAO)
+        amount: Amount to format (wei if int, MDT if float/Decimal, or Balance object)
+        unit: Unit to display ("MDT" or "wei")
+        decimals: Number of decimal places (only for MDT)
         include_unit: Whether to include unit suffix
         thousands_separator: Whether to use comma separator
         
@@ -201,25 +201,25 @@ def format_balance(
         
     Examples:
         >>> format_balance(1500000000)
-        "1.500000000 TAO"
+        "1.500000000 MDT"
         >>> format_balance(1500000000, decimals=2)
-        "1.50 TAO"
-        >>> format_balance(1500000000, unit="RAO", include_unit=False)
+        "1.50 MDT"
+        >>> format_balance(1500000000, unit="wei", include_unit=False)
         "1,500,000,000"
     """
     # Convert to Balance object
     if isinstance(amount, Balance):
         balance = amount
     elif isinstance(amount, int):
-        balance = Balance.from_rao(amount)
+        balance = Balance.from_wei(amount)
     elif isinstance(amount, (float, Decimal)):
-        balance = Balance.from_tao(amount)
+        balance = Balance.from_mdt(amount)
     else:
         raise BalanceError(f"Unsupported amount type: {type(amount)}")
     
-    if unit.upper() == "TAO":
-        # Format as TAO
-        decimal_amount = balance.tao
+    if unit.upper() == "MDT":
+        # Format as MDT
+        decimal_amount = balance.mdt
         # Round to specified decimals
         rounded = decimal_amount.quantize(
             Decimal(10) ** -decimals, 
@@ -233,20 +233,20 @@ def format_balance(
             formatted = f"{rounded:.{decimals}f}"
         
         if include_unit:
-            formatted += " TAO"
+            formatted += " MDT"
     
-    elif unit.upper() == "RAO":
-        # Format as RAO (integer)
+    elif unit.upper() == "wei":
+        # Format as wei (integer)
         if thousands_separator:
-            formatted = f"{balance.rao:,}"
+            formatted = f"{balance.wei:,}"
         else:
-            formatted = str(balance.rao)
+            formatted = str(balance.wei)
         
         if include_unit:
-            formatted += " RAO"
+            formatted += " wei"
     
     else:
-        raise BalanceError(f"Unknown unit: {unit}. Use 'TAO' or 'RAO'")
+        raise BalanceError(f"Unknown unit: {unit}. Use 'MDT' or 'wei'")
     
     return formatted
 
@@ -256,10 +256,10 @@ def parse_balance(balance_str: str) -> Balance:
     Parse balance from string.
     
     Supports formats:
-    - "1.5 TAO" or "1.5TAO"
-    - "1500000000 RAO" or "1500000000RAO"
-    - "1,500,000,000" (assumes RAO if no decimal point)
-    - "1.5" (assumes TAO)
+    - "1.5 MDT" or "1.5MDT"
+    - "1500000000 wei" or "1500000000wei"
+    - "1,500,000,000" (assumes wei if no decimal point)
+    - "1.5" (assumes MDT)
     
     Args:
         balance_str: Balance string to parse
@@ -268,25 +268,25 @@ def parse_balance(balance_str: str) -> Balance:
         Balance object
         
     Examples:
-        >>> parse_balance("1.5 TAO")
-        Balance(1500000000 RAO)
-        >>> parse_balance("1,500,000,000 RAO")
-        Balance(1500000000 RAO)
+        >>> parse_balance("1.5 MDT")
+        Balance(1500000000 wei)
+        >>> parse_balance("1,500,000,000 wei")
+        Balance(1500000000 wei)
     """
     # Remove whitespace and convert to uppercase
     balance_str = balance_str.strip()
     upper_str = balance_str.upper()
     
     # Check for explicit unit
-    if "TAO" in upper_str:
+    if "MDT" in upper_str:
         # Extract number part
         number_str = re.sub(r'[^\d.]', '', balance_str)
-        return Balance.from_tao(number_str)
+        return Balance.from_mdt(number_str)
     
-    elif "RAO" in upper_str:
+    elif "wei" in upper_str:
         # Extract number part
         number_str = re.sub(r'[^\d]', '', balance_str)
-        return Balance.from_rao(int(number_str))
+        return Balance.from_wei(int(number_str))
     
     else:
         # No explicit unit - infer from format
@@ -294,49 +294,49 @@ def parse_balance(balance_str: str) -> Balance:
         clean_str = balance_str.replace(',', '')
         
         if '.' in clean_str:
-            # Has decimal point - assume TAO
-            return Balance.from_tao(clean_str)
+            # Has decimal point - assume MDT
+            return Balance.from_mdt(clean_str)
         else:
-            # No decimal point - assume RAO
-            return Balance.from_rao(int(clean_str))
+            # No decimal point - assume wei
+            return Balance.from_wei(int(clean_str))
 
 
-def tao_to_rao(tao: Union[float, str, Decimal]) -> int:
+def tao_to_wei(tao: Union[float, str, Decimal]) -> int:
     """
-    Convert TAO to RAO.
+    Convert MDT to wei.
     
     Args:
-        tao: Amount in TAO
+        tao: Amount in MDT
         
     Returns:
-        Amount in RAO
+        Amount in wei
         
     Examples:
-        >>> tao_to_rao(1.5)
+        >>> tao_to_wei(1.5)
         1500000000
-        >>> tao_to_rao("0.000000001")
+        >>> tao_to_wei("0.000000001")
         1
     """
-    return Balance.from_tao(tao).rao
+    return Balance.from_mdt(tao).wei
 
 
-def rao_to_tao(rao: int) -> Decimal:
+def rao_to_mdt(rao: int) -> Decimal:
     """
-    Convert RAO to TAO.
+    Convert wei to MDT.
     
     Args:
-        rao: Amount in RAO
+        rao: Amount in wei
         
     Returns:
-        Amount in TAO (Decimal)
+        Amount in MDT (Decimal)
         
     Examples:
-        >>> rao_to_tao(1500000000)
+        >>> rao_to_mdt(1500000000)
         Decimal('1.5')
-        >>> rao_to_tao(1)
+        >>> rao_to_mdt(1)
         Decimal('0.000000001')
     """
-    return Balance.from_rao(rao).tao
+    return Balance.from_wei(rao).mdt
 
 
 def validate_balance(
@@ -356,33 +356,33 @@ def validate_balance(
         True if valid, False otherwise
         
     Examples:
-        >>> validate_balance(Balance.from_tao(100), min_balance=Balance.from_tao(10))
+        >>> validate_balance(Balance.from_mdt(100), min_balance=Balance.from_mdt(10))
         True
-        >>> validate_balance(Balance.from_tao(5), min_balance=Balance.from_tao(10))
+        >>> validate_balance(Balance.from_mdt(5), min_balance=Balance.from_mdt(10))
         False
     """
     # Convert to Balance objects
     if not isinstance(balance, Balance):
         if isinstance(balance, int):
-            balance = Balance.from_rao(balance)
+            balance = Balance.from_wei(balance)
         else:
-            balance = Balance.from_tao(balance)
+            balance = Balance.from_mdt(balance)
     
     if min_balance is not None:
         if not isinstance(min_balance, Balance):
             if isinstance(min_balance, int):
-                min_balance = Balance.from_rao(min_balance)
+                min_balance = Balance.from_wei(min_balance)
             else:
-                min_balance = Balance.from_tao(min_balance)
+                min_balance = Balance.from_mdt(min_balance)
         if balance < min_balance:
             return False
     
     if max_balance is not None:
         if not isinstance(max_balance, Balance):
             if isinstance(max_balance, int):
-                max_balance = Balance.from_rao(max_balance)
+                max_balance = Balance.from_wei(max_balance)
             else:
-                max_balance = Balance.from_tao(max_balance)
+                max_balance = Balance.from_mdt(max_balance)
         if balance > max_balance:
             return False
     
@@ -406,28 +406,28 @@ def calculate_percentage(
         Percentage (0-100)
         
     Examples:
-        >>> calculate_percentage(Balance.from_tao(25), Balance.from_tao(100))
+        >>> calculate_percentage(Balance.from_mdt(25), Balance.from_mdt(100))
         Decimal('25.00')
-        >>> calculate_percentage(Balance.from_tao(33.333), Balance.from_tao(100), decimals=3)
+        >>> calculate_percentage(Balance.from_mdt(33.333), Balance.from_mdt(100), decimals=3)
         Decimal('33.333')
     """
     # Convert to Balance objects
     if not isinstance(amount, Balance):
         if isinstance(amount, int):
-            amount = Balance.from_rao(amount)
+            amount = Balance.from_wei(amount)
         else:
-            amount = Balance.from_tao(amount)
+            amount = Balance.from_mdt(amount)
     
     if not isinstance(total, Balance):
         if isinstance(total, int):
-            total = Balance.from_rao(total)
+            total = Balance.from_wei(total)
         else:
-            total = Balance.from_tao(total)
+            total = Balance.from_mdt(total)
     
-    if total.rao == 0:
+    if total.wei == 0:
         return Decimal('0')
     
-    percentage = (Decimal(amount.rao) / Decimal(total.rao)) * 100
+    percentage = (Decimal(amount.wei) / Decimal(total.wei)) * 100
     return percentage.quantize(Decimal(10) ** -decimals, rounding=ROUND_DOWN)
 
 
@@ -442,10 +442,10 @@ def sum_balances(balances: list[Balance]) -> Balance:
         Total balance
         
     Examples:
-        >>> balances = [Balance.from_tao(10), Balance.from_tao(20), Balance.from_tao(30)]
+        >>> balances = [Balance.from_mdt(10), Balance.from_mdt(20), Balance.from_mdt(30)]
         >>> total = sum_balances(balances)
-        >>> print(total.tao)
+        >>> print(total.mdt)
         60
     """
-    total_rao = sum(b.rao for b in balances)
-    return Balance.from_rao(total_rao)
+    total_wei = sum(b.wei for b in balances)
+    return Balance.from_wei(total_wei)
