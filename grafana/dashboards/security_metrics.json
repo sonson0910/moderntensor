@@ -1,0 +1,284 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "moderntensor-security",
+    "title": "ModernTensor Security Metrics",
+    "tags": ["moderntensor", "security"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Authentication Failures",
+        "targets": [
+          {
+            "expr": "increase(moderntensor_auth_failures_total[5m])",
+            "refId": "A",
+            "legendFormat": "Failed Auth Attempts"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ],
+        "alert": {
+          "name": "High Auth Failures",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [10],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "60s",
+          "handler": 1,
+          "message": "High number of authentication failures detected",
+          "noDataState": "no_data"
+        }
+      },
+      {
+        "id": 2,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Rate Limit Violations",
+        "targets": [
+          {
+            "expr": "increase(moderntensor_rate_limit_violations_total[5m])",
+            "refId": "A",
+            "legendFormat": "Rate Limit Hits"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Blocked IPs",
+        "targets": [
+          {
+            "expr": "moderntensor_blocked_ips_total",
+            "refId": "A",
+            "legendFormat": "Blocked IPs"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "DDoS Protection Events",
+        "targets": [
+          {
+            "expr": "increase(moderntensor_ddos_events_total[5m])",
+            "refId": "A",
+            "legendFormat": "DDoS Events"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ],
+        "alert": {
+          "name": "DDoS Attack Detected",
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [5],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "60s",
+          "handler": 1,
+          "message": "Possible DDoS attack detected",
+          "noDataState": "no_data"
+        }
+      },
+      {
+        "id": 5,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "Active Connections",
+        "targets": [
+          {
+            "expr": "moderntensor_active_connections",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "Total Auth Attempts",
+        "targets": [
+          {
+            "expr": "moderntensor_auth_attempts_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "Security Alerts",
+        "targets": [
+          {
+            "expr": "moderntensor_security_alerts_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 5,
+                  "color": "yellow"
+                },
+                {
+                  "value": 10,
+                  "color": "red"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        },
+        "type": "graph",
+        "title": "Security Events Timeline",
+        "targets": [
+          {
+            "expr": "increase(moderntensor_security_events_total[1m])",
+            "refId": "A",
+            "legendFormat": "{{event_type}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Events/min"
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m"]
+    }
+  }
+}

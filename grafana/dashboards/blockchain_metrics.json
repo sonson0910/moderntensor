@@ -1,0 +1,234 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "moderntensor-blockchain",
+    "title": "ModernTensor Blockchain Metrics",
+    "tags": ["moderntensor", "blockchain"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Block Height",
+        "targets": [
+          {
+            "expr": "moderntensor_block_height",
+            "refId": "A",
+            "legendFormat": "Block Height"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Height"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Block Production Time",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_block_production_seconds_sum[5m])/rate(moderntensor_block_production_seconds_count[5m])",
+            "refId": "A",
+            "legendFormat": "Avg Block Time"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "s",
+            "label": "Time"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Transactions Per Second",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_transactions_total[1m])",
+            "refId": "A",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "TPS"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Transactions Per Block",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_transactions_per_block_sum[5m])/rate(moderntensor_transactions_per_block_count[5m])",
+            "refId": "A",
+            "legendFormat": "Avg TX/Block"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "Total Blocks",
+        "targets": [
+          {
+            "expr": "moderntensor_blocks_produced_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "Total Accounts",
+        "targets": [
+          {
+            "expr": "moderntensor_state_accounts_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 16
+        },
+        "type": "stat",
+        "title": "State Size",
+        "targets": [
+          {
+            "expr": "moderntensor_state_size_bytes",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "type": "graph",
+        "title": "Gas Usage",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_transaction_gas_used_sum[5m])/rate(moderntensor_transaction_gas_used_count[5m])",
+            "refId": "A",
+            "legendFormat": "Avg Gas Used"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Gas"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "type": "graph",
+        "title": "Block Size",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_block_size_bytes_sum[5m])/rate(moderntensor_block_size_bytes_count[5m])",
+            "refId": "A",
+            "legendFormat": "Avg Block Size"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "bytes",
+            "label": "Size"
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m"]
+    }
+  }
+}
