@@ -1,0 +1,214 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "moderntensor-consensus",
+    "title": "ModernTensor Consensus Metrics",
+    "tags": ["moderntensor", "consensus", "validators"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Active Validators",
+        "targets": [
+          {
+            "expr": "moderntensor_validators_active",
+            "refId": "A",
+            "legendFormat": "Active Validators"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Total Validator Stake",
+        "targets": [
+          {
+            "expr": "moderntensor_validator_stake_total",
+            "refId": "A",
+            "legendFormat": "Total Stake"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Stake"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Epoch Number",
+        "targets": [
+          {
+            "expr": "moderntensor_epoch_number",
+            "refId": "A",
+            "legendFormat": "Current Epoch"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Epoch"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Validator Rewards",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_validator_rewards_total[5m])",
+            "refId": "A",
+            "legendFormat": "Rewards/s"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Rewards"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "type": "graph",
+        "title": "Validator Penalties",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_validator_penalties_total[5m])",
+            "refId": "A",
+            "legendFormat": "Penalties/s"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Penalties"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "type": "graph",
+        "title": "AI Tasks Execution",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_ai_tasks_completed_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Tasks/s"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "type": "graph",
+        "title": "AI Task Execution Time",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_ai_task_execution_seconds_sum[5m])/rate(moderntensor_ai_task_execution_seconds_count[5m])",
+            "refId": "A",
+            "legendFormat": "Avg Execution Time"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "s",
+            "label": "Time"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "type": "stat",
+        "title": "Total AI Tasks",
+        "targets": [
+          {
+            "expr": "moderntensor_ai_tasks_submitted",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m"]
+    }
+  }
+}

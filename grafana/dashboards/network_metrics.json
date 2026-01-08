@@ -1,0 +1,207 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "moderntensor-network",
+    "title": "ModernTensor Network Metrics",
+    "tags": ["moderntensor", "network"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Connected Peers",
+        "targets": [
+          {
+            "expr": "moderntensor_peers_connected",
+            "refId": "A",
+            "legendFormat": "Peers"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Count"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "type": "graph",
+        "title": "Sync Progress",
+        "targets": [
+          {
+            "expr": "moderntensor_sync_progress_percent",
+            "refId": "A",
+            "legendFormat": "Sync %"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "percent",
+            "label": "Progress",
+            "max": 100,
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Network Bandwidth (Received)",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_network_bytes_received_total[1m])",
+            "refId": "A",
+            "legendFormat": "Bytes/s Received"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "Bps",
+            "label": "Bandwidth"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "type": "graph",
+        "title": "Network Bandwidth (Sent)",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_network_bytes_sent_total[1m])",
+            "refId": "A",
+            "legendFormat": "Bytes/s Sent"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "Bps",
+            "label": "Bandwidth"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "type": "graph",
+        "title": "Peer Messages (Received)",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_peer_messages_received_total[1m])",
+            "refId": "A",
+            "legendFormat": "{{message_type}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Messages/s"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "type": "graph",
+        "title": "Peer Messages (Sent)",
+        "targets": [
+          {
+            "expr": "rate(moderntensor_peer_messages_sent_total[1m])",
+            "refId": "A",
+            "legendFormat": "{{message_type}}"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Messages/s"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        },
+        "type": "table",
+        "title": "Network Summary",
+        "targets": [
+          {
+            "expr": "moderntensor_peers_connected",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "moderntensor_sync_progress_percent",
+            "refId": "B",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "sum(rate(moderntensor_network_bytes_received_total[5m]))",
+            "refId": "C",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "sum(rate(moderntensor_network_bytes_sent_total[5m]))",
+            "refId": "D",
+            "format": "table",
+            "instant": true
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m"]
+    }
+  }
+}

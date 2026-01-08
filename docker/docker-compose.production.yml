@@ -1,0 +1,303 @@
+# ModernTensor Production Stack
+# Complete production environment with monitoring and observability
+
+version: '3.8'
+
+services:
+  # ========== ModernTensor Nodes ==========
+  
+  # Validator Node (can be scaled)
+  validator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.production
+    image: moderntensor/validator:latest
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+    ports:
+      - "8545-8547:8545"  # RPC (load balanced)
+      - "30303-30305:30303"  # P2P
+      - "9090-9092:9090"  # Metrics
+    volumes:
+      - validator-data:/data
+      - ./config:/app/config:ro
+    environment:
+      - NODE_TYPE=validator
+      - MT_ENVIRONMENT=production
+      - MT_LOG_LEVEL=INFO
+      - MT_NETWORK=mainnet
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - PROMETHEUS_ENDPOINT=http://prometheus:9090
+    networks:
+      - moderntensor-prod
+      - monitoring
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+  
+  # Miner Node (can be scaled)
+  miner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.production
+    image: moderntensor/miner:latest
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    volumes:
+      - miner-data:/data
+      - ./config:/app/config:ro
+    environment:
+      - NODE_TYPE=miner
+      - MT_ENVIRONMENT=production
+      - MT_LOG_LEVEL=INFO
+      - MT_NETWORK=mainnet
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    networks:
+      - moderntensor-prod
+      - monitoring
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+  
+  # ========== Monitoring Stack ==========
+  
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mt-prometheus
+    ports:
+      - "9093:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - monitoring
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+  
+  # Grafana - Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mt-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      - GF_SERVER_ROOT_URL=https://grafana.moderntensor.io
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+  
+  # OpenTelemetry Collector - Distributed tracing
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: mt-otel-collector
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "8888:8888"  # Prometheus metrics
+      - "13133:13133"  # Health check
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    command: ["--config=/etc/otel-collector-config.yml"]
+    networks:
+      - monitoring
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+  
+  # Jaeger - Trace visualization
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: mt-jaeger
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"  # UI
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - monitoring
+    restart: unless-stopped
+  
+  # Loki - Log aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: mt-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yml
+    networks:
+      - monitoring
+    restart: unless-stopped
+  
+  # Promtail - Log shipping to Loki
+  promtail:
+    image: grafana/promtail:latest
+    container_name: mt-promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - loki
+  
+  # Alertmanager - Alert routing
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: mt-alertmanager
+    ports:
+      - "9094:9093"
+    volumes:
+      - ./alertmanager-config.yml:/etc/alertmanager/config.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - monitoring
+    restart: unless-stopped
+  
+  # ========== Support Services ==========
+  
+  # Redis - Caching
+  redis:
+    image: redis:7-alpine
+    container_name: mt-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - moderntensor-prod
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  
+  # Nginx - Load balancer and reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: mt-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    networks:
+      - moderntensor-prod
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - validator
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+networks:
+  moderntensor-prod:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  validator-data:
+    driver: local
+  miner-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  loki-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  redis-data:
+    driver: local
+  nginx-logs:
+    driver: local

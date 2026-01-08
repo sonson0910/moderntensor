@@ -1,0 +1,93 @@
+# ModernTensor Validator Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moderntensor-validator
+  namespace: moderntensor
+  labels:
+    app: moderntensor
+    component: validator
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: moderntensor
+      component: validator
+  template:
+    metadata:
+      labels:
+        app: moderntensor
+        component: validator
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: moderntensor-validator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      containers:
+      - name: validator
+        image: moderntensor/validator:latest
+        imagePullPolicy: Always
+        ports:
+        - name: rpc
+          containerPort: 8545
+        - name: p2p
+          containerPort: 30303
+        - name: http
+          containerPort: 8080
+        - name: metrics
+          containerPort: 9090
+        
+        env:
+        - name: NODE_TYPE
+          value: "validator"
+        - name: MT_ENVIRONMENT
+          value: "production"
+        - name: VALIDATOR_KEY
+          valueFrom:
+            secretKeyRef:
+              name: moderntensor-secrets
+              key: validator_key
+        
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: validator-data
