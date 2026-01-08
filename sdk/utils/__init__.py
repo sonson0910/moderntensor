@@ -50,6 +50,42 @@ from .network import (
     format_url,
 )
 
+# Query optimization
+from .query_optimization import (
+    LRUCache,
+    QueryCache,
+    BatchProcessor,
+    ConnectionPool,
+    query_cache,
+)
+
+# Memory optimization
+from .memory_optimization import (
+    MemoryStats,
+    get_object_size,
+    get_memory_stats,
+    optimize_gc,
+    force_gc,
+    ObjectPool,
+    MemoryMonitor,
+    profile_memory_usage,
+    optimize_data_structure,
+    memory_monitor,
+)
+
+# Concurrency optimization
+from .concurrency_optimization import (
+    TaskResult,
+    AsyncTaskPool,
+    ThreadPoolExecutor,
+    ParallelProcessor,
+    gather_with_concurrency,
+    run_with_timeout,
+    AsyncRateLimiter,
+    optimize_async_loop,
+    WorkQueue,
+)
+
 __all__ = [
     # Balance
     "Balance",
@@ -88,4 +124,31 @@ __all__ = [
     "wait_for_service",
     "get_local_ip",
     "format_url",
+    # Query Optimization
+    "LRUCache",
+    "QueryCache",
+    "BatchProcessor",
+    "ConnectionPool",
+    "query_cache",
+    # Memory Optimization
+    "MemoryStats",
+    "get_object_size",
+    "get_memory_stats",
+    "optimize_gc",
+    "force_gc",
+    "ObjectPool",
+    "MemoryMonitor",
+    "profile_memory_usage",
+    "optimize_data_structure",
+    "memory_monitor",
+    # Concurrency Optimization
+    "TaskResult",
+    "AsyncTaskPool",
+    "ThreadPoolExecutor",
+    "ParallelProcessor",
+    "gather_with_concurrency",
+    "run_with_timeout",
+    "AsyncRateLimiter",
+    "optimize_async_loop",
+    "WorkQueue",
 ]
