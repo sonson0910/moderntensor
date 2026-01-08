@@ -328,16 +328,6 @@ class LuxtensorClient:
     # Chain Information Methods
     # ========================================================================
     
-    def get_chain_info(self) -> ChainInfo:
-        """
-        Get blockchain information.
-        
-        Returns:
-            ChainInfo object with blockchain metadata
-        """
-        result = self._call_rpc("chain_getInfo")
-        return ChainInfo(**result)
-    
     def get_block_number(self) -> int:
         """
         Get current block height.
@@ -345,7 +335,9 @@ class LuxtensorClient:
         Returns:
             Current block number
         """
-        return self._call_rpc("chain_getBlockNumber")
+        result = self._call_rpc("eth_blockNumber")
+        # Convert hex string to int
+        return int(result, 16) if isinstance(result, str) else result
     
     def get_block(self, block_number: Optional[int] = None) -> Dict[str, Any]:
         """
@@ -357,8 +349,13 @@ class LuxtensorClient:
         Returns:
             Block data
         """
-        params = [block_number] if block_number is not None else ["latest"]
-        return self._call_rpc("chain_getBlock", params)
+        # Format block number as hex string or use "latest"
+        if block_number is not None:
+            block_param = f"0x{block_number:x}"
+        else:
+            block_param = "latest"
+        
+        return self._call_rpc("eth_getBlockByNumber", [block_param, True])
     
     def get_block_hash(self, block_number: int) -> str:
         """
@@ -370,7 +367,8 @@ class LuxtensorClient:
         Returns:
             Block hash
         """
-        return self._call_rpc("chain_getBlockHash", [block_number])
+        block = self.get_block(block_number)
+        return block.get("hash", "") if block else ""
     
     # ========================================================================
     # Account Methods
@@ -386,8 +384,20 @@ class LuxtensorClient:
         Returns:
             Account object with balance, nonce, stake
         """
-        result = self._call_rpc("state_getAccount", [address])
-        return Account(**result)
+        # Get balance and nonce separately using eth_ methods
+        balance_hex = self._call_rpc("eth_getBalance", [address, "latest"])
+        nonce_hex = self._call_rpc("eth_getTransactionCount", [address, "latest"])
+        
+        # Convert hex strings to integers
+        balance = int(balance_hex, 16) if isinstance(balance_hex, str) else balance_hex
+        nonce = int(nonce_hex, 16) if isinstance(nonce_hex, str) else nonce_hex
+        
+        return Account(
+            address=address,
+            balance=balance,
+            nonce=nonce,
+            stake=0  # TODO: Get stake from Luxtensor consensus module
+        )
     
     def get_balance(self, address: str) -> int:
         """
@@ -399,8 +409,9 @@ class LuxtensorClient:
         Returns:
             Balance in smallest unit
         """
-        account = self.get_account(address)
-        return account.balance
+        result = self._call_rpc("eth_getBalance", [address, "latest"])
+        # Convert hex string to int
+        return int(result, 16) if isinstance(result, str) else result
     
     def get_nonce(self, address: str) -> int:
         """
@@ -412,8 +423,9 @@ class LuxtensorClient:
         Returns:
             Current nonce
         """
-        account = self.get_account(address)
-        return account.nonce
+        result = self._call_rpc("eth_getTransactionCount", [address, "latest"])
+        # Convert hex string to int
+        return int(result, 16) if isinstance(result, str) else result
     
     # ========================================================================
     # Transaction Methods
@@ -424,25 +436,30 @@ class LuxtensorClient:
         Submit signed transaction to Luxtensor.
         
         Args:
-            signed_tx: Signed transaction (hex encoded)
+            signed_tx: Signed transaction (hex encoded, with 0x prefix)
             
         Returns:
             TransactionResult with tx_hash and status
         """
-        result = self._call_rpc("tx_submit", [signed_tx])
-        return TransactionResult(**result)
+        tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
+        return TransactionResult(
+            tx_hash=tx_hash,
+            status="pending",
+            block_number=None,
+            error=None
+        )
     
     def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
         """
         Get transaction by hash.
         
         Args:
-            tx_hash: Transaction hash
+            tx_hash: Transaction hash (with 0x prefix)
             
         Returns:
             Transaction data
         """
-        return self._call_rpc("tx_get", [tx_hash])
+        return self._call_rpc("eth_getTransactionByHash", [tx_hash])
     
     def get_transaction_receipt(self, tx_hash: str) -> Dict[str, Any]:
         """
@@ -460,14 +477,57 @@ class LuxtensorClient:
     # AI/ML Specific Methods
     # ========================================================================
     
+    def submit_ai_task(self, task_data: Dict[str, Any]) -> str:
+        """
+        Submit AI computation task to Luxtensor.
+        
+        Args:
+            task_data: Task parameters (model_hash, input_data, requester, reward)
+            
+        Returns:
+            Task ID
+        """
+        return self._call_rpc("lux_submitAITask", [task_data])
+    
+    def get_ai_result(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get AI task result.
+        
+        Args:
+            task_id: Task ID from submit_ai_task
+            
+        Returns:
+            Task result if available, None otherwise
+        """
+        return self._call_rpc("lux_getAIResult", [task_id])
+    
+    def get_validator_status(self, address: str) -> Optional[Dict[str, Any]]:
+        """
+        Get validator status and information.
+        
+        Args:
+            address: Validator address
+            
+        Returns:
+            Validator status
+        """
+        return self._call_rpc("lux_getValidatorStatus", [address])
+    
     def get_validators(self) -> List[Dict[str, Any]]:
         """
         Get list of active validators.
         
         Returns:
             List of validator information
+            
+        Note:
+            This method is not yet implemented in Luxtensor RPC.
+            Use get_validator_status() for individual validators.
         """
-        return self._call_rpc("validators_getActive")
+        raise NotImplementedError(
+            "get_validators() is not yet implemented in Luxtensor RPC. "
+            "Use get_validator_status(address) to query individual validators."
+        )
     
     def get_subnet_info(self, subnet_id: int) -> Dict[str, Any]:
         """
@@ -478,8 +538,15 @@ class LuxtensorClient:
             
         Returns:
             Subnet metadata and configuration
+            
+        Note:
+            This method is not yet implemented in Luxtensor RPC.
+            Subnet management will be added in a future Luxtensor release.
         """
-        return self._call_rpc("subnet_getInfo", [subnet_id])
+        raise NotImplementedError(
+            "get_subnet_info() is not yet implemented in Luxtensor RPC. "
+            "Subnet management will be added in future releases."
+        )
     
     def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """
@@ -490,8 +557,14 @@ class LuxtensorClient:
             
         Returns:
             List of neuron information
+            
+        Note:
+            This method is not yet implemented in Luxtensor RPC.
         """
-        return self._call_rpc("subnet_getNeurons", [subnet_id])
+        raise NotImplementedError(
+            "get_neurons() is not yet implemented in Luxtensor RPC. "
+            "Subnet and neuron management will be added in future releases."
+        )
     
     def get_weights(self, subnet_id: int, neuron_uid: int) -> List[float]:
         """
@@ -503,8 +576,14 @@ class LuxtensorClient:
             
         Returns:
             Weight values
+            
+        Note:
+            This method is not yet implemented in Luxtensor RPC.
         """
-        return self._call_rpc("subnet_getWeights", [subnet_id, neuron_uid])
+        raise NotImplementedError(
+            "get_weights() is not yet implemented in Luxtensor RPC. "
+            "Weight management will be added in future releases."
+        )
     
     # ========================================================================
     # Staking Methods
