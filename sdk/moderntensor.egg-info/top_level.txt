@@ -1,7 +1,0 @@
-cli
-config
-keymanager
-metagraph
-network
-node
-utils

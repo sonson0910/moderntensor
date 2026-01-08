@@ -1,11 +1,22 @@
 # tests/consensus/test_signature_verification.py
 
+"""
+NEEDS MIGRATION: This test uses Cardano/PyCardano key types that are deprecated.
+
+TODO: Update this test to use Luxtensor account-based signatures:
+- Replace PaymentKeyPair with secp256k1 keypairs
+- Replace Cardano addresses with Ethereum-style 0x addresses
+- Update signature verification to use Luxtensor's signature scheme
+
+See CARDANO_DEPRECATION.md for migration guide.
+"""
+
 import pytest
 import binascii
 import time
 import copy  # Để tạo bản sao dữ liệu cho việc sửa đổi
 
-# --- Imports từ pycardano ---
+# --- Imports từ pycardano (DEPRECATED - needs migration to Luxtensor signatures) ---
 from sdk.compat.luxtensor_types import (
     PaymentKeyPair,
     PaymentSigningKey,

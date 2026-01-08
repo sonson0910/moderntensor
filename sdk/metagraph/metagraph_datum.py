@@ -1,8 +1,16 @@
 # sdk/metagraph/metagraph_datum.py
 """
 Định nghĩa cấu trúc Datum cho các thành phần trong Metagraph (Miner, Validator, Subnet)
-sử dụng pycardano và kế thừa PlutusData.
-(Phiên bản cập nhật theo gợi ý và sử dụng settings)
+
+**DEPRECATION NOTICE:**
+This file uses Cardano/Plutus concepts (PlutusData, Datum) which are incompatible with Luxtensor.
+Luxtensor uses an account-based model, not UTXO/Datum model.
+
+These data structures are kept for backward compatibility during migration but should be
+replaced with Pydantic models that serialize to JSON for Luxtensor state storage.
+
+TODO: Migrate to pure Pydantic models without PlutusData inheritance
+TODO: Use LuxtensorClient for state queries instead of UTXO/Datum pattern
 """
 from sdk.compat.luxtensor_types import PlutusData, Redeemer
 from dataclasses import dataclass, field
