@@ -21,6 +21,14 @@ __all__ = [
     'Transaction',
     'PaymentVerificationKey',
     'StakeVerificationKey',
+    'ExtendedSigningKey',
+    
+    # Deprecated Cardano types (for import compatibility)
+    'PlutusV3Script',
+    'Asset',
+    'Value',
+    'plutus_script_hash',
+    'hash',
     
     # Aliases for backward compatibility during migration
     'PlutusData',

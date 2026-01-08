@@ -86,6 +86,35 @@ class ExtendedSigningKey:
         """Placeholder from_mnemonic method."""
         return ExtendedSigningKey(data=mnemonic)
 
+
+# Additional placeholder types for backward compatibility
+class PlutusV3Script:
+    """DEPRECATED: Plutus scripts are Cardano-specific. Luxtensor uses Rust smart contracts."""
+    pass
+
+
+class Asset:
+    """DEPRECATED: Cardano asset type. Luxtensor uses native token model."""
+    pass
+
+
+class Value:
+    """DEPRECATED: Cardano value type. Luxtensor uses simple integer amounts."""
+    pass
+
+
+def plutus_script_hash(*args, **kwargs):
+    """DEPRECATED: Plutus script hashing is Cardano-specific."""
+    raise NotImplementedError("plutus_script_hash is deprecated. Luxtensor uses different contract addressing.")
+
+
+def hash(*args, **kwargs):
+    """DEPRECATED: Use standard hashlib or Luxtensor crypto functions instead."""
+    import hashlib
+    if args and isinstance(args[0], bytes):
+        return hashlib.sha256(args[0]).digest()
+    raise NotImplementedError("Use hashlib or Luxtensor crypto functions for hashing.")
+
 # Re-export common names
 Address = L1Address
 Network = L1Network
@@ -282,6 +311,13 @@ __all__ = [
     'PaymentVerificationKey',
     'StakeVerificationKey',
     'ExtendedSigningKey',
+    
+    # Deprecated Cardano types (for import compatibility)
+    'PlutusV3Script',
+    'Asset',
+    'Value',
+    'plutus_script_hash',
+    'hash',
     
     # Aliases for backward compatibility
     'PlutusData',
