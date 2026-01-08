@@ -38,7 +38,7 @@ from sdk.metagraph.metagraph_datum import (
 
 # --- Import Settings và Helpers ---
 from sdk.config.settings import settings
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Address,
     VerificationKeyHash,
     BlockFrostChainContext,

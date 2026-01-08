@@ -60,6 +60,22 @@ class StakeVerificationKey:
     def hash(self):
         return b"stake_hash"
 
+class ExtendedSigningKey:
+    """Placeholder for Luxtensor ExtendedSigningKey until full blockchain module implementation."""
+    
+    def __init__(self, data=None):
+        self.data = data
+        self.public_key = b"placeholder_public_key"
+    
+    def derive_from_path(self, path: str):
+        """Placeholder derive_from_path method."""
+        return ExtendedSigningKey(data=f"derived_{path}")
+    
+    @staticmethod
+    def from_mnemonic(mnemonic: str):
+        """Placeholder from_mnemonic method."""
+        return ExtendedSigningKey(data=mnemonic)
+
 # Re-export common names
 Address = L1Address
 Network = L1Network
@@ -250,6 +266,11 @@ __all__ = [
     'L1ChainContext',
     'L1UTxO',
     'Transaction',
+    
+    # Verification keys
+    'PaymentVerificationKey',
+    'StakeVerificationKey',
+    'ExtendedSigningKey',
     
     # Aliases for backward compatibility
     'PlutusData',

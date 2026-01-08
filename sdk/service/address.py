@@ -1,5 +1,5 @@
 from sdk.config.settings import settings, logger
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     TransactionBuilder,
     TransactionOutput,
     Address,

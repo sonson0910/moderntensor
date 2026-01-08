@@ -11,7 +11,7 @@ Key benefits:
 - Equivalent to Bittensor's Metagraph but on UTXO model
 """
 
-from sdk.compat.pycardano import PlutusData
+from sdk.compat.luxtensor_types import PlutusData
 from dataclasses import dataclass
 from typing import List, Optional
 import hashlib

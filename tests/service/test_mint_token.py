@@ -5,7 +5,7 @@ import time
 import pytest
 from os.path import exists
 
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     PaymentKeyPair,
     PaymentSigningKey,
     PaymentVerificationKey,

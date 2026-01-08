@@ -2,8 +2,7 @@
 import click
 from rich.console import Console
 from rich.table import Table
-from sdk.compat.pycardano import Address, Network, UTxO, PlutusData, RawPlutusData
-from pycardano.serialization import RawCBOR
+from sdk.compat.luxtensor_types import Address, Network, UTxO, PlutusData
 from typing import Optional, Any
 import asyncio
 from collections import defaultdict

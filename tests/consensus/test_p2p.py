@@ -12,7 +12,7 @@ from unittest.mock import patch  # Có thể dùng patch nếu không dùng pyte
 from sdk.consensus.p2p import canonical_json_serialize, broadcast_scores_logic
 from sdk.core.datatypes import ValidatorScore, ValidatorInfo
 from sdk.network.app.api.v1.endpoints.consensus import ScoreSubmissionPayload
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     PaymentKeyPair,
     ExtendedSigningKey,
     PaymentVerificationKey,

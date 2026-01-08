@@ -1,6 +1,6 @@
 # tests/service/test_register_key.py
 import pytest
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Network,
     Address,
     Redeemer,

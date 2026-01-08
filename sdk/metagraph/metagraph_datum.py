@@ -4,7 +4,7 @@
 sử dụng pycardano và kế thừa PlutusData.
 (Phiên bản cập nhật theo gợi ý và sử dụng settings)
 """
-from sdk.compat.pycardano import PlutusData, Redeemer
+from sdk.compat.luxtensor_types import PlutusData, Redeemer
 from dataclasses import dataclass, field
 from typing import Optional, List, Union
 

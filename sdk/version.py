@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from sdk.compat.pycardano import Address, Network, PaymentVerificationKey, StakeVerificationKey
+from sdk.compat.luxtensor_types import Address, Network, PaymentVerificationKey, StakeVerificationKey
 from cryptography.fernet import Fernet
 
 logging.basicConfig(level=logging.INFO)

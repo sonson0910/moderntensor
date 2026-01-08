@@ -198,3 +198,6 @@ moderntensor/kickoff/
 *.wallet
 coldkey*
 hotkey*
+
+# Sphinx build directory
+docs/api/_build/

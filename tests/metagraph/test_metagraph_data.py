@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any
 from pytest import MonkeyPatch  # Vẫn cần nếu mock một phần (nhưng sẽ không dùng)
 
-from sdk.compat.pycardano import (
+from sdk.compat.luxtensor_types import (
     Network,
     Address,
     BlockFrostChainContext,

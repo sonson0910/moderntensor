@@ -1,7 +1,7 @@
 # sdk/service/utxos.py
 import logging
 from typing import Type, Optional
-from sdk.compat.pycardano import Address, BlockFrostChainContext, UTxO, PlutusData
+from sdk.compat.luxtensor_types import Address, BlockFrostChainContext, UTxO, PlutusData
 
 # Lấy logger đã cấu hình
 logger = logging.getLogger(__name__)
