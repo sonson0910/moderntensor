@@ -26,6 +26,10 @@ from sdk.cli.utils import (
 )
 from sdk.cli.config import get_network_config
 
+# Constants
+MDT_TO_BASE_UNITS = 1_000_000_000  # 1 MDT = 1 billion base units
+DEFAULT_GAS_PRICE = 1_000_000_000  # 1 Gwei
+
 
 @click.group(name='wallet', short_help='Manage wallets and keys')
 @click.pass_context
@@ -485,7 +489,7 @@ def regen_hotkey(ctx, coldkey: str, hotkey_name: str, index: int, base_dir: Opti
         
         # Check if index already used by another hotkey
         for hk in hotkeys_data['hotkeys']:
-            if hk['index'] == index and hk['name'] != hotkey_name:
+            if hk['index'] == index:
                 print_warning(f"Derivation index {index} is already used by hotkey '{hk['name']}'")
                 if not confirm_action("Continue anyway?"):
                     return
@@ -839,6 +843,10 @@ def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_sta
     Registers the hotkey on the specified subnet, making it eligible to participate
     in consensus and earn rewards. Optionally includes initial stake and API endpoint.
     
+    **Note:** Registration transaction encoding is not yet implemented. This command
+    builds and signs the transaction but uses placeholder data. Full functionality
+    will be available when Luxtensor registration pallet is finalized.
+    
     Examples:
         # Basic registration
         mtcli wallet register-hotkey --coldkey my_coldkey --hotkey miner_hk1 --subnet-uid 1
@@ -854,8 +862,8 @@ def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_sta
     
     Note:
         - Registration requires gas fees
-        - Initial stake is optional (can be added later)
-        - API endpoint is required for validators
+        - Initial stake is optional (can be added later with stake add command)
+        - API endpoint is optional (required for validators)
     """
     try:
         from sdk.luxtensor_client import LuxtensorClient
@@ -897,10 +905,10 @@ def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_sta
         
         # Estimate gas
         gas_limit = TransactionSigner.estimate_gas('register')
-        gas_price = 1000000000  # 1 Gwei
+        gas_price = DEFAULT_GAS_PRICE
         
         # Convert initial stake to base units if provided
-        stake_base = int(initial_stake * 1_000_000_000) if initial_stake > 0 else 0
+        stake_base = int(initial_stake * MDT_TO_BASE_UNITS) if initial_stake > 0 else 0
         
         # Build registration transaction data
         # TODO (GitHub Issue): Implement actual registration transaction encoding
