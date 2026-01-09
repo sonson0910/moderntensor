@@ -90,9 +90,15 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         gas_price = 1000000000  # 1 Gwei - adjust based on network
         
         # Build stake transaction data
-        # This is a placeholder - actual implementation depends on Luxtensor's staking pallet
-        # Format: function selector + parameters (encoded)
-        stake_data = b''  # TODO: Encode stake transaction data
+        # TODO: Implement actual stake transaction encoding based on Luxtensor pallet
+        # Expected format: function_selector (4 bytes) + encoded_parameters
+        # Example structure:
+        #   stake_data = encode_stake_call(
+        #       function_selector="0x12345678",  # stake function selector
+        #       hotkey=hotkey_address,
+        #       amount=amount_base
+        #   )
+        stake_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
@@ -142,8 +148,8 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to add stake: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Note: In production, use proper logging instead of traceback
+        # For now, include traceback for development/debugging
 
 
 @stake.command('remove')
@@ -210,7 +216,15 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         gas_price = 1000000000  # 1 Gwei
         
         # Build unstake transaction data
-        unstake_data = b''  # TODO: Encode unstake transaction data
+        # TODO: Implement actual unstake transaction encoding based on Luxtensor pallet
+        # Expected format: function_selector (4 bytes) + encoded_parameters
+        # Example structure:
+        #   unstake_data = encode_unstake_call(
+        #       function_selector="0x87654321",  # unstake function selector
+        #       hotkey=hotkey_address,
+        #       amount=amount_base
+        #   )
+        unstake_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
@@ -259,8 +273,7 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to remove stake: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('claim')
@@ -321,7 +334,14 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         gas_price = 1000000000  # 1 Gwei
         
         # Build claim transaction data
-        claim_data = b''  # TODO: Encode claim transaction data
+        # TODO: Implement actual claim transaction encoding based on Luxtensor pallet
+        # Expected format: function_selector (4 bytes) + encoded_parameters
+        # Example structure:
+        #   claim_data = encode_claim_call(
+        #       function_selector="0xabcdef12",  # claim function selector
+        #       hotkey=hotkey_address
+        #   )
+        claim_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
@@ -357,8 +377,7 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to claim rewards: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('info')
@@ -429,8 +448,7 @@ def stake_info(coldkey: str, hotkey: str, base_dir: Optional[str], network: str)
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to fetch stake info: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('list')
@@ -505,5 +523,4 @@ def list_stakes(network: str, limit: int):
         
     except Exception as e:
         print_error(f"Failed to list validators: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Note: In production, use proper logging instead of traceback

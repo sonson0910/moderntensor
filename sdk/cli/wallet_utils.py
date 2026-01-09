@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 
-from sdk.cli.utils import print_error, get_default_wallet_path, prompt_password
+from sdk.cli.utils import get_default_wallet_path, prompt_password
 from sdk.keymanager.encryption import decrypt_data
 from sdk.keymanager.key_generator import KeyGenerator
 
