@@ -201,3 +201,4 @@ hotkey*
 
 # Sphinx build directory
 docs/api/_build/
+validator_state.json
