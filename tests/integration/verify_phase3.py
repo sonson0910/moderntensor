@@ -21,8 +21,9 @@ def main():
     print("Direct Axon Implementation Verification")
     print("="*60 + "\n")
     
-    # Get paths
-    sdk_path = os.path.join(os.path.dirname(__file__), 'sdk')
+    # Get paths - go up to repository root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    sdk_path = os.path.join(repo_root, 'sdk')
     axon_path = os.path.join(sdk_path, 'axon')
     
     try:
@@ -84,7 +85,7 @@ def main():
         
         # Verify documentation
         print("\nChecking documentation...")
-        docs_path = os.path.join(os.path.dirname(__file__), 'docs', 'AXON.md')
+        docs_path = os.path.join(repo_root, 'docs', 'AXON.md')
         assert os.path.exists(docs_path)
         with open(docs_path) as f:
             content = f.read()
@@ -94,7 +95,7 @@ def main():
         
         # Verify examples
         print("\nChecking examples...")
-        example_path = os.path.join(os.path.dirname(__file__), 'examples', 'axon_example.py')
+        example_path = os.path.join(repo_root, 'examples', 'axon_example.py')
         assert os.path.exists(example_path)
         with open(example_path) as f:
             content = f.read()
