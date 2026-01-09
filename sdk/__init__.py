@@ -38,7 +38,7 @@ from .chain_data import (
 )
 
 # API layer
-from .api import RestAPI, WebSocketAPI
+from .api import RestAPI, WebSocketAPI, GraphQLAPI
 
 # Developer framework
 from .dev_framework import (
@@ -46,6 +46,21 @@ from .dev_framework import (
     MockClient,
     TestHarness,
     SubnetDeployer,
+)
+
+# Utilities
+from .utils import (
+    format_balance,
+    convert_balance,
+    validate_address,
+    normalize_weights,
+    validate_weights,
+    compute_weight_hash,
+    check_registration_status,
+    get_registration_cost,
+    format_stake,
+    format_emission,
+    format_timestamp,
 )
 
 # Version
@@ -81,11 +96,24 @@ __all__ = [
     # API layer
     "RestAPI",
     "WebSocketAPI",
+    "GraphQLAPI",
     # Developer framework
     "SubnetTemplate",
     "MockClient",
     "TestHarness",
     "SubnetDeployer",
+    # Utilities
+    "format_balance",
+    "convert_balance",
+    "validate_address",
+    "normalize_weights",
+    "validate_weights",
+    "compute_weight_hash",
+    "check_registration_status",
+    "get_registration_cost",
+    "format_stake",
+    "format_emission",
+    "format_timestamp",
     # Version
     "__version__",
 ]
