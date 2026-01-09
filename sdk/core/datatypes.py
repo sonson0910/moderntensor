@@ -2,21 +2,20 @@
 """
 Định nghĩa các cấu trúc dữ liệu cốt lõi dùng chung trong SDK Moderntensor.
 """
-from sdk.compat.luxtensor_types import (
-    PaymentVerificationKey,
-)  # Import ở đây để tránh circular dependency
+"""
+ModernTensor Core Data Types
+
+Defines core data structures used throughout the SDK.
+"""
 from typing import List, Dict, Any, Tuple, Optional
-from sdk.metagraph.metagraph_datum import STATUS_ACTIVE
 from dataclasses import dataclass, field
-import time  # Thêm import time
+import time
 
 from pydantic import BaseModel, Field
 
-# --- Import PyCardano ---
-from sdk.compat.luxtensor_types import (
-    VerificationKeyHash,
-    PaymentVerificationKey,
-)  # Thêm PaymentVerificationKey nếu property dùng
+# Define status constants locally (previously from deleted metagraph module)
+STATUS_ACTIVE = 1
+STATUS_INACTIVE = 0
 
 
 @dataclass
@@ -59,16 +58,6 @@ class ValidatorInfo:
     wallet_addr_hash: Optional[bytes] = None  # Giữ bytes hoặc hex tùy chuẩn
     performance_history: List[float] = field(default_factory=list)
     performance_history_hash: Optional[bytes] = None
-
-    # --- Có thể thêm property để dễ lấy vkey ---
-    @property
-    def payment_verification_key(self) -> Optional["PaymentVerificationKey"]:
-        """Trả về đối tượng PaymentVerificationKey nếu CBOR hex tồn tại."""
-        if self.payment_vkey_cbor_hex:  # type: ignore
-            import binascii
-
-            return PaymentVerificationKey.from_cbor(binascii.unhexlify(self.payment_vkey_cbor_hex))  # type: ignore
-        return None
 
 
 @dataclass
