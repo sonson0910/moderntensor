@@ -106,7 +106,8 @@ class TestSecurityManager:
                 "192.168.1.100", max_requests=10, window_seconds=60
             )
             assert allowed
-            assert remaining == 10 - (i + 1) - 1
+            # After i requests, we have made (i+1) total, so remaining is max_requests - (i+1)
+            assert remaining == 10 - (i + 1)
         
         # Should block after limit
         for _ in range(6):
