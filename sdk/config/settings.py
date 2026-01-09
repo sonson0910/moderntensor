@@ -9,7 +9,14 @@ import re
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sdk.compat.luxtensor_types import Network
+
+# Network enum (simplified from removed Cardano compat layer)
+from enum import Enum
+
+class Network(Enum):
+    """Network type for blockchain operations."""
+    MAINNET = "mainnet"
+    TESTNET = "testnet"
 
 # ANSI color codes
 RED = "\033[91m"
