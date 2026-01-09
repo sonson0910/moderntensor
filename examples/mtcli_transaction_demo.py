@@ -2,13 +2,14 @@
 """
 Transaction Commands Demo
 
-Demonstrates the usage of mtcli transaction commands.
+Demonstrates the usage of mtcli transaction commands using Luxtensor transactions.
 
 NOTE: This is a demonstration script. In real usage, you would use the
 mtcli commands directly from the command line.
 """
 
-from sdk.keymanager import TransactionSigner, KeyGenerator
+from sdk.transactions import LuxtensorTransaction, sign_transaction, encode_transaction_for_rpc, estimate_gas_for_transfer
+from sdk.keymanager import KeyGenerator
 from sdk.luxtensor_client import LuxtensorClient
 from rich.console import Console
 from rich.panel import Panel
@@ -19,7 +20,7 @@ console = Console()
 
 def demo_transaction_signing():
     """Demonstrate transaction signing capabilities"""
-    console.print("\n[bold cyan]═══ Transaction Signing Demo ═══[/bold cyan]\n")
+    console.print("\n[bold cyan]═══ Luxtensor Transaction Signing Demo ═══[/bold cyan]\n")
     
     # Create a test account
     kg = KeyGenerator()
@@ -30,56 +31,62 @@ def demo_transaction_signing():
     console.print(f"  Address: {hotkey['address']}")
     console.print(f"  (This is a demo account, not a real wallet)\n")
     
-    # Initialize signer
-    signer = TransactionSigner(hotkey['private_key'])
-    
-    # Build a transaction
-    console.print("[yellow]Building transaction...[/yellow]")
-    tx = signer.build_transaction(
-        to='0x742D35CC6634C0532925a3b844Bc9E7595f0beB2',
-        value=1_000_000_000,  # 1 MDT
+    # Build a Luxtensor transaction
+    console.print("[yellow]Building Luxtensor transaction...[/yellow]")
+    tx = LuxtensorTransaction(
         nonce=0,
+        from_address=hotkey['address'],
+        to_address='0x742D35CC6634C0532925a3b844Bc9E7595f0beB2',
+        value=1_000_000_000,  # 1 MDT
         gas_price=50,
         gas_limit=21000,
-        chain_id=2  # testnet
+        data=b''
     )
     
     # Display transaction details
-    table = Table(title="Transaction Details", show_header=True)
+    table = Table(title="Luxtensor Transaction Details", show_header=True)
     table.add_column("Field", style="cyan")
     table.add_column("Value", style="green")
     
-    table.add_row("From", signer.address)
-    table.add_row("To", tx['to'])
-    table.add_row("Value", f"{tx['value'] / 1_000_000_000} MDT")
-    table.add_row("Gas Price", str(tx['gasPrice']))
-    table.add_row("Gas Limit", str(tx['gas']))
-    table.add_row("Nonce", str(tx['nonce']))
-    table.add_row("Chain ID", str(tx['chainId']))
+    table.add_row("From", hotkey['address'])
+    table.add_row("To", tx.to_address)
+    table.add_row("Value", f"{tx.value / 1_000_000_000} MDT")
+    table.add_row("Gas Price", str(tx.gas_price))
+    table.add_row("Gas Limit", str(tx.gas_limit))
+    table.add_row("Nonce", str(tx.nonce))
     
     console.print(table)
     
     # Sign transaction
-    console.print("\n[yellow]Signing transaction...[/yellow]")
-    signed_tx = signer.sign_transaction(tx)
+    console.print("\n[yellow]Signing Luxtensor transaction...[/yellow]")
+    signed_tx = sign_transaction(tx, hotkey['private_key'])
     
     console.print(f"[green]✓ Transaction signed successfully![/green]")
-    console.print(f"  Signed TX (first 50 chars): {signed_tx[:50]}...")
-    console.print(f"  Total length: {len(signed_tx)} characters\n")
+    console.print(f"  V: {signed_tx.v}")
+    console.print(f"  R: {signed_tx.r.hex()[:20]}...")
+    console.print(f"  S: {signed_tx.s.hex()[:20]}...")
+    
+    # Encode for RPC
+    encoded = encode_transaction_for_rpc(signed_tx)
+    console.print(f"\n[green]✓ Encoded for RPC submission![/green]")
+    console.print(f"  Encoded TX (first 50 chars): {encoded[:50]}...")
+    console.print(f"  Total length: {len(encoded)} characters\n")
 
 
 def demo_gas_estimation():
     """Demonstrate gas estimation for different operations"""
     console.print("\n[bold cyan]═══ Gas Estimation Demo ═══[/bold cyan]\n")
     
+    from sdk.transactions import calculate_transaction_fee, estimate_gas_for_transfer, estimate_gas_for_contract_call
+    
     operations = [
-        ('transfer', 'Simple MDT transfer'),
-        ('token_transfer', 'ERC-20 style transfer'),
-        ('stake', 'Staking operation'),
-        ('unstake', 'Unstaking operation'),
-        ('register', 'Hotkey registration'),
-        ('set_weights', 'Validator weight setting'),
-        ('complex', 'Complex contract call')
+        ('transfer', 21000, 'Simple MDT transfer'),
+        ('token_transfer', 65000, 'ERC-20 style transfer'),
+        ('stake', 100000, 'Staking operation'),
+        ('unstake', 80000, 'Unstaking operation'),
+        ('register', 150000, 'Hotkey registration'),
+        ('set_weights', 200000, 'Validator weight setting'),
+        ('complex', 300000, 'Complex contract call')
     ]
     
     table = Table(title="Gas Estimates", show_header=True)
@@ -88,9 +95,8 @@ def demo_gas_estimation():
     table.add_column("Cost @ 50 units", justify="right", style="green")
     table.add_column("Description", style="dim")
     
-    for op, desc in operations:
-        gas = TransactionSigner.estimate_gas(op)
-        cost = TransactionSigner.calculate_transaction_fee(gas, 50)
+    for op, gas, desc in operations:
+        cost = calculate_transaction_fee(gas, 50)
         cost_mdt = cost / 1_000_000_000
         
         table.add_row(

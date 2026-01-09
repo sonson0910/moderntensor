@@ -15,6 +15,15 @@ from .luxtensor_client import (
     TransactionResult,
 )
 
+# Transactions
+from .transactions import (
+    LuxtensorTransaction,
+    create_transfer_transaction,
+    sign_transaction,
+    verify_transaction_signature,
+    encode_transaction_for_rpc,
+)
+
 # Version
 from .version import __version__
 
@@ -27,6 +36,12 @@ __all__ = [
     "ChainInfo",
     "Account",
     "TransactionResult",
+    # Transactions
+    "LuxtensorTransaction",
+    "create_transfer_transaction",
+    "sign_transaction",
+    "verify_transaction_signature",
+    "encode_transaction_for_rpc",
     # Version
     "__version__",
 ]

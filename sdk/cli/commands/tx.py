@@ -21,7 +21,8 @@ from sdk.cli.utils import (
 )
 from sdk.cli.config import get_network_config
 from sdk.luxtensor_client import LuxtensorClient
-from sdk.keymanager import decrypt_data, TransactionSigner
+from sdk.keymanager import decrypt_data
+from sdk.transactions import create_transfer_transaction, encode_transaction_for_rpc
 
 console = Console()
 
@@ -166,18 +167,27 @@ def send_tx(
             print_warning("Transaction cancelled")
             return
         
-        # Build and sign transaction
+        # Build and sign transaction using Luxtensor format
         print_info("\nSigning transaction...")
-        signer = TransactionSigner(private_key)
-        signed_tx = signer.build_and_sign_transaction(
-            to=recipient,
-            value=value_base_units,
+        
+        # Create and sign transaction using Luxtensor transaction format
+        from sdk.transactions import LuxtensorTransaction
+        tx = LuxtensorTransaction(
             nonce=nonce,
+            from_address=from_address,
+            to_address=recipient,
+            value=value_base_units,
             gas_price=gas_price,
             gas_limit=gas_limit,
-            data=b'',
-            chain_id=network_config.chain_id
+            data=b''
         )
+        
+        # Sign the transaction
+        from sdk.transactions import sign_transaction
+        signed_tx_obj = sign_transaction(tx, private_key)
+        
+        # Encode for RPC submission
+        signed_tx = encode_transaction_for_rpc(signed_tx_obj)
         
         # Submit transaction
         print_info("Submitting transaction...")
