@@ -2,10 +2,11 @@
 Tests for Luxtensor Transaction Module
 
 Test suite for the Luxtensor transaction creation and signing.
+Uses native Python cryptography matching Luxtensor's Rust implementation.
 """
 
 import pytest
-from eth_account import Account
+from sdk.keymanager import KeyGenerator
 from sdk.transactions import (
     LuxtensorTransaction,
     create_transfer_transaction,
@@ -14,7 +15,8 @@ from sdk.transactions import (
     encode_transaction_for_rpc,
     estimate_gas_for_transfer,
     estimate_gas_for_contract_call,
-    calculate_transaction_fee
+    calculate_transaction_fee,
+    derive_address_from_private_key
 )
 
 
@@ -66,13 +68,14 @@ class TestLuxtensorTransaction:
     def test_transaction_signing(self):
         """Test transaction signing"""
         # Create account
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         # Create transaction
         tx = LuxtensorTransaction(
             nonce=0,
-            from_address=account.address,
+            from_address=account['address'],
             to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
             value=1000000000,
             gas_price=50,
@@ -113,12 +116,13 @@ class TestLuxtensorTransaction:
     
     def test_to_dict(self):
         """Test converting transaction to dictionary"""
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         tx = LuxtensorTransaction(
             nonce=0,
-            from_address=account.address,
+            from_address=account['address'],
             to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
             value=1000000000,
             gas_price=50,
@@ -130,7 +134,7 @@ class TestLuxtensorTransaction:
         tx_dict = signed_tx.to_dict()
         
         assert tx_dict['nonce'] == 0
-        assert tx_dict['from'] == account.address
+        assert tx_dict['from'] == account['address']
         assert tx_dict['to'] == "0x742D35CC6634C0532925a3b844Bc9E7595f0beB2"
         assert tx_dict['value'] == 1000000000
         assert tx_dict['gasPrice'] == 50
@@ -145,11 +149,12 @@ class TestTransactionFunctions:
     
     def test_create_transfer_transaction(self):
         """Test creating a transfer transaction"""
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         tx_dict = create_transfer_transaction(
-            from_address=account.address,
+            from_address=account['address'],
             to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
             amount=1000000000,
             nonce=0,
@@ -158,7 +163,7 @@ class TestTransactionFunctions:
         
         assert isinstance(tx_dict, dict)
         assert tx_dict['nonce'] == 0
-        assert tx_dict['from'] == account.address
+        assert tx_dict['from'] == account['address']
         assert tx_dict['value'] == 1000000000
         assert 'v' in tx_dict
         assert 'r' in tx_dict
@@ -166,12 +171,13 @@ class TestTransactionFunctions:
     
     def test_encode_transaction_for_rpc(self):
         """Test encoding transaction for RPC"""
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         tx = LuxtensorTransaction(
             nonce=0,
-            from_address=account.address,
+            from_address=account['address'],
             to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
             value=1000000000,
             gas_price=50,
@@ -213,13 +219,14 @@ class TestTransactionIntegration:
     def test_full_transaction_flow(self):
         """Test complete transaction flow"""
         # Create account
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         # Create transaction
         tx = LuxtensorTransaction(
             nonce=0,
-            from_address=account.address,
+            from_address=account['address'],
             to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
             value=1000000000,
             gas_price=50,
@@ -245,14 +252,15 @@ class TestTransactionIntegration:
     
     def test_multiple_transactions(self):
         """Test creating multiple transactions"""
-        account = Account.create()
-        private_key = account.key.hex()
+        kg = KeyGenerator()
+        account = kg.generate_keypair()
+        private_key = account['private_key']
         
         txs = []
         for i in range(3):
             tx = LuxtensorTransaction(
                 nonce=i,
-                from_address=account.address,
+                from_address=account['address'],
                 to_address="0x742D35CC6634C0532925a3b844Bc9E7595f0beB2",
                 value=1000000000 * (i + 1),
                 gas_price=50,

@@ -2,7 +2,8 @@
 """
 Transaction Commands Demo
 
-Demonstrates the usage of mtcli transaction commands using Luxtensor transactions.
+Demonstrates the usage of mtcli transaction commands using Luxtensor's native crypto.
+Uses pure Python cryptography (ecdsa, keccak256) matching Luxtensor's Rust implementation.
 
 NOTE: This is a demonstration script. In real usage, you would use the
 mtcli commands directly from the command line.
