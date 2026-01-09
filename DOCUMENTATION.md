@@ -1,6 +1,6 @@
 # ModernTensor Documentation Index
 
-**Last Updated:** January 7, 2026
+**Last Updated:** January 9, 2026
 
 This is the main documentation index for ModernTensor. All essential documentation is organized here.
 
@@ -14,20 +14,22 @@ This is the main documentation index for ModernTensor. All essential documentati
 
 ### AI/ML Layer
 - **[AI_ML_IMPLEMENTATION_GUIDE.md](AI_ML_IMPLEMENTATION_GUIDE.md)** - Complete usage guide for AI/ML layer
-- **[COMPLETE_AI_ML_IMPLEMENTATION.md](COMPLETE_AI_ML_IMPLEMENTATION.md)** - Final implementation report
-- **[AI_ML_IMPROVEMENTS_SUMMARY_VI.md](AI_ML_IMPROVEMENTS_SUMMARY_VI.md)** - Comparison with Bittensor (Vietnamese)
-- **[TOM_TAT_AI_ML_IMPLEMENTATION_VI.md](TOM_TAT_AI_ML_IMPLEMENTATION_VI.md)** - Summary (Vietnamese)
+- **[BITTENSOR_VS_MODERNTENSOR_COMPARISON.md](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Feature comparison with Bittensor
 
 ### Layer 1 Blockchain
 - **[LAYER1_ROADMAP.md](LAYER1_ROADMAP.md)** - Layer 1 blockchain roadmap
 - **[LAYER1_FOCUS.md](LAYER1_FOCUS.md)** - Current focus and priorities
 
 ### LuxTensor Integration
-- **[LUXTENSOR_USAGE_GUIDE.md](LUXTENSOR_USAGE_GUIDE.md)** - How to use LuxTensor
+- **[LUXTENSOR_INTEGRATION_GUIDE.md](LUXTENSOR_INTEGRATION_GUIDE.md)** - How to integrate with LuxTensor
 - **[LUXTENSOR_TECHNICAL_FAQ_VI.md](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Technical FAQ (Vietnamese)
+
+### Migration
+- **[CARDANO_DEPRECATION.md](CARDANO_DEPRECATION.md)** - Migration from Cardano to LuxTensor
 
 ### Project Management
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+- **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation index
 
 ---
 
