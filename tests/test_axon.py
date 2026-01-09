@@ -100,23 +100,26 @@ class TestSecurityManager:
         """Test rate limiting functionality."""
         manager = SecurityManager()
         
+        MAX_REQUESTS = 10
+        WINDOW_SECONDS = 60
+        
         # Should allow first requests
         for i in range(5):
             allowed, remaining = await manager.check_rate_limit(
-                "192.168.1.100", max_requests=10, window_seconds=60
+                "192.168.1.100", max_requests=MAX_REQUESTS, window_seconds=WINDOW_SECONDS
             )
             assert allowed
             # After i requests, we have made (i+1) total, so remaining is max_requests - (i+1)
-            assert remaining == 10 - (i + 1)
+            assert remaining == MAX_REQUESTS - (i + 1)
         
         # Should block after limit
         for _ in range(6):
             await manager.check_rate_limit(
-                "192.168.1.100", max_requests=10, window_seconds=60
+                "192.168.1.100", max_requests=MAX_REQUESTS, window_seconds=WINDOW_SECONDS
             )
         
         allowed, remaining = await manager.check_rate_limit(
-            "192.168.1.100", max_requests=10, window_seconds=60
+            "192.168.1.100", max_requests=MAX_REQUESTS, window_seconds=WINDOW_SECONDS
         )
         assert not allowed
         assert remaining == 0
