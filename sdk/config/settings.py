@@ -10,7 +10,7 @@ import re
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Network enum (simplified from removed Cardano compat layer)
+# Network enum for blockchain operations
 from enum import Enum
 
 class Network(Enum):
@@ -79,27 +79,8 @@ class Settings(BaseSettings):
         env_prefix="MODERNTENSOR_",  # Giữ nguyên tiền tố (hoặc bỏ nếu không muốn)
     )
 
-    # --- Các trường cấu hình gốc của bạn ---
-    BLOCKFROST_PROJECT_ID: str = Field(
-        default="preprod06dzhzKlynuTInzvxHDH5cXbdHo524DE", alias="BLOCKFROST_PROJECT_ID"
-    )
-    HOTKEY_BASE_DIR: str = Field(default="moderntensor", alias="HOTKEY_BASE_DIR")
-    COLDKEY_NAME: str = Field(default="kickoff", alias="COLDKEY_NAME")
-    HOTKEY_NAME: str = Field(default="hk1", alias="HOTKEY_NAME")
-    HOTKEY_PASSWORD: str = Field(default="sonlearn2003", alias="HOTKEY_PASSWORD")
-    TEST_RECEIVER_ADDRESS: str = Field(
-        default="addr_test1qpkxr3kpzex93m646qr7w82d56md2kchtsv9jy39dykn4cmcxuuneyeqhdc4wy7de9mk54fndmckahxwqtwy3qg8pums5vlxhz",
-        alias="TEST_RECEIVER_ADDRESS",
-    )
-    TEST_POLICY_ID_HEX: str = Field(
-        default="b9107b627e28700da1c5c2077c40b1c7d1fe2e9b23ff20e0e6b8fec1",
-        alias="TEST_POLICY_ID_HEX",
-    )
-    TEST_CONTRACT_ADDRESS: str = Field(
-        default="addr_test1wqlerxnfzfcgx72zpuepgchl6p5mnjsxm27cwjxqq9wuthch489d5",
-        alias="TEST_CONTRACT_ADDRESS",
-    )
-    CARDANO_NETWORK: str = Field(default="TESTNET", alias="CARDANO_NETWORK")
+    # --- Network Configuration ---
+    NETWORK: str = Field(default="TESTNET", alias="NETWORK", description="Network type: MAINNET or TESTNET")
 
     # --- Encryption Settings ---
     ENCRYPTION_PBKDF2_ITERATIONS: int = Field(
@@ -114,7 +95,7 @@ class Settings(BaseSettings):
         None, alias="VALIDATOR_UID", description="UID của validator này (nếu chạy node)"
     )
     VALIDATOR_ADDRESS: Optional[str] = Field(
-        None, alias="VALIDATOR_ADDRESS", description="Địa chỉ Cardano của validator này"
+        None, alias="VALIDATOR_ADDRESS", description="Địa chỉ của validator này"
     )
     VALIDATOR_API_ENDPOINT: Optional[str] = Field(
         None,
@@ -135,7 +116,7 @@ class Settings(BaseSettings):
     CONSENSUS_CYCLE_SLOT_LENGTH: int = Field(
         default=600,  # Ví dụ: 7200 slots = 2 giờ (nếu 1 slot = 1 giây)
         alias="CONSENSUS_CYCLE_SLOT_LENGTH",
-        description="Độ dài của một chu kỳ đồng thuận tính bằng số slot Cardano.",
+        description="Độ dài của một chu kỳ đồng thuận tính bằng số slot.",
     )
     CONSENSUS_SLOT_QUERY_INTERVAL_SECONDS: float = Field(
         default=0.5,
@@ -162,45 +143,34 @@ class Settings(BaseSettings):
         description="Số slot trước khi kết thúc chu kỳ để broadcast điểm cục bộ.",
     )
 
-    # Tỉ lệ thời gian cho giai đoạn Tasking (vẫn giữ dựa trên thời gian thực tương đối)
-    CONSENSUS_TASKING_PHASE_RATIO: float = Field(
-        default=0.85,  # Giữ nguyên hoặc điều chỉnh
-        alias="CONSENSUS_TASKING_PHASE_RATIO",
-        description="Tỷ lệ *thời gian thực* của chu kỳ dành cho việc gửi task và nhận kết quả (mini-batches).",
+    # --- Thêm Cấu hình Mini-Batch ---
+    CONSENSUS_ENABLE_MINI_BATCH: bool = Field(
+        True,
+        alias="CONSENSUS_ENABLE_MINI_BATCH",
+        description="Enable mini-batch tasking within a consensus cycle.",
+    )
+    CONSENSUS_MINI_BATCH_SIZE: int = Field(
+        5,
+        alias="CONSENSUS_MINI_BATCH_SIZE",
+        description="Number of miners to select in each mini-batch (N).",
     )
     CONSENSUS_MINI_BATCH_WAIT_SECONDS: int = Field(
-        default=45,  # Giữ nguyên hoặc điều chỉnh
+        30,
         alias="CONSENSUS_MINI_BATCH_WAIT_SECONDS",
-        description="Timeout (giây) chờ kết quả trong một mini-batch.",
+        description="Timeout (seconds) to wait for results within a single mini-batch.",
+    )
+    CONSENSUS_TASKING_PHASE_RATIO: float = Field(
+        0.85,
+        alias="CONSENSUS_TASKING_PHASE_RATIO",
+        description="Ratio of the cycle interval dedicated to sending tasks and receiving results (mini-batches).",
     )
     CONSENSUS_MINI_BATCH_INTERVAL_SECONDS: int = Field(
-        default=5,  # Giữ nguyên hoặc điều chỉnh
+        5,
         alias="CONSENSUS_MINI_BATCH_INTERVAL_SECONDS",
-        description="Delay (giây) giữa các mini-batch.",
-    )
-    CONSENSUS_TASKING_END_SLOTS_OFFSET: int = Field(
-        default=120,  # Ví dụ: Tasking kết thúc 500 slot trước khi hết chu kỳ
-        alias="CONSENSUS_TASKING_END_SLOTS_OFFSET",
-        description="Số slot trước khi kết thúc chu kỳ để dừng giai đoạn giao task.",
+        description="Short delay (seconds) between mini-batch iterations to avoid busy-waiting.",
     )
 
     # --- Timing ---
-    CONSENSUS_METAGRAPH_UPDATE_INTERVAL_MINUTES: int = Field(
-        60,
-        description="Khoảng thời gian (phút) giữa các lần cập nhật metagraph dự kiến.",
-    )
-    CONSENSUS_SEND_SCORE_OFFSET_MINUTES: int = Field(
-        2,
-        description="Gửi điểm số P2P trước thời điểm cập nhật metagraph bao nhiêu phút.",
-    )
-    CONSENSUS_CONSENSUS_TIMEOUT_OFFSET_MINUTES: int = Field(
-        1,
-        description="Chờ điểm P2P đến trước thời điểm cập nhật metagraph bao nhiêu phút (phải nhỏ hơn SEND_SCORE_OFFSET).",
-    )
-    CONSENSUS_COMMIT_OFFSET_SECONDS: int = Field(
-        15,
-        description="Commit lên blockchain trước thời điểm cập nhật metagraph bao nhiêu giây (phải nhỏ hơn CONSENSUS_TIMEOUT_OFFSET).",
-    )
     CONSENSUS_COMMIT_DELAY_SECONDS: float = Field(
         1.5,
         description="Delay (giây) giữa các lần submit giao dịch commit để tránh rate limit.",
@@ -309,34 +279,6 @@ class Settings(BaseSettings):
         0.5, description="Điểm uốn (x0) của hàm sigmoid f_sig."
     )
 
-    # --- Thêm Cấu hình Mini-Batch ---
-    CONSENSUS_ENABLE_MINI_BATCH: bool = Field(
-        True,  # <<<--- Đặt là True để bật logic mới, False để dùng logic cũ
-        alias="CONSENSUS_ENABLE_MINI_BATCH",
-        description="Enable mini-batch tasking within a consensus cycle.",
-    )
-    CONSENSUS_MINI_BATCH_SIZE: int = Field(
-        5,  # <<<--- Ví dụ: Gửi task cho 5 miner mỗi lô
-        alias="CONSENSUS_MINI_BATCH_SIZE",
-        description="Number of miners to select in each mini-batch (N).",
-    )
-    CONSENSUS_MINI_BATCH_WAIT_SECONDS: int = Field(
-        30,  # <<<--- Ví dụ: Chờ kết quả mỗi lô trong 120 giây (2 phút)
-        alias="CONSENSUS_MINI_BATCH_WAIT_SECONDS",
-        description="Timeout (seconds) to wait for results within a single mini-batch.",
-    )
-    CONSENSUS_TASKING_PHASE_RATIO: float = Field(
-        0.85,  # <<<--- Ví dụ: Giai đoạn gửi task/nhận kết quả chiếm 85% chu kỳ
-        alias="CONSENSUS_TASKING_PHASE_RATIO",
-        description="Ratio of the cycle interval dedicated to sending tasks and receiving results (mini-batches).",
-    )
-    CONSENSUS_MINI_BATCH_INTERVAL_SECONDS: int = Field(
-        5,  # <<<--- Ví dụ: Chờ 5 giây giữa các lô nếu không có gì làm
-        alias="CONSENSUS_MINI_BATCH_INTERVAL_SECONDS",
-        description="Short delay (seconds) between mini-batch iterations to avoid busy-waiting.",
-    )
-    # ----
-
     # --- Fraud Detection & Penalty (Validator) ---
     CONSENSUS_DATUM_COMPARISON_TOLERANCE: float = Field(
         1e-5,
@@ -425,8 +367,8 @@ class Settings(BaseSettings):
         description="Khoảng thời gian tham chiếu (giây) cho bonus thời gian DAO (ví dụ: 1 năm).",
     )  # Đổi sang giây
 
-    # Giữ nguyên validator của bạn
-    @field_validator("CARDANO_NETWORK", mode="before")
+    # Network validator
+    @field_validator("NETWORK", mode="before")
     def validate_network(cls, value: Optional[str]):
         if value is None:
             value = "TESTNET"
