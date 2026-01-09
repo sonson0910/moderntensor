@@ -169,6 +169,11 @@ class Settings(BaseSettings):
         alias="CONSENSUS_MINI_BATCH_INTERVAL_SECONDS",
         description="Short delay (seconds) between mini-batch iterations to avoid busy-waiting.",
     )
+    CONSENSUS_TASKING_END_SLOTS_OFFSET: int = Field(
+        default=120,
+        alias="CONSENSUS_TASKING_END_SLOTS_OFFSET",
+        description="Số slot trước khi kết thúc chu kỳ để dừng giai đoạn giao task.",
+    )
 
     # --- Timing ---
     CONSENSUS_COMMIT_DELAY_SECONDS: float = Field(
