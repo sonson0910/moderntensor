@@ -1,3 +1,31 @@
+## [0.4.0] - 2026-01-09
+### Changed
+- **Major Documentation Cleanup**: Removed 53 redundant documentation files
+  - Reduced root documentation from 54 to 12 essential files (77% reduction)
+  - Removed all outdated PHASE*_SUMMARY.md files
+  - Removed all redundant *_COMPLETION.md and *_FINALIZATION.md files
+  - Removed duplicate roadmap, summary, and index files
+  - Kept only essential docs: README, Whitepaper, Technical guides, Roadmaps
+- Updated DOCUMENTATION_INDEX.md to reflect clean structure
+- Updated DOCUMENTATION.md for consistency
+
+### Removed
+- **Code Cleanup**: Removed 11 empty/obsolete module files
+  - sdk/service/contract_service.py (empty)
+  - sdk/metagraph/metagraph_api.py (empty)
+  - sdk/metagraph/metagraph_utils.py (empty)
+  - sdk/network/schemas.py, client.py, models.py (empty)
+  - sdk/cli/metagraph_cli.py (empty)
+  - sdk/config/constants.py, env.py (empty)
+  - examples/advanced_usage.py, quickstart.py (empty)
+- Removed validator_state.json runtime file (added to .gitignore)
+- Removed .cleanup_plan.txt temporary file
+
+### Improved
+- Cleaner SDK structure focusing on Layer 1 blockchain functionality
+- Better documentation organization
+- Removed obsolete Cardano-related placeholders
+
 ## [0.3.0] - 2023-10-01
 ### Added
 - CLI command `mtcli coldkey info` to view coldkey information.
