@@ -695,6 +695,74 @@ class LuxtensorClient:
             logger.error(f"Error getting prometheus for neuron {neuron_uid}: {e}")
             raise
     
+    def serve_axon(
+        self,
+        subnet_id: int,
+        hotkey: str,
+        coldkey: str,
+        ip: str,
+        port: int,
+        protocol: int = 4,
+        version: int = 1,
+        placeholder1: int = 0,
+        placeholder2: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Register or update axon endpoint information on the blockchain.
+        
+        This method submits a transaction to register the miner/validator's
+        axon server endpoint, making it discoverable by other network participants.
+        
+        Args:
+            subnet_id: Subnet identifier where this neuron operates
+            hotkey: Hotkey address (used for signing)
+            coldkey: Coldkey address (account owner)
+            ip: IP address of the axon server
+            port: Port number of the axon server
+            protocol: Protocol version (default: 4)
+            version: Axon version (default: 1)
+            placeholder1: Reserved field (default: 0)
+            placeholder2: Reserved field (default: 0)
+            
+        Returns:
+            Transaction result with transaction hash and status
+            
+        Example:
+            ```python
+            result = client.serve_axon(
+                subnet_id=1,
+                hotkey="5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuyUpnhM",
+                coldkey="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+                ip="192.168.1.100",
+                port=8091,
+            )
+            print(f"Registered axon: {result['tx_hash']}")
+            ```
+        """
+        try:
+            # Prepare axon info
+            axon_info = {
+                "ip": ip,
+                "port": port,
+                "ip_type": 4,  # IPv4
+                "protocol": protocol,
+                "hotkey": hotkey,
+                "coldkey": coldkey,
+                "version": version,
+                "placeholder1": placeholder1,
+                "placeholder2": placeholder2
+            }
+            
+            # Submit transaction to register axon
+            result = self._call_rpc("tx_serveAxon", [subnet_id, axon_info])
+            
+            logger.info(f"Registered axon for subnet {subnet_id} at {ip}:{port}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error registering axon: {e}")
+            raise
+    
     def get_active_neurons(self, subnet_id: int) -> List[int]:
         """
         Get list of active neuron UIDs in a subnet.

@@ -7,6 +7,7 @@ This bypasses the SDK's __init__.py to avoid circular dependency issues.
 import sys
 import os
 import importlib.util
+from pathlib import Path
 
 def load_module_from_file(module_name, file_path):
     """Load a Python module directly from file path."""
@@ -16,20 +17,25 @@ def load_module_from_file(module_name, file_path):
     spec.loader.exec_module(module)
     return module
 
+def get_repo_root():
+    """Get the repository root directory."""
+    return Path(__file__).parents[2]
+
 def main():
     print("\n" + "="*60)
     print("Direct Axon Implementation Verification")
     print("="*60 + "\n")
     
     # Get paths
-    sdk_path = os.path.join(os.path.dirname(__file__), 'sdk')
-    axon_path = os.path.join(sdk_path, 'axon')
+    repo_root = get_repo_root()
+    sdk_path = repo_root / 'sdk'
+    axon_path = sdk_path / 'axon'
     
     try:
         # Load config module
         print("Loading config module...")
-        config_path = os.path.join(axon_path, 'config.py')
-        config_module = load_module_from_file('axon_config', config_path)
+        config_path = axon_path / 'config.py'
+        config_module = load_module_from_file('axon_config', str(config_path))
         AxonConfig = config_module.AxonConfig
         print("✓ Config module loaded")
         
@@ -47,8 +53,8 @@ def main():
         
         # Load security module
         print("\nLoading security module...")
-        security_path = os.path.join(axon_path, 'security.py')
-        security_module = load_module_from_file('axon_security', security_path)
+        security_path = axon_path / 'security.py'
+        security_module = load_module_from_file('axon_security', str(security_path))
         SecurityManager = security_module.SecurityManager
         print("✓ Security module loaded")
         
@@ -70,22 +76,22 @@ def main():
         
         # Check middleware file exists
         print("\nChecking middleware module...")
-        middleware_path = os.path.join(axon_path, 'middleware.py')
-        assert os.path.exists(middleware_path)
-        file_size = os.path.getsize(middleware_path)
+        middleware_path = axon_path / 'middleware.py'
+        assert middleware_path.exists()
+        file_size = middleware_path.stat().st_size
         print(f"  ✓ Middleware module exists ({file_size} bytes)")
         
         # Check axon file exists
         print("\nChecking axon module...")
-        axon_file_path = os.path.join(axon_path, 'axon.py')
-        assert os.path.exists(axon_file_path)
-        file_size = os.path.getsize(axon_file_path)
+        axon_file_path = axon_path / 'axon.py'
+        assert axon_file_path.exists()
+        file_size = axon_file_path.stat().st_size
         print(f"  ✓ Axon module exists ({file_size} bytes)")
         
         # Verify documentation
         print("\nChecking documentation...")
-        docs_path = os.path.join(os.path.dirname(__file__), 'docs', 'AXON.md')
-        assert os.path.exists(docs_path)
+        docs_path = repo_root / 'docs' / 'AXON.md'
+        assert docs_path.exists()
         with open(docs_path) as f:
             content = f.read()
             assert '# Axon Server Documentation' in content
@@ -94,8 +100,8 @@ def main():
         
         # Verify examples
         print("\nChecking examples...")
-        example_path = os.path.join(os.path.dirname(__file__), 'examples', 'axon_example.py')
-        assert os.path.exists(example_path)
+        example_path = repo_root / 'examples' / 'axon_example.py'
+        assert example_path.exists()
         with open(example_path) as f:
             content = f.read()
             assert 'Axon' in content

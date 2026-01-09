@@ -15,11 +15,14 @@ async def forward_handler(request: Request):
     Handler for forward requests (inference).
     
     This is where you would process incoming requests for AI/ML inference.
+    Replace this with your actual model inference logic.
     """
     # Get request data
     data = await request.json()
     
-    # Process the request (placeholder - implement your model logic here)
+    # Example: Process with your AI/ML model
+    # result = your_model.predict(data['input'])
+    
     result = {
         "success": True,
         "output": f"Processed input: {data.get('input', 'N/A')}",
@@ -34,11 +37,14 @@ async def backward_handler(request: Request):
     Handler for backward requests (gradient/feedback).
     
     This is where you would handle gradient updates or feedback.
+    Replace this with your actual gradient processing logic.
     """
     # Get request data
     data = await request.json()
     
-    # Process the backward pass (placeholder)
+    # Example: Process gradients
+    # your_model.update_weights(data['gradients'])
+    
     result = {
         "success": True,
         "gradient_received": True,

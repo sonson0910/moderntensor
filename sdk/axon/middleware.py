@@ -34,6 +34,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         self.public_paths = {
             "/health",
             "/metrics",
+            "/info",
             "/docs",
             "/redoc",
             "/openapi.json",
