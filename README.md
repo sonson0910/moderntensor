@@ -44,36 +44,92 @@ This project includes an SDK toolkit and a command-line interface (CLI) for inte
 
 ## 📋 Current Features
 
-*   **Dynamic Subnets:** Create and deploy custom subnets with unique task logic and scoring mechanisms.
-*   **zkML Integration:** Built-in support for Zero-Knowledge Machine Learning proofs using `ezkl`.
-*   **Subnet Simulator:** Test your subnet logic locally with the `simulate` command.
-*   **Wallet Management CLI (`mtcli w`):**
-    *   Create Coldkey (`create-coldkey`): Generates a secure mnemonic phrase and encrypts it for storing the root key.
-    *   Restore Coldkey (`restore-coldkey`): Recreates a coldkey from a saved mnemonic phrase.
-    *   Generate Hotkey (`generate-hotkey`): Generates child keys (hotkeys) from the coldkey using standard HD derivation, used for Miner identification and signing operational transactions.
-    *   Import Hotkey (`import-hotkey`): Imports an encrypted hotkey from an external source.
-    *   Regenerate Hotkey (`regen-hotkey`): Recovers hotkey information if the `hotkeys.json` file is lost, requiring only the coldkey and the derivation index.
-    *   List Wallets (`list`): Displays a list of coldkeys and their corresponding hotkeys.
-    *   Register Hotkey (`register-hotkey`): Registers a hotkey as a Miner on the ModernTensor network, creating/updating a UTxO at the smart contract address with Miner information (UID, stake, API endpoint,...).
+### Layer 1 Blockchain (Luxtensor)
+*   **Custom PoS Blockchain:** Independent Layer 1 with account-based model (Ethereum-style)
+*   **High Performance:** ~12 second block time, scalable architecture
+*   **Native Integration:** Optimized for AI/ML workloads
+*   **Phase 1 Complete:** 83% complete, production-ready foundation
+
+### Python SDK & Tools
+*   **LuxtensorClient:** Comprehensive RPC client for blockchain interaction (sync + async)
+*   **Axon Server:** Production-ready API server with DDoS protection, rate limiting
+*   **Dendrite Client:** Advanced query client with circuit breaker, caching
+*   **AI/ML Framework:** Subnet system, agent framework, zkML integration
+*   **Security Module:** Authentication, rate limiting, IP filtering
+*   **Tokenomics:** Reward calculation, emission schedules, staking
+
+### CLI Tool (mtcli) - NEW! 🚀
+*   **Modern CLI:** Click-based command interface with Rich output
+*   **Wallet Management:**
+    *   Create Coldkey (`create-coldkey`): Generates BIP39 mnemonic with password encryption
+    *   Restore Coldkey (`restore-coldkey`): Restore from existing mnemonic
+    *   Generate Hotkey (`generate-hotkey`): BIP44 HD derivation for hotkeys
+    *   List Wallets (`list`): Display all coldkeys
+    *   More commands coming in Phase 2
+*   **Ethereum-Compatible Keys:** Standard BIP39/BIP44 key derivation
+*   **Secure Storage:** PBKDF2 + Fernet encryption (100k iterations)
+*   **Beautiful Output:** Rich tables, colors, progress indicators
+*   **Status:** Phase 1 Complete (30%), see [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md)
 
 ## 💡 Using the CLI (`mtcli`)
 
-The main command-line tool is `mtcli`. The `w` (`wallet`) subcommand is used for wallet management, `tx` for transactions, `query` for blockchain information, `stake` for Cardano staking, and `l1-stake` for native Layer 1 blockchain staking.
+**NEW!** mtcli has been rebuilt from the ground up with modern architecture and security.
 
-**Help:**
+**Installation:**
 ```bash
-mtcli --help
-mtcli w --help
-mtcli tx --help
-mtcli query --help
-mtcli stake --help
-mtcli l1-stake --help
-mtcli w <command_name> --help # Example: mtcli w create-coldkey --help
-mtcli query <command_name> --help # Example: mtcli query address --help
-mtcli l1-stake <command_name> --help # Example: mtcli l1-stake add --help
+# Install in development mode
+pip install -e .
+
+# Or run directly
+python -m sdk.cli.main
 ```
 
-### Subnet & Simulation Commands
+**Quick Start:**
+```bash
+# Check version
+mtcli --version
+
+# Get help
+mtcli --help
+mtcli wallet --help
+
+# Create a wallet
+mtcli wallet create-coldkey --name my_coldkey
+
+# Generate hotkey
+mtcli wallet generate-hotkey --coldkey my_coldkey --hotkey-name miner_hk1
+
+# List wallets
+mtcli wallet list
+
+# Convert units
+mtcli utils convert --from-mdt 1.5
+```
+
+**Documentation:**
+- [MTCLI_IMPLEMENTATION_GUIDE.md](MTCLI_IMPLEMENTATION_GUIDE.md) - Technical guide
+- [MTCLI_ROADMAP_VI.md](MTCLI_ROADMAP_VI.md) - Vietnamese roadmap
+- [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md) - Phase 1 summary
+
+**Command Groups:**
+**Command Groups:**
+```bash
+mtcli wallet      # Wallet management (create, restore, generate hotkeys)
+mtcli stake       # Staking operations (Phase 4 - planned)
+mtcli query       # Blockchain queries (Phase 2 - planned)
+mtcli tx          # Transactions (Phase 3 - planned)
+mtcli subnet      # Subnet management (Phase 5 - planned)
+mtcli validator   # Validator operations (Phase 6 - planned)
+mtcli utils       # Utilities (convert, version, generate-keypair)
+```
+
+---
+
+### Legacy Commands (Being Migrated)
+
+The following commands are from the previous implementation. They will be migrated to the new mtcli structure in upcoming phases.
+
+#### Subnet & Simulation Commands (Legacy)
 
 **Run a Validator:**
 ```bash
