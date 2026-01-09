@@ -62,7 +62,7 @@ def load_hotkey_info(
         base_dir: Optional base directory for wallets
     
     Returns:
-        Dictionary with hotkey information (address, index)
+        Dictionary with hotkey information (name, address, index, public_key)
     
     Raises:
         Exception: If hotkey not found
@@ -76,12 +76,17 @@ def load_hotkey_info(
     
     # Load hotkeys
     with open(hotkeys_file, 'r') as f:
-        hotkeys = json.load(f)
+        hotkeys_data = json.load(f)
     
-    if hotkey_name not in hotkeys:
-        raise KeyError(f"Hotkey '{hotkey_name}' not found in coldkey '{coldkey_name}'")
+    hotkeys_list = hotkeys_data.get('hotkeys', [])
     
-    return hotkeys[hotkey_name]
+    # Find the hotkey by name
+    for hotkey in hotkeys_list:
+        if hotkey.get('name') == hotkey_name:
+            return hotkey
+    
+    # If not found, raise error
+    raise KeyError(f"Hotkey '{hotkey_name}' not found in coldkey '{coldkey_name}'")
 
 
 def derive_hotkey_from_coldkey(
