@@ -28,6 +28,9 @@ impl RpcServer {
         // Register account methods
         self.register_account_methods(&mut io);
 
+        // Register staking methods
+        self.register_staking_methods(&mut io);
+
         // Register AI-specific methods
         self.register_ai_methods(&mut io);
 
@@ -249,6 +252,152 @@ impl RpcServer {
 
             // For now, return null
             Ok(Value::Null)
+        });
+    }
+
+    /// Register staking-related methods
+    fn register_staking_methods(&self, io: &mut IoHandler) {
+        let state = self.state.clone();
+
+        // staking_getTotalStake - Get total stake in network
+        io.add_sync_method("staking_getTotalStake", move |_params: Params| {
+            // In a real implementation, query from consensus module
+            // For now, return a placeholder value
+            let total_stake = 1000000000000000000u128; // 1 MDT
+            Ok(Value::String(format!("0x{:x}", total_stake)))
+        });
+
+        let state = self.state.clone();
+
+        // staking_getStake - Get stake for specific address
+        io.add_sync_method("staking_getStake", move |params: Params| {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+            }
+
+            let address = parse_address(&parsed[0])?;
+
+            // In a real implementation, query stake from consensus module
+            // For now, return 0 (no stake)
+            let stake = 0u128;
+            Ok(Value::String(format!("0x{:x}", stake)))
+        });
+
+        // staking_getValidators - Get list of validators
+        io.add_sync_method("staking_getValidators", move |_params: Params| {
+            // In a real implementation:
+            // 1. Query validator set from consensus module
+            // 2. Return list of validators with their stakes
+
+            // For now, return empty array
+            Ok(Value::Array(vec![]))
+        });
+
+        // subnet_getInfo - Get subnet information
+        io.add_sync_method("subnet_getInfo", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+            }
+
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            // In a real implementation:
+            // 1. Query subnet from state
+            // 2. Return subnet metadata
+
+            // For now, return placeholder data
+            let subnet_info = serde_json::json!({
+                "id": subnet_id,
+                "name": format!("Subnet {}", subnet_id),
+                "owner": "0x0000000000000000000000000000000000000000",
+                "emission_rate": "1000000000",
+                "participant_count": 0
+            });
+
+            Ok(subnet_info)
+        });
+
+        // subnet_listAll - List all subnets
+        io.add_sync_method("subnet_listAll", move |_params: Params| {
+            // In a real implementation:
+            // 1. Query all subnets from state
+            // 2. Return array of subnet info
+
+            // For now, return empty array
+            Ok(Value::Array(vec![]))
+        });
+
+        // neuron_getInfo - Get neuron information
+        io.add_sync_method("neuron_getInfo", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.len() < 2 {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Missing subnet ID or neuron UID",
+                ));
+            }
+
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            let neuron_uid = parsed[1]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron UID"))?;
+
+            // In a real implementation:
+            // 1. Query neuron from subnet state
+            // 2. Return neuron metadata
+
+            // For now, return null (not found)
+            Ok(Value::Null)
+        });
+
+        // neuron_listBySubnet - List neurons in subnet
+        io.add_sync_method("neuron_listBySubnet", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+            }
+
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            // In a real implementation:
+            // 1. Query all neurons in subnet
+            // 2. Return array of neuron info
+
+            // For now, return empty array
+            Ok(Value::Array(vec![]))
+        });
+
+        // weight_getWeights - Get weights for neuron
+        io.add_sync_method("weight_getWeights", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.len() < 2 {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Missing subnet ID or neuron UID",
+                ));
+            }
+
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            let neuron_uid = parsed[1]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron UID"))?;
+
+            // In a real implementation:
+            // 1. Query weights from subnet state
+            // 2. Return weight matrix
+
+            // For now, return empty array
+            Ok(Value::Array(vec![]))
         });
     }
 }

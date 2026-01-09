@@ -396,7 +396,7 @@ class LuxtensorClient:
             address=address,
             balance=balance,
             nonce=nonce,
-            stake=0  # TODO: Get stake from Luxtensor consensus module
+            stake=self.get_stake(address)  # Get stake from staking RPC method
         )
     
     def get_balance(self, address: str) -> int:
@@ -519,15 +519,13 @@ class LuxtensorClient:
         
         Returns:
             List of validator information
-            
-        Note:
-            This method is not yet implemented in Luxtensor RPC.
-            Use get_validator_status() for individual validators.
         """
-        raise NotImplementedError(
-            "get_validators() is not yet implemented in Luxtensor RPC. "
-            "Use get_validator_status(address) to query individual validators."
-        )
+        try:
+            result = self._call_rpc("staking_getValidators", [])
+            return result if result else []
+        except Exception as e:
+            logger.warning(f"Failed to get validators: {e}")
+            return []
     
     def get_subnet_info(self, subnet_id: int) -> Dict[str, Any]:
         """
@@ -538,15 +536,13 @@ class LuxtensorClient:
             
         Returns:
             Subnet metadata and configuration
-            
-        Note:
-            This method is not yet implemented in Luxtensor RPC.
-            Subnet management will be added in a future Luxtensor release.
         """
-        raise NotImplementedError(
-            "get_subnet_info() is not yet implemented in Luxtensor RPC. "
-            "Subnet management will be added in future releases."
-        )
+        try:
+            result = self._call_rpc("subnet_getInfo", [subnet_id])
+            return result if result else {}
+        except Exception as e:
+            logger.error(f"Failed to get subnet info for {subnet_id}: {e}")
+            raise
     
     def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """
@@ -557,14 +553,13 @@ class LuxtensorClient:
             
         Returns:
             List of neuron information
-            
-        Note:
-            This method is not yet implemented in Luxtensor RPC.
         """
-        raise NotImplementedError(
-            "get_neurons() is not yet implemented in Luxtensor RPC. "
-            "Subnet and neuron management will be added in future releases."
-        )
+        try:
+            result = self._call_rpc("neuron_listBySubnet", [subnet_id])
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Failed to get neurons for subnet {subnet_id}: {e}")
+            return []
     
     def get_weights(self, subnet_id: int, neuron_uid: int) -> List[float]:
         """
@@ -576,14 +571,13 @@ class LuxtensorClient:
             
         Returns:
             Weight values
-            
-        Note:
-            This method is not yet implemented in Luxtensor RPC.
         """
-        raise NotImplementedError(
-            "get_weights() is not yet implemented in Luxtensor RPC. "
-            "Weight management will be added in future releases."
-        )
+        try:
+            result = self._call_rpc("weight_getWeights", [subnet_id, neuron_uid])
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Failed to get weights for neuron {neuron_uid} in subnet {subnet_id}: {e}")
+            return []
     
     # ========================================================================
     # Staking Methods
@@ -597,19 +591,34 @@ class LuxtensorClient:
             address: Account address
             
         Returns:
-            Staked amount
+            Staked amount in base units
         """
-        account = self.get_account(address)
-        return account.stake
+        try:
+            result = self._call_rpc("staking_getStake", [address])
+            # Convert hex string to int
+            if isinstance(result, str):
+                return int(result, 16) if result.startswith('0x') else int(result)
+            return result if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get stake for {address}: {e}")
+            return 0
     
     def get_total_stake(self) -> int:
         """
         Get total staked in network.
         
         Returns:
-            Total stake amount
+            Total stake amount in base units
         """
-        return self._call_rpc("staking_getTotalStake")
+        try:
+            result = self._call_rpc("staking_getTotalStake", [])
+            # Convert hex string to int
+            if isinstance(result, str):
+                return int(result, 16) if result.startswith('0x') else int(result)
+            return result if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get total stake: {e}")
+            return 0
     
     # ========================================================================
     # Utility Methods
