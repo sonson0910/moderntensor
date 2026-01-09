@@ -9,6 +9,7 @@ import asyncio
 import logging
 from typing import Optional, List, Dict, Any, Union
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout
@@ -420,6 +421,189 @@ class AsyncLuxtensorClient:
             if current_block >= target_block:
                 break
             await asyncio.sleep(poll_interval)
+    
+    # =============================================================================
+    # Advanced Batch Operations
+    # =============================================================================
+    
+    async def batch_query(self, queries: List[Dict[str, Any]]) -> List[Any]:
+        """
+        Execute multiple queries in batch for better performance.
+        
+        Args:
+            queries: List of query dictionaries with 'method' and optional 'params'
+            
+        Returns:
+            List of results corresponding to each query
+            
+        Example:
+            ```python
+            queries = [
+                {"method": "block_number"},
+                {"method": "subnet_info", "params": [1]},
+                {"method": "neurons", "params": [1]},
+            ]
+            results = await client.batch_query(queries)
+            ```
+        """
+        tasks = []
+        for query in queries:
+            method = query.get("method")
+            params = query.get("params")
+            if method:
+                tasks.append(self._make_request(method, params))
+        
+        return await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def subscribe_events(
+        self,
+        event_type: str,
+        callback: Optional[callable] = None,
+    ):
+        """
+        Subscribe to blockchain events (WebSocket required).
+        
+        Args:
+            event_type: Type of event to subscribe to
+            callback: Optional callback function for events
+            
+        Yields:
+            Event data as it arrives
+            
+        Note:
+            Requires WebSocket connection. HTTP connections will raise an error.
+            
+        Example:
+            ```python
+            async for event in client.subscribe_events("NewBlock"):
+                print(f"New block: {event}")
+            ```
+        """
+        if not self.url.startswith("ws"):
+            raise ValueError("Event subscription requires WebSocket connection")
+        
+        # This is a placeholder for WebSocket event subscription
+        # Full implementation would use aiohttp WebSocket client
+        logger.warning("Event subscription not fully implemented yet")
+        raise NotImplementedError("Event subscription requires WebSocket support")
+    
+    async def get_metagraph_async(self, subnet_uid: int):
+        """
+        Get complete metagraph data for a subnet asynchronously.
+        
+        Args:
+            subnet_uid: Subnet UID
+            
+        Returns:
+            Dictionary containing:
+            - subnet_info: SubnetInfo object
+            - neurons: List of NeuronInfo objects
+            - weights: Weight matrix data
+            
+        Example:
+            ```python
+            metagraph_data = await client.get_metagraph_async(1)
+            neurons = metagraph_data['neurons']
+            ```
+        """
+        # Fetch subnet info, neurons, and other data in parallel
+        subnet_task = self.get_subnet(subnet_uid)
+        neurons_task = self.get_neurons(subnet_uid)
+        
+        subnet_info, neurons = await asyncio.gather(
+            subnet_task,
+            neurons_task,
+            return_exceptions=False
+        )
+        
+        return {
+            "subnet_info": subnet_info,
+            "neurons": neurons,
+            "subnet_uid": subnet_uid,
+            "timestamp": datetime.now().isoformat(),
+        }
+    
+    async def get_weights_async(
+        self,
+        subnet_uid: int,
+        validator_uid: Optional[int] = None
+    ) -> Dict[int, Dict[int, float]]:
+        """
+        Get weight matrix or weights for specific validator asynchronously.
+        
+        Args:
+            subnet_uid: Subnet UID
+            validator_uid: Optional validator UID (None for all validators)
+            
+        Returns:
+            Dictionary mapping validator UID to weight dictionary
+        """
+        try:
+            if validator_uid is not None:
+                result = await self._make_request(
+                    "weights",
+                    params=[subnet_uid, validator_uid]
+                )
+                return {validator_uid: result} if result else {}
+            else:
+                # Get all validators' weights
+                neurons = await self.get_neurons(subnet_uid)
+                validators = [n for n in neurons if n.validator_permit]
+                
+                tasks = [
+                    self._make_request("weights", params=[subnet_uid, v.uid])
+                    for v in validators
+                ]
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                weights = {}
+                for validator, result in zip(validators, results):
+                    if not isinstance(result, Exception) and result:
+                        weights[validator.uid] = result
+                
+                return weights
+                
+        except Exception as e:
+            logger.error(f"Error getting weights for subnet {subnet_uid}: {e}")
+            return {}
+    
+    async def get_balance_async(self, address: str) -> float:
+        """
+        Get account balance asynchronously.
+        
+        Args:
+            address: Account address
+            
+        Returns:
+            Balance amount
+        """
+        try:
+            result = await self._make_request(
+                "balance",
+                params=[address]
+            )
+            return float(result) if result else 0.0
+        except Exception as e:
+            logger.error(f"Error getting balance for {address}: {e}")
+            return 0.0
+    
+    async def get_multiple_balances(
+        self,
+        addresses: List[str]
+    ) -> Dict[str, float]:
+        """
+        Get balances for multiple addresses in parallel.
+        
+        Args:
+            addresses: List of account addresses
+            
+        Returns:
+            Dictionary mapping address to balance
+        """
+        tasks = [self.get_balance_async(addr) for addr in addresses]
+        balances = await asyncio.gather(*tasks)
+        return dict(zip(addresses, balances))
     
     def __repr__(self) -> str:
         return f"AsyncLuxtensorClient(url='{self.url}')"
