@@ -2,6 +2,7 @@
 Key Generation Module
 
 Provides functionality for generating and deriving cryptographic keys.
+Uses native Python cryptography matching Luxtensor implementation.
 """
 
 from typing import Dict, Any
@@ -9,8 +10,36 @@ from bip_utils import (
     Bip39MnemonicGenerator, Bip39SeedGenerator, Bip39WordsNum,
     Bip44, Bip44Coins, Bip44Changes
 )
-from eth_account import Account
+from ecdsa import SigningKey, SECP256k1
 import secrets
+
+
+def _derive_address_from_private_key(private_key_hex: str) -> tuple[str, str]:
+    """
+    Derive address and public key from private key (matching Luxtensor).
+    
+    Args:
+        private_key_hex: Private key in hex
+    
+    Returns:
+        Tuple of (address, public_key_hex)
+    """
+    from sdk.transactions import derive_address_from_private_key
+    from Crypto.Hash import keccak
+    
+    # Get address using Luxtensor's method
+    address = derive_address_from_private_key(private_key_hex)
+    
+    # Get public key
+    private_key_bytes = bytes.fromhex(private_key_hex)
+    signing_key = SigningKey.from_string(private_key_bytes, curve=SECP256k1)
+    verifying_key = signing_key.get_verifying_key()
+    
+    # Uncompressed public key format (0x04 + X + Y)
+    public_key_bytes = b'\x04' + verifying_key.to_string()
+    public_key_hex = '0x' + public_key_bytes.hex()
+    
+    return address, public_key_hex
 
 
 class KeyGenerator:
@@ -18,6 +47,7 @@ class KeyGenerator:
     Key generator for ModernTensor wallets
     
     Handles mnemonic generation, key derivation, and keypair creation.
+    Uses native Python cryptography matching Luxtensor's Rust implementation.
     """
     
     def generate_mnemonic(self, words: int = 12) -> str:
@@ -58,7 +88,7 @@ class KeyGenerator:
     
     def derive_hotkey(self, mnemonic: str, index: int) -> Dict[str, str]:
         """
-        Derive a hotkey from mnemonic using HD derivation
+        Derive a hotkey from mnemonic using HD derivation (matching Luxtensor).
         
         Args:
             mnemonic: BIP39 mnemonic phrase
@@ -70,7 +100,7 @@ class KeyGenerator:
         # Generate seed from mnemonic
         seed_bytes = Bip39SeedGenerator(mnemonic).Generate()
         
-        # Create BIP44 context for Ethereum (could use custom coin type)
+        # Create BIP44 context for Ethereum (compatible with Luxtensor)
         bip44_ctx = Bip44.FromSeed(seed_bytes, Bip44Coins.ETHEREUM)
         
         # Derive account: m/44'/60'/0'/0/index
@@ -83,18 +113,18 @@ class KeyGenerator:
         private_key_bytes = bip44_addr_ctx.PrivateKey().Raw().ToBytes()
         private_key_hex = private_key_bytes.hex()
         
-        # Create account from private key
-        account = Account.from_key(private_key_hex)
+        # Derive address and public key using Luxtensor's crypto
+        address, public_key_hex = _derive_address_from_private_key(private_key_hex)
         
         return {
-            'address': account.address,
-            'public_key': account._key_obj.public_key.to_hex(),
+            'address': address,
+            'public_key': public_key_hex,
             'private_key': private_key_hex
         }
     
     def generate_keypair(self) -> Dict[str, str]:
         """
-        Generate a random keypair (for testing)
+        Generate a random keypair (for testing) using Luxtensor crypto.
         
         Returns:
             Dictionary with address, public_key, and private_key
@@ -102,11 +132,11 @@ class KeyGenerator:
         # Generate random private key
         private_key = secrets.token_hex(32)
         
-        # Create account
-        account = Account.from_key(private_key)
+        # Derive address and public key using Luxtensor's crypto
+        address, public_key_hex = _derive_address_from_private_key(private_key)
         
         return {
-            'address': account.address,
-            'public_key': account._key_obj.public_key.to_hex(),
+            'address': address,
+            'public_key': public_key_hex,
             'private_key': private_key
         }

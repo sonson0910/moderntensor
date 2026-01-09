@@ -2,6 +2,7 @@
 Key Manager Module
 
 Handles cryptographic key generation, derivation, and management.
+Uses native Python cryptography matching Luxtensor's Rust implementation.
 """
 
 __all__ = ['KeyGenerator', 'encrypt_data', 'decrypt_data']
