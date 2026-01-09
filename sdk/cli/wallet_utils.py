@@ -25,7 +25,8 @@ def load_coldkey_mnemonic(coldkey_name: str, base_dir: Optional[str] = None) -> 
         Decrypted mnemonic phrase
     
     Raises:
-        Exception: If coldkey not found or decryption fails
+        FileNotFoundError: If coldkey file not found
+        ValueError: If decryption fails (wrong password or corrupted data)
     """
     wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
     coldkey_path = wallet_path / coldkey_name
@@ -45,7 +46,7 @@ def load_coldkey_mnemonic(coldkey_name: str, base_dir: Optional[str] = None) -> 
         decrypted_data = decrypt_data(encrypted_data, password)
         return decrypted_data.decode('utf-8')
     except Exception as e:
-        raise Exception(f"Failed to decrypt coldkey: {str(e)}")
+        raise ValueError(f"Failed to decrypt coldkey (wrong password or corrupted data): {str(e)}")
 
 
 def load_hotkey_info(
@@ -65,7 +66,8 @@ def load_hotkey_info(
         Dictionary with hotkey information (name, address, index, public_key)
     
     Raises:
-        Exception: If hotkey not found
+        FileNotFoundError: If hotkeys.json not found
+        KeyError: If specified hotkey name not found in the file
     """
     wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
     coldkey_path = wallet_path / coldkey_name

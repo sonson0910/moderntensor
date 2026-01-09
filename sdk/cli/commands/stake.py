@@ -90,7 +90,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         gas_price = 1000000000  # 1 Gwei - adjust based on network
         
         # Build stake transaction data
-        # TODO: Implement actual stake transaction encoding based on Luxtensor pallet
+        # TODO (GitHub Issue): Implement actual stake transaction encoding based on Luxtensor pallet
         # Expected format: function_selector (4 bytes) + encoded_parameters
         # Example structure:
         #   stake_data = encode_stake_call(
@@ -98,6 +98,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         #       hotkey=hotkey_address,
         #       amount=amount_base
         #   )
+        # Track: Create GitHub issue for transaction encoding implementation
         stake_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
         
         # Create transaction signer
@@ -148,8 +149,6 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to add stake: {str(e)}")
-        # Note: In production, use proper logging instead of traceback
-        # For now, include traceback for development/debugging
 
 
 @stake.command('remove')
@@ -273,7 +272,6 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to remove stake: {str(e)}")
-        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('claim')
@@ -314,10 +312,8 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         # Get hotkey address
         hotkey_address = get_hotkey_address(coldkey, hotkey, base_dir)
         
-        # Check pending rewards (this is a placeholder - actual method depends on implementation)
-        print_info("Checking pending rewards...")
-        # pending_rewards = client.get_pending_rewards(hotkey_address)
-        # For now, we'll proceed without checking
+        # Note: Pending rewards query will be implemented when Luxtensor provides the API
+        # For now, proceed with claim operation directly
         
         # Derive hotkey to get private key
         print_info("Loading wallet keys...")
@@ -377,7 +373,6 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to claim rewards: {str(e)}")
-        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('info')
@@ -448,7 +443,6 @@ def stake_info(coldkey: str, hotkey: str, base_dir: Optional[str], network: str)
         print_error(f"Hotkey not found: {str(e)}")
     except Exception as e:
         print_error(f"Failed to fetch stake info: {str(e)}")
-        # Note: In production, use proper logging instead of traceback
 
 
 @stake.command('list')
@@ -523,4 +517,3 @@ def list_stakes(network: str, limit: int):
         
     except Exception as e:
         print_error(f"Failed to list validators: {str(e)}")
-        # Note: In production, use proper logging instead of traceback
