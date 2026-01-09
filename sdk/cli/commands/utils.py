@@ -75,7 +75,7 @@ def generate_keypair():
 def show_version():
     """Show detailed version information"""
     from sdk.cli import __version__
-    from sdk.version import VERSION as sdk_version
+    from sdk.version import __version__ as sdk_version
     
     console.print(f"\n📦 mtcli version: {__version__}", style="bold cyan")
     console.print(f"📦 SDK version: {sdk_version}", style="bold cyan")
