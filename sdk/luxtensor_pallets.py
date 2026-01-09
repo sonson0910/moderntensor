@@ -13,29 +13,32 @@ This matches the Luxtensor Rust implementation in luxtensor-contracts.
 """
 
 import struct
-from typing import Optional
+from typing import Optional, List
 from dataclasses import dataclass
 
 
 # Function selectors for Luxtensor pallets (matching Rust implementation)
 # These are derived from keccak256 hash of function signatures
+# NOTE: These are placeholder values for development. In production, these should be
+# replaced with actual keccak256 hashes of function signatures:
+# Example: keccak256("addStake(address,uint256)")[:4]
 FUNCTION_SELECTORS = {
     # Staking pallet
-    'stake_add': bytes.fromhex('12345678'),       # addStake(address,uint256)
-    'stake_remove': bytes.fromhex('87654321'),    # removeStake(address,uint256)
-    'stake_claim': bytes.fromhex('abcdef12'),     # claimRewards(address)
+    'stake_add': bytes.fromhex('12345678'),       # PLACEHOLDER: addStake(address,uint256)
+    'stake_remove': bytes.fromhex('87654321'),    # PLACEHOLDER: removeStake(address,uint256)
+    'stake_claim': bytes.fromhex('abcdef12'),     # PLACEHOLDER: claimRewards(address)
     
     # Subnet pallet
-    'subnet_create': bytes.fromhex('11223344'),   # createSubnet(string,uint256)
-    'subnet_register': bytes.fromhex('abcd1234'), # registerOnSubnet(uint256,address,uint256,string)
+    'subnet_create': bytes.fromhex('11223344'),   # PLACEHOLDER: createSubnet(string,uint256)
+    'subnet_register': bytes.fromhex('abcd1234'), # PLACEHOLDER: registerOnSubnet(uint256,address,uint256,string)
     
     # Neuron pallet
-    'neuron_register': bytes.fromhex('22334455'),  # registerNeuron(uint256,address)
-    'neuron_deregister': bytes.fromhex('33445566'), # deregisterNeuron(uint256,address)
+    'neuron_register': bytes.fromhex('22334455'),  # PLACEHOLDER: registerNeuron(uint256,address)
+    'neuron_deregister': bytes.fromhex('33445566'), # PLACEHOLDER: deregisterNeuron(uint256,address)
     
     # Weight pallet
-    'weight_set': bytes.fromhex('44556677'),      # setWeights(uint256,uint256[],uint256[])
-    'weight_commit': bytes.fromhex('55667788'),   # commitWeights(uint256,bytes32)
+    'weight_set': bytes.fromhex('44556677'),      # PLACEHOLDER: setWeights(uint256,uint256[],uint256[])
+    'weight_commit': bytes.fromhex('55667788'),   # PLACEHOLDER: commitWeights(uint256,bytes32)
 }
 
 
@@ -234,8 +237,8 @@ def encode_register_on_subnet(
 
 def encode_set_weights(
     subnet_uid: int,
-    neuron_uids: list[int],
-    weights: list[int]
+    neuron_uids: List[int],
+    weights: List[int]
 ) -> EncodedCall:
     """
     Encode a setWeights call for validator weight setting.
