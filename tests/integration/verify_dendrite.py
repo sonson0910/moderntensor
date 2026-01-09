@@ -34,7 +34,9 @@ def test_imports():
     """Test that all Dendrite modules can be imported."""
     print("Testing imports...")
     
-    sdk_path = os.path.join(os.path.dirname(__file__), 'sdk')
+    # Get repository root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    sdk_path = os.path.join(repo_root, 'sdk')
     dendrite_path = os.path.join(sdk_path, 'dendrite')
     
     # Load config module first (no dependencies)
@@ -200,7 +202,9 @@ def test_file_structure():
     """Test that all files exist."""
     print("Checking file structure...")
     
-    dendrite_path = os.path.join(os.path.dirname(__file__), 'sdk', 'dendrite')
+    # Get repository root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    dendrite_path = os.path.join(repo_root, 'sdk', 'dendrite')
     
     files_to_check = [
         '__init__.py',
@@ -217,11 +221,13 @@ def test_file_structure():
         print(f"  ✓ {filename} ({size} bytes)")
     
     # Check documentation
-    docs_path = os.path.join(os.path.dirname(__file__), 'docs', 'DENDRITE.md')
-    # Will be created later
+    docs_path = os.path.join(repo_root, 'docs', 'DENDRITE.md')
+    if os.path.exists(docs_path):
+        size = os.path.getsize(docs_path)
+        print(f"  ✓ DENDRITE.md ({size} bytes)")
     
     # Check examples
-    example_path = os.path.join(os.path.dirname(__file__), 'examples', 'dendrite_example.py')
+    example_path = os.path.join(repo_root, 'examples', 'dendrite_example.py')
     assert os.path.exists(example_path), "Missing example file"
     size = os.path.getsize(example_path)
     print(f"  ✓ dendrite_example.py ({size} bytes)")

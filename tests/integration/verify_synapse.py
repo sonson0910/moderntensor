@@ -26,7 +26,9 @@ def test_imports():
     """Test that all Synapse modules can be imported."""
     print("Testing imports...")
     
-    sdk_path = os.path.join(os.path.dirname(__file__), 'sdk')
+    # Get repository root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    sdk_path = os.path.join(repo_root, 'sdk')
     synapse_path = os.path.join(sdk_path, 'synapse')
     
     # Load version module
@@ -215,7 +217,9 @@ def test_file_structure():
     """Test that all files exist."""
     print("Checking file structure...")
     
-    synapse_path = os.path.join(os.path.dirname(__file__), 'sdk', 'synapse')
+    # Get repository root
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    synapse_path = os.path.join(repo_root, 'sdk', 'synapse')
     
     files_to_check = [
         '__init__.py',
@@ -231,8 +235,14 @@ def test_file_structure():
         size = os.path.getsize(filepath)
         print(f"  ✓ {filename} ({size} bytes)")
     
+    # Check documentation
+    docs_path = os.path.join(repo_root, 'docs', 'SYNAPSE.md')
+    if os.path.exists(docs_path):
+        size = os.path.getsize(docs_path)
+        print(f"  ✓ SYNAPSE.md ({size} bytes)")
+    
     # Check examples
-    example_path = os.path.join(os.path.dirname(__file__), 'examples', 'synapse_example.py')
+    example_path = os.path.join(repo_root, 'examples', 'synapse_example.py')
     assert os.path.exists(example_path), "Missing example file"
     size = os.path.getsize(example_path)
     print(f"  ✓ synapse_example.py ({size} bytes)")
