@@ -209,21 +209,25 @@ class TestKeyManagementIntegration:
         # 2. Derive hotkey
         hotkey = self.key_gen.derive_hotkey(coldkey_mnemonic, index=0)
         
-        # 3. Encrypt hotkey private key
-        encrypted_privkey = encrypt_data(hotkey['private_key'].encode(), password)
+        # 3. Handle private key as bytes for security
+        privkey_bytes = hotkey['private_key'].encode()
         
-        # 4. Save to file
+        # 4. Encrypt hotkey private key
+        encrypted_privkey = encrypt_data(privkey_bytes, password)
+        
+        # 5. Save to file
         hotkey_file = Path(self.temp_dir) / "hotkey.enc"
         with open(hotkey_file, 'wb') as f:
             f.write(encrypted_privkey)
         
-        # 5. Load from file
+        # 6. Load from file
         with open(hotkey_file, 'rb') as f:
             loaded_encrypted = f.read()
         
-        loaded_privkey = decrypt_data(loaded_encrypted, password).decode()
+        loaded_privkey_bytes = decrypt_data(loaded_encrypted, password)
+        loaded_privkey = loaded_privkey_bytes.decode()
         
-        # 6. Verify
+        # 7. Verify
         assert loaded_privkey == hotkey['private_key']
 
     def test_multiple_hotkeys_from_coldkey(self):

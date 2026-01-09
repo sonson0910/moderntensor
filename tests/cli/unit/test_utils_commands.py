@@ -21,7 +21,9 @@ class TestConvertCommand:
         result = self.runner.invoke(cli, ['utils', 'convert', '--from-mdt', '1.5'])
         assert result.exit_code == 0
         assert 'MDT' in result.output
-        assert '1500000000' in result.output  # 1.5 * 10^9
+        # 1.5 MDT = 1.5 * 10^9 base units (9 decimals)
+        expected_base = 1500000000
+        assert str(expected_base) in result.output
 
     def test_convert_from_base(self):
         """Test converting from base units to MDT."""
