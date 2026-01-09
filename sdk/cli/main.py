@@ -8,10 +8,17 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import box
 
-# REMOVED: Cardano-specific CLI commands (wallet_cli, tx_cli, query_cli, subnet_cli, simulation_cli)
-# REMOVED: Cardano-dependent agent runners (run_validator, run_miner) 
-# These were tightly coupled with Cardano blockchain and have been deprecated
-from .l1_stake_cli import l1_stake_cli  # Import Layer 1 staking CLI
+# REMOVED: All Cardano-specific and blockchain-dependent CLI commands
+# The SDK is now focused on AI/ML functionality via Luxtensor integration
+# CLI commands have been removed as they were tightly coupled with:
+# - Cardano blockchain (wallet, tx, query, subnet)
+# - Non-existent blockchain module (l1-stake)
+# - Broken implementations (run_validator, run_miner, simulate)
+#
+# For AI/ML operations, use the Python SDK directly:
+# - sdk.ai_ml for subnet and agent functionality
+# - sdk.luxtensor_client for blockchain operations
+# - examples/ directory for usage demonstrations
 
 # from .metagraph_cli import metagraph_cli  # If you have
 
@@ -89,9 +96,8 @@ def cli(ctx):
         ctx.exit()  # Exit after showing splash screen
 
 
-# Add CLI subcommands:
-# NOTE: Cardano-specific commands (wallet, tx, query, subnet, simulate, run_validator, run_miner) have been removed
-cli.add_command(l1_stake_cli, name="l1-stake")  # Layer 1 staking commands
+# CLI interface removed - use Python SDK directly
+# See examples/ directory for usage demonstrations
 
 # If you want, you can place the original command here:
 # Remove the old version command if displaying version in splash screen

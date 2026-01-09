@@ -6,9 +6,13 @@ from sdk.compat.luxtensor_types import (
     PaymentVerificationKey,
 )  # Import ở đây để tránh circular dependency
 from typing import List, Dict, Any, Tuple, Optional
-from sdk.metagraph.metagraph_datum import STATUS_ACTIVE
 from dataclasses import dataclass, field
 import time  # Thêm import time
+
+# REMOVED: from sdk.metagraph.metagraph_datum import STATUS_ACTIVE (Cardano-specific)
+# Define status constants locally
+STATUS_ACTIVE = 1
+STATUS_INACTIVE = 0
 
 from pydantic import BaseModel, Field
 
