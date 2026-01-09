@@ -9,6 +9,7 @@ from eth_account import Account
 from eth_account.signers.local import LocalAccount
 from eth_typing import HexStr
 from hexbytes import HexBytes
+from eth_utils import to_checksum_address
 
 
 class TransactionSigner:
@@ -57,8 +58,11 @@ class TransactionSigner:
         Returns:
             Transaction dictionary
         """
+        # Convert to checksum address
+        to_checksum = to_checksum_address(to)
+        
         transaction = {
-            'to': to,
+            'to': to_checksum,
             'value': value,
             'gas': gas_limit,
             'gasPrice': gas_price,
