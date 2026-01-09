@@ -89,21 +89,21 @@ class Settings(BaseSettings):
         description="Number of iterations for PBKDF2 key derivation.",
     )
 
-    # --- Thêm các trường cấu hình Node (Ví dụ) ---
-    API_PORT: int = Field(8001, alias="API_PORT", description="Port cho FastAPI server")
+    # --- Node Configuration ---
+    API_PORT: int = Field(default=8001, alias="API_PORT", description="Port for FastAPI server")
     VALIDATOR_UID: Optional[str] = Field(
-        None, alias="VALIDATOR_UID", description="UID của validator này (nếu chạy node)"
+        default=None, alias="VALIDATOR_UID", description="UID of this validator (if running a node)"
     )
     VALIDATOR_ADDRESS: Optional[str] = Field(
-        None, alias="VALIDATOR_ADDRESS", description="Địa chỉ của validator này"
+        default=None, alias="VALIDATOR_ADDRESS", description="Address of this validator"
     )
     VALIDATOR_API_ENDPOINT: Optional[str] = Field(
-        None,
+        default=None,
         alias="VALIDATOR_API_ENDPOINT",
-        description="Địa chỉ API đầy đủ mà các node khác có thể gọi đến validator này",
+        description="Full API endpoint URL that other nodes can call to reach this validator",
     )
 
-    # ======== THÊM TRƯỜNG LOG_LEVEL ========
+    # --- Logging Configuration ---
     LOG_LEVEL: str = Field(
         default="DEBUG",
         alias="LOG_LEVEL",
@@ -143,55 +143,56 @@ class Settings(BaseSettings):
         description="Số slot trước khi kết thúc chu kỳ để broadcast điểm cục bộ.",
     )
 
-    # --- Thêm Cấu hình Mini-Batch ---
+    # --- Mini-Batch Configuration ---
     CONSENSUS_ENABLE_MINI_BATCH: bool = Field(
-        True,
+        default=True,
         alias="CONSENSUS_ENABLE_MINI_BATCH",
         description="Enable mini-batch tasking within a consensus cycle.",
     )
     CONSENSUS_MINI_BATCH_SIZE: int = Field(
-        5,
+        default=5,
         alias="CONSENSUS_MINI_BATCH_SIZE",
         description="Number of miners to select in each mini-batch (N).",
     )
     CONSENSUS_MINI_BATCH_WAIT_SECONDS: int = Field(
-        30,
+        default=30,
         alias="CONSENSUS_MINI_BATCH_WAIT_SECONDS",
         description="Timeout (seconds) to wait for results within a single mini-batch.",
     )
     CONSENSUS_TASKING_PHASE_RATIO: float = Field(
-        0.85,
+        default=0.85,
         alias="CONSENSUS_TASKING_PHASE_RATIO",
         description="Ratio of the cycle interval dedicated to sending tasks and receiving results (mini-batches).",
     )
     CONSENSUS_MINI_BATCH_INTERVAL_SECONDS: int = Field(
-        5,
+        default=5,
         alias="CONSENSUS_MINI_BATCH_INTERVAL_SECONDS",
         description="Short delay (seconds) between mini-batch iterations to avoid busy-waiting.",
     )
     CONSENSUS_TASKING_END_SLOTS_OFFSET: int = Field(
         default=120,
         alias="CONSENSUS_TASKING_END_SLOTS_OFFSET",
-        description="Số slot trước khi kết thúc chu kỳ để dừng giai đoạn giao task.",
+        description="Number of slots before end of cycle to stop task assignment phase.",
     )
 
     # --- Timing ---
     CONSENSUS_COMMIT_DELAY_SECONDS: float = Field(
-        1.5,
-        description="Delay (giây) giữa các lần submit giao dịch commit để tránh rate limit.",
+        default=1.5,
+        description="Delay (seconds) between transaction submissions to avoid rate limit.",
     )
     CONSENSUS_CYCLE_MIN_WAIT_SECONDS: int = Field(
-        10,
-        description="Thời gian chờ tối thiểu (giây) giữa các chu kỳ, nếu chu kỳ hoàn thành quá nhanh.",
+        default=10,
+        description="Minimum wait time (seconds) between cycles if cycle completes too quickly.",
     )
     CONSENSUS_NETWORK_TIMEOUT_SECONDS: int = Field(
-        10, description="Timeout (giây) cho các yêu cầu mạng P2P (gửi task, gửi điểm)."
+        default=10, 
+        description="Timeout (seconds) for P2P network requests (task submission, score sending)."
     )
 
     # --- Limits & Constants ---
     CONSENSUS_MAX_PERFORMANCE_HISTORY_LEN: int = Field(
-        100,
-        description="Độ dài tối đa của lịch sử hiệu suất lưu trữ (ảnh hưởng tính weight).",
+        default=100,
+        description="Maximum length of performance history stored (affects weight calculation).",
     )
     METAGRAPH_DATUM_INT_DIVISOR: float = Field(
         1_000_000.0,
