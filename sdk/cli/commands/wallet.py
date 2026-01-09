@@ -910,18 +910,19 @@ def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_sta
         # Convert initial stake to base units if provided
         stake_base = int(initial_stake * MDT_TO_BASE_UNITS) if initial_stake > 0 else 0
         
-        # Build registration transaction data
-        # TODO (GitHub Issue): Implement actual registration transaction encoding
-        # Expected format: function_selector + subnet_uid + hotkey_address + stake + api_endpoint
-        # Example structure:
-        #   register_data = encode_register_call(
-        #       function_selector="0xabcd1234",
-        #       subnet_uid=subnet_uid,
-        #       hotkey=from_address,
-        #       stake=stake_base,
-        #       api_endpoint=api_endpoint or ""
-        #   )
-        register_data = b''  # Placeholder - implement when Luxtensor registration pallet is ready
+        # Build registration transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_register_on_subnet
+        
+        encoded_call = encode_register_on_subnet(
+            subnet_uid=subnet_uid,
+            hotkey=from_address,
+            stake=stake_base,
+            api_endpoint=api_endpoint or None
+        )
+        register_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)

@@ -214,16 +214,14 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         gas_limit = TransactionSigner.estimate_gas('unstake')
         gas_price = 1000000000  # 1 Gwei
         
-        # Build unstake transaction data
-        # TODO: Implement actual unstake transaction encoding based on Luxtensor pallet
-        # Expected format: function_selector (4 bytes) + encoded_parameters
-        # Example structure:
-        #   unstake_data = encode_unstake_call(
-        #       function_selector="0x87654321",  # unstake function selector
-        #       hotkey=hotkey_address,
-        #       amount=amount_base
-        #   )
-        unstake_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
+        # Build unstake transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_stake_remove
+        
+        encoded_call = encode_stake_remove(hotkey_address, amount_base)
+        unstake_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
@@ -329,15 +327,14 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         gas_limit = 100000  # Gas for claim operation
         gas_price = 1000000000  # 1 Gwei
         
-        # Build claim transaction data
-        # TODO: Implement actual claim transaction encoding based on Luxtensor pallet
-        # Expected format: function_selector (4 bytes) + encoded_parameters
-        # Example structure:
-        #   claim_data = encode_claim_call(
-        #       function_selector="0xabcdef12",  # claim function selector
-        #       hotkey=hotkey_address
-        #   )
-        claim_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
+        # Build claim transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_claim_rewards
+        
+        encoded_call = encode_claim_rewards(hotkey_address)
+        claim_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
