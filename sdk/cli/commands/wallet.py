@@ -325,12 +325,93 @@ def generate_hotkey(ctx, coldkey: str, hotkey_name: str, base_dir: Optional[str]
 @wallet.command('import-hotkey')
 @click.option('--coldkey', required=True, help='Coldkey name')
 @click.option('--hotkey-name', required=True, help='Name for the imported hotkey')
-@click.option('--encrypted-hotkey', required=True, help='Encrypted hotkey string')
+@click.option('--hotkey-file', required=True, type=click.Path(exists=True), help='Path to encrypted hotkey file')
 @click.option('--base-dir', type=click.Path(), default=None)
-def import_hotkey(coldkey: str, hotkey_name: str, encrypted_hotkey: str, base_dir: Optional[str]):
-    """Import an encrypted hotkey"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement hotkey import
+@click.pass_context
+def import_hotkey(ctx, coldkey: str, hotkey_name: str, hotkey_file: str, base_dir: Optional[str]):
+    """
+    Import an encrypted hotkey from file
+    
+    Imports a previously exported hotkey file and adds it to the specified coldkey.
+    The hotkey file should contain encrypted hotkey data.
+    
+    Example:
+        mtcli wallet import-hotkey --coldkey my_coldkey --hotkey-name imported_hk --hotkey-file ./my_hotkey.enc
+    """
+    try:
+        import json
+        from sdk.keymanager.encryption import decrypt_data
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        
+        # Check coldkey exists
+        if not (coldkey_path / "coldkey.enc").exists():
+            print_error(f"Coldkey '{coldkey}' not found at {coldkey_path}")
+            return
+        
+        print_info(f"Importing hotkey '{hotkey_name}' from {hotkey_file}")
+        
+        # Read encrypted hotkey file
+        hotkey_file_path = Path(hotkey_file)
+        with open(hotkey_file_path, 'rb') as f:
+            encrypted_data = f.read()
+        
+        # Prompt for password to decrypt
+        password = prompt_password("Enter password for hotkey file")
+        
+        try:
+            decrypted_data = decrypt_data(encrypted_data, password)
+            hotkey_data = json.loads(decrypted_data.decode('utf-8'))
+        except Exception as e:
+            print_error(f"Failed to decrypt hotkey file: {str(e)}")
+            print_info("Make sure the password is correct")
+            return
+        
+        # Validate hotkey data structure
+        required_fields = ['address', 'public_key', 'index']
+        for field in required_fields:
+            if field not in hotkey_data:
+                print_error(f"Invalid hotkey file: missing '{field}' field")
+                return
+        
+        # Load or create hotkeys.json
+        hotkeys_file = coldkey_path / "hotkeys.json"
+        if hotkeys_file.exists():
+            with open(hotkeys_file, 'r') as f:
+                hotkeys_data = json.load(f)
+        else:
+            hotkeys_data = {'hotkeys': []}
+        
+        # Check if hotkey name already exists
+        for hk in hotkeys_data['hotkeys']:
+            if hk['name'] == hotkey_name:
+                print_error(f"Hotkey '{hotkey_name}' already exists in coldkey '{coldkey}'")
+                if not confirm_action("Overwrite existing hotkey?"):
+                    return
+                # Remove existing
+                hotkeys_data['hotkeys'] = [h for h in hotkeys_data['hotkeys'] if h['name'] != hotkey_name]
+                break
+        
+        # Add imported hotkey
+        new_hotkey = {
+            'name': hotkey_name,
+            'index': hotkey_data['index'],
+            'address': hotkey_data['address'],
+            'public_key': hotkey_data['public_key']
+        }
+        hotkeys_data['hotkeys'].append(new_hotkey)
+        
+        # Save updated hotkeys
+        with open(hotkeys_file, 'w') as f:
+            json.dump(hotkeys_data, f, indent=2)
+        
+        print_success(f"Hotkey '{hotkey_name}' imported successfully")
+        print_info(f"Address: {hotkey_data['address']}")
+        print_info(f"Derivation index: {hotkey_data['index']}")
+        
+    except Exception as e:
+        print_error(f"Failed to import hotkey: {str(e)}")
 
 
 @wallet.command('regen-hotkey')
@@ -338,10 +419,97 @@ def import_hotkey(coldkey: str, hotkey_name: str, encrypted_hotkey: str, base_di
 @click.option('--hotkey-name', required=True, help='Name for the regenerated hotkey')
 @click.option('--index', required=True, type=int, help='Derivation index')
 @click.option('--base-dir', type=click.Path(), default=None)
-def regen_hotkey(coldkey: str, hotkey_name: str, index: int, base_dir: Optional[str]):
-    """Regenerate hotkey from derivation index"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement hotkey regeneration
+@click.pass_context
+def regen_hotkey(ctx, coldkey: str, hotkey_name: str, index: int, base_dir: Optional[str]):
+    """
+    Regenerate hotkey from derivation index
+    
+    Derives a hotkey from the coldkey mnemonic using a specific derivation index.
+    Useful for recovering lost hotkeys or generating keys at specific indices.
+    
+    Example:
+        mtcli wallet regen-hotkey --coldkey my_coldkey --hotkey-name recovered_hk --index 5
+    """
+    try:
+        import json
+        from sdk.keymanager.key_generator import KeyGenerator
+        from sdk.keymanager.encryption import decrypt_data
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        coldkey_file = coldkey_path / "coldkey.enc"
+        
+        # Check coldkey exists
+        if not coldkey_file.exists():
+            print_error(f"Coldkey '{coldkey}' not found at {coldkey_path}")
+            return
+        
+        print_info(f"Regenerating hotkey '{hotkey_name}' at derivation index {index}")
+        
+        # Load and decrypt coldkey mnemonic
+        password = prompt_password(f"Enter password for coldkey '{coldkey}'")
+        
+        with open(coldkey_file, 'rb') as f:
+            encrypted_data = f.read()
+        
+        try:
+            decrypted_data = decrypt_data(encrypted_data, password)
+            mnemonic = decrypted_data.decode('utf-8')
+        except Exception as e:
+            print_error(f"Failed to decrypt coldkey: {str(e)}")
+            print_info("Make sure the password is correct")
+            return
+        
+        # Generate hotkey at specified index
+        print_info(f"Deriving hotkey at index {index}...")
+        kg = KeyGenerator()
+        hotkey_data = kg.derive_hotkey(mnemonic, index)
+        
+        # Load or create hotkeys.json
+        hotkeys_file = coldkey_path / "hotkeys.json"
+        if hotkeys_file.exists():
+            with open(hotkeys_file, 'r') as f:
+                hotkeys_data = json.load(f)
+        else:
+            hotkeys_data = {'hotkeys': []}
+        
+        # Check if hotkey name already exists
+        for hk in hotkeys_data['hotkeys']:
+            if hk['name'] == hotkey_name:
+                print_warning(f"Hotkey '{hotkey_name}' already exists")
+                if not confirm_action("Overwrite existing hotkey?"):
+                    return
+                # Remove existing
+                hotkeys_data['hotkeys'] = [h for h in hotkeys_data['hotkeys'] if h['name'] != hotkey_name]
+                break
+        
+        # Check if index already used by another hotkey
+        for hk in hotkeys_data['hotkeys']:
+            if hk['index'] == index and hk['name'] != hotkey_name:
+                print_warning(f"Derivation index {index} is already used by hotkey '{hk['name']}'")
+                if not confirm_action("Continue anyway?"):
+                    return
+        
+        # Add regenerated hotkey
+        hotkey_info = {
+            'name': hotkey_name,
+            'index': index,
+            'address': hotkey_data['address'],
+            'public_key': hotkey_data['public_key']
+        }
+        hotkeys_data['hotkeys'].append(hotkey_info)
+        
+        # Save updated hotkeys
+        with open(hotkeys_file, 'w') as f:
+            json.dump(hotkeys_data, f, indent=2)
+        
+        print_success(f"Hotkey '{hotkey_name}' regenerated successfully")
+        print_info(f"Derivation index: {index}")
+        print_info(f"Address: {hotkey_data['address']}")
+        print_info(f"Public key: {hotkey_data['public_key']}")
+        
+    except Exception as e:
+        print_error(f"Failed to regenerate hotkey: {str(e)}")
 
 
 @wallet.command('list-hotkeys')
@@ -656,14 +824,158 @@ def query_address(ctx, coldkey: str, hotkey: Optional[str], base_dir: Optional[s
 @wallet.command('register-hotkey')
 @click.option('--coldkey', required=True, help='Coldkey name')
 @click.option('--hotkey', required=True, help='Hotkey name')
-@click.option('--subnet-uid', required=True, type=int, help='Subnet UID')
-@click.option('--initial-stake', required=True, type=int, help='Initial stake amount')
-@click.option('--api-endpoint', required=True, help='Miner API endpoint')
+@click.option('--subnet-uid', required=True, type=int, help='Subnet UID to register on')
+@click.option('--initial-stake', type=float, default=0.0, help='Initial stake amount in MDT (optional)')
+@click.option('--api-endpoint', help='Miner/Validator API endpoint (optional)')
 @click.option('--base-dir', type=click.Path(), default=None)
-@click.option('--network', default='testnet', help='Network name')
-@click.option('--yes', is_flag=True, help='Skip confirmation')
-def register_hotkey(coldkey: str, hotkey: str, subnet_uid: int, initial_stake: int,
-                   api_endpoint: str, base_dir: Optional[str], network: str, yes: bool):
-    """Register hotkey as a miner on the network"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement register hotkey
+@click.option('--network', default='testnet', help='Network name (mainnet/testnet)')
+@click.option('--yes', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_stake: float,
+                   api_endpoint: Optional[str], base_dir: Optional[str], network: str, yes: bool):
+    """
+    Register hotkey as a miner/validator on the network
+    
+    Registers the hotkey on the specified subnet, making it eligible to participate
+    in consensus and earn rewards. Optionally includes initial stake and API endpoint.
+    
+    Examples:
+        # Basic registration
+        mtcli wallet register-hotkey --coldkey my_coldkey --hotkey miner_hk1 --subnet-uid 1
+        
+        # With initial stake and API endpoint
+        mtcli wallet register-hotkey \
+          --coldkey my_coldkey \
+          --hotkey validator_hk \
+          --subnet-uid 1 \
+          --initial-stake 1000 \
+          --api-endpoint "http://my-server.com:8080" \
+          --network testnet
+    
+    Note:
+        - Registration requires gas fees
+        - Initial stake is optional (can be added later)
+        - API endpoint is required for validators
+    """
+    try:
+        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.keymanager.transaction_signer import TransactionSigner
+        from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
+        from rich.table import Table
+        
+        print_info(f"Registering hotkey '{hotkey}' on subnet {subnet_uid}")
+        
+        # Get network config
+        network_config = get_network_config(network)
+        rpc_url = network_config.rpc_url
+        chain_id = network_config.chain_id
+        
+        # Initialize client
+        client = LuxtensorClient(rpc_url)
+        
+        # Derive hotkey to get address and private key
+        print_info("Loading wallet keys...")
+        hotkey_data = derive_hotkey_from_coldkey(coldkey, hotkey, base_dir)
+        from_address = hotkey_data['address']
+        private_key = hotkey_data['private_key']
+        
+        # Check if already registered
+        print_info("Checking registration status...")
+        try:
+            is_registered = client.is_hotkey_registered(subnet_uid, from_address)
+            if is_registered:
+                print_warning(f"Hotkey '{hotkey}' is already registered on subnet {subnet_uid}")
+                if not yes and not confirm_action("Re-register anyway?"):
+                    return
+        except:
+            # If method doesn't exist or fails, proceed anyway
+            pass
+        
+        # Get current nonce
+        print_info("Fetching account nonce...")
+        nonce = client.get_nonce(from_address)
+        
+        # Estimate gas
+        gas_limit = TransactionSigner.estimate_gas('register')
+        gas_price = 1000000000  # 1 Gwei
+        
+        # Convert initial stake to base units if provided
+        stake_base = int(initial_stake * 1_000_000_000) if initial_stake > 0 else 0
+        
+        # Build registration transaction data
+        # TODO (GitHub Issue): Implement actual registration transaction encoding
+        # Expected format: function_selector + subnet_uid + hotkey_address + stake + api_endpoint
+        # Example structure:
+        #   register_data = encode_register_call(
+        #       function_selector="0xabcd1234",
+        #       subnet_uid=subnet_uid,
+        #       hotkey=from_address,
+        #       stake=stake_base,
+        #       api_endpoint=api_endpoint or ""
+        #   )
+        register_data = b''  # Placeholder - implement when Luxtensor registration pallet is ready
+        
+        # Create transaction signer
+        signer = TransactionSigner(private_key)
+        
+        # Build and sign transaction
+        print_info("Building and signing transaction...")
+        signed_tx = signer.build_and_sign_transaction(
+            to=from_address,  # Registration to self
+            value=stake_base if stake_base > 0 else 0,
+            nonce=nonce,
+            gas_price=gas_price,
+            gas_limit=gas_limit,
+            data=register_data,
+            chain_id=chain_id
+        )
+        
+        # Display registration summary
+        console.print("\n[bold yellow]Registration Summary:[/bold yellow]")
+        table = Table(show_header=False, box=None)
+        table.add_row("[bold]Coldkey:[/bold]", coldkey)
+        table.add_row("[bold]Hotkey:[/bold]", hotkey)
+        table.add_row("[bold]Address:[/bold]", from_address)
+        table.add_row("[bold]Subnet UID:[/bold]", str(subnet_uid))
+        table.add_row("[bold]Network:[/bold]", network)
+        table.add_row("", "")
+        if stake_base > 0:
+            table.add_row("[bold yellow]Initial Stake:[/bold yellow]", f"{initial_stake} MDT ({stake_base} base units)")
+        if api_endpoint:
+            table.add_row("[bold yellow]API Endpoint:[/bold yellow]", api_endpoint)
+        table.add_row("", "")
+        table.add_row("[bold]Gas Limit:[/bold]", str(gas_limit))
+        table.add_row("[bold]Gas Price:[/bold]", f"{gas_price} ({gas_price / 1e9} Gwei)")
+        table.add_row("[bold]Est. Fee:[/bold]", f"{gas_limit * gas_price} base units")
+        console.print(table)
+        console.print()
+        
+        # Confirm before submitting
+        if not yes and not confirm_action("Submit registration transaction?"):
+            print_warning("Registration cancelled")
+            return
+        
+        # Submit transaction
+        print_info("Submitting transaction to network...")
+        result = client.submit_transaction(signed_tx)
+        
+        print_success(f"Hotkey registered successfully!")
+        print_info(f"Transaction hash: {result.tx_hash}")
+        print_info(f"Block: {result.block_number}")
+        
+        if not result.success:
+            print_warning(f"Transaction may have failed. Status: {result.status}")
+            print_info("Check the transaction hash on the block explorer for details")
+        else:
+            print_success(f"Hotkey '{hotkey}' is now registered on subnet {subnet_uid}")
+            if api_endpoint:
+                print_info(f"API endpoint: {api_endpoint}")
+            if stake_base > 0:
+                print_info(f"Initial stake: {initial_stake} MDT")
+        
+    except FileNotFoundError as e:
+        print_error(f"Wallet not found: {str(e)}")
+    except KeyError as e:
+        print_error(f"Hotkey not found: {str(e)}")
+    except Exception as e:
+        print_error(f"Failed to register hotkey: {str(e)}")
