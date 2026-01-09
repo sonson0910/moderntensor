@@ -12,9 +12,14 @@ This is the main documentation index for ModernTensor. All essential documentati
 - **[README.md](README.md)** - Project overview, quick start, installation
 - **[MODERNTENSOR_WHITEPAPER_VI.md](MODERNTENSOR_WHITEPAPER_VI.md)** - Technical whitepaper (Vietnamese)
 
+### SDK Status & Roadmap (NEW - Jan 2026)
+- **[SDK_COMPLETION_ANALYSIS_2026.md](SDK_COMPLETION_ANALYSIS_2026.md)** - Comprehensive SDK analysis and 5-month roadmap (English)
+- **[TOM_TAT_HOAN_THIEN_SDK_2026.md](TOM_TAT_HOAN_THIEN_SDK_2026.md)** - Phân tích SDK và kế hoạch hoàn thiện (Tiếng Việt)
+- **[SDK_DEEP_CLEANUP_COMPLETE.md](SDK_DEEP_CLEANUP_COMPLETE.md)** - SDK cleanup summary (179 → 80 files)
+
 ### AI/ML Layer
 - **[AI_ML_IMPLEMENTATION_GUIDE.md](AI_ML_IMPLEMENTATION_GUIDE.md)** - Complete usage guide for AI/ML layer
-- **[BITTENSOR_VS_MODERNTENSOR_COMPARISON.md](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Feature comparison with Bittensor
+- **[BITTENSOR_VS_MODERNTENSOR_COMPARISON.md](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Detailed feature comparison with Bittensor
 
 ### Layer 1 Blockchain
 - **[LAYER1_ROADMAP.md](LAYER1_ROADMAP.md)** - Layer 1 blockchain roadmap
