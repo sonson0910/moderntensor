@@ -347,20 +347,123 @@ def regen_hotkey(coldkey: str, hotkey_name: str, index: int, base_dir: Optional[
 @wallet.command('list-hotkeys')
 @click.option('--coldkey', required=True, help='Coldkey name')
 @click.option('--base-dir', type=click.Path(), default=None)
-def list_hotkeys(coldkey: str, base_dir: Optional[str]):
-    """List all hotkeys for a coldkey"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement hotkey listing
+@click.pass_context
+def list_hotkeys(ctx, coldkey: str, base_dir: Optional[str]):
+    """
+    List all hotkeys for a coldkey
+    
+    Displays all hotkeys associated with the specified coldkey.
+    
+    Example:
+        mtcli wallet list-hotkeys --coldkey my_coldkey
+    """
+    try:
+        import json
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        
+        # Check coldkey exists
+        if not (coldkey_path / "coldkey.enc").exists():
+            print_error(f"Coldkey '{coldkey}' not found at {coldkey_path}")
+            return
+        
+        # Load hotkeys
+        hotkeys_file = coldkey_path / "hotkeys.json"
+        if not hotkeys_file.exists():
+            print_warning(f"No hotkeys found for coldkey '{coldkey}'")
+            return
+        
+        with open(hotkeys_file, 'r') as f:
+            hotkeys_data = json.load(f)
+        
+        hotkeys = hotkeys_data.get('hotkeys', [])
+        
+        if not hotkeys:
+            print_warning("No hotkeys found")
+            return
+        
+        # Display hotkeys
+        table = create_table(
+            f"Hotkeys for coldkey: {coldkey}",
+            ["Name", "Index", "Address"]
+        )
+        
+        for hotkey in hotkeys:
+            table.add_row(
+                hotkey['name'],
+                str(hotkey['index']),
+                hotkey['address']
+            )
+        
+        console.print(table)
+        print_info(f"Found {len(hotkeys)} hotkey(s)")
+        
+    except Exception as e:
+        print_error(f"Failed to list hotkeys: {str(e)}")
+        raise
 
 
 @wallet.command('show-hotkey')
 @click.option('--coldkey', required=True, help='Coldkey name')
 @click.option('--hotkey', required=True, help='Hotkey name')
 @click.option('--base-dir', type=click.Path(), default=None)
-def show_hotkey(coldkey: str, hotkey: str, base_dir: Optional[str]):
-    """Show hotkey information"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement show hotkey
+@click.pass_context
+def show_hotkey(ctx, coldkey: str, hotkey: str, base_dir: Optional[str]):
+    """
+    Show hotkey information
+    
+    Displays detailed information for a specific hotkey.
+    
+    Example:
+        mtcli wallet show-hotkey --coldkey my_coldkey --hotkey miner_hk1
+    """
+    try:
+        import json
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        
+        # Check coldkey exists
+        if not (coldkey_path / "coldkey.enc").exists():
+            print_error(f"Coldkey '{coldkey}' not found")
+            return
+        
+        # Load hotkeys
+        hotkeys_file = coldkey_path / "hotkeys.json"
+        if not hotkeys_file.exists():
+            print_error(f"No hotkeys found for coldkey '{coldkey}'")
+            return
+        
+        with open(hotkeys_file, 'r') as f:
+            hotkeys_data = json.load(f)
+        
+        # Find the hotkey
+        hotkey_info = None
+        for hk in hotkeys_data.get('hotkeys', []):
+            if hk['name'] == hotkey:
+                hotkey_info = hk
+                break
+        
+        if not hotkey_info:
+            print_error(f"Hotkey '{hotkey}' not found")
+            return
+        
+        # Display hotkey info
+        from rich.panel import Panel
+        
+        info_text = f"""[bold cyan]Hotkey:[/bold cyan] {hotkey_info['name']}
+[bold cyan]Derivation Index:[/bold cyan] {hotkey_info['index']}
+[bold cyan]Address:[/bold cyan] {hotkey_info['address']}
+[bold cyan]Public Key:[/bold cyan] {hotkey_info['public_key']}
+[bold cyan]Coldkey:[/bold cyan] {coldkey}"""
+        
+        panel = Panel(info_text, title="Hotkey Information", border_style="cyan")
+        console.print(panel)
+        
+    except Exception as e:
+        print_error(f"Failed to show hotkey: {str(e)}")
+        raise
 
 
 @wallet.command('show-address')
@@ -368,20 +471,186 @@ def show_hotkey(coldkey: str, hotkey: str, base_dir: Optional[str]):
 @click.option('--hotkey', required=True, help='Hotkey name')
 @click.option('--base-dir', type=click.Path(), default=None)
 @click.option('--network', default='testnet', help='Network name')
-def show_address(coldkey: str, hotkey: str, base_dir: Optional[str], network: str):
-    """Show address information"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement show address
+@click.pass_context
+def show_address(ctx, coldkey: str, hotkey: str, base_dir: Optional[str], network: str):
+    """
+    Show address information for a hotkey
+    
+    Displays the address derived from the coldkey/hotkey pair for the specified network.
+    
+    Example:
+        mtcli wallet show-address --coldkey my_coldkey --hotkey miner_hk1 --network testnet
+    """
+    try:
+        import json
+        from rich.panel import Panel
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        
+        # Check coldkey exists
+        if not (coldkey_path / "coldkey.enc").exists():
+            print_error(f"Coldkey '{coldkey}' not found")
+            return
+        
+        # Load hotkeys
+        hotkeys_file = coldkey_path / "hotkeys.json"
+        if not hotkeys_file.exists():
+            print_error(f"No hotkeys found for coldkey '{coldkey}'")
+            return
+        
+        with open(hotkeys_file, 'r') as f:
+            hotkeys_data = json.load(f)
+        
+        # Find the hotkey
+        hotkey_info = None
+        for hk in hotkeys_data.get('hotkeys', []):
+            if hk['name'] == hotkey:
+                hotkey_info = hk
+                break
+        
+        if not hotkey_info:
+            print_error(f"Hotkey '{hotkey}' not found")
+            return
+        
+        # Get network config
+        network_config = get_network_config(network)
+        
+        # Display address info
+        info_text = f"""[bold cyan]Network:[/bold cyan] {network_config.name}
+[bold cyan]RPC URL:[/bold cyan] {network_config.rpc_url}
+[bold cyan]Chain ID:[/bold cyan] {network_config.chain_id}
+
+[bold green]Payment Address:[/bold green] {hotkey_info['address']}
+[bold green]Public Key:[/bold green] {hotkey_info['public_key']}
+
+[bold yellow]Derivation Path:[/bold yellow] m/44'/60'/0'/0/{hotkey_info['index']}
+[bold yellow]Coldkey:[/bold yellow] {coldkey}
+[bold yellow]Hotkey:[/bold yellow] {hotkey}"""
+        
+        if network_config.explorer_url:
+            info_text += f"\n\n[bold cyan]Explorer:[/bold cyan] {network_config.explorer_url}/address/{hotkey_info['address']}"
+        
+        panel = Panel(info_text, title="Address Information", border_style="green")
+        console.print(panel)
+        
+    except Exception as e:
+        print_error(f"Failed to show address: {str(e)}")
+        raise
 
 
 @wallet.command('query-address')
 @click.option('--coldkey', required=True, help='Coldkey name')
+@click.option('--hotkey', help='Hotkey name (optional, queries coldkey address if not provided)')
 @click.option('--base-dir', type=click.Path(), default=None)
 @click.option('--network', default='testnet', help='Network name')
-def query_address(coldkey: str, base_dir: Optional[str], network: str):
-    """Query address balance and info from network"""
-    print_warning("Command not yet implemented")
-    # TODO: Implement query address
+@click.pass_context
+def query_address(ctx, coldkey: str, hotkey: Optional[str], base_dir: Optional[str], network: str):
+    """
+    Query address balance and info from network
+    
+    Queries the blockchain for balance, nonce, and stake information
+    for the address associated with the coldkey/hotkey pair.
+    
+    Example:
+        mtcli wallet query-address --coldkey my_coldkey --network testnet
+        mtcli wallet query-address --coldkey my_coldkey --hotkey miner_hk1 --network testnet
+    """
+    try:
+        import json
+        from rich.panel import Panel
+        from sdk.luxtensor_client import LuxtensorClient
+        
+        wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
+        coldkey_path = wallet_path / coldkey
+        
+        # Check coldkey exists
+        if not (coldkey_path / "coldkey.enc").exists():
+            print_error(f"Coldkey '{coldkey}' not found")
+            return
+        
+        # Get address to query
+        address = None
+        
+        if hotkey:
+            # Load hotkeys
+            hotkeys_file = coldkey_path / "hotkeys.json"
+            if not hotkeys_file.exists():
+                print_error(f"No hotkeys found for coldkey '{coldkey}'")
+                return
+            
+            with open(hotkeys_file, 'r') as f:
+                hotkeys_data = json.load(f)
+            
+            # Find the hotkey
+            hotkey_info = None
+            for hk in hotkeys_data.get('hotkeys', []):
+                if hk['name'] == hotkey:
+                    hotkey_info = hk
+                    break
+            
+            if not hotkey_info:
+                print_error(f"Hotkey '{hotkey}' not found")
+                return
+            
+            address = hotkey_info['address']
+            query_name = f"{coldkey}/{hotkey}"
+        else:
+            # For coldkey only, we would need to derive the main address
+            # For now, show a message that hotkey is required
+            print_warning("Querying coldkey address directly is not yet supported.")
+            print_info("Please specify a hotkey with --hotkey option")
+            return
+        
+        # Get network config
+        network_config = get_network_config(network)
+        
+        print_info(f"Querying address {address} on {network_config.name}...")
+        
+        # Create client and query
+        try:
+            client = LuxtensorClient(network_config.rpc_url)
+            
+            # Get account info
+            balance = client.get_balance(address)
+            nonce = client.get_nonce(address)
+            
+            # Try to get stake info
+            try:
+                stake = client.get_stake(address)
+            except:
+                stake = 0
+            
+            # Format balance (assuming 9 decimals like most cryptos)
+            from sdk.cli.utils import format_balance
+            balance_formatted = format_balance(balance, decimals=9)
+            stake_formatted = format_balance(stake, decimals=9)
+            
+            # Display results
+            info_text = f"""[bold cyan]Address:[/bold cyan] {address}
+[bold cyan]Network:[/bold cyan] {network_config.name}
+[bold cyan]Wallet:[/bold cyan] {query_name}
+
+[bold green]Balance:[/bold green] {balance_formatted} MDT ({balance} base units)
+[bold green]Stake:[/bold green] {stake_formatted} MDT ({stake} base units)
+[bold yellow]Nonce:[/bold yellow] {nonce}"""
+            
+            if network_config.explorer_url:
+                info_text += f"\n\n[bold cyan]Explorer:[/bold cyan] {network_config.explorer_url}/address/{address}"
+            
+            panel = Panel(info_text, title="Address Query Results", border_style="green")
+            console.print(panel)
+            
+            print_success("Query completed successfully")
+            
+        except Exception as e:
+            print_error(f"Failed to query blockchain: {str(e)}")
+            print_info(f"Make sure the RPC endpoint is accessible: {network_config.rpc_url}")
+            raise
+        
+    except Exception as e:
+        print_error(f"Failed to query address: {str(e)}")
+        raise
 
 
 @wallet.command('register-hotkey')
