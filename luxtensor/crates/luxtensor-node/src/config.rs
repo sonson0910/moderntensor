@@ -54,6 +54,18 @@ pub struct ConsensusConfig {
     
     /// Maximum number of validators
     pub max_validators: usize,
+    
+    /// Default gas price for transactions (in wei)
+    pub default_gas_price: u64,
+    
+    /// Minimum gas price accepted (in wei)
+    pub min_gas_price: u64,
+    
+    /// Default gas limit for transactions
+    pub default_gas_limit: u64,
+    
+    /// Maximum gas limit per block
+    pub max_block_gas_limit: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +149,10 @@ impl Default for Config {
                 epoch_length: 100,
                 min_stake: 1_000_000_000_000_000_000, // 1 token
                 max_validators: 100,
+                default_gas_price: 1_000_000_000, // 1 gwei
+                min_gas_price: 1_000_000_000, // 1 gwei
+                default_gas_limit: 21_000, // Standard transfer
+                max_block_gas_limit: 10_000_000, // 10M gas per block
             },
             network: NetworkConfig {
                 listen_addr: "0.0.0.0".to_string(),
