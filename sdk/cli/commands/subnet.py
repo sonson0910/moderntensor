@@ -118,10 +118,15 @@ def create_subnet(ctx, coldkey: str, name: str, registration_cost: float,
         gas_limit = TransactionSigner.estimate_gas('complex')
         gas_price = DEFAULT_GAS_PRICE
         
-        # Build subnet creation transaction data
-        # TODO (GitHub Issue): Implement actual subnet creation transaction encoding
-        # Expected format: function_selector + subnet_name + registration_cost
-        subnet_data = b''  # Placeholder
+        # Build subnet creation transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_subnet_create
+        
+        # Use registration cost as initial emission (can be adjusted)
+        encoded_call = encode_subnet_create(name, cost_base)
+        subnet_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
