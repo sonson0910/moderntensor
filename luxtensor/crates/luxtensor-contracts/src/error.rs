@@ -29,6 +29,9 @@ pub enum ContractError {
 
     #[error("Contract execution failed: {0}")]
     ExecutionFailed(String),
+
+    #[error("Insufficient balance")]
+    InsufficientBalance,
 }
 
 pub type Result<T> = std::result::Result<T, ContractError>;
