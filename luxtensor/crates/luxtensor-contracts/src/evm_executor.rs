@@ -37,6 +37,7 @@ impl EvmExecutor {
         code: Vec<u8>,
         value: u128,
         gas_limit: u64,
+        gas_price: u64,
         block_number: u64,
         timestamp: u64,
     ) -> Result<(Vec<u8>, u64, Vec<u8>), ContractError> {
@@ -59,7 +60,7 @@ impl EvmExecutor {
                 tx.data = Bytes::from(code);
                 tx.value = U256::from(value);
                 tx.gas_limit = gas_limit;
-                tx.gas_price = U256::from(1);
+                tx.gas_price = U256::from(gas_price);
             })
             .build();
 
@@ -128,6 +129,7 @@ impl EvmExecutor {
         input_data: Vec<u8>,
         value: u128,
         gas_limit: u64,
+        gas_price: u64,
         block_number: u64,
         timestamp: u64,
     ) -> Result<(Vec<u8>, u64, Vec<u8>), ContractError> {
@@ -165,7 +167,7 @@ impl EvmExecutor {
                 tx.data = Bytes::from(input_data);
                 tx.value = U256::from(value);
                 tx.gas_limit = gas_limit;
-                tx.gas_price = U256::from(1);
+                tx.gas_price = U256::from(gas_price);
             })
             .build();
 
@@ -329,6 +331,11 @@ fn address_to_revm(address: &Address) -> RevmAddress {
 mod tests {
     use super::*;
 
+    const TEST_GAS_LIMIT: u64 = 1_000_000;
+    const TEST_GAS_PRICE: u64 = 1_000_000_000; // 1 gwei
+    const TEST_BLOCK_NUMBER: u64 = 1;
+    const TEST_TIMESTAMP: u64 = 1000;
+
     #[test]
     fn test_evm_executor_creation() {
         let executor = EvmExecutor::new();
@@ -343,7 +350,15 @@ mod tests {
         // Simple contract bytecode (just returns)
         let code = vec![0x60, 0x00, 0x60, 0x00, 0xf3]; // PUSH1 0, PUSH1 0, RETURN
 
-        let result = executor.deploy(deployer, code, 0, 1_000_000, 1, 1000);
+        let result = executor.deploy(
+            deployer,
+            code,
+            0,
+            TEST_GAS_LIMIT,
+            TEST_GAS_PRICE,
+            TEST_BLOCK_NUMBER,
+            TEST_TIMESTAMP,
+        );
         // May fail without proper bytecode, but should not panic
         assert!(result.is_ok() || result.is_err());
     }

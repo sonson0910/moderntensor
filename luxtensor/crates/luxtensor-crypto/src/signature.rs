@@ -50,7 +50,7 @@ impl KeyPair {
         self.public_key.serialize_uncompressed().to_vec()
     }
     
-    /// Derive address from public key (Ethereum-style)
+    /// Derive address from public key (using Keccak256 hashing)
     pub fn address(&self) -> [u8; 20] {
         let pubkey_bytes = self.public_key.serialize_uncompressed();
         // Skip first byte (0x04 prefix)

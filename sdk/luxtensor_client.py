@@ -242,6 +242,7 @@ class TransactionResult:
     status: str
     block_number: Optional[int] = None
     error: Optional[str] = None
+    success: bool = True  # True if transaction was accepted, False if failed
 
 
 class LuxtensorClient:
@@ -441,13 +442,23 @@ class LuxtensorClient:
         Returns:
             TransactionResult with tx_hash and status
         """
-        tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
-        return TransactionResult(
-            tx_hash=tx_hash,
-            status="pending",
-            block_number=None,
-            error=None
-        )
+        try:
+            tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
+            return TransactionResult(
+                tx_hash=tx_hash,
+                status="pending",
+                block_number=None,
+                error=None,
+                success=True
+            )
+        except Exception as e:
+            return TransactionResult(
+                tx_hash="",
+                status="failed",
+                block_number=None,
+                error=str(e),
+                success=False
+            )
     
     def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
         """
@@ -2179,8 +2190,23 @@ class AsyncLuxtensorClient:
     
     async def submit_transaction(self, signed_tx: str) -> TransactionResult:
         """Submit transaction (async)"""
-        result = await self._call_rpc("tx_submit", [signed_tx])
-        return TransactionResult(**result)
+        try:
+            tx_hash = await self._call_rpc("eth_sendRawTransaction", [signed_tx])
+            return TransactionResult(
+                tx_hash=tx_hash,
+                status="pending",
+                block_number=None,
+                error=None,
+                success=True
+            )
+        except Exception as e:
+            return TransactionResult(
+                tx_hash="",
+                status="failed",
+                block_number=None,
+                error=str(e),
+                success=False
+            )
     
     async def get_validators(self) -> List[Dict[str, Any]]:
         """Get active validators (async)"""
