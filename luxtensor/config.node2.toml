@@ -1,0 +1,87 @@
+# LuxTensor Node 2 Configuration
+# Local development multi-node setup
+
+[node]
+# Node name/identifier
+name = "node-2"
+
+# Chain ID (1 for local development)
+chain_id = 1
+
+# Data directory for blockchain data
+data_dir = "./data"
+
+# Whether this node is a validator
+is_validator = false
+
+# Path to validator private key (only if is_validator = true)
+# validator_key_path = "./validator.key"
+
+[consensus]
+# Block time in seconds
+block_time = 3
+
+# Number of blocks per epoch
+epoch_length = 100
+
+# Minimum stake required to become a validator (in wei)
+min_stake = 1000000000000000000  # 1 token
+
+# Maximum number of validators
+max_validators = 100
+
+[network]
+# P2P listening address
+listen_addr = "0.0.0.0"
+
+# P2P listening port (Node 2: 30304)
+listen_port = 30304
+
+# Bootstrap nodes for initial peer discovery
+# Leave empty to use mDNS for automatic discovery
+bootstrap_nodes = []
+
+# Maximum number of connected peers
+max_peers = 50
+
+# Enable mDNS peer discovery on local network
+enable_mdns = true
+
+[storage]
+# Database directory
+db_path = "./data/db"
+
+# Enable database compression (LZ4)
+enable_compression = true
+
+# Maximum number of open database files
+max_open_files = 1000
+
+# Database cache size in MB
+cache_size = 256
+
+[rpc]
+# Enable JSON-RPC server
+enabled = true
+
+# RPC listening address (127.0.0.1 for local only, 0.0.0.0 for all interfaces)
+listen_addr = "127.0.0.1"
+
+# RPC listening port (Node 2: 8555)
+listen_port = 8555
+
+# Number of RPC worker threads
+threads = 4
+
+# CORS allowed origins (* for all, or list specific origins)
+cors_origins = ["*"]
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log to file instead of stdout
+log_to_file = false
+
+# Use JSON format for logs
+json_format = false
