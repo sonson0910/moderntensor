@@ -1,12 +1,14 @@
 use crate::{types::*, RpcError, Result};
+use crate::websocket::BroadcastEvent;
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
-use luxtensor_core::{Address, StateDB};
+use luxtensor_core::{Address, StateDB, Transaction};
 use luxtensor_storage::BlockchainDB;
 use luxtensor_consensus::{ValidatorSet, Validator};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 /// JSON-RPC server for LuxTensor blockchain
 pub struct RpcServer {
@@ -16,6 +18,7 @@ pub struct RpcServer {
     subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
     neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>, // (subnet_id, neuron_uid) -> NeuronInfo
     weights: Arc<RwLock<HashMap<(u64, u64), Vec<WeightInfo>>>>, // (subnet_id, neuron_uid) -> weights
+    broadcast_tx: Option<mpsc::UnboundedSender<BroadcastEvent>>,
 }
 
 impl RpcServer {
@@ -28,6 +31,7 @@ impl RpcServer {
             subnets: Arc::new(RwLock::new(HashMap::new())),
             neurons: Arc::new(RwLock::new(HashMap::new())),
             weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: None,
         }
     }
 
@@ -44,6 +48,42 @@ impl RpcServer {
             subnets: Arc::new(RwLock::new(HashMap::new())),
             neurons: Arc::new(RwLock::new(HashMap::new())),
             weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: None,
+        }
+    }
+
+    /// Create a new RPC server with broadcast sender for WebSocket support
+    pub fn with_broadcast(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        broadcast_tx: mpsc::UnboundedSender<BroadcastEvent>,
+    ) -> Self {
+        Self {
+            db,
+            state,
+            validators: Arc::new(RwLock::new(ValidatorSet::new())),
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: Some(broadcast_tx),
+        }
+    }
+
+    /// Create a new RPC server with all options
+    pub fn with_all(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        validators: Arc<RwLock<ValidatorSet>>,
+        broadcast_tx: Option<mpsc::UnboundedSender<BroadcastEvent>>,
+    ) -> Self {
+        Self {
+            db,
+            state,
+            validators,
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx,
         }
     }
 
@@ -217,6 +257,7 @@ impl RpcServer {
         // eth_sendRawTransaction - Submit raw signed transaction
         let db = self.db.clone();
         let state = self.state.clone();
+        let broadcast_tx = self.broadcast_tx.clone();
         
         io.add_sync_method("eth_sendRawTransaction", move |params: Params| {
             let parsed: Vec<String> = params.parse()?;
@@ -228,11 +269,22 @@ impl RpcServer {
             let tx_bytes = hex::decode(tx_hex)
                 .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid transaction hex"))?;
 
+            // Decode transaction
+            let tx: Transaction = bincode::deserialize(&tx_bytes)
+                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid transaction encoding"))?;
+
             // Calculate transaction hash
-            let tx_hash = luxtensor_crypto::keccak256(&tx_bytes);
+            let tx_hash = tx.hash();
+            
+            // Broadcast to WebSocket subscribers if broadcast sender is available
+            if let Some(ref broadcaster) = broadcast_tx {
+                let rpc_tx = RpcTransaction::from(tx.clone());
+                // Ignore send errors - WebSocket is optional
+                let _ = broadcaster.send(BroadcastEvent::NewTransaction(rpc_tx));
+            }
             
             // In a real implementation:
-            // 1. Decode and verify the transaction
+            // 1. Verify the transaction signature
             // 2. Check nonce and balance
             // 3. Add to mempool
             // 4. Broadcast to peers
