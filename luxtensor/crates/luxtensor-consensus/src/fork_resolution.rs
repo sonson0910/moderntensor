@@ -4,7 +4,7 @@
 use crate::error::ConsensusError;
 use luxtensor_core::block::Block;
 use luxtensor_core::types::Hash;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
 /// Fork resolution manager with reorg detection

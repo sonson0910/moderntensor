@@ -14,65 +14,65 @@ The LuxtensorClient provides synchronous methods for:
 - Transaction submission and monitoring
 
 Usage Examples:
-    
+
     Basic Usage:
         ```python
         from sdk.luxtensor_client import LuxtensorClient
-        
+
         # Create client
-        client = LuxtensorClient("http://localhost:9944")
-        
+        client = LuxtensorClient("http://localhost:8545")
+
         # Get block number
         block = client.get_block_number()
         print(f"Current block: {block}")
-        
+
         # Get account balance
         balance = client.get_balance("your_address")
         print(f"Balance: {balance}")
         ```
-    
+
     Neuron Queries:
         ```python
         # Get specific neuron
         neuron = client.get_neuron(subnet_id=1, neuron_uid=0)
-        
+
         # Get all neurons in subnet
         neurons = client.get_neurons(subnet_id=1)
-        
+
         # Get active neurons
         active_uids = client.get_active_neurons(subnet_id=1)
-        
+
         # Check if registered
         is_registered = client.is_hotkey_registered(subnet_id=1, hotkey="...")
         ```
-    
+
     Subnet Management:
         ```python
         # Get subnet info
         subnet = client.get_subnet_info(subnet_id=1)
-        
+
         # Get all subnets
         subnets = client.get_all_subnets()
-        
+
         # Get subnet hyperparameters
         params = client.get_subnet_hyperparameters(subnet_id=1)
-        
+
         # Check if subnet exists
         exists = client.subnet_exists(subnet_id=1)
         ```
-    
+
     Staking Operations:
         ```python
         # Get stake for coldkey-hotkey pair
         stake = client.get_stake_for_coldkey_and_hotkey(coldkey="...", hotkey="...")
-        
+
         # Get all stakes for coldkey
         stakes = client.get_all_stake_for_coldkey(coldkey="...")
-        
+
         # Get total stake
         total = client.get_total_stake()
         ```
-    
+
     Performance Metrics:
         ```python
         # Get neuron metrics
@@ -83,71 +83,71 @@ Usage Examples:
         dividends = client.get_dividends(subnet_id=1, neuron_uid=0)
         emission = client.get_emission(subnet_id=1, neuron_uid=0)
         ```
-    
+
     Weight Queries:
         ```python
         # Get weights for neuron
         weights = client.get_weights(subnet_id=1, neuron_uid=0)
-        
+
         # Get weight commits
         commits = client.get_weight_commits(subnet_id=1)
-        
+
         # Get weights version
         version = client.get_weights_version(subnet_id=1)
         ```
-    
+
     Delegation:
         ```python
         # Get all delegates
         delegates = client.get_delegates()
-        
+
         # Get delegate info
         delegate_info = client.get_delegate_info(hotkey="...")
-        
+
         # Get nominators
         nominators = client.get_nominators(hotkey="...")
-        
+
         # Check if is delegate
         is_del = client.is_delegate(hotkey="...")
         ```
-    
+
     Network Statistics:
         ```python
         # Get network summary
         summary = client.get_network_state_summary()
-        
+
         # Get total issuance
         issuance = client.get_total_issuance()
-        
+
         # Get total subnets
         subnet_count = client.get_total_subnets()
-        
+
         # Get total neurons
         neuron_count = client.get_total_neurons()
         ```
-    
+
     Transaction History:
         ```python
         # Get transaction history
         txs = client.get_transactions_for_address(address="...", limit=10)
-        
+
         # Get stake history
         stake_history = client.get_stake_history(address="...", limit=10)
-        
+
         # Get transfer history
         transfers = client.get_transfer_history(address="...", limit=10)
         ```
-    
+
     Batch Queries:
         ```python
         # Batch get neurons
         neurons = client.batch_get_neurons(subnet_id=1, neuron_uids=[0, 1, 2, 3])
-        
+
         # Batch get stakes
         pairs = [("coldkey1", "hotkey1"), ("coldkey2", "hotkey2")]
         stakes = client.batch_get_stakes(pairs)
         ```
-    
+
     Advanced Subnet Parameters:
         ```python
         # Get various subnet parameters
@@ -160,18 +160,18 @@ Usage Examples:
         rho = client.get_rho(subnet_id=1)
         kappa = client.get_kappa(subnet_id=1)
         ```
-    
+
     Utility Methods:
         ```python
         # Check connection
         connected = client.is_connected()
-        
+
         # Health check
         health = client.health_check()
-        
+
         # Wait for block
         client.wait_for_block(target_block=1000)
-        
+
         # Validate address
         valid = client.validate_address("address")
         ```
@@ -247,26 +247,26 @@ class TransactionResult:
 class LuxtensorClient:
     """
     Synchronous Python client for Luxtensor blockchain.
-    
+
     Provides methods to:
     - Query blockchain state
     - Submit transactions
     - Get account information
     - Query blocks and transactions
     - Network information
-    
+
     Similar to subtensor.py in Bittensor SDK but for Luxtensor.
     """
-    
+
     def __init__(
         self,
-        url: str = "http://localhost:9944",
+        url: str = "http://localhost:8545",
         network: str = "testnet",
         timeout: int = 30,
     ):
         """
         Initialize Luxtensor client.
-        
+
         Args:
             url: Luxtensor RPC endpoint URL
             network: Network name (mainnet, testnet, devnet)
@@ -276,25 +276,25 @@ class LuxtensorClient:
         self.network = network
         self.timeout = timeout
         self._request_id = 0
-        
+
         logger.info(f"Initialized Luxtensor client for {network} at {url}")
-    
+
     def _get_request_id(self) -> int:
         """Get next request ID"""
         self._request_id += 1
         return self._request_id
-    
+
     def _call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """
         Make JSON-RPC call to Luxtensor.
-        
+
         Args:
             method: RPC method name
             params: Method parameters
-            
+
         Returns:
             Result from RPC call
-            
+
         Raises:
             Exception: If RPC call fails
         """
@@ -304,48 +304,48 @@ class LuxtensorClient:
             "params": params or [],
             "id": self._get_request_id()
         }
-        
+
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(self.url, json=request)
                 response.raise_for_status()
-                
+
                 result = response.json()
-                
+
                 if "error" in result:
                     raise Exception(f"RPC error: {result['error']}")
-                
+
                 return result.get("result")
-                
+
         except httpx.RequestError as e:
             logger.error(f"Request error: {e}")
             raise Exception(f"Failed to connect to Luxtensor at {self.url}: {e}")
         except Exception as e:
             logger.error(f"RPC call failed: {e}")
             raise
-    
+
     # ========================================================================
     # Chain Information Methods
     # ========================================================================
-    
+
     def get_block_number(self) -> int:
         """
         Get current block height.
-        
+
         Returns:
             Current block number
         """
         result = self._call_rpc("eth_blockNumber")
         # Convert hex string to int
         return int(result, 16) if isinstance(result, str) else result
-    
+
     def get_block(self, block_number: Optional[int] = None) -> Dict[str, Any]:
         """
         Get block by number.
-        
+
         Args:
             block_number: Block number (None for latest)
-            
+
         Returns:
             Block data
         """
@@ -354,90 +354,90 @@ class LuxtensorClient:
             block_param = f"0x{block_number:x}"
         else:
             block_param = "latest"
-        
+
         return self._call_rpc("eth_getBlockByNumber", [block_param, True])
-    
+
     def get_block_hash(self, block_number: int) -> str:
         """
         Get block hash by number.
-        
+
         Args:
             block_number: Block number
-            
+
         Returns:
             Block hash
         """
         block = self.get_block(block_number)
         return block.get("hash", "") if block else ""
-    
+
     # ========================================================================
     # Account Methods
     # ========================================================================
-    
+
     def get_account(self, address: str) -> Account:
         """
         Get account information.
-        
+
         Args:
             address: Account address
-            
+
         Returns:
             Account object with balance, nonce, stake
         """
         # Get balance and nonce separately using eth_ methods
         balance_hex = self._call_rpc("eth_getBalance", [address, "latest"])
         nonce_hex = self._call_rpc("eth_getTransactionCount", [address, "latest"])
-        
+
         # Convert hex strings to integers
         balance = int(balance_hex, 16) if isinstance(balance_hex, str) else balance_hex
         nonce = int(nonce_hex, 16) if isinstance(nonce_hex, str) else nonce_hex
-        
+
         return Account(
             address=address,
             balance=balance,
             nonce=nonce,
             stake=self.get_stake(address)  # Get stake from staking RPC method
         )
-    
+
     def get_balance(self, address: str) -> int:
         """
         Get account balance.
-        
+
         Args:
             address: Account address
-            
+
         Returns:
             Balance in smallest unit
         """
         result = self._call_rpc("eth_getBalance", [address, "latest"])
         # Convert hex string to int
         return int(result, 16) if isinstance(result, str) else result
-    
+
     def get_nonce(self, address: str) -> int:
         """
         Get account nonce (transaction count).
-        
+
         Args:
             address: Account address
-            
+
         Returns:
             Current nonce
         """
         result = self._call_rpc("eth_getTransactionCount", [address, "latest"])
         # Convert hex string to int
         return int(result, 16) if isinstance(result, str) else result
-    
+
     # ========================================================================
     # Transaction Methods
     # ========================================================================
-    
+
     def submit_transaction(self, signed_tx: str) -> TransactionResult:
         """
         Submit signed transaction to Luxtensor.
-        
+
         Args:
             signed_tx: Signed transaction (hex encoded, with 0x prefix)
-            
+
         Returns:
             TransactionResult with tx_hash and status
         """
@@ -448,75 +448,75 @@ class LuxtensorClient:
             block_number=None,
             error=None
         )
-    
+
     def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
         """
         Get transaction by hash.
-        
+
         Args:
             tx_hash: Transaction hash (with 0x prefix)
-            
+
         Returns:
             Transaction data
         """
         return self._call_rpc("eth_getTransactionByHash", [tx_hash])
-    
+
     def get_transaction_receipt(self, tx_hash: str) -> Dict[str, Any]:
         """
         Get transaction receipt.
-        
+
         Args:
             tx_hash: Transaction hash
-            
+
         Returns:
             Transaction receipt with execution result
         """
         return self._call_rpc("tx_getReceipt", [tx_hash])
-    
+
     # ========================================================================
     # AI/ML Specific Methods
     # ========================================================================
-    
+
     def submit_ai_task(self, task_data: Dict[str, Any]) -> str:
         """
         Submit AI computation task to Luxtensor.
-        
+
         Args:
             task_data: Task parameters (model_hash, input_data, requester, reward)
-            
+
         Returns:
             Task ID
         """
         return self._call_rpc("lux_submitAITask", [task_data])
-    
+
     def get_ai_result(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
         Get AI task result.
-        
+
         Args:
             task_id: Task ID from submit_ai_task
-            
+
         Returns:
             Task result if available, None otherwise
         """
         return self._call_rpc("lux_getAIResult", [task_id])
-    
+
     def get_validator_status(self, address: str) -> Optional[Dict[str, Any]]:
         """
         Get validator status and information.
-        
+
         Args:
             address: Validator address
-            
+
         Returns:
             Validator status
         """
         return self._call_rpc("lux_getValidatorStatus", [address])
-    
+
     def get_validators(self) -> List[Dict[str, Any]]:
         """
         Get list of active validators.
-        
+
         Returns:
             List of validator information
         """
@@ -526,14 +526,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.warning(f"Failed to get validators: {e}")
             return []
-    
+
     def get_subnet_info(self, subnet_id: int) -> Dict[str, Any]:
         """
         Get subnet information.
-        
+
         Args:
             subnet_id: Subnet ID
-            
+
         Returns:
             Subnet metadata and configuration
         """
@@ -543,14 +543,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Failed to get subnet info for {subnet_id}: {e}")
             raise
-    
+
     def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """
         Get neurons (miners/validators) in subnet.
-        
+
         Args:
             subnet_id: Subnet ID
-            
+
         Returns:
             List of neuron information
         """
@@ -560,15 +560,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Failed to get neurons for subnet {subnet_id}: {e}")
             return []
-    
+
     def get_weights(self, subnet_id: int, neuron_uid: int) -> List[float]:
         """
         Get weight matrix for neuron.
-        
+
         Args:
             subnet_id: Subnet ID
             neuron_uid: Neuron UID
-            
+
         Returns:
             Weight values
         """
@@ -578,18 +578,18 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Failed to get weights for neuron {neuron_uid} in subnet {subnet_id}: {e}")
             return []
-    
+
     # ========================================================================
     # Staking Methods
     # ========================================================================
-    
+
     def get_stake(self, address: str) -> int:
         """
         Get staked amount for address.
-        
+
         Args:
             address: Account address
-            
+
         Returns:
             Staked amount in base units
         """
@@ -602,11 +602,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.warning(f"Failed to get stake for {address}: {e}")
             return 0
-    
+
     def get_total_stake(self) -> int:
         """
         Get total staked in network.
-        
+
         Returns:
             Total stake amount in base units
         """
@@ -619,15 +619,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.warning(f"Failed to get total stake: {e}")
             return 0
-    
+
     # ========================================================================
     # Utility Methods
     # ========================================================================
-    
+
     def is_connected(self) -> bool:
         """
         Check if connected to Luxtensor.
-        
+
         Returns:
             True if connected, False otherwise
         """
@@ -636,28 +636,28 @@ class LuxtensorClient:
             return True
         except:
             return False
-    
+
     def health_check(self) -> Dict[str, Any]:
         """
         Get node health status.
-        
+
         Returns:
             Health information
         """
         return self._call_rpc("system_health")
-    
+
     # =============================================================================
     # Extended Neuron Queries
     # =============================================================================
-    
+
     def get_neuron(self, subnet_id: int, neuron_uid: int) -> Dict[str, Any]:
         """
         Get detailed information about a specific neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron unique identifier
-            
+
         Returns:
             Neuron information dictionary
         """
@@ -667,15 +667,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting neuron {neuron_uid} in subnet {subnet_id}: {e}")
             raise
-    
+
     def get_neuron_axon(self, subnet_id: int, neuron_uid: int) -> Dict[str, Any]:
         """
         Get axon information for a specific neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron unique identifier
-            
+
         Returns:
             Axon information (ip, port, protocol)
         """
@@ -685,15 +685,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting axon for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_neuron_prometheus(self, subnet_id: int, neuron_uid: int) -> Dict[str, Any]:
         """
         Get prometheus information for a specific neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron unique identifier
-            
+
         Returns:
             Prometheus endpoint information
         """
@@ -703,7 +703,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting prometheus for neuron {neuron_uid}: {e}")
             raise
-    
+
     def serve_axon(
         self,
         subnet_id: int,
@@ -718,10 +718,10 @@ class LuxtensorClient:
     ) -> Dict[str, Any]:
         """
         Register or update axon endpoint information on the blockchain.
-        
+
         This method submits a transaction to register the miner/validator's
         axon server endpoint, making it discoverable by other network participants.
-        
+
         Args:
             subnet_id: Subnet identifier where this neuron operates
             hotkey: Hotkey address (used for signing)
@@ -732,10 +732,10 @@ class LuxtensorClient:
             version: Axon version (default: 1)
             placeholder1: Reserved field (default: 0)
             placeholder2: Reserved field (default: 0)
-            
+
         Returns:
             Transaction result with transaction hash and status
-            
+
         Example:
             ```python
             result = client.serve_axon(
@@ -761,24 +761,24 @@ class LuxtensorClient:
                 "placeholder1": placeholder1,
                 "placeholder2": placeholder2
             }
-            
+
             # Submit transaction to register axon
             result = self._call_rpc("tx_serveAxon", [subnet_id, axon_info])
-            
+
             logger.info(f"Registered axon for subnet {subnet_id} at {ip}:{port}")
             return result
-            
+
         except Exception as e:
             logger.error(f"Error registering axon: {e}")
             raise
-    
+
     def get_active_neurons(self, subnet_id: int) -> List[int]:
         """
         Get list of active neuron UIDs in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             List of active neuron UIDs
         """
@@ -788,14 +788,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting active neurons in subnet {subnet_id}: {e}")
             raise
-    
+
     def get_neuron_count(self, subnet_id: int) -> int:
         """
         Get total count of neurons in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Number of neurons
         """
@@ -805,15 +805,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting neuron count for subnet {subnet_id}: {e}")
             raise
-    
+
     # =============================================================================
     # Subnet Management Queries
     # =============================================================================
-    
+
     def get_all_subnets(self) -> List[Dict[str, Any]]:
         """
         Get information about all subnets.
-        
+
         Returns:
             List of subnet information dictionaries
         """
@@ -823,14 +823,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting all subnets: {e}")
             raise
-    
+
     def get_subnet_hyperparameters(self, subnet_id: int) -> Dict[str, Any]:
         """
         Get hyperparameters for a specific subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Subnet hyperparameters dictionary
         """
@@ -840,14 +840,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting hyperparameters for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_subnet_owner(self, subnet_id: int) -> str:
         """
         Get owner address of a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Owner address
         """
@@ -857,14 +857,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting owner for subnet {subnet_id}: {e}")
             raise
-    
+
     def subnet_exists(self, subnet_id: int) -> bool:
         """
         Check if a subnet exists.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             True if subnet exists, False otherwise
         """
@@ -874,14 +874,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error checking if subnet {subnet_id} exists: {e}")
             raise
-    
+
     def get_subnet_emission(self, subnet_id: int) -> int:
         """
         Get emission rate for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Emission rate
         """
@@ -891,14 +891,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting emission for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_subnet_tempo(self, subnet_id: int) -> int:
         """
         Get tempo (epoch length) for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Tempo in blocks
         """
@@ -908,19 +908,19 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting tempo for subnet {subnet_id}: {e}")
             raise
-    
+
     # =============================================================================
     # Staking Queries
     # =============================================================================
-    
+
     def get_stake_for_coldkey_and_hotkey(self, coldkey: str, hotkey: str) -> int:
         """
         Get stake amount for a specific coldkey-hotkey pair.
-        
+
         Args:
             coldkey: Coldkey address
             hotkey: Hotkey address
-            
+
         Returns:
             Stake amount
         """
@@ -930,14 +930,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting stake for {coldkey}-{hotkey}: {e}")
             raise
-    
+
     def get_all_stake_for_coldkey(self, coldkey: str) -> Dict[str, int]:
         """
         Get all stakes for a coldkey across all hotkeys.
-        
+
         Args:
             coldkey: Coldkey address
-            
+
         Returns:
             Dictionary mapping hotkey to stake amount
         """
@@ -947,14 +947,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting all stakes for coldkey {coldkey}: {e}")
             raise
-    
+
     def get_all_stake_for_hotkey(self, hotkey: str) -> Dict[str, int]:
         """
         Get all stakes for a hotkey from all coldkeys.
-        
+
         Args:
             hotkey: Hotkey address
-            
+
         Returns:
             Dictionary mapping coldkey to stake amount
         """
@@ -964,14 +964,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting all stakes for hotkey {hotkey}: {e}")
             raise
-    
+
     def get_total_stake_for_coldkey(self, coldkey: str) -> int:
         """
         Get total stake for a coldkey.
-        
+
         Args:
             coldkey: Coldkey address
-            
+
         Returns:
             Total stake amount
         """
@@ -981,14 +981,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting total stake for coldkey {coldkey}: {e}")
             raise
-    
+
     def get_total_stake_for_hotkey(self, hotkey: str) -> int:
         """
         Get total stake for a hotkey.
-        
+
         Args:
             hotkey: Hotkey address
-            
+
         Returns:
             Total stake amount
         """
@@ -998,18 +998,18 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting total stake for hotkey {hotkey}: {e}")
             raise
-    
+
     # =============================================================================
     # Weight Queries
     # =============================================================================
-    
+
     def get_weight_commits(self, subnet_id: int) -> Dict[str, Any]:
         """
         Get weight commits for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Weight commits information
         """
@@ -1019,14 +1019,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting weight commits for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_weights_version(self, subnet_id: int) -> int:
         """
         Get weights version for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Weights version number
         """
@@ -1036,14 +1036,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting weights version for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_weights_rate_limit(self, subnet_id: int) -> int:
         """
         Get weights rate limit for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Rate limit in blocks
         """
@@ -1053,19 +1053,19 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting weights rate limit for subnet {subnet_id}: {e}")
             raise
-    
+
     # =============================================================================
     # Validator Queries
     # =============================================================================
-    
+
     def is_hotkey_registered(self, subnet_id: int, hotkey: str) -> bool:
         """
         Check if a hotkey is registered in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
             hotkey: Hotkey address
-            
+
         Returns:
             True if registered, False otherwise
         """
@@ -1075,15 +1075,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error checking if hotkey {hotkey} is registered: {e}")
             raise
-    
+
     def get_uid_for_hotkey(self, subnet_id: int, hotkey: str) -> Optional[int]:
         """
         Get neuron UID for a hotkey in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
             hotkey: Hotkey address
-            
+
         Returns:
             Neuron UID or None if not registered
         """
@@ -1093,15 +1093,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting UID for hotkey {hotkey}: {e}")
             raise
-    
+
     def get_hotkey_for_uid(self, subnet_id: int, neuron_uid: int) -> Optional[str]:
         """
         Get hotkey for a neuron UID in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Hotkey address or None if not found
         """
@@ -1111,15 +1111,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting hotkey for UID {neuron_uid}: {e}")
             raise
-    
+
     def has_validator_permit(self, subnet_id: int, hotkey: str) -> bool:
         """
         Check if a hotkey has validator permit in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
             hotkey: Hotkey address
-            
+
         Returns:
             True if has permit, False otherwise
         """
@@ -1129,15 +1129,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error checking validator permit for {hotkey}: {e}")
             raise
-    
+
     def get_validator_trust(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get validator trust score for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Trust score (0-1)
         """
@@ -1147,19 +1147,19 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting validator trust for neuron {neuron_uid}: {e}")
             raise
-    
+
     # =============================================================================
     # Performance Metrics Queries
     # =============================================================================
-    
+
     def get_rank(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get rank score for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Rank score (0-1)
         """
@@ -1169,15 +1169,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting rank for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_trust(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get trust score for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Trust score (0-1)
         """
@@ -1187,15 +1187,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting trust for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_consensus(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get consensus weight for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Consensus weight (0-1)
         """
@@ -1205,14 +1205,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting consensus for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_incentive(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get incentive score for a neuron.
-        
+
         Args:
             subnet_id: int, neuron_uid: Neuron UID
-            
+
         Returns:
             Incentive score (0-1)
         """
@@ -1222,15 +1222,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting incentive for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_dividends(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get dividends for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Dividends (0-1)
         """
@@ -1240,15 +1240,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting dividends for neuron {neuron_uid}: {e}")
             raise
-    
+
     def get_emission(self, subnet_id: int, neuron_uid: int) -> float:
         """
         Get emission rate for a neuron.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uid: Neuron UID
-            
+
         Returns:
             Emission rate
         """
@@ -1258,18 +1258,18 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting emission for neuron {neuron_uid}: {e}")
             raise
-    
+
     # =============================================================================
     # Registration & Identity Queries
     # =============================================================================
-    
+
     def get_registration_cost(self, subnet_id: int) -> int:
         """
         Get registration cost for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Registration cost in tokens
         """
@@ -1279,14 +1279,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting registration cost for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_burn_cost(self, subnet_id: int) -> int:
         """
         Get burn cost for registration in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Burn cost in tokens
         """
@@ -1296,14 +1296,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting burn cost for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_difficulty(self, subnet_id: int) -> int:
         """
         Get registration difficulty for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Difficulty value
         """
@@ -1313,14 +1313,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting difficulty for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_immunity_period(self, subnet_id: int) -> int:
         """
         Get immunity period for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Immunity period in blocks
         """
@@ -1330,15 +1330,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting immunity period for subnet {subnet_id}: {e}")
             raise
-    
+
     # =============================================================================
     # Network Statistics
     # =============================================================================
-    
+
     def get_total_issuance(self) -> int:
         """
         Get total token issuance.
-        
+
         Returns:
             Total tokens issued
         """
@@ -1348,11 +1348,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting total issuance: {e}")
             raise
-    
+
     def get_total_subnets(self) -> int:
         """
         Get total number of subnets.
-        
+
         Returns:
             Number of subnets
         """
@@ -1362,11 +1362,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting total subnets: {e}")
             raise
-    
+
     def get_max_subnets(self) -> int:
         """
         Get maximum number of subnets allowed.
-        
+
         Returns:
             Maximum subnets
         """
@@ -1376,11 +1376,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting max subnets: {e}")
             raise
-    
+
     def get_total_neurons(self) -> int:
         """
         Get total number of neurons across all subnets.
-        
+
         Returns:
             Total neuron count
         """
@@ -1390,11 +1390,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting total neurons: {e}")
             raise
-    
+
     def get_network_info(self) -> Dict[str, Any]:
         """
         Get comprehensive network information.
-        
+
         Returns:
             Network statistics and information
         """
@@ -1404,15 +1404,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
             raise
-    
+
     # =============================================================================
     # Delegation Queries
     # =============================================================================
-    
+
     def get_delegates(self) -> List[Dict[str, Any]]:
         """
         Get list of all delegates.
-        
+
         Returns:
             List of delegate information
         """
@@ -1422,14 +1422,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting delegates: {e}")
             raise
-    
+
     def get_delegate_info(self, hotkey: str) -> Dict[str, Any]:
         """
         Get information about a specific delegate.
-        
+
         Args:
             hotkey: Delegate hotkey address
-            
+
         Returns:
             Delegate information
         """
@@ -1439,14 +1439,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting delegate info for {hotkey}: {e}")
             raise
-    
+
     def get_delegate_take(self, hotkey: str) -> float:
         """
         Get delegate commission rate (take).
-        
+
         Args:
             hotkey: Delegate hotkey address
-            
+
         Returns:
             Commission rate (0-1, e.g., 0.18 = 18%)
         """
@@ -1456,14 +1456,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting delegate take for {hotkey}: {e}")
             raise
-    
+
     def get_nominators(self, hotkey: str) -> List[str]:
         """
         Get list of nominators for a delegate.
-        
+
         Args:
             hotkey: Delegate hotkey address
-            
+
         Returns:
             List of nominator addresses
         """
@@ -1473,14 +1473,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting nominators for {hotkey}: {e}")
             raise
-    
+
     def is_delegate(self, hotkey: str) -> bool:
         """
         Check if a hotkey is a delegate.
-        
+
         Args:
             hotkey: Hotkey address
-            
+
         Returns:
             True if is delegate, False otherwise
         """
@@ -1490,11 +1490,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error checking if {hotkey} is delegate: {e}")
             raise
-    
+
     # =============================================================================
     # Transaction History Queries
     # =============================================================================
-    
+
     def get_transactions_for_address(
         self,
         address: str,
@@ -1503,12 +1503,12 @@ class LuxtensorClient:
     ) -> List[Dict[str, Any]]:
         """
         Get transaction history for an address.
-        
+
         Args:
             address: Address to query
             limit: Maximum number of transactions to return
             offset: Offset for pagination
-            
+
         Returns:
             List of transactions
         """
@@ -1518,7 +1518,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting transactions for {address}: {e}")
             raise
-    
+
     def get_stake_history(
         self,
         address: str,
@@ -1526,11 +1526,11 @@ class LuxtensorClient:
     ) -> List[Dict[str, Any]]:
         """
         Get staking history for an address.
-        
+
         Args:
             address: Address to query
             limit: Maximum number of records to return
-            
+
         Returns:
             List of stake events
         """
@@ -1540,7 +1540,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting stake history for {address}: {e}")
             raise
-    
+
     def get_transfer_history(
         self,
         address: str,
@@ -1548,11 +1548,11 @@ class LuxtensorClient:
     ) -> List[Dict[str, Any]]:
         """
         Get transfer history for an address.
-        
+
         Args:
             address: Address to query
             limit: Maximum number of transfers to return
-            
+
         Returns:
             List of transfers
         """
@@ -1562,18 +1562,18 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting transfer history for {address}: {e}")
             raise
-    
+
     # =============================================================================
     # Advanced Subnet Queries
     # =============================================================================
-    
+
     def get_subnet_network_metadata(self, subnet_id: int) -> Dict[str, Any]:
         """
         Get network metadata for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Network metadata including URLs, descriptions, etc.
         """
@@ -1583,14 +1583,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting network metadata for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_subnet_registration_allowed(self, subnet_id: int) -> bool:
         """
         Check if registration is allowed in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             True if registration allowed, False otherwise
         """
@@ -1600,14 +1600,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error checking registration allowed for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_max_allowed_uids(self, subnet_id: int) -> int:
         """
         Get maximum allowed UIDs in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Maximum UID count
         """
@@ -1617,14 +1617,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting max allowed UIDs for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_min_allowed_weights(self, subnet_id: int) -> int:
         """
         Get minimum allowed weights for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Minimum allowed weights
         """
@@ -1634,14 +1634,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting min allowed weights for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_max_weight_limit(self, subnet_id: int) -> float:
         """
         Get maximum weight limit for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Maximum weight limit
         """
@@ -1651,14 +1651,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting max weight limit for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_scaling_law_power(self, subnet_id: int) -> float:
         """
         Get scaling law power for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Scaling law power
         """
@@ -1668,14 +1668,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting scaling law power for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_synergy_scaling_law_power(self, subnet_id: int) -> float:
         """
         Get synergy scaling law power for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Synergy scaling law power
         """
@@ -1685,14 +1685,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting synergy scaling law power for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_subnetwork_n(self, subnet_id: int) -> int:
         """
         Get number of subnetworks in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Number of subnetworks
         """
@@ -1702,14 +1702,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting subnetwork N for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_max_allowed_validators(self, subnet_id: int) -> int:
         """
         Get maximum allowed validators in a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Maximum validator count
         """
@@ -1719,14 +1719,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting max allowed validators for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_bonds_moving_average(self, subnet_id: int) -> float:
         """
         Get bonds moving average for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Bonds moving average
         """
@@ -1736,14 +1736,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting bonds moving average for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_max_registrations_per_block(self, subnet_id: int) -> int:
         """
         Get maximum registrations per block for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Maximum registrations per block
         """
@@ -1753,14 +1753,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting max registrations per block for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_target_registrations_per_interval(self, subnet_id: int) -> int:
         """
         Get target registrations per interval for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Target registrations per interval
         """
@@ -1770,14 +1770,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting target registrations for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_adjustment_alpha(self, subnet_id: int) -> float:
         """
         Get adjustment alpha for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Adjustment alpha (0-1)
         """
@@ -1787,14 +1787,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting adjustment alpha for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_adjustment_interval(self, subnet_id: int) -> int:
         """
         Get adjustment interval for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Adjustment interval in blocks
         """
@@ -1804,14 +1804,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting adjustment interval for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_activity_cutoff(self, subnet_id: int) -> int:
         """
         Get activity cutoff for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Activity cutoff in blocks
         """
@@ -1821,14 +1821,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting activity cutoff for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_rho(self, subnet_id: int) -> float:
         """
         Get rho parameter for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Rho value
         """
@@ -1838,14 +1838,14 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting rho for subnet {subnet_id}: {e}")
             raise
-    
+
     def get_kappa(self, subnet_id: int) -> float:
         """
         Get kappa parameter for a subnet.
-        
+
         Args:
             subnet_id: Subnet identifier
-            
+
         Returns:
             Kappa value
         """
@@ -1855,15 +1855,15 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting kappa for subnet {subnet_id}: {e}")
             raise
-    
+
     # =============================================================================
     # Root Network Queries
     # =============================================================================
-    
+
     def get_root_network_validators(self) -> List[str]:
         """
         Get validators in the root network.
-        
+
         Returns:
             List of validator hotkeys
         """
@@ -1873,11 +1873,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting root network validators: {e}")
             raise
-    
+
     def get_senate_members(self) -> List[str]:
         """
         Get senate members (if applicable).
-        
+
         Returns:
             List of senate member addresses
         """
@@ -1887,11 +1887,11 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting senate members: {e}")
             raise
-    
+
     # =============================================================================
     # Utility Methods for Batch Queries
     # =============================================================================
-    
+
     def batch_get_neurons(
         self,
         subnet_id: int,
@@ -1899,11 +1899,11 @@ class LuxtensorClient:
     ) -> List[Dict[str, Any]]:
         """
         Get multiple neurons in a single call.
-        
+
         Args:
             subnet_id: Subnet identifier
             neuron_uids: List of neuron UIDs
-            
+
         Returns:
             List of neuron information
         """
@@ -1916,17 +1916,17 @@ class LuxtensorClient:
                 logger.warning(f"Error getting neuron {uid}: {e}")
                 results.append(None)
         return results
-    
+
     def batch_get_stakes(
         self,
         coldkey_hotkey_pairs: List[tuple]
     ) -> List[int]:
         """
         Get stakes for multiple coldkey-hotkey pairs.
-        
+
         Args:
             coldkey_hotkey_pairs: List of (coldkey, hotkey) tuples
-            
+
         Returns:
             List of stake amounts
         """
@@ -1939,15 +1939,15 @@ class LuxtensorClient:
                 logger.warning(f"Error getting stake for {coldkey}-{hotkey}: {e}")
                 results.append(0)
         return results
-    
+
     # =============================================================================
     # Helper Methods
     # =============================================================================
-    
+
     def wait_for_block(self, target_block: int, poll_interval: float = 1.0):
         """
         Wait until a specific block number is reached.
-        
+
         Args:
             target_block: Target block number
             poll_interval: Polling interval in seconds
@@ -1958,11 +1958,11 @@ class LuxtensorClient:
             if current_block >= target_block:
                 break
             time.sleep(poll_interval)
-    
+
     def get_network_state_summary(self) -> Dict[str, Any]:
         """
         Get a comprehensive summary of network state.
-        
+
         Returns:
             Dictionary with network statistics
         """
@@ -1978,24 +1978,24 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting network state summary: {e}")
             raise
-    
+
     def validate_address(self, address: str) -> bool:
         """
         Validate if an address format is correct.
-        
+
         Args:
             address: Address to validate
-            
+
         Returns:
             True if valid, False otherwise
         """
         # Basic validation - should be enhanced based on actual address format
         return isinstance(address, str) and len(address) > 0
-    
+
     # =============================================================================
     # Governance and Proposals (Additional 600+ lines of methods)
     # =============================================================================
-    
+
     def get_proposals(self) -> List[Dict[str, Any]]:
         """Get list of active governance proposals."""
         try:
@@ -2003,7 +2003,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting proposals: {e}")
             raise
-    
+
     def get_proposal(self, proposal_id: int) -> Dict[str, Any]:
         """Get details of a specific proposal."""
         try:
@@ -2011,7 +2011,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting proposal {proposal_id}: {e}")
             raise
-    
+
     def get_network_version(self) -> str:
         """Get network protocol version."""
         try:
@@ -2019,7 +2019,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting network version: {e}")
             raise
-    
+
     def get_peer_count(self) -> int:
         """Get number of connected peers."""
         try:
@@ -2027,7 +2027,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting peer count: {e}")
             raise
-    
+
     def is_syncing(self) -> bool:
         """Check if node is currently syncing."""
         try:
@@ -2035,7 +2035,7 @@ class LuxtensorClient:
             return sync_state.get("isSyncing", False)
         except Exception as e:
             return False
-    
+
     def get_free_balance(self, address: str) -> int:
         """Get free (transferable) balance for an address."""
         try:
@@ -2043,7 +2043,7 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting free balance: {e}")
             raise
-    
+
     def get_reserved_balance(self, address: str) -> int:
         """Get reserved (locked) balance for an address."""
         try:
@@ -2051,17 +2051,17 @@ class LuxtensorClient:
         except Exception as e:
             logger.error(f"Error getting reserved balance: {e}")
             raise
-    
+
     def switch_network(self, url: str, network: str = "testnet"):
         """Switch to a different network."""
         self.url = url
         self.network = network
         logger.info(f"Switched to network: {network} at {url}")
-    
+
     def __repr__(self) -> str:
         """String representation of client."""
         return f"LuxtensorClient(url='{self.url}', network='{self.network}')"
-    
+
     def __str__(self) -> str:
         """Human-readable string representation."""
         return f"Luxtensor Client connected to {self.network} at {self.url}"
@@ -2070,25 +2070,25 @@ class LuxtensorClient:
 class AsyncLuxtensorClient:
     """
     Asynchronous Python client for Luxtensor blockchain.
-    
+
     Provides async methods for high-performance operations:
     - Batch queries
     - Concurrent transaction submission
     - Non-blocking blockchain calls
-    
+
     Similar to async_subtensor.py in Bittensor SDK.
     """
-    
+
     def __init__(
         self,
-        url: str = "http://localhost:9944",
+        url: str = "http://localhost:8545",
         network: str = "testnet",
         timeout: int = 30,
         max_connections: int = 100,
     ):
         """
         Initialize async Luxtensor client.
-        
+
         Args:
             url: Luxtensor RPC endpoint URL
             network: Network name
@@ -2100,28 +2100,28 @@ class AsyncLuxtensorClient:
         self.timeout = timeout
         self.max_connections = max_connections
         self._request_id = 0
-        
+
         # Connection pool limits
         self._limits = httpx.Limits(
             max_connections=max_connections,
             max_keepalive_connections=20
         )
-        
+
         logger.info(f"Initialized async Luxtensor client for {network} at {url}")
-    
+
     def _get_request_id(self) -> int:
         """Get next request ID"""
         self._request_id += 1
         return self._request_id
-    
+
     async def _call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """
         Make async JSON-RPC call to Luxtensor.
-        
+
         Args:
             method: RPC method name
             params: Method parameters
-            
+
         Returns:
             Result from RPC call
         """
@@ -2131,65 +2131,65 @@ class AsyncLuxtensorClient:
             "params": params or [],
             "id": self._get_request_id()
         }
-        
+
         async with httpx.AsyncClient(timeout=self.timeout, limits=self._limits) as client:
             try:
                 response = await client.post(self.url, json=request)
                 response.raise_for_status()
-                
+
                 result = response.json()
-                
+
                 if "error" in result:
                     raise Exception(f"RPC error: {result['error']}")
-                
+
                 return result.get("result")
-                
+
             except httpx.RequestError as e:
                 logger.error(f"Request error: {e}")
                 raise Exception(f"Failed to connect to Luxtensor at {self.url}: {e}")
-    
+
     async def batch_call(self, calls: List[tuple]) -> List[Any]:
         """
         Execute multiple RPC calls concurrently.
-        
+
         Args:
             calls: List of (method, params) tuples
-            
+
         Returns:
             List of results in same order
         """
         tasks = [self._call_rpc(method, params) for method, params in calls]
         return await asyncio.gather(*tasks)
-    
+
     # Async versions of sync methods
-    
+
     async def get_block_number(self) -> int:
         """Get current block height (async)"""
         return await self._call_rpc("chain_getBlockNumber")
-    
+
     async def get_block(self, block_number: Optional[int] = None) -> Dict[str, Any]:
         """Get block by number (async)"""
         params = [block_number] if block_number is not None else ["latest"]
         return await self._call_rpc("chain_getBlock", params)
-    
+
     async def get_account(self, address: str) -> Account:
         """Get account information (async)"""
         result = await self._call_rpc("state_getAccount", [address])
         return Account(**result)
-    
+
     async def submit_transaction(self, signed_tx: str) -> TransactionResult:
         """Submit transaction (async)"""
         result = await self._call_rpc("tx_submit", [signed_tx])
         return TransactionResult(**result)
-    
+
     async def get_validators(self) -> List[Dict[str, Any]]:
         """Get active validators (async)"""
         return await self._call_rpc("validators_getActive")
-    
+
     async def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """Get neurons in subnet (async)"""
         return await self._call_rpc("subnet_getNeurons", [subnet_id])
-    
+
     async def is_connected(self) -> bool:
         """Check connection (async)"""
         try:
@@ -2200,28 +2200,28 @@ class AsyncLuxtensorClient:
 
 
 # Convenience function
-def connect(url: str = "http://localhost:9944", network: str = "testnet") -> LuxtensorClient:
+def connect(url: str = "http://localhost:8545", network: str = "testnet") -> LuxtensorClient:
     """
     Create and return Luxtensor client.
-    
+
     Args:
         url: Luxtensor RPC URL
         network: Network name
-        
+
     Returns:
         LuxtensorClient instance
     """
     return LuxtensorClient(url=url, network=network)
 
 
-def async_connect(url: str = "http://localhost:9944", network: str = "testnet") -> AsyncLuxtensorClient:
+def async_connect(url: str = "http://localhost:8545", network: str = "testnet") -> AsyncLuxtensorClient:
     """
     Create and return async Luxtensor client.
-    
+
     Args:
         url: Luxtensor RPC URL
         network: Network name
-        
+
     Returns:
         AsyncLuxtensorClient instance
     """

@@ -13,7 +13,7 @@ impl BlockNumber {
     pub fn latest() -> Self {
         BlockNumber::Tag("latest".to_string())
     }
-    
+
     pub fn earliest() -> Self {
         BlockNumber::Tag("earliest".to_string())
     }
@@ -96,6 +96,30 @@ pub struct AITaskResult {
     pub result_data: String,
     pub worker: String,
     pub status: String,
+}
+
+/// AI Task information (internal tracking)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AITaskInfo {
+    pub id: [u8; 32],
+    pub model_hash: String,
+    pub input_data: String,
+    pub requester: String,
+    pub reward: u128,
+    pub status: AITaskStatus,
+    pub result: Option<String>,
+    pub worker: Option<String>,
+    pub created_at: u64,
+    pub completed_at: Option<u64>,
+}
+
+/// AI Task status
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AITaskStatus {
+    Pending,
+    Processing,
+    Completed,
+    Failed,
 }
 
 /// Validator status

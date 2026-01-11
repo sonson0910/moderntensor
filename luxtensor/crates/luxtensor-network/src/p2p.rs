@@ -13,13 +13,13 @@ use tracing::info;
 pub struct P2PConfig {
     /// Listen address
     pub listen_addr: Multiaddr,
-    
+
     /// Maximum number of peers
     pub max_peers: usize,
-    
+
     /// Genesis hash for compatibility check
     pub genesis_hash: Hash,
-    
+
     /// Enable mDNS discovery
     pub enable_mdns: bool,
 }
@@ -45,19 +45,19 @@ pub struct CombinedBehaviour {
 pub enum P2PEvent {
     /// New transaction received
     NewTransaction(Transaction),
-    
+
     /// New block received
     NewBlock(Block),
-    
+
     /// Message received from peer
     Message {
         peer_id: PeerId,
         message: NetworkMessage,
     },
-    
+
     /// Peer connected
     PeerConnected(PeerId),
-    
+
     /// Peer disconnected
     PeerDisconnected(PeerId),
 }
@@ -65,8 +65,8 @@ pub enum P2PEvent {
 /// P2P node for blockchain networking (simplified without NetworkBehaviour derive for now)
 pub struct P2PNode {
     peer_manager: PeerManager,
-    config: P2PConfig,
-    event_sender: mpsc::UnboundedSender<P2PEvent>,
+    _config: P2PConfig,
+    _event_sender: mpsc::UnboundedSender<P2PEvent>,
     local_peer_id: PeerId,
 }
 
@@ -78,15 +78,15 @@ impl P2PNode {
     ) -> Result<Self, NetworkError> {
         // Generate a peer ID
         let local_peer_id = PeerId::random();
-        
+
         info!("Local peer ID: {}", local_peer_id);
 
         let peer_manager = PeerManager::new(config.max_peers);
 
         Ok(Self {
             peer_manager,
-            config,
-            event_sender,
+            _config: config,
+            _event_sender: event_sender,
             local_peer_id,
         })
     }
@@ -127,7 +127,7 @@ mod tests {
     async fn test_p2p_node_creation() {
         let config = P2PConfig::default();
         let (tx, _rx) = mpsc::unbounded_channel();
-        
+
         let result = P2PNode::new(config, tx).await;
         assert!(result.is_ok());
     }

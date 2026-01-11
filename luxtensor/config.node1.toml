@@ -25,7 +25,7 @@ block_time = 3
 epoch_length = 100
 
 # Minimum stake required to become a validator (in wei)
-min_stake = 1000000000000000000  # 1 token
+min_stake = "1000000000000000000"  # 1 token (as string for u128)
 
 # Maximum number of validators
 max_validators = 100

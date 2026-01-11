@@ -81,7 +81,7 @@ pub struct WebSocketServer {
 /// A subscription
 #[derive(Debug, Clone)]
 struct Subscription {
-    id: String,
+    _id: String,
     sub_type: SubscriptionType,
     tx: mpsc::UnboundedSender<Message>,
 }
@@ -253,7 +253,7 @@ impl WebSocketServer {
 
                 // Store subscription
                 let subscription = Subscription {
-                    id: sub_id.clone(),
+                    _id: sub_id.clone(),
                     sub_type: sub_type.clone(),
                     tx: tx.clone(),
                 };

@@ -139,7 +139,7 @@ impl ValidatorRotation {
     pub fn request_validator_exit(&mut self, address: Address) -> Result<u64, ConsensusError> {
         // Check if validator exists
         if self.current_validators.get_validator(&address).is_none() {
-            return Err(ConsensusError::ValidatorNotFound(address));
+            return Err(ConsensusError::ValidatorNotFound(format!("{:?}", address)));
         }
 
         // Check if already scheduled to exit
@@ -262,7 +262,7 @@ impl ValidatorRotation {
         let validator = self
             .current_validators
             .get_validator(address)
-            .ok_or(ConsensusError::ValidatorNotFound(*address))?;
+            .ok_or(ConsensusError::ValidatorNotFound(format!("{:?}", address)))?;
 
         let new_stake = validator
             .stake
@@ -318,13 +318,14 @@ mod tests {
         let mut public_key = [0u8; 32];
         let pk_bytes = keypair.public_key_bytes();
         public_key.copy_from_slice(&pk_bytes[..32.min(pk_bytes.len())]);
-        
+
         Validator {
             address: Address::from(keypair.address()),
             stake,
             public_key,
             active: true,
             rewards: 0,
+            last_active_slot: 0,
         }
     }
 

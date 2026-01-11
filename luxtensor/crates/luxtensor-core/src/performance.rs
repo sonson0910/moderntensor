@@ -1,7 +1,6 @@
 // Performance optimization utilities for LuxTensor
 // Provides caching, parallel processing, and optimized data structures
 
-use crate::types::{Address, Hash};
 use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;

@@ -9,12 +9,14 @@ pub struct Validator {
     pub address: Address,
     /// Amount of stake (in base units)
     pub stake: u128,
-    /// Public key for signing (32 bytes)
+    /// Public key for signing (32 bytes - hash of full pubkey)
     pub public_key: [u8; 32],
     /// Is the validator active?
     pub active: bool,
     /// Accumulated rewards
     pub rewards: u128,
+    /// Last slot this validator was active
+    pub last_active_slot: u64,
 }
 
 impl Validator {
@@ -25,6 +27,7 @@ impl Validator {
             public_key,
             active: true,
             rewards: 0,
+            last_active_slot: 0,
         }
     }
 }
@@ -49,11 +52,11 @@ impl ValidatorSet {
         if self.validators.contains_key(&validator.address) {
             return Err("Validator already exists");
         }
-        
+
         if validator.stake == 0 {
             return Err("Validator stake must be greater than 0");
         }
-        
+
         self.total_stake += validator.stake;
         self.validators.insert(validator.address, validator);
         Ok(())
@@ -74,6 +77,48 @@ impl ValidatorSet {
         if let Some(validator) = self.validators.get_mut(address) {
             self.total_stake = self.total_stake - validator.stake + new_stake;
             validator.stake = new_stake;
+            Ok(())
+        } else {
+            Err("Validator not found")
+        }
+    }
+
+    /// Slash stake from a validator (for slashing)
+    pub fn slash_stake(&mut self, address: &Address, amount: u128) -> Result<u128, &'static str> {
+        if let Some(validator) = self.validators.get_mut(address) {
+            let slash_amount = amount.min(validator.stake);
+            validator.stake -= slash_amount;
+            self.total_stake -= slash_amount;
+            Ok(slash_amount)
+        } else {
+            Err("Validator not found")
+        }
+    }
+
+    /// Deactivate a validator (for jailing)
+    pub fn deactivate_validator(&mut self, address: &Address) -> Result<(), &'static str> {
+        if let Some(validator) = self.validators.get_mut(address) {
+            validator.active = false;
+            Ok(())
+        } else {
+            Err("Validator not found")
+        }
+    }
+
+    /// Activate a validator (for unjailing)
+    pub fn activate_validator(&mut self, address: &Address) -> Result<(), &'static str> {
+        if let Some(validator) = self.validators.get_mut(address) {
+            validator.active = true;
+            Ok(())
+        } else {
+            Err("Validator not found")
+        }
+    }
+
+    /// Update last active slot for validator
+    pub fn update_last_active(&mut self, address: &Address, slot: u64) -> Result<(), &'static str> {
+        if let Some(validator) = self.validators.get_mut(address) {
+            validator.last_active_slot = slot;
             Ok(())
         } else {
             Err("Validator not found")
@@ -120,6 +165,12 @@ impl ValidatorSet {
             return Err("No active validators");
         }
 
+        // Calculate active stake
+        let active_stake: u128 = active.iter().map(|v| v.stake).sum();
+        if active_stake == 0 {
+            return Err("No stake in active validators");
+        }
+
         // Convert seed to a number for weighted selection
         let mut seed_value: u128 = 0;
         for (i, &byte) in seed.iter().enumerate().take(16) {
@@ -127,7 +178,7 @@ impl ValidatorSet {
         }
 
         // Perform weighted selection
-        let target = seed_value % self.total_stake;
+        let target = seed_value % active_stake;
         let mut accumulated = 0u128;
 
         for validator in &active {
@@ -166,10 +217,10 @@ mod tests {
         let mut addr_bytes = [0u8; 20];
         addr_bytes[0] = index;
         let address = Address::from(addr_bytes);
-        
+
         let mut pubkey = [0u8; 32];
         pubkey[0] = index;
-        
+
         Validator::new(address, 1000u128, pubkey)
     }
 
@@ -184,7 +235,7 @@ mod tests {
     fn test_add_validator() {
         let mut set = ValidatorSet::new();
         let validator = create_test_validator(1);
-        
+
         assert!(set.add_validator(validator.clone()).is_ok());
         assert_eq!(set.len(), 1);
         assert_eq!(set.total_stake(), 1000);
@@ -194,7 +245,7 @@ mod tests {
     fn test_add_duplicate_validator() {
         let mut set = ValidatorSet::new();
         let validator = create_test_validator(1);
-        
+
         assert!(set.add_validator(validator.clone()).is_ok());
         assert!(set.add_validator(validator).is_err());
     }
@@ -204,10 +255,10 @@ mod tests {
         let mut set = ValidatorSet::new();
         let validator = create_test_validator(1);
         let address = validator.address;
-        
+
         set.add_validator(validator).unwrap();
         assert_eq!(set.len(), 1);
-        
+
         assert!(set.remove_validator(&address).is_ok());
         assert_eq!(set.len(), 0);
         assert_eq!(set.total_stake(), 0);
@@ -218,10 +269,10 @@ mod tests {
         let mut set = ValidatorSet::new();
         let validator = create_test_validator(1);
         let address = validator.address;
-        
+
         set.add_validator(validator).unwrap();
         assert_eq!(set.total_stake(), 1000);
-        
+
         set.update_stake(&address, 2000).unwrap();
         assert_eq!(set.total_stake(), 2000);
     }
@@ -229,14 +280,14 @@ mod tests {
     #[test]
     fn test_select_by_seed() {
         let mut set = ValidatorSet::new();
-        
+
         // Add 3 validators with different stakes
         for i in 1..=3 {
             let mut validator = create_test_validator(i);
             validator.stake = (i as u128) * 1000;
             set.add_validator(validator).unwrap();
         }
-        
+
         // Selection should work
         let seed = [0u8; 32];
         let selected = set.select_by_seed(&seed);
@@ -248,10 +299,10 @@ mod tests {
         let mut set = ValidatorSet::new();
         let validator = create_test_validator(1);
         let address = validator.address;
-        
+
         set.add_validator(validator).unwrap();
         set.add_reward(&address, 100).unwrap();
-        
+
         let v = set.get_validator(&address).unwrap();
         assert_eq!(v.rewards, 100);
     }

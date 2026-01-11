@@ -1,234 +1,221 @@
-# ModernTensor Tokenomics ($MDT)
+# ModernTensor Tokenomics v3.0 ($MDT)
 
-## 1. Core Philosophy: Adaptive & Sustainable Emission
+**The Superior Decentralized AI Economic Model**
 
-Khác với Bittensor (in tiền cố định bất kể nhu cầu), ModernTensor áp dụng cơ chế **"Phát thải thích ứng" (Adaptive Emission)**. Mục tiêu là giảm tối đa lạm phát khi mạng lưới chưa tạo ra giá trị thực, và chỉ tăng cung khi nhu cầu sử dụng mạng lưới tăng.
+---
 
-## 2. Key Metrics
-*   **Token Name:** ModernTensor ($MDT)
-*   **Max Supply:** 21,000,000 MDT
-*   **Halving Interval:** 210,000 epochs (~4 years at 10min/epoch)
-*   **Emission Type:** Deflationary (Giảm phát)
-*   **Base Reward:** 1,000 tokens per epoch
+## Executive Summary
 
-## 3. Implementation Status ✅
+ModernTensor ($MDT) implements a next-generation tokenomics model designed to surpass Bittensor's fixed emission approach. Our **Adaptive Emission + Multi-Layer Deflation** system creates sustainable value through:
 
-**Status:** MONTH 2 COMPLETE - OPTIMIZED & SECURED
+1. **Utility-based minting** (vs. Bittensor's fixed 7,200 TAO/day)
+2. **Recycling pool** before new minting
+3. **4 burn mechanisms** for long-term scarcity
+4. **Performance-based rewards** for quality
+5. **DAO treasury** for sustainable development
 
-ModernTensor's adaptive tokenomics is fully implemented, optimized, and security-hardened:
+---
 
-### Core Tokenomics (Month 1)
-- ✅ **Adaptive Emission Controller** (`sdk/tokenomics/emission_controller.py`)
-- ✅ **Token Recycling Pool** (`sdk/tokenomics/recycling_pool.py`)
-- ✅ **Burn Manager** (`sdk/tokenomics/burn_manager.py`)
-- ✅ **Reward Distributor** (`sdk/tokenomics/reward_distributor.py`)
-- ✅ **Merkle Claim System** (`sdk/tokenomics/claim_manager.py`)
-- ✅ **Enhanced RPC Integration** (`sdk/tokenomics/enhanced_rpc_integration.py`)
+## 1. Core Token Metrics
 
-### Performance Optimization (Month 2)
-- ✅ **Performance Optimizer** (`sdk/tokenomics/performance_optimizer.py`)
-  - TTL cache system (100x faster calculations)
-  - Batch operation optimizer (10x faster distributions)
-  - Memory compression (70% reduction)
-  - Operation profiling
+| Metric | ModernTensor (MDT) | Bittensor (TAO) | Advantage |
+|--------|-------------------|-----------------|-----------|
+| **Max Supply** | 21,000,000 | 21,000,000 | Equal |
+| **Emission Type** | Adaptive (0-100%) | Fixed | ✅ Superior |
+| **Daily Max Emission** | 0 - 2,876 | 7,200 fixed | ✅ Deflationary |
+| **Halving Trigger** | Epochs + Supply | Supply only | ✅ Faster |
+| **Burn Mechanisms** | 4 types | None | ✅ Deflationary |
+| **Recycling Pool** | Yes | Partial | ✅ Efficient |
 
-### Security Hardening (Month 2)
-- ✅ **Security Module** (`sdk/tokenomics/security.py`)
-  - Rate limiter (DoS protection)
-  - Input validator (injection prevention)
-  - Transaction validator (double-claim prevention)
-  - Security monitor (anomaly detection)
-  - Slashing validator (misbehavior penalties)
-  - Audit logger (immutable trail)
+---
 
-### Testing & Documentation
-- ✅ **80+ Unit Tests Passing** (`tests/test_tokenomics_month1.py`, `tests/test_tokenomics_month2.py`)
-- ✅ **90%+ Code Coverage**
-- ✅ **Complete Documentation** (`TOKENOMICS_MONTH1_IMPLEMENTATION.md`, `TOKENOMICS_MONTH2_IMPLEMENTATION.md`)
+## 2. Token Distribution (Final)
 
-**Progress:** 90% Complete (Ready for Month 3: Production Deployment)
+### 2.1 Total Supply Allocation
 
-## 4. Cơ chế Giảm Phác Thải (Emission Reduction Mechanisms)
+| Category | % | Amount (MDT) | Vesting | Purpose |
+|----------|---|--------------|---------|---------|
+| **Emission Rewards** | 45% | 9,450,000 | 10+ years | Miners, Validators, Stakers |
+| **Ecosystem Grants** | 12% | 2,520,000 | DAO controlled | dApp builders |
+| **Team & Core Dev** | 10% | 2,100,000 | 1yr cliff + 4yr | Founders, devs |
+| **Private Investors** | 8% | 1,680,000 | 1yr cliff + 4yr | Seed funding |
+| **Community Sale** | 8% | 1,680,000 | 6mo linear | Public |
+| **Research Fund** | 5% | 1,050,000 | Foundation | AI research |
+| **Strategic Partners** | 5% | 1,050,000 | 6mo cliff + 3yr | Exchanges, Labs |
+| **DAO Treasury** | 5% | 1,050,000 | DAO votes | Operations |
+| **Foundation Reserve** | 2% | 420,000 | Multi-sig | Emergency |
 
-### A. Utility-Based Minting (In tiền dựa trên Tiện ích)
-Thay vì in cố định `1 MDT` mỗi block, lượng in ra (`MintAmount`) phụ thuộc vào **Điểm Tiện ích Mạng lưới (Network Utility Score - $U$)**:
+### 2.2 Epoch Reward Distribution (v3 Final)
 
-$$ MintAmount = BaseReward \times U $$
+The 45% Emission Rewards are distributed each epoch:
 
-Trong đó $U$ (từ 0.0 đến 1.0) được tính dựa trên:
-1.  **Task Volume:** Số lượng task AI được giải quyết trong chu kỳ.
-2.  **Task Difficulty:** Độ khó trung bình của các task (zkML proof complexity).
-3.  **Validator Participation:** Tỷ lệ Validator tham gia đồng thuận.
+| Recipient | % of Emission | % of Total Supply | Description |
+|-----------|---------------|-------------------|-------------|
+| **Miners** | 35% | 15.75% | Performance-based |
+| **Validators** | 30% | 13.5% | Stake-based |
+| **Delegators** | 12% | 5.4% | Passive stakers + lock bonus |
+| **Subnet Owners** | 10% | 4.5% | Subnet creators |
+| **DAO Treasury** | 13% | 5.85% | Protocol operations |
 
-*   **Hệ quả:** Nếu mạng lưới "vắng khách" (ít task), $U$ thấp $\rightarrow$ Lượng token in ra cực thấp. Tránh lạm phát vô nghĩa.
+### 2.3 Delegator Lock Bonuses
 
-### B. The Recycling Pool (Bể Tái Chế)
-Ưu tiên sử dụng token đã có sẵn thay vì in mới.
-1.  **Nguồn thu:**
-    *   Phí đăng ký Miner (Registration Fee).
-    *   Phí phạt Validator (Slashing).
-    *   Phí người dùng gửi Task (nếu có).
-2.  **Cơ chế:**
-    *   Khi đến kỳ trả thưởng, Smart Contract kiểm tra **Recycling Pool**.
-    *   Nếu Pool có tiền $\rightarrow$ Lấy tiền từ Pool trả cho Miner/Validator.
-    *   Nếu Pool thiếu $\rightarrow$ Mới kích hoạt Minting để bù phần thiếu.
+| Lock Period | Bonus | Effective Rate |
+|-------------|-------|----------------|
+| No lock | 0% | 1.0x |
+| 30 days | +10% | 1.1x |
+| 90 days | +25% | 1.25x |
+| 180 days | +50% | 1.5x |
+| 365 days | +100% | 2.0x |
 
-### C. Burn Mechanism (Cơ chế Đốt)
-*   **Unmet Quota Burn:** Nếu trong một chu kỳ, chất lượng mạng lưới kém (không đạt chuẩn đồng thuận), phần thưởng dự kiến của chu kỳ đó sẽ bị **ĐỐT BỎ** thay vì tích lũy.
-*   **Transaction Fee Burn:** 50% phí giao dịch trên mạng lưới (nếu có Layer 2 fees) sẽ bị đốt.
+---
 
-## 4. Phân Phối (Distribution)
-Mỗi đợt trả thưởng (sau khi đã tính toán giảm phát) được chia như sau:
+## 3. Adaptive Emission Model
 
-*   **40% - Miners:** Dựa trên Proof of Useful Work (zkML).
-*   **40% - Validators:** Dựa trên Consensus Weight & Staking.
-*   **20% - DAO Treasury:** Dùng cho R&D và vận hành hạ tầng (Oracle/Hydra).
+### 3.1 Core Formula
 
-## 5. Technical Implementation
-
-### Quick Start
-
-```python
-from sdk.tokenomics import TokenomicsIntegration, ConsensusData, NetworkMetrics
-
-# Initialize
-tokenomics = TokenomicsIntegration()
-
-# Process epoch
-result = tokenomics.process_epoch_tokenomics(
-    epoch=0,
-    consensus_data=ConsensusData(
-        miner_scores={'miner1': 0.8},
-        validator_stakes={'val1': 100000},
-        quality_score=0.9
-    ),
-    network_metrics=NetworkMetrics(
-        task_count=5000,
-        avg_difficulty=0.8,
-        validator_ratio=1.0
-    )
+```
+MintAmount = max(
+    BaseReward × UtilityScore × QualityMultiplier × HalvingFactor,
+    MinEmissionFloor × HalvingFactor
 )
-
-print(f"Emission: {result.emission_amount} tokens")
-print(f"Utility: {result.utility_score}")
 ```
 
-### Layer 1 Integration
+### 3.2 Components
 
-Tokenomics is automatically processed during consensus:
+| Component | Description | Range |
+|-----------|-------------|-------|
+| **BaseReward** | Initial base per epoch | 1,000 MDT |
+| **UtilityScore** | Network activity score | 0.0 - 1.0 |
+| **QualityMultiplier** | Consensus quality | 0.6 - 1.4 |
+| **HalvingFactor** | 0.5^n per halving | 1.0 → 0.5 → 0.25... |
+| **MinEmissionFloor** | Prevents death spiral | 100 MDT/day |
 
-```python
-from sdk.consensus.layer1_integration import Layer1ConsensusIntegrator
+### 3.3 Utility Score Formula
 
-integrator = Layer1ConsensusIntegrator()
+```
+UtilityScore = α₁×TaskVolume + α₂×Difficulty + α₃×Participation
 
-# Process consensus (includes tokenomics)
-await integrator.process_consensus_round(...)
-
-# Access tokenomics data from aggregated state
-state = integrator.state_manager.get_state(subnet_uid)
-print(f"Utility: {state.utility_score}")
-print(f"Emission: {state.epoch_emission}")
-print(f"Pool Balance: {state.recycling_pool_balance}")
+Where: α₁=0.4, α₂=0.3, α₃=0.3
 ```
 
-### Running Tests
+---
 
-```bash
-# Run all tokenomics tests
-pytest tests/test_tokenomics_month1.py tests/test_tokenomics_month2.py -v
+## 4. Burn Mechanisms (4 Types)
 
-# Run demo
-PYTHONPATH=. python examples/tokenomics_demo.py
+### 4.1 Overview
 
-# Run with coverage
-pytest tests/test_tokenomics_month*.py --cov=sdk/tokenomics --cov-report=html
+| Burn Type | Rate | Impact |
+|-----------|------|--------|
+| **Transaction Fees** | 50% burned | ~100K MDT/year |
+| **Subnet Registration** | 50% burned, 50% recycled | ~25K MDT/year |
+| **Unmet Quota** | 100% burned | Variable |
+| **Slashing** | 80% burned | ~20K MDT/year |
+
+**Note:** Inactive account burn removed (controversial, user trust issue).
+
+### 4.2 Estimated Annual Burns
+
+```
+Conservative: 100,000 MDT/year
+Moderate:     175,000 MDT/year
+Aggressive:   250,000 MDT/year
 ```
 
-### Documentation
+---
 
-For detailed documentation, see:
-- **Month 1 Implementation:** `TOKENOMICS_MONTH1_IMPLEMENTATION.md`
-- **Month 2 Implementation:** `TOKENOMICS_MONTH2_IMPLEMENTATION.md`
-- **Month 2 Summary (Vietnamese):** `TOKENOMICS_MONTH2_SUMMARY_VI.md`
-- **Architecture Roadmap:** `TOKENOMICS_ARCHITECTURE_ROADMAP.md`
-- **Implementation Plan:** `docs/implementation/TOKENOMICS_IMPLEMENTATION_PLAN.md`
-- **API Reference:** Module docstrings in `sdk/tokenomics/`
+## 5. New Economic Mechanisms (v3)
+
+### 5.1 Buyback & Burn
+
+| Parameter | Value |
+|-----------|-------|
+| Source | 15% of protocol revenue |
+| Frequency | Weekly |
+| Max Slippage | 2% |
+| Execution | TWAP orders |
+
+### 5.2 Revenue Sharing (Real Yield)
+
+Non-burned tx fees distributed:
+
+| Recipient | Share |
+|-----------|-------|
+| Stakers | 60% |
+| Validators | 30% |
+| DAO | 10% |
+
+### 5.3 Referral Program
+
+| Reward | Amount | Duration |
+|--------|--------|----------|
+| New user bonus | +5% rewards | 30 days |
+| Referrer reward | 2% of referee | 30 days |
+
+### 5.4 Builder Incentives (Year 1)
+
+| Incentive | Details |
+|-----------|---------|
+| Free subnet registration | Until 2027-01-01 |
+| Subnet grant pool | 100K MDT per subnet |
+| Bug bounties | 500K MDT total |
+| Integration bonus | 10K MDT per integration |
+
+---
 
 ## 6. Comparison with Bittensor
 
-| Feature | Bittensor | ModernTensor (Month 2) |
-|---------|-----------|------------------------|
-| Emission | Fixed | ✅ Adaptive |
-| Recycling | ❌ No | ✅ Yes |
-| Burns | ❌ No | ✅ Yes |
-| DAO Treasury | Limited | ✅ 20% |
-| Claim System | On-chain | ✅ Merkle proofs |
-| **Performance** | ~100 TPS | ✅ **1000-5000 TPS** |
-| **Caching** | ❌ No | ✅ **TTL cache (100x faster)** |
-| **Batch Processing** | ⚠️ Limited | ✅ **Parallel (10x faster)** |
-| **Rate Limiting** | ⚠️ Basic | ✅ **Token bucket algorithm** |
-| **Security Monitoring** | ❌ No | ✅ **Real-time anomaly detection** |
-| **Audit Trail** | ⚠️ Limited | ✅ **Immutable chain** |
+| Feature | Bittensor | ModernTensor | Winner |
+|---------|-----------|--------------|--------|
+| **Daily Emission** | 7,200 fixed | 0-2,876 adaptive | ✅ MDT |
+| **Burn Mechanisms** | 0 | 4 types | ✅ MDT |
+| **Delegator Rewards** | 0% | 12% | ✅ MDT |
+| **DAO Treasury** | Limited | 13% of emission | ✅ MDT |
+| **Lock Bonuses** | No | Up to 2x | ✅ MDT |
+| **Builder Incentives** | Limited | Comprehensive | ✅ MDT |
+| **Revenue Sharing** | No | Yes (real yield) | ✅ MDT |
 
-## 7. Month 2 Enhancements (NEW)
+---
 
-### 7.1 Performance Optimization
+## 7. Long-term Projections
 
-**Status:** ✅ Complete
+### 7.1 Emission Schedule
 
-ModernTensor now includes enterprise-grade performance optimization:
+| Year | Max Daily | Min Daily | Bittensor | Reduction |
+|------|-----------|-----------|-----------|-----------|
+| 1 | 2,000 | 100 | 7,200 | 72-99% |
+| 5 | 500 | 50 | 1,800 | 72-97% |
+| 10 | 250 | 25 | 450 | 44-94% |
 
-#### Caching System
-- **TTL Cache:** 100x faster for repeated calculations
-- **Hit Rate:** >90% in production scenarios
-- **Memory Efficient:** LRU eviction when full
+### 7.2 Supply Trajectory
 
-#### Batch Processing
-- **10x Faster:** Bulk reward distributions
-- **95% Reduction:** In RPC calls
-- **Concurrent:** Parallel processing with limits
+With burns and adaptive emission:
 
-#### Memory Optimization
-- **70% Reduction:** Data compression
-- **Efficient:** Streaming for large datasets
+- **Year 5:** ~8-10M circulating
+- **Year 10:** ~12-15M circulating
+- **Year 20:** ~18-19M circulating (approaching max)
 
-### 7.2 Security Hardening
+---
 
-**Status:** ✅ Complete
+## 8. Governance
 
-5-layer defense system protects against threats:
+All tokenomics parameters are governable by DAO:
 
-#### Layer 1: Rate Limiting
-- Prevents DoS attacks
-- Per-address limits
-- Token bucket algorithm
+- Emission rates
+- Burn rates
+- Distribution percentages
+- Lock bonus tiers
+- Revenue share ratios
 
-#### Layer 2: Input Validation
-- Address format checking
-- Amount validation
-- String sanitization (XSS/SQL injection)
+---
 
-#### Layer 3: Transaction Validation
-- Balance verification
-- Double-claim prevention
-- Merkle proof validation
+## Version History
 
-#### Layer 4: Security Monitoring
-- Real-time anomaly detection
-- Alert system (INFO/WARNING/CRITICAL)
-- Suspicious pattern analysis
+| Version | Date | Changes |
+|---------|------|---------|
+| v1.0 | 2025-Q4 | Initial design |
+| v2.0 | 2026-01 | Adaptive emission, 5 burns |
+| v3.0 | 2026-01 | Simplified to 4 burns, lock bonus, revenue sharing, builder incentives |
 
-#### Layer 5: Audit Logging
-- Immutable event trail
-- Hash chain integrity
-- Compliance reporting
+---
 
-### 7.3 Performance Benchmarks
-
-| Operation | Before Month 2 | After Month 2 | Improvement |
-|-----------|----------------|---------------|-------------|
-| Utility calculation (cached) | 10ms | 0.1ms | **100x faster** |
-| Reward distribution (1000) | 5000ms | 500ms | **10x faster** |
-| RPC calls (batch) | 100 calls | 5 calls | **95% reduction** |
-| Memory usage | 100% | 30% | **70% savings** |
+*ModernTensor Foundation - Building the Future of Decentralized AI*

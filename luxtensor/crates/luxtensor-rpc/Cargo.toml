@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 hex = { workspace = true }
+bincode = { workspace = true }
 
 # WebSocket support
 tokio-tungstenite = "0.21"
@@ -22,6 +23,8 @@ tracing = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-storage = { path = "../luxtensor-storage" }
+luxtensor-consensus = { path = "../luxtensor-consensus" }
+luxtensor-crypto = { path = "../luxtensor-crypto" }
 
 [dev-dependencies]
 tokio = { workspace = true }

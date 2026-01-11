@@ -106,23 +106,23 @@ impl ContractExecutor {
         }
 
         let mut contracts = self.contracts.write();
-        
+
         // Get sender balance
         let from_contract = contracts
             .get_mut(from)
             .ok_or(ContractError::ContractNotFound)?;
-        
+
         if from_contract.balance < amount {
             return Err(ContractError::InsufficientBalance);
         }
-        
+
         from_contract.balance -= amount;
-        
+
         // Add to receiver balance (create if doesn't exist)
         if let Some(to_contract) = contracts.get_mut(to) {
             to_contract.balance += amount;
         }
-        
+
         Ok(())
     }
 
@@ -162,11 +162,11 @@ impl ContractExecutor {
         let contract = contracts
             .get_mut(address)
             .ok_or(ContractError::ContractNotFound)?;
-        
+
         if contract.balance < amount {
             return Err(ContractError::InsufficientBalance);
         }
-        
+
         contract.balance -= amount;
         Ok(())
     }
@@ -222,19 +222,16 @@ impl ContractExecutor {
 
         // Execute deployment with EVM
         let evm = self.evm.read();
-        let (_returned_address, gas_used, _logs_data) = evm
-            .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)
-            .unwrap_or_else(|e| {
-                // Fall back to simulation on EVM error
-                debug!("EVM deployment failed, using simulation: {:?}", e);
-                let gas = (code.0.len() as u64) * 200;
-                (contract_address.0.to_vec(), gas, vec![])
-            });
+        let (returned_address, gas_used, logs_data) = evm
+            .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
+
+        // Parse logs from EVM execution
+        let logs = self.parse_logs_from_data(&contract_address, &logs_data);
 
         let result = ExecutionResult {
             gas_used,
-            return_data: contract_address.0.to_vec(),
-            logs: vec![],
+            return_data: returned_address,
+            logs,
             success: true,
             error: None,
         };
@@ -269,7 +266,7 @@ impl ContractExecutor {
 
         // Execute with EVM
         let evm = self.evm.read();
-        let (return_data, gas_used, _logs_data) = evm
+        let (return_data, gas_used, logs_data) = evm
             .call(
                 context.caller,
                 context.contract_address,
@@ -279,18 +276,15 @@ impl ContractExecutor {
                 context.gas_limit,
                 context.block_number,
                 context.timestamp,
-            )
-            .unwrap_or_else(|e| {
-                // Fall back to simulation on EVM error
-                debug!("EVM call failed, using simulation: {:?}", e);
-                let gas = 21_000 + (input_data.len() as u64) * 68 + 5_000;
-                (vec![0x01], gas, vec![])
-            });
+            )?;
+
+        // Parse logs from EVM execution
+        let logs = self.parse_logs_from_data(&context.contract_address, &logs_data);
 
         Ok(ExecutionResult {
             gas_used,
             return_data,
-            logs: vec![],
+            logs,
             success: true,
             error: None,
         })
@@ -323,7 +317,7 @@ impl ContractExecutor {
 
         // Execute with EVM (value must be 0 for static calls)
         let evm = self.evm.read();
-        let (return_data, gas_used, _logs_data) = evm
+        let (return_data, gas_used, logs_data) = evm
             .call(
                 context.caller,
                 context.contract_address,
@@ -333,18 +327,15 @@ impl ContractExecutor {
                 context.gas_limit,
                 context.block_number,
                 context.timestamp,
-            )
-            .unwrap_or_else(|e| {
-                // Fall back to simulation on EVM error
-                debug!("EVM static call failed, using simulation: {:?}", e);
-                let gas = 21_000 + (input_data.len() as u64) * 68 + 5_000;
-                (vec![0x01], gas, vec![])
-            });
+            )?;
+
+        // Parse logs from EVM execution (should be empty for static calls)
+        let logs = self.parse_logs_from_data(&context.contract_address, &logs_data);
 
         Ok(ExecutionResult {
             gas_used,
             return_data,
-            logs: vec![],
+            logs,
             success: true,
             error: None,
         })
@@ -357,33 +348,33 @@ impl ContractExecutor {
         beneficiary: &ContractAddress,
     ) -> Result<(), ContractError> {
         let mut contracts = self.contracts.write();
-        
+
         // Get contract to destroy
         let contract = contracts
             .get(contract_address)
             .ok_or(ContractError::ContractNotFound)?;
-        
+
         let balance = contract.balance;
-        
+
         // Remove contract
         contracts.remove(contract_address);
-        
+
         // Transfer balance to beneficiary if any
         if balance > 0 {
             if let Some(beneficiary_contract) = contracts.get_mut(beneficiary) {
                 beneficiary_contract.balance += balance;
             }
         }
-        
+
         // Clear contract storage
         self.state.write().clear_contract_storage(contract_address);
-        
+
         info!(
             "Contract destroyed at {}, balance transferred to {}",
             hex::encode(&contract_address.0),
             hex::encode(&beneficiary.0)
         );
-        
+
         Ok(())
     }
 
@@ -499,8 +490,25 @@ impl ContractExecutor {
         let base_gas = 21_000u64; // Base transaction cost
         let data_gas = (input_data.len() as u64) * 68; // Cost per byte of data
         let execution_gas = 5_000u64; // Estimated execution cost
-        
+
         Ok(base_gas + data_gas + execution_gas)
+    }
+
+    /// Parse raw logs data from EVM execution into Log structs
+    fn parse_logs_from_data(&self, contract_address: &ContractAddress, logs_data: &[u8]) -> Vec<Log> {
+        // If no logs data, return empty
+        if logs_data.is_empty() {
+            return vec![];
+        }
+
+        // For now, create a single log with the raw data
+        // In production, this would decode proper EVM log format
+        // which includes topics (32 bytes each) and data
+        vec![Log {
+            address: *contract_address,
+            topics: vec![],
+            data: logs_data.to_vec(),
+        }]
     }
 }
 
@@ -857,7 +865,7 @@ mod tests {
 
         let input_data = vec![0x01, 0x02, 0x03, 0x04];
         let estimated_gas = executor.estimate_gas(&context, &input_data).unwrap();
-        
+
         // Base (21000) + data (4 * 68) + execution (5000)
         assert_eq!(estimated_gas, 21_000 + 272 + 5_000);
     }

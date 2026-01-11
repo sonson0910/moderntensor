@@ -1,6 +1,5 @@
 use crate::{Result, StorageError};
 use luxtensor_crypto::{keccak256, Hash};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Simplified Merkle Patricia Trie using a HashMap backend

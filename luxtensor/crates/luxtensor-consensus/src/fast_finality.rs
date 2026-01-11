@@ -5,7 +5,7 @@ use crate::error::ConsensusError;
 use crate::validator::ValidatorSet;
 use luxtensor_core::types::{Address, Hash};
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Fast finality manager using validator signatures
 pub struct FastFinality {
@@ -53,7 +53,7 @@ impl FastFinality {
         let validator_info = self
             .validator_set
             .get_validator(&validator)
-            .ok_or(ConsensusError::ValidatorNotFound(validator))?;
+            .ok_or(ConsensusError::ValidatorNotFound(format!("{:?}", validator)))?;
 
         // Get or create signature entry
         let entry = self.signatures.entry(block_hash).or_insert_with(|| {
@@ -180,7 +180,7 @@ impl FastFinality {
     /// Update validator set
     pub fn update_validator_set(&mut self, validator_set: ValidatorSet) {
         self.validator_set = validator_set;
-        
+
         // Re-check all pending blocks for finality
         let total_stake = self.validator_set.total_stake();
         let required_stake = (total_stake * self.finality_threshold_percent as u128) / 100;
@@ -418,7 +418,7 @@ mod tests {
 
         // Create new validator set with lower total stake
         let (new_set, _) = create_validator_set(2, 100);
-        
+
         // Update validator set - block might now be finalized if threshold reached
         finality.update_validator_set(new_set);
     }

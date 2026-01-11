@@ -10,6 +10,7 @@ Python SDK for interacting with Luxtensor blockchain and building AI/ML subnets.
 - ❌ **Cardano/PyCardano** dependencies have been removed (UTXO-based, incompatible)
 
 If you're upgrading from an older version that used Cardano:
+
 - See [CARDANO_DEPRECATION.md](../CARDANO_DEPRECATION.md) for migration guide
 - Old UTXO/Datum/Redeemer code will not work with Luxtensor
 - Use `LuxtensorClient` for all blockchain interactions
@@ -24,7 +25,7 @@ ModernTensor consists of two layers:
    - Status: Phase 1 complete, ongoing development
 
 2. **ModernTensor SDK (Python Layer)** - This package
-   - Location: `/sdk/` directory  
+   - Location: `/sdk/` directory
    - Handles: Python client, AI/ML framework, developer tools
    - Status: Under active development
 
@@ -42,7 +43,7 @@ pip install -e .
 from sdk import connect
 
 # Connect to Luxtensor blockchain
-client = connect(url="http://localhost:9944", network="testnet")
+client = connect(url="http://localhost:8545", network="testnet")
 
 # Check connection
 if client.is_connected():
@@ -65,8 +66,8 @@ import asyncio
 
 async def main():
     # Async client for high performance
-    client = async_connect(url="http://localhost:9944")
-    
+    client = async_connect(url="http://localhost:8545")
+
     # Batch queries
     calls = [
         ("chain_getBlockNumber", []),
@@ -186,6 +187,7 @@ pytest tests/
 Synchronous client for blockchain interaction.
 
 **Methods:**
+
 - `get_chain_info()` - Get blockchain information
 - `get_block_number()` - Get current block height
 - `get_block(block_number)` - Get block by number
@@ -206,6 +208,7 @@ Synchronous client for blockchain interaction.
 Asynchronous client for high-performance operations.
 
 **Additional Methods:**
+
 - `batch_call(calls)` - Execute multiple RPC calls concurrently
 
 All sync methods have async equivalents.

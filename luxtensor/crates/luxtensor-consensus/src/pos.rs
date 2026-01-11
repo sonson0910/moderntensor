@@ -35,6 +35,8 @@ pub struct ProofOfStake {
     validator_set: Arc<RwLock<ValidatorSet>>,
     config: ConsensusConfig,
     current_epoch: RwLock<u64>,
+    /// Last finalized block hash for VRF seed entropy
+    last_block_hash: RwLock<Hash>,
 }
 
 impl ProofOfStake {
@@ -44,6 +46,7 @@ impl ProofOfStake {
             validator_set: Arc::new(RwLock::new(ValidatorSet::new())),
             config,
             current_epoch: RwLock::new(0),
+            last_block_hash: RwLock::new([0u8; 32]),
         }
     }
 
@@ -53,14 +56,20 @@ impl ProofOfStake {
             validator_set: Arc::new(RwLock::new(validator_set)),
             config,
             current_epoch: RwLock::new(0),
+            last_block_hash: RwLock::new([0u8; 32]),
         }
+    }
+
+    /// Update last block hash (call after block finalization)
+    pub fn update_last_block_hash(&self, hash: Hash) {
+        *self.last_block_hash.write() = hash;
     }
 
     /// Select a validator for a given slot using VRF-based selection
     pub fn select_validator(&self, slot: u64) -> Result<Address, ConsensusError> {
         let seed = self.compute_seed(slot);
         let validator_set = self.validator_set.read();
-        
+
         validator_set
             .select_by_seed(&seed)
             .map_err(|e| ConsensusError::ValidatorSelection(e.to_string()))
@@ -73,31 +82,34 @@ impl ProofOfStake {
         slot: u64,
     ) -> Result<(), ConsensusError> {
         let expected = self.select_validator(slot)?;
-        
+
         if producer != &expected {
             return Err(ConsensusError::InvalidProducer {
                 expected,
                 actual: *producer,
             });
         }
-        
+
         Ok(())
     }
 
     /// Compute the randomness seed for validator selection at a given slot
+    /// Uses epoch + slot + last_block_hash for unpredictable entropy
     pub fn compute_seed(&self, slot: u64) -> Hash {
-        // Use slot number and epoch for deterministic seed generation
         let epoch = slot / self.config.epoch_length;
-        let mut data = Vec::new();
+        let last_hash = *self.last_block_hash.read();
+
+        let mut data = Vec::with_capacity(48);
         data.extend_from_slice(&epoch.to_le_bytes());
         data.extend_from_slice(&slot.to_le_bytes());
+        data.extend_from_slice(&last_hash); // Added for entropy
         keccak256(&data)
     }
 
     /// Calculate and distribute block rewards
     pub fn distribute_reward(&self, producer: &Address) -> Result<(), ConsensusError> {
         let mut validator_set = self.validator_set.write();
-        
+
         validator_set
             .add_reward(producer, self.config.block_reward)
             .map_err(|e| ConsensusError::RewardDistribution(e.to_string()))
@@ -119,7 +131,7 @@ impl ProofOfStake {
 
         let validator = crate::validator::Validator::new(address, stake, public_key);
         let mut validator_set = self.validator_set.write();
-        
+
         validator_set
             .add_validator(validator)
             .map_err(|e| ConsensusError::ValidatorManagement(e.to_string()))
@@ -128,7 +140,7 @@ impl ProofOfStake {
     /// Remove a validator from the set
     pub fn remove_validator(&self, address: &Address) -> Result<(), ConsensusError> {
         let mut validator_set = self.validator_set.write();
-        
+
         validator_set
             .remove_validator(address)
             .map_err(|e| ConsensusError::ValidatorManagement(e.to_string()))
@@ -148,7 +160,7 @@ impl ProofOfStake {
         }
 
         let mut validator_set = self.validator_set.write();
-        
+
         validator_set
             .update_stake(address, new_stake)
             .map_err(|e| ConsensusError::ValidatorManagement(e.to_string()))
@@ -208,7 +220,7 @@ mod tests {
     fn test_pos_creation() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config);
-        
+
         assert_eq!(pos.validator_count(), 0);
         assert_eq!(pos.current_epoch(), 0);
     }
@@ -217,10 +229,10 @@ mod tests {
     fn test_add_validator() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         let address = create_test_address(1);
         let pubkey = [1u8; 32];
-        
+
         let result = pos.add_validator(address, config.min_stake, pubkey);
         assert!(result.is_ok());
         assert_eq!(pos.validator_count(), 1);
@@ -230,10 +242,10 @@ mod tests {
     fn test_add_validator_insufficient_stake() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         let address = create_test_address(1);
         let pubkey = [1u8; 32];
-        
+
         let result = pos.add_validator(address, config.min_stake - 1, pubkey);
         assert!(result.is_err());
     }
@@ -242,7 +254,7 @@ mod tests {
     fn test_validator_selection() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         // Add validators
         for i in 1..=3 {
             let address = create_test_address(i);
@@ -250,7 +262,7 @@ mod tests {
             pos.add_validator(address, config.min_stake * (i as u128), pubkey)
                 .unwrap();
         }
-        
+
         // Select validator for slot 0
         let selected = pos.select_validator(0);
         assert!(selected.is_ok());
@@ -260,18 +272,18 @@ mod tests {
     fn test_validate_block_producer() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         // Add validator
         let address = create_test_address(1);
         let pubkey = [1u8; 32];
         pos.add_validator(address, config.min_stake, pubkey).unwrap();
-        
+
         // Select validator for slot 0
         let selected = pos.select_validator(0).unwrap();
-        
+
         // Validate correct producer
         assert!(pos.validate_block_producer(&selected, 0).is_ok());
-        
+
         // Validate wrong producer
         let wrong_address = create_test_address(2);
         assert!(pos.validate_block_producer(&wrong_address, 0).is_err());
@@ -281,15 +293,15 @@ mod tests {
     fn test_reward_distribution() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         let address = create_test_address(1);
         let pubkey = [1u8; 32];
         pos.add_validator(address, config.min_stake, pubkey).unwrap();
-        
+
         // Distribute reward
         let result = pos.distribute_reward(&address);
         assert!(result.is_ok());
-        
+
         // Check reward was added
         let validator_set = pos.validator_set.read();
         let validator = validator_set.get_validator(&address).unwrap();
@@ -300,12 +312,12 @@ mod tests {
     fn test_seed_computation() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config);
-        
+
         // Same slot should produce same seed
         let seed1 = pos.compute_seed(0);
         let seed2 = pos.compute_seed(0);
         assert_eq!(seed1, seed2);
-        
+
         // Different slots should produce different seeds
         let seed3 = pos.compute_seed(1);
         assert_ne!(seed1, seed3);
@@ -315,18 +327,18 @@ mod tests {
     fn test_get_slot() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config.clone());
-        
+
         let genesis_time = 1000u64;
-        
+
         // At genesis
         assert_eq!(pos.get_slot(genesis_time, genesis_time), 0);
-        
+
         // After one slot duration
         assert_eq!(
             pos.get_slot(genesis_time + config.slot_duration, genesis_time),
             1
         );
-        
+
         // After multiple slot durations
         assert_eq!(
             pos.get_slot(genesis_time + config.slot_duration * 5, genesis_time),
@@ -338,12 +350,12 @@ mod tests {
     fn test_epoch_advancement() {
         let config = ConsensusConfig::default();
         let pos = ProofOfStake::new(config);
-        
+
         assert_eq!(pos.current_epoch(), 0);
-        
+
         pos.advance_epoch();
         assert_eq!(pos.current_epoch(), 1);
-        
+
         pos.advance_epoch();
         assert_eq!(pos.current_epoch(), 2);
     }

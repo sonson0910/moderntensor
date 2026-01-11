@@ -6,6 +6,7 @@ pub mod executor;
 pub mod state;
 pub mod types;
 pub mod evm_executor;
+pub mod revm_integration;
 
 pub use error::*;
 pub use executor::{
