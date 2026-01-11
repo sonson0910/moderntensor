@@ -321,14 +321,16 @@ impl RpcServer {
 
             // Decode transaction
             let tx: Transaction = bincode::deserialize(&tx_bytes)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid transaction encoding"))?;
+                .map_err(|e| jsonrpc_core::Error::invalid_params(
+                    format!("Failed to decode transaction: {}", e)
+                ))?;
 
             // Calculate transaction hash
             let tx_hash = tx.hash();
             
             // Broadcast to WebSocket subscribers if broadcast sender is available
             if let Some(ref broadcaster) = broadcast_tx {
-                let rpc_tx = RpcTransaction::from(tx.clone());
+                let rpc_tx = RpcTransaction::from(tx);
                 // Ignore send errors - WebSocket is optional
                 let _ = broadcaster.send(BroadcastEvent::NewTransaction(rpc_tx));
             }
@@ -337,7 +339,7 @@ impl RpcServer {
             // 1. Verify the transaction signature
             // 2. Check nonce and balance
             // 3. Add to mempool
-            // 4. Broadcast to peers
+            // 4. Broadcast to P2P peers
             
             // Return the transaction hash
             Ok(Value::String(format!("0x{}", hex::encode(tx_hash))))
