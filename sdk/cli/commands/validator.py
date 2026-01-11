@@ -18,6 +18,8 @@ from sdk.cli.config import get_network_config
 
 # Constants
 DEFAULT_GAS_PRICE = 1_000_000_000
+WEIGHT_SCALE_FACTOR = 1_000_000  # Scale factor for converting float weights (0.0-1.0) to u32
+U32_MAX = 4_294_967_295  # Maximum value for u32 type
 
 
 @click.group(name='validator', short_help='Validator operations')
@@ -272,10 +274,34 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         gas_limit = TransactionSigner.estimate_gas('set_weights')
         gas_price = DEFAULT_GAS_PRICE
         
-        # Build set weights transaction data
-        # TODO (GitHub Issue): Implement actual set-weights transaction encoding
-        # Expected format: function_selector + subnet_uid + weights_array
-        weights_tx_data = b''  # Placeholder
+        # Build set weights transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_set_weights
+        
+        # Extract UIDs and weights from the weights list
+        # Validate that all entries have required fields
+        try:
+            # Convert float weights (0.0-1.0) to u32 by scaling with WEIGHT_SCALE_FACTOR
+            # Use round() for accurate representation and clamp to valid u32 range
+            neuron_uids = []
+            weight_values = []
+            for w in weights_list:
+                neuron_uids.append(w['uid'])
+                scaled_weight = round(w['weight'] * WEIGHT_SCALE_FACTOR)
+                # Clamp to valid u32 range (0 to U32_MAX)
+                clamped_weight = max(0, min(scaled_weight, U32_MAX))
+                weight_values.append(clamped_weight)
+        except KeyError as e:
+            print_error(f"Invalid weights file format: missing required field {e}")
+            return
+        except (TypeError, ValueError) as e:
+            print_error(f"Invalid weight value: {e}")
+            return
+        
+        encoded_call = encode_set_weights(subnet_uid, neuron_uids, weight_values)
+        weights_tx_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
