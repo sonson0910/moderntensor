@@ -18,6 +18,7 @@ from sdk.cli.config import get_network_config
 
 # Constants
 DEFAULT_GAS_PRICE = 1_000_000_000
+WEIGHT_SCALE_FACTOR = 1_000_000  # Scale factor for converting float weights (0.0-1.0) to u32
 
 
 @click.group(name='validator', short_help='Validator operations')
@@ -279,8 +280,8 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         # Validate that all entries have required fields
         try:
             neuron_uids = [w['uid'] for w in weights_list]
-            # Convert float weights (0.0-1.0) to u32 by scaling to 0-1000000 range
-            weight_values = [int(w['weight'] * 1_000_000) for w in weights_list]
+            # Convert float weights (0.0-1.0) to u32 by scaling with WEIGHT_SCALE_FACTOR
+            weight_values = [int(w['weight'] * WEIGHT_SCALE_FACTOR) for w in weights_list]
         except KeyError as e:
             print_error(f"Invalid weights file format: missing required field {e}")
             return
