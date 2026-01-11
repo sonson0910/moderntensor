@@ -1,14 +1,47 @@
 use crate::{types::*, RpcError, Result};
+use crate::websocket::BroadcastEvent;
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
-use luxtensor_core::{Address, StateDB};
+use luxtensor_core::{Address, StateDB, Transaction};
 use luxtensor_storage::BlockchainDB;
 use luxtensor_consensus::{ValidatorSet, Validator};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 /// JSON-RPC server for LuxTensor blockchain
+/// 
+/// The RPC server provides a JSON-RPC API for interacting with the blockchain.
+/// It supports both synchronous HTTP requests and asynchronous WebSocket subscriptions.
+/// 
+/// # WebSocket Integration
+/// 
+/// When a `broadcast_tx` is provided via `with_broadcast()` or `with_all()`, the RPC server
+/// will broadcast pending transactions to WebSocket subscribers. This allows clients to
+/// receive real-time notifications when new transactions are submitted via `eth_sendRawTransaction`.
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// use luxtensor_rpc::{RpcServer, websocket::WebSocketServer};
+/// use luxtensor_storage::BlockchainDB;
+/// use luxtensor_core::StateDB;
+/// use parking_lot::RwLock;
+/// use std::sync::Arc;
+/// 
+/// # async fn example() {
+/// let db = Arc::new(BlockchainDB::open("./data").unwrap());
+/// let state = Arc::new(RwLock::new(StateDB::new()));
+/// 
+/// // Create WebSocket server and get broadcast sender
+/// let ws_server = WebSocketServer::new();
+/// let broadcast_tx = ws_server.get_broadcast_sender();
+/// 
+/// // Create RPC server with WebSocket broadcast support
+/// let rpc_server = RpcServer::with_broadcast(db, state, broadcast_tx);
+/// # }
+/// ```
 pub struct RpcServer {
     db: Arc<BlockchainDB>,
     state: Arc<RwLock<StateDB>>,
@@ -16,6 +49,7 @@ pub struct RpcServer {
     subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
     neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>, // (subnet_id, neuron_uid) -> NeuronInfo
     weights: Arc<RwLock<HashMap<(u64, u64), Vec<WeightInfo>>>>, // (subnet_id, neuron_uid) -> weights
+    broadcast_tx: Option<mpsc::UnboundedSender<BroadcastEvent>>,
 }
 
 impl RpcServer {
@@ -28,6 +62,7 @@ impl RpcServer {
             subnets: Arc::new(RwLock::new(HashMap::new())),
             neurons: Arc::new(RwLock::new(HashMap::new())),
             weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: None,
         }
     }
 
@@ -44,6 +79,61 @@ impl RpcServer {
             subnets: Arc::new(RwLock::new(HashMap::new())),
             neurons: Arc::new(RwLock::new(HashMap::new())),
             weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: None,
+        }
+    }
+
+    /// Create a new RPC server with broadcast sender for WebSocket support
+    /// 
+    /// When transactions are submitted via `eth_sendRawTransaction`, they will be
+    /// broadcast to WebSocket subscribers listening for pending transactions.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `db` - Blockchain storage database
+    /// * `state` - State database for account data
+    /// * `broadcast_tx` - Channel sender for broadcasting events to WebSocket subscribers
+    pub fn with_broadcast(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        broadcast_tx: mpsc::UnboundedSender<BroadcastEvent>,
+    ) -> Self {
+        Self {
+            db,
+            state,
+            validators: Arc::new(RwLock::new(ValidatorSet::new())),
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx: Some(broadcast_tx),
+        }
+    }
+
+    /// Create a new RPC server with all options
+    /// 
+    /// This constructor allows full customization including validator set and
+    /// optional WebSocket broadcast functionality.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `db` - Blockchain storage database
+    /// * `state` - State database for account data
+    /// * `validators` - Validator set for consensus
+    /// * `broadcast_tx` - Optional channel sender for broadcasting events to WebSocket subscribers
+    pub fn with_all(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        validators: Arc<RwLock<ValidatorSet>>,
+        broadcast_tx: Option<mpsc::UnboundedSender<BroadcastEvent>>,
+    ) -> Self {
+        Self {
+            db,
+            state,
+            validators,
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx,
         }
     }
 
@@ -217,6 +307,7 @@ impl RpcServer {
         // eth_sendRawTransaction - Submit raw signed transaction
         let db = self.db.clone();
         let state = self.state.clone();
+        let broadcast_tx = self.broadcast_tx.clone();
         
         io.add_sync_method("eth_sendRawTransaction", move |params: Params| {
             let parsed: Vec<String> = params.parse()?;
@@ -228,14 +319,27 @@ impl RpcServer {
             let tx_bytes = hex::decode(tx_hex)
                 .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid transaction hex"))?;
 
+            // Decode transaction
+            let tx: Transaction = bincode::deserialize(&tx_bytes)
+                .map_err(|e| jsonrpc_core::Error::invalid_params(
+                    format!("Failed to decode transaction: {}", e)
+                ))?;
+
             // Calculate transaction hash
-            let tx_hash = luxtensor_crypto::keccak256(&tx_bytes);
+            let tx_hash = tx.hash();
+            
+            // Broadcast to WebSocket subscribers if broadcast sender is available
+            if let Some(ref broadcaster) = broadcast_tx {
+                let rpc_tx = RpcTransaction::from(tx);
+                // Ignore send errors - WebSocket is optional
+                let _ = broadcaster.send(BroadcastEvent::NewTransaction(rpc_tx));
+            }
             
             // In a real implementation:
-            // 1. Decode and verify the transaction
+            // 1. Verify the transaction signature
             // 2. Check nonce and balance
             // 3. Add to mempool
-            // 4. Broadcast to peers
+            // 4. Broadcast to P2P peers
             
             // Return the transaction hash
             Ok(Value::String(format!("0x{}", hex::encode(tx_hash))))
@@ -992,5 +1096,31 @@ mod tests {
         let rpc_tx = RpcTransaction::from(tx);
         assert_eq!(rpc_tx.nonce, "0x1");
         assert_eq!(rpc_tx.value, "0x3e8");
+    }
+
+    #[test]
+    fn test_rpc_server_with_broadcast() {
+        use crate::websocket::BroadcastEvent;
+        use tokio::sync::mpsc;
+
+        let (_temp, db, state) = create_test_setup();
+        let (tx, _rx) = mpsc::unbounded_channel::<BroadcastEvent>();
+        
+        // Create RPC server with broadcast sender
+        let server = RpcServer::with_broadcast(db, state, tx);
+        
+        // Verify broadcast_tx is set
+        assert!(server.broadcast_tx.is_some());
+    }
+
+    #[test]
+    fn test_rpc_server_without_broadcast() {
+        let (_temp, db, state) = create_test_setup();
+        
+        // Create RPC server without broadcast sender
+        let server = RpcServer::new(db, state);
+        
+        // Verify broadcast_tx is None
+        assert!(server.broadcast_tx.is_none());
     }
 }
