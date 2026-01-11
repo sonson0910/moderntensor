@@ -89,17 +89,14 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         gas_limit = TransactionSigner.estimate_gas('stake')
         gas_price = 1000000000  # 1 Gwei - adjust based on network
         
-        # Build stake transaction data
-        # TODO (GitHub Issue): Implement actual stake transaction encoding based on Luxtensor pallet
-        # Expected format: function_selector (4 bytes) + encoded_parameters
-        # Example structure:
-        #   stake_data = encode_stake_call(
-        #       function_selector="0x12345678",  # stake function selector
-        #       hotkey=hotkey_address,
-        #       amount=amount_base
-        #   )
-        # Track: Create GitHub issue for transaction encoding implementation
-        stake_data = b''  # Placeholder - implement when Luxtensor staking pallet is ready
+        # Build stake transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_stake_add
+        
+        encoded_call = encode_stake_add(from_address, amount_base)
+        stake_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)

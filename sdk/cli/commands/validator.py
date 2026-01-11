@@ -272,10 +272,19 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         gas_limit = TransactionSigner.estimate_gas('set_weights')
         gas_price = DEFAULT_GAS_PRICE
         
-        # Build set weights transaction data
-        # TODO (GitHub Issue): Implement actual set-weights transaction encoding
-        # Expected format: function_selector + subnet_uid + weights_array
-        weights_tx_data = b''  # Placeholder
+        # Build set weights transaction data using Luxtensor pallet encoding
+        from sdk.luxtensor_pallets import encode_set_weights
+        
+        # Extract UIDs and weights from the weights list
+        # Convert float weights (0.0-1.0) to u32 by scaling to 0-1000000 range
+        neuron_uids = [w.get('uid') for w in weights_list]
+        weight_values = [int(w.get('weight') * 1_000_000) for w in weights_list]
+        
+        encoded_call = encode_set_weights(subnet_uid, neuron_uids, weight_values)
+        weights_tx_data = encoded_call.data
+        
+        print_info(f"Transaction: {encoded_call.description}")
+        print_info(f"Estimated gas: {encoded_call.gas_estimate}")
         
         # Create transaction signer
         signer = TransactionSigner(private_key)
