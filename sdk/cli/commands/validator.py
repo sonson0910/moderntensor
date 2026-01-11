@@ -281,7 +281,13 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         try:
             neuron_uids = [w['uid'] for w in weights_list]
             # Convert float weights (0.0-1.0) to u32 by scaling with WEIGHT_SCALE_FACTOR
-            weight_values = [int(w['weight'] * WEIGHT_SCALE_FACTOR) for w in weights_list]
+            # Use round() for accurate representation and clamp to valid u32 range
+            weight_values = []
+            for w in weights_list:
+                scaled_weight = round(w['weight'] * WEIGHT_SCALE_FACTOR)
+                # Clamp to valid u32 range (0 to 4,294,967,295)
+                clamped_weight = max(0, min(scaled_weight, 4_294_967_295))
+                weight_values.append(clamped_weight)
         except KeyError as e:
             print_error(f"Invalid weights file format: missing required field {e}")
             return
