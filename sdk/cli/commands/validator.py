@@ -276,9 +276,17 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         from sdk.luxtensor_pallets import encode_set_weights
         
         # Extract UIDs and weights from the weights list
-        # Convert float weights (0.0-1.0) to u32 by scaling to 0-1000000 range
-        neuron_uids = [w.get('uid') for w in weights_list]
-        weight_values = [int(w.get('weight') * 1_000_000) for w in weights_list]
+        # Validate that all entries have required fields
+        try:
+            neuron_uids = [w['uid'] for w in weights_list]
+            # Convert float weights (0.0-1.0) to u32 by scaling to 0-1000000 range
+            weight_values = [int(w['weight'] * 1_000_000) for w in weights_list]
+        except KeyError as e:
+            print_error(f"Invalid weights file format: missing required field {e}")
+            return
+        except (TypeError, ValueError) as e:
+            print_error(f"Invalid weight value: {e}")
+            return
         
         encoded_call = encode_set_weights(subnet_uid, neuron_uids, weight_values)
         weights_tx_data = encoded_call.data
