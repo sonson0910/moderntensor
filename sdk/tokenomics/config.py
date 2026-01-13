@@ -164,37 +164,31 @@ class TokenomicsConfig:
 @dataclass
 class DistributionConfig:
     """
-    Configuration for epoch reward distribution (FINAL v3).
+    Configuration for epoch reward distribution (v3.1 - Model C Progressive Staking).
 
     IMPORTANT: This config distributes the EMISSION REWARDS portion (45%)
     among network participants on each epoch.
 
-    This is a SUB-DIVISION of the 45% emission_rewards allocation:
-
+    Model C Distribution (Progressive Staking):
         45% Emission Rewards (from Allocations)
             ├── 35% → Miners (performance-based)
-            ├── 30% → Validators (stake-based)
+            ├── 28% → Validators (stake-based, Tier 2-3)
+            ├── 2%  → Infrastructure (Full node operators, Tier 1+)
             ├── 12% → Delegators (stake-based + lock bonus)
             ├── 10% → Subnet Owners (emission-based)
             └── 13% → DAO Treasury
 
-    In absolute terms (of total 21M supply):
-        - Miners get: 45% × 35% = 15.75% of total supply
-        - Validators get: 45% × 30% = 13.5% of total supply
-        - Delegators get: 45% × 12% = 5.4% of total supply
-        - Subnet Owners get: 45% × 10% = 4.5% of total supply
-        - DAO gets: 45% × 13% = 5.85% of total supply
-
-    v3 CHANGES:
-        - Gộp Staking Bonus Pool vào Delegators (lock bonus in formula)
-        - Delegators: 12% (với lock bonus up to 2x)
-        - DAO: 13% (tăng từ 10% để có thêm runway)
+    v3.1 CHANGES (Model C):
+        - Validators reduced from 30% → 28%
+        - Infrastructure added: 2% (NEW - for node operators)
+        - 4-tier progressive system: Light → Full → Validator → Super Validator
     """
-    miner_share: float = 0.35          # 35% - Core compute providers
-    validator_share: float = 0.30      # 30% - Quality assurance
-    delegator_share: float = 0.12      # 12% - Passive stakers (with lock bonus)
-    subnet_owner_share: float = 0.10   # 10% - Subnet creators
-    dao_share: float = 0.13            # 13% - Protocol treasury (increased)
+    miner_share: float = 0.35               # 35% - Core compute providers
+    validator_share: float = 0.28           # 28% - Quality assurance (was 30%)
+    infrastructure_share: float = 0.02      # 2% - Full node operators (NEW!)
+    delegator_share: float = 0.12           # 12% - Passive stakers (with lock bonus)
+    subnet_owner_share: float = 0.10        # 10% - Subnet creators
+    dao_share: float = 0.13                 # 13% - Protocol treasury
 
     # Delegator lock bonus (replaces separate staking bonus pool)
     lock_bonus_30d: float = 0.10       # +10% for 30-day lock
@@ -207,12 +201,64 @@ class DistributionConfig:
         total = (
             self.miner_share +
             self.validator_share +
+            self.infrastructure_share +
             self.delegator_share +
             self.subnet_owner_share +
             self.dao_share
         )
         if not abs(total - 1.0) < 0.001:
             raise ValueError(f"Distribution shares must sum to 1.0, got {total}")
+
+
+@dataclass
+class NodeTierConfig:
+    """
+    Configuration for progressive staking tiers (Model C).
+
+    4 Tiers:
+        Tier 0: Light Node - No stake, tx relay fees only
+        Tier 1: Full Node - 10 MDT, 2% infrastructure emission
+        Tier 2: Validator - 100 MDT, 28% validator emission
+        Tier 3: Super Validator - 1000 MDT, priority fees + delegation
+    """
+    # Minimum stake requirements (in base units, 18 decimals)
+    light_node_stake: int = 0                               # Tier 0: Free
+    full_node_stake: int = 10_000_000_000_000_000_000       # Tier 1: 10 MDT
+    validator_stake: int = 100_000_000_000_000_000_000      # Tier 2: 100 MDT
+    super_validator_stake: int = 1_000_000_000_000_000_000_000  # Tier 3: 1000 MDT
+
+    # Reward shares per tier
+    light_node_emission_share: float = 0.0    # No emission, only tx fee relay
+    full_node_emission_share: float = 0.02    # 2% infrastructure
+    validator_emission_share: float = 0.28    # 28% validator
+    super_validator_emission_share: float = 0.28  # Same + priority fees
+
+    # Tier benefits
+    light_node_tx_fee_share: float = 0.005    # 0.5% of relayed tx fees
+    full_node_block_proposal: bool = False    # Cannot propose blocks
+    validator_block_proposal: bool = True     # Can propose blocks
+    super_validator_priority: bool = True     # Priority block proposal
+
+    def get_tier_from_stake(self, stake: int) -> str:
+        """Determine tier based on stake amount."""
+        if stake >= self.super_validator_stake:
+            return "super_validator"
+        elif stake >= self.validator_stake:
+            return "validator"
+        elif stake >= self.full_node_stake:
+            return "full_node"
+        else:
+            return "light_node"
+
+    def get_min_stake_for_tier(self, tier: str) -> int:
+        """Get minimum stake for a tier."""
+        return {
+            "light_node": self.light_node_stake,
+            "full_node": self.full_node_stake,
+            "validator": self.validator_stake,
+            "super_validator": self.super_validator_stake,
+        }.get(tier, 0)
+
 
 
 @dataclass
@@ -305,3 +351,4 @@ DEFAULT_BUYBACK_CONFIG = BuybackConfig()
 DEFAULT_REVENUE_SHARE_CONFIG = RevenueShareConfig()
 DEFAULT_REFERRAL_CONFIG = ReferralConfig()
 DEFAULT_BUILDER_INCENTIVE_CONFIG = BuilderIncentiveConfig()
+DEFAULT_NODE_TIER_CONFIG = NodeTierConfig()

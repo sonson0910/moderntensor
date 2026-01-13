@@ -1,4 +1,4 @@
-use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster};
+use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{EvmState, register_eth_methods}};
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_core::{Address, StateDB, Transaction, Hash};
@@ -44,6 +44,7 @@ pub struct RpcServer {
     pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
     ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
     broadcaster: Arc<dyn TransactionBroadcaster>,
+    evm_state: Arc<RwLock<EvmState>>,
 }
 
 impl RpcServer {
@@ -69,6 +70,7 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
+            evm_state: Arc::new(RwLock::new(EvmState::new(1337))), // Chain ID 1337
         }
     }
 
@@ -103,6 +105,7 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
+            evm_state: Arc::new(RwLock::new(EvmState::new(1337))),
         }
     }
 
@@ -175,6 +178,9 @@ impl RpcServer {
 
         // Register SDK query methods (query_*)
         self.register_query_methods(&mut io);
+
+        // Register Ethereum-compatible methods (eth_*)
+        register_eth_methods(&mut io, self.evm_state.clone());
 
         // Start HTTP server
         let server = ServerBuilder::new(io)

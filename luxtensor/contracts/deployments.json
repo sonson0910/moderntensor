@@ -1,0 +1,10 @@
+{
+  "network": "luxtensor_local",
+  "chainId": 1337,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "timestamp": "2026-01-13T03:15:35.998Z",
+  "contracts": {
+    "MDTToken": "0xb2519110ec53731e1e7353ec109151b200000001",
+    "MDTVesting": "0x0c642480eb531543431553eb8024640c00000002"
+  }
+}

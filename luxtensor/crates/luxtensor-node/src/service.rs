@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::mempool::Mempool;
 use crate::executor::{TransactionExecutor, calculate_receipts_root};
 use anyhow::Result;
-use luxtensor_consensus::{ConsensusConfig, ProofOfStake};
+use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::MerkleTree;
 use luxtensor_rpc::RpcServer;
@@ -21,8 +21,12 @@ pub struct NodeService {
     consensus: Arc<RwLock<ProofOfStake>>,
     mempool: Arc<Mempool>,
     executor: Arc<TransactionExecutor>,
+    reward_executor: Arc<RwLock<RewardExecutor>>,
+    token_allocation: Arc<RwLock<TokenAllocation>>,
+    node_registry: Arc<RwLock<NodeRegistry>>,
     shutdown_tx: broadcast::Sender<()>,
     tasks: Vec<JoinHandle<Result<()>>>,
+    epoch_length: u64,
 }
 
 impl NodeService {
@@ -85,8 +89,28 @@ impl NodeService {
             info!("  ✓ Genesis block found");
         }
 
+        // Initialize reward executor for epoch processing
+        let dao_address = [0u8; 20]; // TODO: Configure DAO address
+        let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
+        info!("  ✓ Reward executor initialized");
+
+        // Initialize token allocation for TGE and vesting
+        let tge_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let token_allocation = Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)));
+        info!("  ✓ Token allocation initialized");
+
+        // Initialize node registry for progressive staking
+        let node_registry = Arc::new(RwLock::new(NodeRegistry::new()));
+        info!("  ✓ Node registry initialized");
+
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(16);
+
+        // Get epoch length from consensus config
+        let epoch_length = config.consensus.epoch_length;
 
         Ok(Self {
             config,
@@ -95,8 +119,12 @@ impl NodeService {
             consensus,
             mempool,
             executor,
+            reward_executor,
+            token_allocation,
+            node_registry,
             shutdown_tx,
             tasks: Vec::new(),
+            epoch_length,
         })
     }
 
@@ -149,7 +177,9 @@ impl NodeService {
             let state_db = self.state_db.clone();
             let mempool = self.mempool.clone();
             let executor = self.executor.clone();
+            let reward_executor = self.reward_executor.clone();
             let block_time = self.config.consensus.block_time;
+            let epoch_length = self.epoch_length;
             let shutdown_rx = self.shutdown_tx.subscribe();
 
             let task = tokio::spawn(async move {
@@ -159,7 +189,9 @@ impl NodeService {
                     state_db,
                     mempool,
                     executor,
+                    reward_executor,
                     block_time,
+                    epoch_length,
                     shutdown_rx,
                 ).await
             });
@@ -216,7 +248,9 @@ impl NodeService {
         state_db: Arc<RwLock<StateDB>>,
         mempool: Arc<Mempool>,
         executor: Arc<TransactionExecutor>,
+        reward_executor: Arc<RwLock<RewardExecutor>>,
         block_time: u64,
+        epoch_length: u64,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
@@ -226,7 +260,8 @@ impl NodeService {
                 _ = interval.tick() => {
                     // Produce a block
                     if let Err(e) = Self::produce_block(
-                        &consensus, &storage, &state_db, &mempool, &executor
+                        &consensus, &storage, &state_db, &mempool, &executor,
+                        &reward_executor, epoch_length
                     ).await {
                         error!("Failed to produce block: {}", e);
                     }
@@ -248,6 +283,8 @@ impl NodeService {
         state_db: &Arc<RwLock<StateDB>>,
         mempool: &Arc<Mempool>,
         executor: &Arc<TransactionExecutor>,
+        reward_executor: &Arc<RwLock<RewardExecutor>>,
+        epoch_length: u64,
     ) -> Result<()> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -269,43 +306,45 @@ impl NodeService {
                 .as_secs(),
             previous_hash: previous_block.hash(),
             state_root: [0u8; 32], // Will be updated after execution
-            txs_root: [0u8; 32],    // Will be updated after execution
-            receipts_root: [0u8; 32], // Will be updated after execution
+            txs_root: [0u8; 32],
+            receipts_root: [0u8; 32],
             validator: [0u8; 32],
             signature: vec![0u8; 64],
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
         };
-        let preliminary_block = Block::new(preliminary_header, vec![]);
+
+        let preliminary_block = Block::new(preliminary_header.clone(), transactions.clone());
         let block_hash = preliminary_block.hash();
 
-        // Execute transactions and collect receipts
+        // Execute transactions
         let mut state = state_db.write();
-        let receipts = executor.execute_batch(&transactions, &mut state, new_height, block_hash);
-
-        // Filter successful transactions and receipts
         let mut valid_transactions = Vec::new();
         let mut valid_receipts = Vec::new();
         let mut total_gas = 0u64;
 
-        for (tx, receipt_result) in transactions.iter().zip(receipts.into_iter()) {
-            if let Ok(receipt) = receipt_result {
-                total_gas += receipt.gas_used;
-                valid_transactions.push(tx.clone());
-                valid_receipts.push(receipt);
+        for (tx_index, tx) in transactions.into_iter().enumerate() {
+            match executor.execute(&tx, &mut state, new_height, block_hash, tx_index) {
+                Ok(receipt) => {
+                    total_gas += receipt.gas_used;
+                    valid_receipts.push(receipt);
+                    valid_transactions.push(tx);
+                }
+                Err(e) => {
+                    warn!("Transaction {:?} failed: {}", tx.hash(), e);
+                }
             }
         }
 
-        // Calculate transaction merkle root
-        let txs_root = if valid_transactions.is_empty() {
+        // Calculate transaction root
+        let tx_hashes: Vec<[u8; 32]> = valid_transactions.iter()
+            .map(|tx| tx.hash())
+            .collect();
+        let txs_root = if tx_hashes.is_empty() {
             [0u8; 32]
         } else {
-            let tx_hashes: Vec<_> = valid_transactions.iter()
-                .map(|tx| tx.hash())
-                .collect();
-            let merkle_tree = MerkleTree::new(tx_hashes);
-            merkle_tree.root()
+            MerkleTree::new(tx_hashes).root()
         };
 
         // Calculate receipts root
@@ -345,6 +384,45 @@ impl NodeService {
 
         info!("📦 Produced block #{} with {} transactions, {} gas used, hash {:?}",
             new_height, valid_transactions.len(), total_gas, block.hash());
+
+        // Check if this is an epoch boundary and process rewards
+        if new_height % epoch_length == 0 && epoch_length > 0 {
+            let epoch_num = new_height / epoch_length;
+            info!("🎯 Epoch {} completed at block #{}, processing rewards...", epoch_num, new_height);
+
+            // Create utility metrics for this epoch
+            let utility = UtilityMetrics {
+                active_validators: 1,
+                active_subnets: 1,
+                epoch_transactions: valid_transactions.len() as u64,
+                epoch_ai_tasks: 0, // TODO: Track AI tasks
+                block_utilization: 50, // TODO: Calculate actual utilization
+            };
+
+            // Get current miners and validators (simplified - in production get from metagraph)
+            // For now, use the block producer as both miner and validator
+            let miner_addr = [0u8; 20]; // TODO: Get actual miner address
+            let miners = vec![
+                MinerInfo { address: miner_addr, score: 1.0 },
+            ];
+            let validators = vec![
+                ValidatorInfo { address: miner_addr, stake: 1000 },
+            ];
+
+            // Process epoch rewards
+            let result = reward_executor.write().process_epoch(
+                epoch_num,
+                new_height,
+                &utility,
+                &miners,
+                &validators,
+                &[], // delegators
+                &[], // subnets
+            );
+
+            info!("💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
+                epoch_num, result.total_emission, result.participants_rewarded, result.dao_allocation);
+        }
 
         Ok(())
     }

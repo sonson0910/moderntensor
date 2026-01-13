@@ -1,5 +1,5 @@
 // LuxTensor consensus module
-// Phase 2: Consensus Layer Implementation
+// Phase 2: Consensus Layer Implementation + Tokenomics v3.1 (Model C)
 
 pub mod error;
 pub mod validator;
@@ -10,6 +10,11 @@ pub mod fork_resolution;
 pub mod fast_finality;
 pub mod slashing;
 pub mod emission;
+pub mod reward_distribution;
+pub mod burn_manager;
+pub mod reward_executor;
+pub mod node_tier;
+pub mod token_allocation;
 
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};
@@ -20,4 +25,21 @@ pub use fork_resolution::{ForkResolver, ReorgInfo, FinalityStatus, FinalityStats
 pub use fast_finality::{FastFinality, FastFinalityStats};
 pub use slashing::{SlashingManager, SlashingConfig, SlashReason, SlashingEvidence, SlashEvent, JailStatus};
 pub use emission::{EmissionController, EmissionConfig, EmissionResult, EmissionStats, UtilityMetrics};
+pub use reward_distribution::{
+    RewardDistributor, DistributionConfig, LockBonusConfig, DistributionResult,
+    MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo
+};
+pub use burn_manager::{BurnManager, BurnConfig, BurnType, BurnEvent, BurnStats};
+pub use reward_executor::{
+    RewardExecutor, EpochResult, ClaimResult, ExecutorStats,
+    PendingReward, RewardHistoryEntry, RewardType, AccountBalance
+};
+pub use node_tier::{
+    NodeTier, NodeInfo, NodeRegistry,
+    LIGHT_NODE_STAKE, FULL_NODE_STAKE, VALIDATOR_STAKE, SUPER_VALIDATOR_STAKE
+};
+pub use token_allocation::{
+    TokenAllocation, AllocationCategory, VestingSchedule, VestingEntry,
+    TgeResult, AllocationStats, TOTAL_SUPPLY, DECIMALS
+};
 
