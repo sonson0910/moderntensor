@@ -24,6 +24,38 @@ from .transactions import (
     encode_transaction_for_rpc,
 )
 
+# WebSocket (real-time events)
+from .websocket_client import (
+    LuxtensorWebSocket,
+    SubscriptionType,
+    BlockEvent,
+    TransactionEvent,
+    AccountChangeEvent,
+    subscribe_to_blocks,
+)
+
+# Caching
+from .cache import (
+    LuxtensorCache,
+    MemoryCache,
+    RedisCache,
+    CacheBackend,
+    cached,
+    get_cache,
+    set_cache,
+)
+
+# Indexer Client
+from .indexer_client import (
+    IndexerClient,
+    AsyncIndexerClient,
+    IndexedBlock,
+    IndexedTransaction,
+    TokenTransfer,
+    StakeEvent,
+    SyncStatus,
+)
+
 # Version
 from .version import __version__
 
@@ -42,6 +74,33 @@ __all__ = [
     "sign_transaction",
     "verify_transaction_signature",
     "encode_transaction_for_rpc",
+    # WebSocket
+    "LuxtensorWebSocket",
+    "SubscriptionType",
+    "BlockEvent",
+    "TransactionEvent",
+    "AccountChangeEvent",
+    "subscribe_to_blocks",
+    # Caching
+    "LuxtensorCache",
+    "MemoryCache",
+    "RedisCache",
+    "CacheBackend",
+    "cached",
+    "get_cache",
+    "set_cache",
+    # Indexer
+    "IndexerClient",
+    "AsyncIndexerClient",
+    "IndexedBlock",
+    "IndexedTransaction",
+    "TokenTransfer",
+    "StakeEvent",
+    "SyncStatus",
     # Version
     "__version__",
 ]
+    # Version
+    "__version__",
+]
+

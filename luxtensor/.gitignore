@@ -23,3 +23,9 @@ Thumbs.db
 # Build artifacts
 /dist
 /build
+
+# Node js
+/luxtensor/contracts/node_modules
+
+# environment
+.env
