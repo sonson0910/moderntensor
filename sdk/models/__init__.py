@@ -5,7 +5,15 @@ Standardized Pydantic models for blockchain data structures.
 """
 
 from .neuron import NeuronInfo
-from .subnet import SubnetInfo, SubnetHyperparameters
+from .subnet import (
+    SubnetInfo,
+    SubnetHyperparameters,
+    RootConfig,
+    RootValidatorInfo,
+    SubnetWeights,
+    EmissionShare,
+    SubnetRegistrationResult,
+)
 from .stake import StakeInfo
 from .validator import ValidatorInfo
 from .miner import MinerInfo
@@ -14,6 +22,7 @@ from .delegate import DelegateInfo
 from .prometheus import PrometheusInfo
 from .block import BlockInfo
 from .transaction import TransactionInfo
+from .root_subnet import RootSubnet
 
 __all__ = [
     "NeuronInfo",
@@ -27,4 +36,11 @@ __all__ = [
     "PrometheusInfo",
     "BlockInfo",
     "TransactionInfo",
+    # Root Subnet
+    "RootSubnet",
+    "RootConfig",
+    "RootValidatorInfo",
+    "SubnetWeights",
+    "EmissionShare",
+    "SubnetRegistrationResult",
 ]

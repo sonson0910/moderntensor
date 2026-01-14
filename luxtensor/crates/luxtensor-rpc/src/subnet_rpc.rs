@@ -11,7 +11,6 @@
 //! Synced with Python SDK: sdk/luxtensor_client.py
 
 use jsonrpc_core::{IoHandler, Params, Value, Error as RpcError, ErrorCode};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

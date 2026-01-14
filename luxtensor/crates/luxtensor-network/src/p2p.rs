@@ -2,8 +2,7 @@ use crate::error::NetworkError;
 use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS};
 use crate::peer::PeerManager;
 use libp2p::gossipsub::{
-    Behaviour as Gossipsub, Config as GossipsubConfig, ConfigBuilder,
-    Event as GossipsubEvent, IdentTopic, Message, MessageAuthenticity,
+    Behaviour as Gossipsub, Config as GossipsubConfig, ConfigBuilder, IdentTopic, Message, MessageAuthenticity,
     MessageId, ValidationMode,
 };
 use libp2p::identity::Keypair;
@@ -17,7 +16,7 @@ use std::hash::{Hash as StdHash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// P2P network configuration
 #[derive(Debug, Clone)]

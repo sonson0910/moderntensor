@@ -34,8 +34,8 @@ from .websocket_client import (
     subscribe_to_blocks,
 )
 
-# Caching
-from .cache import (
+# Caching (moved to core/)
+from .core.cache import (
     LuxtensorCache,
     MemoryCache,
     RedisCache,
@@ -100,7 +100,3 @@ __all__ = [
     # Version
     "__version__",
 ]
-    # Version
-    "__version__",
-]
-

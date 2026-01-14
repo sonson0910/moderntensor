@@ -407,7 +407,7 @@ class LuxtensorClient:
             address: Account address
 
         Returns:
-            Balance in smallest unit
+            Balance in LTS (smallest unit)
         """
         result = self._call_rpc("eth_getBalance", [address, "latest"])
         # Convert hex string to int
@@ -735,7 +735,7 @@ class LuxtensorClient:
         Get emission distribution for all subnets.
 
         Args:
-            total_emission: Total emission amount (default: 1000 tokens in wei)
+            total_emission: Total emission amount (default: 1000 MDT in LTS)
 
         Returns:
             List of EmissionShare dictionaries

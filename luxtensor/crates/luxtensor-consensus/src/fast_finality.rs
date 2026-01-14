@@ -222,6 +222,7 @@ mod tests {
             public_key,
             active: true,
             rewards: 0,
+            last_active_slot: 0,
         };
 
         (address, validator)

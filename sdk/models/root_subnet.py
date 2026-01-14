@@ -13,7 +13,7 @@ import logging
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
-from .models.subnet import (
+from .subnet import (
     SubnetInfo,
     RootConfig,
     RootValidatorInfo,

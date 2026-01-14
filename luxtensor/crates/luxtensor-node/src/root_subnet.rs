@@ -11,7 +11,7 @@ use luxtensor_core::{
     SubnetInfo, RootConfig, RootValidatorInfo, SubnetWeights,
     EmissionShare, SubnetRegistrationResult
 };
-use tracing::{info, warn};
+use tracing::info;
 
 /// Root Subnet state
 pub struct RootSubnetState {

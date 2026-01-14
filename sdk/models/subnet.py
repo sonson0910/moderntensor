@@ -170,8 +170,8 @@ class RootConfig(BaseModel):
     max_subnets: int = Field(default=32, description="Maximum number of subnets", ge=1)
     max_root_validators: int = Field(default=64, description="Top N stakers become root validators", ge=1)
     min_stake_for_root: int = Field(
-        default=1_000_000_000_000_000_000_000,  # 1000 tokens in wei
-        description="Minimum stake to be root validator (wei)"
+        default=1_000_000_000_000_000_000_000,  # 1000 MDT in LTS
+        description="Minimum stake to be root validator (LTS)"
     )
     subnet_registration_cost: int = Field(
         default=100_000_000_000_000_000_000,  # 100 tokens
@@ -200,7 +200,7 @@ class RootValidatorInfo(BaseModel):
     Synced with Rust: luxtensor-core/src/subnet.rs::RootValidatorInfo
     """
     address: str = Field(..., description="Validator address (0x...)")
-    stake: int = Field(default=0, description="Total stake amount (wei)", ge=0)
+    stake: int = Field(default=0, description="Total stake amount (LTS)", ge=0)
     rank: int = Field(default=0, description="Rank among root validators (1-64)", ge=0)
     is_active: bool = Field(default=True, description="Whether validator is active")
     last_weight_update: int = Field(default=0, description="Block of last weight update", ge=0)

@@ -1,7 +1,7 @@
 // Rewards RPC API Module
 // Provides JSON-RPC endpoints for reward queries and claims
 
-use jsonrpc_core::{IoHandler, Params, Value};
+use jsonrpc_core::{IoHandler, Params};
 use luxtensor_consensus::RewardExecutor;
 use parking_lot::RwLock;
 use std::sync::Arc;

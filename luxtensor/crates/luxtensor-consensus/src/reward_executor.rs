@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use crate::reward_distribution::{
-    RewardDistributor, DistributionConfig, LockBonusConfig, DistributionResult,
+    RewardDistributor, DistributionResult,
     MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo
 };
 use crate::emission::{EmissionController, EmissionConfig, UtilityMetrics};
@@ -333,9 +333,11 @@ mod tests {
 
     fn test_utility() -> UtilityMetrics {
         UtilityMetrics {
-            transaction_count: 100,
-            ai_tasks_completed: 50,
-            network_utilization: 0.5,
+            active_validators: 10,
+            active_subnets: 5,
+            epoch_transactions: 100,
+            epoch_ai_tasks: 50,
+            block_utilization: 50,
         }
     }
 

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Maximum gas for user operation validation
 pub const MAX_VERIFICATION_GAS: u64 = 500_000;
@@ -282,7 +282,7 @@ impl EntryPoint {
     fn handle_single_op(
         &self,
         user_op: UserOperation,
-        beneficiary: &Address,
+        _beneficiary: &Address,
     ) -> Result<UserOperationReceipt, AccountAbstractionError> {
         let entry_point = &self.supported_entry_points[0];
         let op_hash = user_op.hash(entry_point, self.chain_id);

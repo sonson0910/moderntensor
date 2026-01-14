@@ -1183,7 +1183,7 @@ impl RpcServer {
     /// Register SDK-compatible query methods (query_*)
     fn register_query_methods(&self, io: &mut IoHandler) {
         let neurons = self.neurons.clone();
-        let subnets = self.subnets.clone();
+        let _subnets = self.subnets.clone();
 
         // query_neuron - Get specific neuron info
         io.add_sync_method("query_neuron", move |params: Params| {

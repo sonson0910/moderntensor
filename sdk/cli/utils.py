@@ -40,11 +40,11 @@ def print_info(message: str) -> None:
 def confirm_action(message: str, default: bool = False) -> bool:
     """
     Ask user for confirmation
-    
+
     Args:
         message: Confirmation message
         default: Default value if user just presses Enter
-    
+
     Returns:
         True if user confirms, False otherwise
     """
@@ -54,11 +54,11 @@ def confirm_action(message: str, default: bool = False) -> bool:
 def format_balance(amount: int, decimals: int = 9) -> str:
     """
     Format token amount with proper decimals
-    
+
     Args:
-        amount: Amount in smallest unit (like wei/rao)
+        amount: Amount in LTS (smallest unit)
         decimals: Number of decimal places
-    
+
     Returns:
         Formatted string
     """
@@ -69,11 +69,11 @@ def format_balance(amount: int, decimals: int = 9) -> str:
 def format_address(address: str, length: int = 10) -> str:
     """
     Format address for display (shortened)
-    
+
     Args:
         address: Full address
         length: Characters to show on each end
-    
+
     Returns:
         Formatted address like "0x1234...5678"
     """
@@ -85,12 +85,12 @@ def format_address(address: str, length: int = 10) -> str:
 def create_table(title: str, columns: list[str], **kwargs) -> Table:
     """
     Create a rich Table with common styling
-    
+
     Args:
         title: Table title
         columns: List of column names
         **kwargs: Additional arguments for Table
-    
+
     Returns:
         Configured Table object
     """
@@ -101,17 +101,17 @@ def create_table(title: str, columns: list[str], **kwargs) -> Table:
         header_style="bold magenta",
         **kwargs
     )
-    
+
     for col in columns:
         table.add_column(col)
-    
+
     return table
 
 
 def display_panel(content: str, title: str = "", style: str = "bold") -> None:
     """
     Display content in a panel
-    
+
     Args:
         content: Content to display
         title: Panel title
@@ -124,13 +124,13 @@ def display_panel(content: str, title: str = "", style: str = "bold") -> None:
 def validate_network(network: str) -> str:
     """
     Validate network name
-    
+
     Args:
         network: Network name (mainnet, testnet, local)
-    
+
     Returns:
         Validated network name
-    
+
     Raises:
         click.BadParameter: If network is invalid
     """
@@ -145,7 +145,7 @@ def validate_network(network: str) -> str:
 def get_default_wallet_path() -> Path:
     """
     Get default wallet storage path
-    
+
     Returns:
         Path to default wallet directory
     """
@@ -155,7 +155,7 @@ def get_default_wallet_path() -> Path:
 def get_default_config_path() -> Path:
     """
     Get default configuration file path
-    
+
     Returns:
         Path to default config file
     """
@@ -165,7 +165,7 @@ def get_default_config_path() -> Path:
 def ensure_directory(path: Path) -> None:
     """
     Ensure directory exists, create if not
-    
+
     Args:
         path: Directory path
     """
@@ -175,11 +175,11 @@ def ensure_directory(path: Path) -> None:
 def prompt_password(message: str = "Enter password", confirm: bool = False) -> str:
     """
     Prompt user for password
-    
+
     Args:
         message: Prompt message
         confirm: Whether to ask for confirmation
-    
+
     Returns:
         Password string
     """
@@ -189,7 +189,7 @@ def prompt_password(message: str = "Enter password", confirm: bool = False) -> s
 def handle_exception(e: Exception, verbose: bool = False) -> None:
     """
     Handle and display exception
-    
+
     Args:
         e: Exception to handle
         verbose: Whether to show full traceback

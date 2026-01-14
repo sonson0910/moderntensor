@@ -123,29 +123,45 @@ asyncio.run(main())
 
 ```
 sdk/
-├── luxtensor_client.py    # Python client for Luxtensor (NEW)
-├── __init__.py            # SDK exports
+├── __init__.py              # SDK exports (backward compatible)
+├── luxtensor_client.py      # Main client (74KB, 140+ methods)
+├── async_luxtensor_client.py # Async client
+├── luxtensor_pallets.py     # Pallet call encoding (keccak256)
+├── transactions.py          # Transaction signing
 │
-├── ai_ml/                 # AI/ML framework
-├── cli/                   # CLI tools (mtcli)
-├── keymanager/            # Wallet/key management
-├── metagraph/             # Network topology
-├── network/
-│   └── app/              # Axon server (in progress)
-├── monitoring/            # Metrics and monitoring
-├── security/              # Security features
-├── subnets/               # Subnet management
-├── simulation/            # Testing and simulation
-├── tokenomics/            # Tokenomics (evaluate if needed)
-└── utils/                 # Utilities
-
-# Removed (Luxtensor handles these):
-# ├── blockchain/         # REMOVED - Luxtensor has this
-# ├── consensus/          # REMOVED - Luxtensor has this
-# ├── storage/            # REMOVED - Luxtensor has this
-# ├── node/               # REMOVED - Luxtensor is the node
-# ├── optimization/       # REMOVED - Luxtensor handles this
-# ├── testnet/            # REMOVED - Luxtensor testnet
+├── client/                  # NEW - Modular client components
+│   ├── base.py             # BaseClient, data classes
+│   ├── blockchain_mixin.py # Block/chain methods
+│   ├── account_mixin.py    # Account methods
+│   ├── transaction_mixin.py# TX methods
+│   ├── staking_mixin.py    # Staking methods
+│   ├── subnet0_mixin.py    # Root Subnet methods
+│   └── neuron_mixin.py     # Neuron/AI methods
+│
+├── core/                    # Core utilities
+│   ├── cache.py            # LRU cache with TTL
+│   └── datatypes.py        # Core data types
+│
+├── models/                  # Pydantic data models
+│   ├── subnet.py           # SubnetInfo, RootConfig
+│   ├── root_subnet.py      # RootSubnet manager
+│   ├── neuron.py           # NeuronInfo
+│   └── ...                 # Other models
+│
+├── ai_ml/                   # AI/ML framework
+│   ├── core/               # SubnetProtocol
+│   ├── zkml/               # Zero-knowledge ML proofs
+│   ├── agent/              # Miner/Validator AI agents
+│   └── ...
+│
+├── axon/                    # Server for miners/validators
+├── dendrite/                # Client for AI queries
+├── synapse/                 # Request/response protocol
+├── security/                # RBAC, auditing
+├── keymanager/              # Wallet/key management
+├── cli/                     # CLI tools (mtcli)
+├── tokenomics/              # Token economics
+└── monitoring/              # Metrics and monitoring
 ```
 
 ## Development

@@ -295,7 +295,7 @@ mod tests {
         let config = DistributionConfig::default();
         assert!(config.validate().is_ok());
         assert_eq!(config.miner_share, 0.35);
-        assert_eq!(config.validator_share, 0.30);
+        assert_eq!(config.validator_share, 0.28);  // Updated from 0.30
         assert_eq!(config.delegator_share, 0.12);
         assert_eq!(config.subnet_owner_share, 0.10);
         assert_eq!(config.dao_share, 0.13);

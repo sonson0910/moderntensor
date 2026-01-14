@@ -5,7 +5,7 @@ use luxtensor_core::types::Address;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Genesis account configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
