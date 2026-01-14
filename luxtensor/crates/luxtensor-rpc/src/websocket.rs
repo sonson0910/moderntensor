@@ -92,6 +92,8 @@ pub enum BroadcastEvent {
     NewBlock(RpcBlock),
     NewTransaction(RpcTransaction),
     SyncStatus { syncing: bool },
+    /// New logs from contract events
+    NewLogs(Vec<crate::logs::LogEntry>),
 }
 
 impl WebSocketServer {
@@ -370,6 +372,29 @@ impl WebSocketServer {
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
                                     result: serde_json::json!({ "syncing": syncing }),
+                                },
+                            };
+
+                            if let Ok(text) = serde_json::to_string(&notification) {
+                                let _ = sub.tx.send(Message::Text(text));
+                            }
+                        }
+                    }
+                }
+                BroadcastEvent::NewLogs(logs) => {
+                    for (sub_id, sub) in subscriptions.iter() {
+                        if sub.sub_type == SubscriptionType::Logs {
+                            // Convert logs to RPC format
+                            let rpc_logs: Vec<serde_json::Value> = logs.iter()
+                                .map(|log| log.to_rpc_log())
+                                .collect();
+
+                            let notification = SubscriptionNotification {
+                                jsonrpc: "2.0".to_string(),
+                                method: "eth_subscription".to_string(),
+                                params: SubscriptionParams {
+                                    subscription: sub_id.clone(),
+                                    result: serde_json::json!(rpc_logs),
                                 },
                             };
 

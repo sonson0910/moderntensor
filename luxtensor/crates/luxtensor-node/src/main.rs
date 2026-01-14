@@ -2,6 +2,10 @@ mod config;
 mod service;
 mod mempool;
 mod executor;
+mod genesis_config;
+pub mod root_subnet;
+
+pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -17,7 +21,7 @@ struct Cli {
     /// Configuration file path
     #[clap(short, long, value_name = "FILE", default_value = "config.toml")]
     config: String,
-    
+
     /// Subcommand
     #[clap(subcommand)]
     command: Option<Commands>,
@@ -27,14 +31,14 @@ struct Cli {
 enum Commands {
     /// Start the node
     Start,
-    
+
     /// Initialize a new node configuration
     Init {
         /// Output configuration file path
         #[clap(short, long, default_value = "config.toml")]
         output: String,
     },
-    
+
     /// Show node version
     Version,
 }
@@ -42,7 +46,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     match cli.command {
         Some(Commands::Init { output }) => {
             init_config(&output)?;
@@ -54,7 +58,7 @@ async fn main() -> Result<()> {
             start_node(&cli.config).await?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -84,20 +88,20 @@ async fn start_node(config_path: &str) -> Result<()> {
         info!("Configuration file not found, using defaults");
         Config::default()
     };
-    
+
     // Initialize logging
     init_logging(&config)?;
-    
+
     // Print banner
     print_banner();
-    
+
     // Create and start node service
     let mut service = NodeService::new(config).await?;
     service.start().await?;
-    
+
     // Wait for shutdown
     service.wait_for_shutdown().await?;
-    
+
     Ok(())
 }
 
@@ -105,14 +109,14 @@ async fn start_node(config_path: &str) -> Result<()> {
 fn init_logging(config: &Config) -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.logging.level));
-    
+
     // Note: JSON formatting requires additional features
     // For now, use standard formatting
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
         .with_target(false)
         .init();
-    
+
     Ok(())
 }
 

@@ -20,6 +20,9 @@ pub enum IndexerError {
     #[error("Connection error: {0}")]
     Connection(String),
 
+    #[error("Parse error: {0}")]
+    Parse(String),
+
     #[error("Invalid data: {0}")]
     InvalidData(String),
 

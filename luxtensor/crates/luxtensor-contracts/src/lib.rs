@@ -7,6 +7,7 @@ pub mod state;
 pub mod types;
 pub mod evm_executor;
 pub mod revm_integration;
+pub mod account_abstraction;
 
 pub use error::*;
 pub use executor::{
@@ -18,3 +19,8 @@ pub use types::{
     ContractAddress, ContractCode, ContractABI, FunctionSignature, EventSignature, ABIType,
 };
 pub use evm_executor::EvmExecutor;
+pub use account_abstraction::{
+    UserOperation, EntryPoint, UserOperationReceipt, PaymasterInfo,
+    SimulationResult, GasEstimate, AccountAbstractionError,
+};
+

@@ -1,10 +1,9 @@
 //! PostgreSQL storage layer
 
-use crate::error::{IndexerError, Result};
+use crate::error::Result;
 use crate::models::*;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::info;
 
 /// PostgreSQL storage for indexed data
 pub struct Storage {
@@ -242,6 +241,18 @@ impl Storage {
         .await?;
 
         Ok(txs)
+    }
+
+    /// Get transaction by hash
+    pub async fn get_transaction_by_hash(&self, hash: &str) -> Result<Option<Transaction>> {
+        let tx = sqlx::query_as::<_, Transaction>(
+            "SELECT * FROM transactions WHERE hash = $1"
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(tx)
     }
 
     // ======== Token transfer operations ========

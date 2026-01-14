@@ -29,6 +29,7 @@ pub mod decoder;
 pub mod storage;
 pub mod graphql;
 pub mod error;
+pub mod backfill;
 
 pub use config::Config;
 pub use error::{IndexerError, Result};
@@ -36,6 +37,7 @@ pub use listener::BlockListener;
 pub use decoder::EventDecoder;
 pub use storage::Storage;
 pub use graphql::GraphQLServer;
+pub use backfill::Backfill;
 
 use std::sync::Arc;
 use tracing::{info, error};

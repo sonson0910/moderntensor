@@ -10,7 +10,6 @@ members = [
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
-    "crates/luxtensor-indexer",
 ]
 resolver = "2"
 

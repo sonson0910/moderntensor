@@ -12,7 +12,8 @@ pub mod rate_limiter;
 pub use error::*;
 pub use messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS};
 pub use peer::{PeerInfo, PeerManager};
-pub use p2p::{P2PConfig, P2PEvent, P2PNode};
+pub use p2p::{P2PConfig, P2PEvent, P2PNode, GossipTopics, GossipStats};
 pub use sync::{SyncManager, SyncStatus};
 pub use sync_protocol::{SyncProtocol, SyncStats};
 pub use rate_limiter::{RateLimiter, RateLimiterConfig, RateLimiterStats};
+

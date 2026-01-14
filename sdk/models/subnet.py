@@ -154,3 +154,134 @@ class SubnetInfo(BaseModel):
 
     def __repr__(self) -> str:
         return self.__str__()
+
+
+# =============================================================================
+# Subnet 0 (Root Subnet) Types
+# Synced with luxtensor-core/src/subnet.rs
+# =============================================================================
+
+class RootConfig(BaseModel):
+    """
+    Configuration for Root Subnet (Subnet 0).
+
+    Synced with Rust: luxtensor-core/src/subnet.rs::RootConfig
+    """
+    max_subnets: int = Field(default=32, description="Maximum number of subnets", ge=1)
+    max_root_validators: int = Field(default=64, description="Top N stakers become root validators", ge=1)
+    min_stake_for_root: int = Field(
+        default=1_000_000_000_000_000_000_000,  # 1000 tokens in wei
+        description="Minimum stake to be root validator (wei)"
+    )
+    subnet_registration_cost: int = Field(
+        default=100_000_000_000_000_000_000,  # 100 tokens
+        description="Cost to register subnet (burned)"
+    )
+    weight_update_interval: int = Field(default=100, description="Blocks between weight updates", ge=1)
+    emission_tempo: int = Field(default=360, description="Blocks per emission cycle", ge=1)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "max_subnets": 32,
+                "max_root_validators": 64,
+                "min_stake_for_root": 1000000000000000000000,
+                "subnet_registration_cost": 100000000000000000000,
+                "weight_update_interval": 100,
+                "emission_tempo": 360
+            }
+        }
+
+
+class RootValidatorInfo(BaseModel):
+    """
+    Information about a Root Validator (top staker in Subnet 0).
+
+    Synced with Rust: luxtensor-core/src/subnet.rs::RootValidatorInfo
+    """
+    address: str = Field(..., description="Validator address (0x...)")
+    stake: int = Field(default=0, description="Total stake amount (wei)", ge=0)
+    rank: int = Field(default=0, description="Rank among root validators (1-64)", ge=0)
+    is_active: bool = Field(default=True, description="Whether validator is active")
+    last_weight_update: int = Field(default=0, description="Block of last weight update", ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                "stake": 10000000000000000000000,
+                "rank": 1,
+                "is_active": True,
+                "last_weight_update": 12345
+            }
+        }
+
+
+class SubnetWeights(BaseModel):
+    """
+    Weight votes from a root validator for subnets.
+
+    Synced with Rust: luxtensor-core/src/subnet.rs::SubnetWeights
+    """
+    validator: str = Field(..., description="Validator address")
+    weights: dict = Field(default_factory=dict, description="netuid -> weight (0.0-1.0)")
+    block_updated: int = Field(default=0, description="Block when last updated", ge=0)
+
+    def normalize(self) -> None:
+        """Normalize weights to sum to 1.0"""
+        total = sum(self.weights.values())
+        if total > 0:
+            self.weights = {k: v / total for k, v in self.weights.items()}
+
+    def is_valid(self) -> bool:
+        """Check if weights are valid (all values 0.0-1.0)"""
+        return all(0.0 <= v <= 1.0 for v in self.weights.values())
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "validator": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                "weights": {"1": 0.4, "2": 0.35, "3": 0.25},
+                "block_updated": 12345
+            }
+        }
+
+
+class EmissionShare(BaseModel):
+    """
+    Computed emission share for a subnet after weight aggregation.
+
+    Synced with Rust: luxtensor-node/src/root_subnet.rs::EmissionShare
+    """
+    netuid: int = Field(..., description="Subnet ID", ge=0)
+    share: float = Field(default=0.0, description="Emission share (0.0-1.0)", ge=0, le=1)
+    amount: int = Field(default=0, description="Actual token amount for epoch (wei)", ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "netuid": 1,
+                "share": 0.35,
+                "amount": 350000000000000000000
+            }
+        }
+
+
+class SubnetRegistrationResult(BaseModel):
+    """Result of subnet registration."""
+    success: bool = Field(..., description="Whether registration succeeded")
+    netuid: Optional[int] = Field(default=None, description="Assigned subnet ID")
+    tx_hash: Optional[str] = Field(default=None, description="Transaction hash")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
+    cost_burned: int = Field(default=0, description="Amount burned for registration", ge=0)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "netuid": 5,
+                "tx_hash": "0x1234...",
+                "error": None,
+                "cost_burned": 100000000000000000000
+            }
+        }

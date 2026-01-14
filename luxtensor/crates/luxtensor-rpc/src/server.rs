@@ -83,6 +83,37 @@ impl RpcServer {
         Self::new(db, state, metagraph, Arc::new(NoOpBroadcaster))
     }
 
+    /// Get EVM state reference for block production polling
+    pub fn evm_state(&self) -> Arc<RwLock<EvmState>> {
+        self.evm_state.clone()
+    }
+
+    /// Create a new RPC server for testing with external EVM state
+    pub fn new_for_testing_with_evm(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        evm_state: Arc<RwLock<EvmState>>,
+    ) -> Self {
+        let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
+        let metagraph = Arc::new(
+            MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
+        );
+
+        Self {
+            db,
+            state,
+            validators: Arc::new(RwLock::new(ValidatorSet::new())),
+            metagraph,
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            pending_txs: Arc::new(RwLock::new(HashMap::new())),
+            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            broadcaster: Arc::new(NoOpBroadcaster),
+            evm_state,
+        }
+    }
+
     /// Create a new RPC server with validator set
     pub fn with_validators(
         db: Arc<BlockchainDB>,

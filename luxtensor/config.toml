@@ -2,7 +2,7 @@
 name = "luxtensor-node"
 chain_id = 1
 data_dir = "./data"
-is_validator = false
+is_validator = true
 
 [consensus]
 block_time = 3

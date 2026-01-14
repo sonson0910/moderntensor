@@ -35,14 +35,27 @@ pub struct Log {
 pub struct TransactionExecutor {
     base_gas_cost: u64,
     gas_per_byte: u64,
+    /// Skip signature verification (for development only!)
+    skip_signature_verification: bool,
 }
 
 impl TransactionExecutor {
-    /// Create a new transaction executor
+    /// Create a new transaction executor with signature verification enabled (production mode)
     pub fn new() -> Self {
         Self {
             base_gas_cost: 21000,  // Base transaction cost
             gas_per_byte: 68,      // Cost per byte of data
+            skip_signature_verification: false,  // PRODUCTION: always verify
+        }
+    }
+
+    /// Create executor for development mode (signature verification disabled)
+    /// WARNING: Only use for local development/testing!
+    pub fn new_dev_mode() -> Self {
+        Self {
+            base_gas_cost: 21000,
+            gas_per_byte: 68,
+            skip_signature_verification: true,
         }
     }
 
@@ -55,8 +68,10 @@ impl TransactionExecutor {
         block_hash: [u8; 32],
         tx_index: usize,
     ) -> Result<Receipt> {
-        // Verify signature
-        tx.verify_signature()?;
+        // Signature verification - CRITICAL for production!
+        if !self.skip_signature_verification {
+            tx.verify_signature()?;
+        }
 
         // Get sender account
         let mut sender = state.get_account(&tx.from)
@@ -83,13 +98,13 @@ impl TransactionExecutor {
             .ok_or_else(|| CoreError::InvalidTransaction(
                 "Gas fee calculation overflow".to_string()
             ))?;
-        
+
         let total_cost = gas_fee
             .checked_add(tx.value)
             .ok_or_else(|| CoreError::InvalidTransaction(
                 "Total cost calculation overflow".to_string()
             ))?;
-        
+
         // Check balance
         if sender.balance < total_cost {
             return Err(CoreError::InvalidTransaction(
@@ -133,10 +148,10 @@ impl TransactionExecutor {
     /// Calculate gas cost for a transaction
     fn calculate_gas_cost(&self, tx: &Transaction) -> Result<u64> {
         let mut gas = self.base_gas_cost;
-        
+
         // Add gas for data
         gas += self.gas_per_byte * (tx.data.len() as u64);
-        
+
         Ok(gas)
     }
 
@@ -191,16 +206,16 @@ mod tests {
     ) -> Transaction {
         let from = Address::from(keypair.address());
         let mut tx = Transaction::new(nonce, from, to, value, 1, 100000, vec![]);
-        
+
         // Sign transaction
         let msg = tx.signing_message();
         let msg_hash = keccak256(&msg);
         let sig = keypair.sign(&msg_hash);
-        
+
         tx.r.copy_from_slice(&sig[..32]);
         tx.s.copy_from_slice(&sig[32..]);
         tx.v = 0;
-        
+
         tx
     }
 
@@ -222,7 +237,7 @@ mod tests {
             100000,
             vec![0; 10], // 10 bytes of data
         );
-        
+
         let gas_cost = executor.calculate_gas_cost(&tx).unwrap();
         assert_eq!(gas_cost, 21000 + 68 * 10);
     }
@@ -231,7 +246,7 @@ mod tests {
     fn test_simple_transfer() {
         let executor = TransactionExecutor::new();
         let mut state = StateDB::new();
-        
+
         // Setup sender with balance
         let keypair = KeyPair::generate();
         let from = Address::from(keypair.address());
@@ -239,11 +254,11 @@ mod tests {
         sender.balance = 1_000_000;
         sender.nonce = 0;
         state.set_account(from, sender);
-        
+
         // Create and sign transaction
         let to = Address::zero();
         let tx = create_signed_transaction(&keypair, 0, Some(to), 1000);
-        
+
         // Execute transaction
         let result = executor.execute(
             &tx,
@@ -252,7 +267,7 @@ mod tests {
             [1u8; 32],
             0,
         );
-        
+
         // For now, signature verification may fail without proper signing
         // Just check that execution doesn't panic
         let _ = result;
@@ -262,7 +277,7 @@ mod tests {
     fn test_insufficient_balance() {
         let executor = TransactionExecutor::new();
         let mut state = StateDB::new();
-        
+
         // Setup sender with insufficient balance
         let keypair = KeyPair::generate();
         let from = Address::from(keypair.address());
@@ -270,9 +285,9 @@ mod tests {
         sender.balance = 100;  // Not enough
         sender.nonce = 0;
         state.set_account(from, sender);
-        
+
         let tx = create_signed_transaction(&keypair, 0, Some(Address::zero()), 1000);
-        
+
         let result = executor.execute(
             &tx,
             &mut state,
@@ -280,7 +295,7 @@ mod tests {
             [1u8; 32],
             0,
         );
-        
+
         // Should fail due to insufficient balance or signature issue
         assert!(result.is_err());
     }
@@ -289,19 +304,19 @@ mod tests {
     fn test_batch_execution() {
         let executor = TransactionExecutor::new();
         let mut state = StateDB::new();
-        
+
         let keypair = KeyPair::generate();
         let from = Address::from(keypair.address());
         let mut sender = Account::new();
         sender.balance = 10_000_000;
         sender.nonce = 0;
         state.set_account(from, sender);
-        
+
         let txs = vec![
             create_signed_transaction(&keypair, 0, Some(Address::zero()), 1000),
             create_signed_transaction(&keypair, 1, Some(Address::zero()), 2000),
         ];
-        
+
         let results = executor.execute_batch(&txs, &mut state, 1, [1u8; 32]);
         assert_eq!(results.len(), 2);
     }
@@ -321,7 +336,7 @@ mod tests {
                 logs: vec![],
             },
         ];
-        
+
         let root = calculate_receipts_root(&receipts);
         assert_ne!(root, [0u8; 32]);
     }

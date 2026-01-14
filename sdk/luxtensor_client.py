@@ -646,6 +646,142 @@ class LuxtensorClient:
         """
         return self._call_rpc("system_health")
 
+    # =========================================================================
+    # Subnet 0 (Root Subnet) Methods
+    # Synced with luxtensor-node/src/subnet_rpc.rs
+    # =========================================================================
+
+    def get_all_subnets(self) -> List[Dict[str, Any]]:
+        """
+        Get all registered subnets.
+
+        Returns:
+            List of SubnetInfo dictionaries
+        """
+        try:
+            result = self._call_rpc("subnet_getAll", [])
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Failed to get all subnets: {e}")
+            return []
+
+    def register_subnet(self, name: str, owner: str) -> Dict[str, Any]:
+        """
+        Register a new subnet (Subnet 0 operation).
+
+        Args:
+            name: Human-readable subnet name
+            owner: Owner address (0x...)
+
+        Returns:
+            Registration result with netuid if successful
+        """
+        try:
+            result = self._call_rpc("subnet_register", [name, owner])
+            return result
+        except Exception as e:
+            logger.error(f"Failed to register subnet: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_root_validators(self) -> List[Dict[str, Any]]:
+        """
+        Get list of root validators (top stakers in Subnet 0).
+
+        Returns:
+            List of RootValidatorInfo dictionaries
+        """
+        try:
+            result = self._call_rpc("subnet_getRootValidators", [])
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Failed to get root validators: {e}")
+            return []
+
+    def is_root_validator(self, address: str) -> bool:
+        """
+        Check if address is a root validator.
+
+        Args:
+            address: Address to check
+
+        Returns:
+            True if address is a root validator
+        """
+        validators = self.get_root_validators()
+        return any(v.get("address", "").lower() == address.lower() for v in validators)
+
+    def set_subnet_weights(self, validator: str, weights: Dict[int, float]) -> Dict[str, Any]:
+        """
+        Set subnet weights for a root validator.
+
+        Args:
+            validator: Root validator address
+            weights: Dict of netuid -> weight (0.0 - 1.0)
+
+        Returns:
+            Result with success status
+        """
+        try:
+            # Convert int keys to strings for JSON
+            weights_json = {str(k): v for k, v in weights.items()}
+            result = self._call_rpc("subnet_setWeights", [validator, weights_json])
+            return result
+        except Exception as e:
+            logger.error(f"Failed to set subnet weights: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_subnet_emissions(self, total_emission: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get emission distribution for all subnets.
+
+        Args:
+            total_emission: Total emission amount (default: 1000 tokens in wei)
+
+        Returns:
+            List of EmissionShare dictionaries
+        """
+        try:
+            params = []
+            if total_emission is not None:
+                params.append(f"0x{total_emission:x}")
+            result = self._call_rpc("subnet_getEmissions", params)
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Failed to get subnet emissions: {e}")
+            return []
+
+    def get_root_config(self) -> Dict[str, Any]:
+        """
+        Get Root Subnet configuration.
+
+        Returns:
+            RootConfig dictionary
+        """
+        try:
+            result = self._call_rpc("subnet_getConfig", [])
+            return result if result else {}
+        except Exception as e:
+            logger.error(f"Failed to get root config: {e}")
+            return {}
+
+    def get_root_validator_count(self) -> int:
+        """
+        Get number of root validators.
+
+        Returns:
+            Count of root validators
+        """
+        return len(self.get_root_validators())
+
+    def get_subnet_count(self) -> int:
+        """
+        Get number of registered subnets.
+
+        Returns:
+            Count of subnets
+        """
+        return len(self.get_all_subnets())
+
     # =============================================================================
     # Extended Neuron Queries
     # =============================================================================

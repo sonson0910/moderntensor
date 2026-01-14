@@ -89,6 +89,26 @@ impl NodeService {
             info!("  ✓ Genesis block found");
         }
 
+        // ALWAYS initialize genesis accounts with balance for development
+        // This ensures accounts have balance even after node restart
+        // Hardhat account #0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+        let dev_accounts: &[[u8; 20]] = &[
+            [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
+             0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
+            [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
+             0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
+            [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
+             0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
+        ];
+
+        for addr_bytes in dev_accounts {
+            let dev_address = luxtensor_core::Address::from(*addr_bytes);
+            let mut dev_account = luxtensor_core::Account::new();
+            dev_account.balance = 10_000_000_000_000_000_000_000_u128; // 10000 ETH in wei
+            state_db.write().set_account(dev_address, dev_account);
+        }
+        info!("  ✓ {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
+
         // Initialize reward executor for epoch processing
         let dao_address = [0u8; 20]; // TODO: Configure DAO address
         let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
@@ -132,15 +152,21 @@ impl NodeService {
     pub async fn start(&mut self) -> Result<()> {
         info!("🚀 Starting node services...");
 
+        // Create shared EVM state for transaction bridge
+        let evm_state = Arc::new(parking_lot::RwLock::new(
+            luxtensor_rpc::EvmState::new(self.config.node.chain_id as u64)
+        ));
+
         // Start RPC server if enabled
         if self.config.rpc.enabled {
             info!("🔌 Starting RPC server...");
 
             // For production, configure P2P and WebSocket broadcasters here
             // For now, use NoOp broadcaster (transactions stay in mempool only)
-            let rpc_server = RpcServer::new_for_testing(
+            let rpc_server = RpcServer::new_for_testing_with_evm(
                 self.storage.clone(),
                 self.state_db.clone(),
+                evm_state.clone(),
             );
 
             let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
@@ -181,6 +207,7 @@ impl NodeService {
             let block_time = self.config.consensus.block_time;
             let epoch_length = self.epoch_length;
             let shutdown_rx = self.shutdown_tx.subscribe();
+            let evm_state_for_block = evm_state.clone();
 
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
@@ -193,6 +220,7 @@ impl NodeService {
                     block_time,
                     epoch_length,
                     shutdown_rx,
+                    evm_state_for_block,
                 ).await
             });
 
@@ -252,12 +280,44 @@ impl NodeService {
         block_time: u64,
         epoch_length: u64,
         mut shutdown: broadcast::Receiver<()>,
+        evm_state: Arc<parking_lot::RwLock<luxtensor_rpc::EvmState>>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    // Poll tx_queue from EVM state and add to mempool
+                    let pending_txs = evm_state.read().drain_tx_queue();
+                    for ready_tx in pending_txs {
+                        // Convert ReadyTransaction to core Transaction
+                        let from_addr = luxtensor_core::Address::from(ready_tx.from);
+                        let to_addr = ready_tx.to.map(luxtensor_core::Address::from);
+
+                        let mut tx = Transaction::new(
+                            ready_tx.nonce,
+                            from_addr,
+                            to_addr,
+                            ready_tx.value,
+                            1, // gas price
+                            ready_tx.gas,
+                            ready_tx.data,
+                        );
+
+                        // Sign transaction with proper secp256k1 using dev private key
+                        // This is for development - in production, clients send pre-signed TX
+                        if !sign_transaction_with_dev_key(&mut tx, &ready_tx.from) {
+                            warn!("Failed to sign transaction from unknown account: {:?}", ready_tx.from);
+                            continue;
+                        }
+
+                        if let Err(e) = mempool.add_transaction(tx) {
+                            warn!("Failed to add RPC tx to mempool: {}", e);
+                        } else {
+                            info!("📥 Added signed transaction to mempool");
+                        }
+                    }
+
                     // Produce a block
                     if let Err(e) = Self::produce_block(
                         &consensus, &storage, &state_db, &mempool, &executor,
@@ -532,4 +592,97 @@ mod tests {
         assert_eq!(stats.height, 0); // Genesis block
         assert_eq!(stats.chain_id, 1);
     }
+}
+
+/// Sign a transaction with a development private key (proper secp256k1 signing)
+/// Returns true if signing was successful, false if the address is not a known dev account
+fn sign_transaction_with_dev_key(tx: &mut Transaction, from: &[u8; 20]) -> bool {
+    use luxtensor_crypto::{keccak256, KeyPair};
+
+    // Hardhat default private keys (for development only!)
+    // These are well-known test keys - never use in production with real funds
+    let dev_accounts: &[([u8; 20], [u8; 32])] = &[
+        // Account #0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+        (
+            [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
+             0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
+            [0xac, 0x09, 0x74, 0xbe, 0xc3, 0x9a, 0x17, 0xe3, 0x6b, 0xa4,
+             0xa6, 0xb4, 0xd2, 0x38, 0xff, 0x94, 0x4b, 0xac, 0xb4, 0x78,
+             0xcb, 0xed, 0x5e, 0xfc, 0xae, 0x78, 0x4d, 0x7b, 0xf4, 0xf2,
+             0xff, 0x80]
+        ),
+        // Account #1: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+        (
+            [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
+             0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
+            [0x59, 0xc6, 0x99, 0x5e, 0x99, 0x8f, 0x97, 0xa5, 0xa0, 0x04,
+             0x49, 0x66, 0xf0, 0x94, 0x53, 0x89, 0xdc, 0x9e, 0x86, 0xda,
+             0xe8, 0x8c, 0x7a, 0x84, 0x12, 0xf4, 0x60, 0x3b, 0x6b, 0x78,
+             0x69, 0x0d]
+        ),
+        // Account #2: 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+        (
+            [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
+             0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
+            [0x5d, 0xe4, 0x11, 0x1a, 0xfa, 0x1a, 0x4b, 0x94, 0x90, 0x8f,
+             0x83, 0x10, 0x3e, 0xb1, 0xf1, 0x70, 0x63, 0x67, 0xc2, 0xe6,
+             0x8c, 0xa8, 0x70, 0xfc, 0x3f, 0xb9, 0xa8, 0x04, 0xcd, 0xab,
+             0x36, 0x5a]
+        ),
+    ];
+
+    // Find matching private key (case-insensitive by converting to lowercase)
+    let from_lower: [u8; 20] = from.map(|b| b.to_ascii_lowercase());
+
+    for (addr, privkey) in dev_accounts {
+        let addr_lower: [u8; 20] = addr.map(|b| b.to_ascii_lowercase());
+        if addr_lower == from_lower {
+            // Create keypair from private key using proper secp256k1
+            match KeyPair::from_secret(privkey) {
+                Ok(keypair) => {
+                    // Verify keypair address matches expected address
+                    let keypair_addr = keypair.address();
+                    info!("🔑 Signing with keypair address: {:?}", keypair_addr);
+                    info!("🔑 Expected from address: {:?}", from);
+
+                    // Get signing message and hash (same format as verify_signature)
+                    let msg = tx.signing_message();
+                    let msg_hash = keccak256(&msg);
+                    info!("🔑 Message hash: {:?}", &msg_hash[..8]);
+
+                    // Sign with secp256k1 ECDSA
+                    match keypair.sign(&msg_hash) {
+                        Ok(signature) => {
+                            tx.r.copy_from_slice(&signature[..32]);
+                            tx.s.copy_from_slice(&signature[32..]);
+
+                            // Try recovery ID 0 first, then 1 if verification fails
+                            for v in [0u8, 1u8] {
+                                tx.v = v;
+                                if tx.verify_signature().is_ok() {
+                                    info!("✅ Signature verified with v={}", v);
+                                    return true;
+                                }
+                            }
+
+                            // If neither works, log error
+                            warn!("❌ Signature verification failed for both v=0 and v=1");
+                            return false;
+                        }
+                        Err(e) => {
+                            warn!("Failed to sign transaction: {}", e);
+                            return false;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to create keypair: {}", e);
+                    return false;
+                }
+            }
+        }
+    }
+
+    warn!("No matching dev account found for address: {:?}", from);
+    false
 }
