@@ -1,0 +1,596 @@
+"""
+ModernTensor SDK - Multi-Validator Weight Consensus
+
+Implements consensus mechanism requiring multiple validators to agree on weights.
+
+Flow:
+1. Validator proposes weights
+2. Other validators vote (approve/reject)
+3. If threshold met (e.g., 2/3 majority), weights are applied
+4. Proposer gets small reward for successful proposal
+
+Usage:
+    from sdk.weight_consensus import WeightConsensusClient, ProposalStatus
+
+    client = WeightConsensusClient(rpc_url="http://localhost:8545")
+
+    # Propose weights
+    proposal_id = client.propose_weights(
+        subnet_uid=1,
+        weights=[(0, 500), (1, 300), (2, 200)],
+        signer=signer
+    )
+
+    # Other validators vote
+    client.vote_on_proposal(proposal_id, approve=True, signer=other_signer)
+
+    # Check status
+    status = client.get_proposal_status(proposal_id)
+    if status.reached_consensus:
+        client.finalize_proposal(proposal_id, signer)
+
+Author: ModernTensor Team
+Version: 1.0.0
+"""
+
+import hashlib
+import logging
+from typing import List, Tuple, Optional, Dict, Any
+from dataclasses import dataclass, field
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Data Types
+# =============================================================================
+
+class ProposalStatus(str, Enum):
+    """Status of a weight proposal"""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    APPLIED = "applied"
+    EXPIRED = "expired"
+
+
+@dataclass
+class WeightConsensusConfig:
+    """Configuration for consensus mechanism"""
+    min_validators: int = 2
+    approval_threshold_percent: int = 67  # 2/3 majority
+    proposal_timeout: int = 200  # blocks
+    proposal_cooldown: int = 50  # blocks between proposals
+
+
+@dataclass
+class ProposalVote:
+    """A vote on a proposal"""
+    voter: str
+    approve: bool
+    block: int
+
+
+@dataclass
+class WeightProposal:
+    """A weight proposal from a validator"""
+    id: str
+    proposer: str
+    subnet_uid: int
+    weights: List[Tuple[int, int]]
+    weights_hash: str
+    proposed_at: int
+    expires_at: int
+    status: ProposalStatus
+    votes: List[ProposalVote] = field(default_factory=list)
+    eligible_voters: int = 0
+
+    def approval_count(self) -> int:
+        return sum(1 for v in self.votes if v.approve)
+
+    def rejection_count(self) -> int:
+        return sum(1 for v in self.votes if not v.approve)
+
+    def approval_percentage(self) -> int:
+        if not self.votes:
+            return 0
+        return (self.approval_count() * 100) // len(self.votes)
+
+    def has_voted(self, voter: str) -> bool:
+        return any(v.voter.lower() == voter.lower() for v in self.votes)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "proposer": self.proposer,
+            "subnet_uid": self.subnet_uid,
+            "weights_count": len(self.weights),
+            "weights_hash": self.weights_hash,
+            "proposed_at": self.proposed_at,
+            "expires_at": self.expires_at,
+            "status": self.status.value,
+            "approval_count": self.approval_count(),
+            "rejection_count": self.rejection_count(),
+            "total_votes": len(self.votes),
+            "approval_percentage": self.approval_percentage(),
+        }
+
+
+@dataclass
+class ConsensusResult:
+    """Result of consensus check"""
+    reached: bool
+    approval_count: int
+    rejection_count: int
+    total_votes: int
+    approval_percentage: int
+    threshold: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "reached": self.reached,
+            "approval_count": self.approval_count,
+            "rejection_count": self.rejection_count,
+            "total_votes": self.total_votes,
+            "approval_percentage": self.approval_percentage,
+            "threshold": self.threshold,
+        }
+
+
+# =============================================================================
+# Hash Functions
+# =============================================================================
+
+def compute_weights_hash(weights: List[Tuple[int, int]]) -> str:
+    """Compute hash of weights for verification"""
+    try:
+        from Crypto.Hash import keccak
+        hasher = keccak.new(digest_bits=256)
+    except ImportError:
+        hasher = hashlib.sha3_256()
+
+    for uid, weight in sorted(weights, key=lambda x: x[0]):
+        hasher.update(uid.to_bytes(8, 'big'))
+        hasher.update(weight.to_bytes(2, 'big'))
+
+    return "0x" + hasher.hexdigest()
+
+
+def compute_proposal_id(
+    proposer: str,
+    subnet_uid: int,
+    block: int,
+    weights_hash: str,
+) -> str:
+    """Compute unique proposal ID"""
+    try:
+        from Crypto.Hash import keccak
+        hasher = keccak.new(digest_bits=256)
+    except ImportError:
+        hasher = hashlib.sha3_256()
+
+    proposer_bytes = bytes.fromhex(proposer.replace('0x', ''))
+    hasher.update(proposer_bytes)
+    hasher.update(subnet_uid.to_bytes(8, 'big'))
+    hasher.update(block.to_bytes(8, 'big'))
+    hasher.update(bytes.fromhex(weights_hash.replace('0x', '')))
+
+    return "0x" + hasher.hexdigest()
+
+
+# =============================================================================
+# Client
+# =============================================================================
+
+class WeightConsensusClient:
+    """
+    Client for multi-validator weight consensus.
+
+    Syncs with on-chain WeightConsensusManager in LuxTensor.
+
+    Example:
+        from sdk.weight_consensus import WeightConsensusClient
+
+        client = WeightConsensusClient()
+
+        # Propose weights
+        weights = [(0, 500), (1, 300), (2, 200)]
+        proposal_id = client.propose_weights(1, weights, signer)
+
+        # Other validator votes
+        client.vote_on_proposal(proposal_id, True, other_signer)
+
+        # Check and finalize
+        result = client.check_consensus(proposal_id)
+        if result.reached:
+            client.finalize_proposal(proposal_id, signer)
+    """
+
+    def __init__(self, rpc_url: str = "http://localhost:8545"):
+        """Initialize client"""
+        from sdk.luxtensor_client import LuxtensorClient
+
+        self.rpc_url = rpc_url
+        self.client = LuxtensorClient(url=rpc_url)
+        self._config = None
+
+    def get_config(self) -> WeightConsensusConfig:
+        """Get consensus configuration from chain"""
+        if self._config:
+            return self._config
+
+        try:
+            result = self.client._call_rpc("weightConsensus_getConfig", [])
+            self._config = WeightConsensusConfig(
+                min_validators=result.get("minValidators", 2),
+                approval_threshold_percent=result.get("approvalThreshold", 67),
+                proposal_timeout=result.get("proposalTimeout", 200),
+                proposal_cooldown=result.get("proposalCooldown", 50),
+            )
+            return self._config
+        except Exception:
+            return WeightConsensusConfig()
+
+    def propose_weights(
+        self,
+        subnet_uid: int,
+        weights: List[Tuple[int, int]],
+        signer: "TransactionSigner",
+    ) -> str:
+        """
+        Create a new weight proposal.
+
+        Args:
+            subnet_uid: Subnet ID
+            weights: List of (uid, weight) tuples
+            signer: Transaction signer with proposer's private key
+
+        Returns:
+            Proposal ID (hex string)
+        """
+        from sdk.luxtensor_pallets import encode_propose_weights
+
+        proposer_address = signer.get_address()
+
+        # Encode transaction
+        encoded = encode_propose_weights(subnet_uid, weights)
+
+        # Get nonce
+        nonce = self.client.get_nonce(proposer_address)
+
+        # Build and sign
+        tx = signer.build_and_sign_transaction(
+            to=encoded.contract_address or proposer_address,
+            value=0,
+            nonce=nonce,
+            gas_price=1_000_000_000,
+            gas_limit=encoded.gas_estimate,
+            data=encoded.data,
+            chain_id=self.client.chain_id,
+        )
+
+        # Submit
+        result = self.client.submit_transaction(tx)
+
+        # Get proposal ID from event/receipt
+        proposal_id = self._extract_proposal_id(result)
+
+        logger.info(f"Created proposal {proposal_id} for subnet {subnet_uid}")
+
+        return proposal_id
+
+    def vote_on_proposal(
+        self,
+        proposal_id: str,
+        approve: bool,
+        signer: "TransactionSigner",
+    ) -> ConsensusResult:
+        """
+        Vote on a weight proposal.
+
+        Args:
+            proposal_id: Proposal ID to vote on
+            approve: True to approve, False to reject
+            signer: Transaction signer with voter's private key
+
+        Returns:
+            ConsensusResult after vote
+        """
+        from sdk.luxtensor_pallets import encode_vote_proposal
+
+        voter_address = signer.get_address()
+
+        # Get proposal to verify
+        proposal = self.get_proposal(proposal_id)
+        if not proposal:
+            raise ValueError(f"Proposal {proposal_id} not found")
+
+        if proposal.status != ProposalStatus.PENDING:
+            raise ValueError(f"Proposal is not pending: {proposal.status}")
+
+        if proposal.has_voted(voter_address):
+            raise ValueError("Already voted on this proposal")
+
+        if proposal.proposer.lower() == voter_address.lower():
+            raise ValueError("Cannot vote on own proposal")
+
+        # Encode transaction
+        encoded = encode_vote_proposal(proposal_id, approve)
+
+        # Get nonce
+        nonce = self.client.get_nonce(voter_address)
+
+        # Build and sign
+        tx = signer.build_and_sign_transaction(
+            to=encoded.contract_address or voter_address,
+            value=0,
+            nonce=nonce,
+            gas_price=1_000_000_000,
+            gas_limit=encoded.gas_estimate,
+            data=encoded.data,
+            chain_id=self.client.chain_id,
+        )
+
+        # Submit
+        result = self.client.submit_transaction(tx)
+
+        logger.info(
+            f"Voted {'approve' if approve else 'reject'} on proposal {proposal_id}"
+        )
+
+        # Return updated consensus status
+        return self.check_consensus(proposal_id)
+
+    def check_consensus(self, proposal_id: str) -> ConsensusResult:
+        """Check if proposal has reached consensus"""
+        try:
+            result = self.client._call_rpc(
+                "weightConsensus_checkConsensus",
+                [proposal_id]
+            )
+
+            return ConsensusResult(
+                reached=result.get("reached", False),
+                approval_count=result.get("approvalCount", 0),
+                rejection_count=result.get("rejectionCount", 0),
+                total_votes=result.get("totalVotes", 0),
+                approval_percentage=result.get("approvalPercentage", 0),
+                threshold=result.get("threshold", 67),
+            )
+        except Exception as e:
+            logger.error(f"Failed to check consensus: {e}")
+            return ConsensusResult(
+                reached=False,
+                approval_count=0,
+                rejection_count=0,
+                total_votes=0,
+                approval_percentage=0,
+                threshold=67,
+            )
+
+    def finalize_proposal(
+        self,
+        proposal_id: str,
+        signer: "TransactionSigner",
+    ) -> List[Tuple[int, int]]:
+        """
+        Finalize an approved proposal.
+
+        Args:
+            proposal_id: Proposal ID to finalize
+            signer: Transaction signer
+
+        Returns:
+            Applied weights
+        """
+        from sdk.luxtensor_pallets import encode_finalize_proposal
+
+        address = signer.get_address()
+
+        # Check proposal is approved
+        proposal = self.get_proposal(proposal_id)
+        if not proposal:
+            raise ValueError(f"Proposal {proposal_id} not found")
+
+        if proposal.status != ProposalStatus.APPROVED:
+            raise ValueError(f"Proposal not approved: {proposal.status}")
+
+        # Encode transaction
+        encoded = encode_finalize_proposal(proposal_id)
+
+        # Get nonce
+        nonce = self.client.get_nonce(address)
+
+        # Build and sign
+        tx = signer.build_and_sign_transaction(
+            to=encoded.contract_address or address,
+            value=0,
+            nonce=nonce,
+            gas_price=1_000_000_000,
+            gas_limit=encoded.gas_estimate,
+            data=encoded.data,
+            chain_id=self.client.chain_id,
+        )
+
+        # Submit
+        self.client.submit_transaction(tx)
+
+        logger.info(f"Finalized proposal {proposal_id}")
+
+        return proposal.weights
+
+    def get_proposal(self, proposal_id: str) -> Optional[WeightProposal]:
+        """Get proposal by ID"""
+        try:
+            result = self.client._call_rpc(
+                "weightConsensus_getProposal",
+                [proposal_id]
+            )
+
+            if not result:
+                return None
+
+            votes = [
+                ProposalVote(
+                    voter=v["voter"],
+                    approve=v["approve"],
+                    block=v["block"],
+                )
+                for v in result.get("votes", [])
+            ]
+
+            return WeightProposal(
+                id=result["id"],
+                proposer=result["proposer"],
+                subnet_uid=result["subnetUid"],
+                weights=[(w["uid"], w["weight"]) for w in result.get("weights", [])],
+                weights_hash=result.get("weightsHash", ""),
+                proposed_at=result["proposedAt"],
+                expires_at=result["expiresAt"],
+                status=ProposalStatus(result["status"]),
+                votes=votes,
+                eligible_voters=result.get("eligibleVoters", 0),
+            )
+        except Exception as e:
+            logger.error(f"Failed to get proposal: {e}")
+            return None
+
+    def get_pending_proposals(self, subnet_uid: int) -> List[WeightProposal]:
+        """Get all pending proposals for subnet"""
+        try:
+            result = self.client._call_rpc(
+                "weightConsensus_getPendingProposals",
+                [subnet_uid]
+            )
+
+            proposals = []
+            for r in result:
+                votes = [
+                    ProposalVote(
+                        voter=v["voter"],
+                        approve=v["approve"],
+                        block=v["block"],
+                    )
+                    for v in r.get("votes", [])
+                ]
+
+                proposals.append(WeightProposal(
+                    id=r["id"],
+                    proposer=r["proposer"],
+                    subnet_uid=subnet_uid,
+                    weights=[(w["uid"], w["weight"]) for w in r.get("weights", [])],
+                    weights_hash=r.get("weightsHash", ""),
+                    proposed_at=r["proposedAt"],
+                    expires_at=r["expiresAt"],
+                    status=ProposalStatus.PENDING,
+                    votes=votes,
+                ))
+
+            return proposals
+        except Exception as e:
+            logger.error(f"Failed to get pending proposals: {e}")
+            return []
+
+    def _extract_proposal_id(self, tx_result) -> str:
+        """Extract proposal ID from transaction result"""
+        # In real implementation, parse from event logs
+        # For now, return from RPC response
+        if hasattr(tx_result, 'events'):
+            for event in tx_result.events:
+                if event.get('event') == 'ProposalCreated':
+                    return event.get('proposal_id', '')
+        return tx_result.tx_hash  # Fallback to tx hash
+
+
+# =============================================================================
+# Helper for Validators
+# =============================================================================
+
+class ValidatorConsensusHelper:
+    """
+    High-level helper for validators to participate in consensus.
+
+    Provides automatic voting and proposal management.
+    """
+
+    def __init__(
+        self,
+        signer: "TransactionSigner",
+        rpc_url: str = "http://localhost:8545",
+        auto_vote: bool = False,
+    ):
+        self.signer = signer
+        self.client = WeightConsensusClient(rpc_url)
+        self.auto_vote = auto_vote
+        self.my_address = signer.get_address()
+
+    def create_proposal(
+        self,
+        subnet_uid: int,
+        weights: List[Tuple[int, int]],
+    ) -> str:
+        """Create a new weight proposal"""
+        return self.client.propose_weights(subnet_uid, weights, self.signer)
+
+    def vote(self, proposal_id: str, approve: bool = True) -> ConsensusResult:
+        """Vote on a proposal"""
+        return self.client.vote_on_proposal(proposal_id, approve, self.signer)
+
+    def auto_vote_pending(
+        self,
+        subnet_uid: int,
+        vote_approve: bool = True,
+    ) -> List[str]:
+        """Vote on all pending proposals that I haven't voted on"""
+        proposals = self.client.get_pending_proposals(subnet_uid)
+        voted = []
+
+        for proposal in proposals:
+            # Skip own proposals
+            if proposal.proposer.lower() == self.my_address.lower():
+                continue
+
+            # Skip already voted
+            if proposal.has_voted(self.my_address):
+                continue
+
+            try:
+                self.vote(proposal.id, vote_approve)
+                voted.append(proposal.id)
+            except Exception as e:
+                logger.warning(f"Failed to vote on {proposal.id}: {e}")
+
+        return voted
+
+    def finalize_approved(self, subnet_uid: int) -> List[str]:
+        """Finalize all approved proposals"""
+        proposals = self.client.get_pending_proposals(subnet_uid)
+        finalized = []
+
+        for proposal in proposals:
+            if proposal.status == ProposalStatus.APPROVED:
+                try:
+                    self.client.finalize_proposal(proposal.id, self.signer)
+                    finalized.append(proposal.id)
+                except Exception as e:
+                    logger.warning(f"Failed to finalize {proposal.id}: {e}")
+
+        return finalized
+
+
+# =============================================================================
+# Module exports
+# =============================================================================
+
+__all__ = [
+    "WeightConsensusClient",
+    "ValidatorConsensusHelper",
+    "WeightConsensusConfig",
+    "WeightProposal",
+    "ProposalVote",
+    "ProposalStatus",
+    "ConsensusResult",
+    "compute_weights_hash",
+    "compute_proposal_id",
+]

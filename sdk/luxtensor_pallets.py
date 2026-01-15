@@ -44,6 +44,12 @@ FUNCTION_SELECTORS = {
     # Weight pallet
     'weight_set': _compute_selector('setWeights(uint256,uint256[],uint256[])'),
     'weight_commit': _compute_selector('commitWeights(uint256,bytes32)'),
+    'weight_reveal': _compute_selector('revealWeights(uint256,uint256[],uint256[],bytes32)'),
+
+    # Weight consensus pallet
+    'weight_propose': _compute_selector('proposeWeights(uint256,uint256[],uint256[])'),
+    'weight_vote': _compute_selector('voteProposal(bytes32,bool)'),
+    'weight_finalize': _compute_selector('finalizeProposal(bytes32)'),
 }
 
 
@@ -56,10 +62,12 @@ class EncodedCall:
         data: Encoded call data (function selector + parameters)
         gas_estimate: Estimated gas for this call
         description: Human-readable description
+        contract_address: Target contract address (optional)
     """
     data: bytes
     gas_estimate: int
     description: str
+    contract_address: Optional[str] = None
 
 
 def encode_stake_add(hotkey: str, amount: int) -> EncodedCall:
@@ -339,6 +347,8 @@ def estimate_gas_for_pallet_call(call_type: str, data_size: int = 0) -> int:
         'subnet_create': 200000,
         'subnet_register': 250000,
         'weight_set': 150000,
+        'weight_commit': 100000,
+        'weight_reveal': 200000,
     }
 
     # Get base gas or use default
@@ -348,3 +358,239 @@ def estimate_gas_for_pallet_call(call_type: str, data_size: int = 0) -> int:
     gas += data_size * 68
 
     return gas
+
+
+# =============================================================================
+# Commit-Reveal Encoding Functions
+# =============================================================================
+
+# Contract address for commit-reveal operations
+COMMIT_REVEAL_CONTRACT = "0x0000000000000000000000000000000000000003"
+
+
+def encode_commit_weights(subnet_uid: int, commit_hash: str) -> EncodedCall:
+    """
+    Encode a commitWeights call for commit-reveal mechanism.
+
+    Args:
+        subnet_uid: Subnet unique identifier (u32)
+        commit_hash: Hash of weights+salt (32 bytes, hex string with 0x prefix)
+
+    Returns:
+        EncodedCall with encoded data and gas estimate
+
+    Example:
+        >>> from sdk.commit_reveal import compute_commit_hash, generate_salt
+        >>> weights = [(0, 500), (1, 300)]
+        >>> salt = generate_salt()
+        >>> commit_hash = compute_commit_hash(weights, salt)
+        >>> call = encode_commit_weights(1, commit_hash)
+    """
+    # Function selector
+    selector = FUNCTION_SELECTORS['weight_commit']
+
+    # Encode subnet UID (u32, 4 bytes little endian)
+    subnet_bytes = struct.pack('<I', subnet_uid)
+
+    # Encode commit hash (32 bytes)
+    hash_str = commit_hash[2:] if commit_hash.startswith('0x') else commit_hash
+    hash_bytes = bytes.fromhex(hash_str)
+    if len(hash_bytes) != 32:
+        raise ValueError(f"Invalid commit hash length: {len(hash_bytes)}, expected 32")
+
+    # Combine
+    data = selector + subnet_bytes + hash_bytes
+
+    return EncodedCall(
+        data=data,
+        gas_estimate=100000,
+        description=f"Commit weights hash for subnet {subnet_uid}",
+        contract_address=COMMIT_REVEAL_CONTRACT,
+    )
+
+
+def encode_reveal_weights(
+    subnet_uid: int,
+    weights: List[tuple],
+    salt: str
+) -> EncodedCall:
+    """
+    Encode a revealWeights call for commit-reveal mechanism.
+
+    Args:
+        subnet_uid: Subnet unique identifier (u32)
+        weights: List of (uid, weight) tuples
+        salt: Salt used for commit (32 bytes, hex string)
+
+    Returns:
+        EncodedCall with encoded data and gas estimate
+
+    Example:
+        >>> weights = [(0, 500), (1, 300)]
+        >>> salt = "abc123..."  # 64 hex chars
+        >>> call = encode_reveal_weights(1, weights, salt)
+    """
+    # Function selector
+    selector = FUNCTION_SELECTORS['weight_reveal']
+
+    # Encode subnet UID (u32, 4 bytes little endian)
+    subnet_bytes = struct.pack('<I', subnet_uid)
+
+    # Encode UIDs array
+    uids = [w[0] for w in weights]
+    weight_values = [w[1] for w in weights]
+
+    uids_length = struct.pack('<I', len(uids))
+    uids_data = b''.join(struct.pack('<I', uid) for uid in uids)
+
+    # Encode weights array
+    weights_length = struct.pack('<I', len(weight_values))
+    weights_data = b''.join(struct.pack('<H', w) for w in weight_values)  # u16
+
+    # Encode salt (32 bytes)
+    salt_str = salt[2:] if salt.startswith('0x') else salt
+    salt_bytes = bytes.fromhex(salt_str)
+    if len(salt_bytes) != 32:
+        raise ValueError(f"Invalid salt length: {len(salt_bytes)}, expected 32")
+
+    # Combine
+    data = (
+        selector +
+        subnet_bytes +
+        uids_length + uids_data +
+        weights_length + weights_data +
+        salt_bytes
+    )
+
+    # Gas estimate scales with number of weights
+    gas_estimate = 200000 + (len(weights) * 5000)
+
+    return EncodedCall(
+        data=data,
+        gas_estimate=gas_estimate,
+        description=f"Reveal {len(weights)} weights for subnet {subnet_uid}",
+        contract_address=COMMIT_REVEAL_CONTRACT,
+    )
+
+
+# =============================================================================
+# Weight Consensus Encoding Functions
+# =============================================================================
+
+# Contract address for weight consensus operations
+WEIGHT_CONSENSUS_CONTRACT = "0x0000000000000000000000000000000000000004"
+
+
+def encode_propose_weights(
+    subnet_uid: int,
+    weights: List[tuple]
+) -> EncodedCall:
+    """
+    Encode a proposeWeights call for multi-validator consensus.
+
+    Args:
+        subnet_uid: Subnet unique identifier (u32)
+        weights: List of (uid, weight) tuples
+
+    Returns:
+        EncodedCall with encoded data and gas estimate
+    """
+    # Function selector
+    selector = FUNCTION_SELECTORS['weight_propose']
+
+    # Encode subnet UID (u32, 4 bytes little endian)
+    subnet_bytes = struct.pack('<I', subnet_uid)
+
+    # Encode UIDs array
+    uids = [w[0] for w in weights]
+    weight_values = [w[1] for w in weights]
+
+    uids_length = struct.pack('<I', len(uids))
+    uids_data = b''.join(struct.pack('<I', uid) for uid in uids)
+
+    # Encode weights array
+    weights_length = struct.pack('<I', len(weight_values))
+    weights_data = b''.join(struct.pack('<I', w) for w in weight_values)
+
+    # Combine
+    data = (
+        selector +
+        subnet_bytes +
+        uids_length + uids_data +
+        weights_length + weights_data
+    )
+
+    gas_estimate = 200000 + (len(weights) * 5000)
+
+    return EncodedCall(
+        data=data,
+        gas_estimate=gas_estimate,
+        description=f"Propose {len(weights)} weights for subnet {subnet_uid}",
+        contract_address=WEIGHT_CONSENSUS_CONTRACT,
+    )
+
+
+def encode_vote_proposal(proposal_id: str, approve: bool) -> EncodedCall:
+    """
+    Encode a voteProposal call.
+
+    Args:
+        proposal_id: Proposal ID (32 bytes, hex string with 0x prefix)
+        approve: True to approve, False to reject
+
+    Returns:
+        EncodedCall with encoded data and gas estimate
+    """
+    # Function selector
+    selector = FUNCTION_SELECTORS['weight_vote']
+
+    # Encode proposal ID (32 bytes)
+    id_str = proposal_id[2:] if proposal_id.startswith('0x') else proposal_id
+    id_bytes = bytes.fromhex(id_str)
+    if len(id_bytes) != 32:
+        raise ValueError(f"Invalid proposal ID length: {len(id_bytes)}, expected 32")
+
+    # Encode approve (1 byte)
+    approve_byte = b'\x01' if approve else b'\x00'
+
+    # Combine
+    data = selector + id_bytes + approve_byte
+
+    return EncodedCall(
+        data=data,
+        gas_estimate=100000,
+        description=f"Vote {'approve' if approve else 'reject'} on proposal",
+        contract_address=WEIGHT_CONSENSUS_CONTRACT,
+    )
+
+
+def encode_finalize_proposal(proposal_id: str) -> EncodedCall:
+    """
+    Encode a finalizeProposal call.
+
+    Args:
+        proposal_id: Proposal ID (32 bytes, hex string with 0x prefix)
+
+    Returns:
+        EncodedCall with encoded data and gas estimate
+    """
+    # Function selector
+    selector = FUNCTION_SELECTORS['weight_finalize']
+
+    # Encode proposal ID (32 bytes)
+    id_str = proposal_id[2:] if proposal_id.startswith('0x') else proposal_id
+    id_bytes = bytes.fromhex(id_str)
+    if len(id_bytes) != 32:
+        raise ValueError(f"Invalid proposal ID length: {len(id_bytes)}, expected 32")
+
+    # Combine
+    data = selector + id_bytes
+
+    return EncodedCall(
+        data=data,
+        gas_estimate=150000,
+        description=f"Finalize proposal and apply weights",
+        contract_address=WEIGHT_CONSENSUS_CONTRACT,
+    )
+
+

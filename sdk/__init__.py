@@ -56,6 +56,14 @@ from .indexer_client import (
     SyncStatus,
 )
 
+# Neuron Checker (registration & activity)
+from .neuron_checker import (
+    NeuronChecker,
+    NeuronRegistrationInfo,
+    NeuronStatus,
+    NeuronType,
+)
+
 # Version
 from .version import __version__
 
@@ -97,6 +105,12 @@ __all__ = [
     "TokenTransfer",
     "StakeEvent",
     "SyncStatus",
+    # Neuron Checker
+    "NeuronChecker",
+    "NeuronRegistrationInfo",
+    "NeuronStatus",
+    "NeuronType",
     # Version
     "__version__",
 ]
+

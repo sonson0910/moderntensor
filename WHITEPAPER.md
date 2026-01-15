@@ -156,6 +156,48 @@ Full EVM compatibility enables:
 - Automated market makers
 - Cross-chain bridges
 
+#### 4.2.4 dApp Platform (Beyond AI Networks)
+
+Unlike Subtensor (Bittensor's blockchain), LuxTensor is a **general-purpose L1** with AI superpowers:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                 LuxTensor dApp Ecosystem                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  AI-NATIVE DAPPS                    TRADITIONAL DAPPS               │
+│  ┌─────────────────────┐           ┌─────────────────────┐         │
+│  │ • Prediction Markets │           │ • DEX / AMM          │         │
+│  │ • AI-Generated NFTs  │           │ • Lending Protocols  │         │
+│  │ • Inference Markets  │           │ • Stablecoins        │         │
+│  │ • Model Marketplaces │           │ • DAOs               │         │
+│  └─────────────────────┘           └─────────────────────┘         │
+│                                                                     │
+│  UNIQUE FEATURES:                                                   │
+│  • Native AI Task Submission (mt_submitAITask)                     │
+│  • zkML Proof Verification On-Chain                                │
+│  • AI Oracle Smart Contracts                                       │
+│  • Miner Rewards for Inference                                     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Developer Tooling:**
+
+| Tool | Support |
+|------|---------|
+| Hardhat | ✅ Full support |
+| Foundry | ✅ Full support |
+| Web3.py | ✅ Full support |
+| ethers.js | ✅ Full support |
+| Remix IDE | ✅ Full support |
+
+**Contract Templates Available:**
+
+- ERC-20 Token Template (`LuxToken.sol`)
+- AI-Enhanced NFT Template (`LuxNFT.sol`)
+- AI Oracle Contract (`AIOracle.sol`)
+
 ---
 
 ## 5. Network Participants

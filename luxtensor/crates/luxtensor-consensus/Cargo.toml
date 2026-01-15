@@ -13,6 +13,7 @@ rand = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
+sha3 = "0.10"
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
