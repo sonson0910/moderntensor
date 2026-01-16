@@ -13,6 +13,8 @@ pub mod node_rpc;
 pub mod eth_rpc;
 pub mod logs;
 pub mod subnet_rpc;
+pub mod helpers;
+pub mod handlers;
 
 pub use broadcaster::{
     TransactionBroadcaster, BroadcastError,
