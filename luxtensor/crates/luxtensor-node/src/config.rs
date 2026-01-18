@@ -39,6 +39,10 @@ pub struct NodeConfig {
 
     /// Validator private key path (if validator)
     pub validator_key_path: Option<PathBuf>,
+
+    /// Unique validator ID for leader election (e.g., "validator-1")
+    #[serde(default)]
+    pub validator_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +58,10 @@ pub struct ConsensusConfig {
 
     /// Maximum number of validators
     pub max_validators: usize,
+
+    /// List of known validators for leader election (in order)
+    #[serde(default)]
+    pub validators: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,12 +139,14 @@ impl Default for Config {
                 data_dir: PathBuf::from("./data"),
                 is_validator: false,
                 validator_key_path: None,
+                validator_id: None,
             },
             consensus: ConsensusConfig {
                 block_time: 3,
                 epoch_length: 100,
                 min_stake: "1000000000000000000".to_string(), // 1 token (10^18)
                 max_validators: 100,
+                validators: vec!["validator-1".to_string(), "validator-2".to_string(), "validator-3".to_string()],
             },
             network: NetworkConfig {
                 listen_addr: "0.0.0.0".to_string(),

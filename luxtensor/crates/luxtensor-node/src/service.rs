@@ -1,17 +1,30 @@
 use crate::config::Config;
 use crate::mempool::Mempool;
 use crate::executor::{TransactionExecutor, calculate_receipts_root};
+use crate::p2p_handler::is_leader_for_slot;
+use futures::FutureExt;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::MerkleTree;
+use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
+
+/// Get current Unix timestamp (seconds since epoch)
+/// Panics only if system time is before Unix epoch (practically impossible)
+#[inline]
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("System time before Unix epoch")
+        .as_secs()
+}
 
 /// Node service that orchestrates all components
 pub struct NodeService {
@@ -27,6 +40,10 @@ pub struct NodeService {
     shutdown_tx: broadcast::Sender<()>,
     tasks: Vec<JoinHandle<Result<()>>>,
     epoch_length: u64,
+    /// Broadcast channel to P2P swarm for sending blocks/txs
+    broadcast_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
+    /// Genesis timestamp for slot calculation
+    genesis_timestamp: u64,
 }
 
 impl NodeService {
@@ -45,9 +62,9 @@ impl NodeService {
 
         // Initialize storage
         info!("📦 Initializing storage...");
-        let storage = Arc::new(BlockchainDB::open(
-            config.storage.db_path.to_str().unwrap(),
-        )?);
+        let db_path_str = config.storage.db_path.to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?;
+        let storage = Arc::new(BlockchainDB::open(db_path_str)?);
         info!("  ✓ Storage initialized at {:?}", config.storage.db_path);
 
         // Initialize state database
@@ -115,10 +132,7 @@ impl NodeService {
         info!("  ✓ Reward executor initialized");
 
         // Initialize token allocation for TGE and vesting
-        let tge_timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let tge_timestamp = current_timestamp();
         let token_allocation = Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)));
         info!("  ✓ Token allocation initialized");
 
@@ -131,6 +145,17 @@ impl NodeService {
 
         // Get epoch length from consensus config
         let epoch_length = config.consensus.epoch_length;
+
+        // Get genesis timestamp from genesis block (for slot calculation)
+        // This ensures all nodes use the same genesis timestamp from the chain
+        let genesis_timestamp = storage.get_block_by_height(0)?
+            .map(|block| block.header.timestamp)
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            });
 
         Ok(Self {
             config,
@@ -145,6 +170,8 @@ impl NodeService {
             shutdown_tx,
             tasks: Vec::new(),
             epoch_length,
+            broadcast_tx: None, // Will be initialized in start()
+            genesis_timestamp,
         })
     }
 
@@ -187,12 +214,97 @@ impl NodeService {
             self.tasks.push(task);
         }
 
-        // Start P2P network
-        info!("🌐 Starting P2P network...");
-        // Note: P2P is currently stubbed. Will be fully implemented in future
-        info!("  ⏳ P2P network configuration prepared");
-        info!("    Listen address: {}:{}", self.config.network.listen_addr, self.config.network.listen_port);
-        info!("    Max peers: {}", self.config.network.max_peers);
+        // Start P2P network with Swarm
+        info!("🌐 Starting P2P Swarm network...");
+        let (p2p_event_tx, mut p2p_event_rx) = mpsc::unbounded_channel::<SwarmP2PEvent>();
+
+        match SwarmP2PNode::new(self.config.network.listen_port, p2p_event_tx).await {
+            Ok((mut swarm_node, command_tx)) => {
+                info!("  ✓ P2P Swarm started");
+                info!("    Listen port: {}", self.config.network.listen_port);
+                info!("    mDNS discovery enabled");
+
+                // Save broadcast_tx for block production
+                self.broadcast_tx = Some(command_tx);
+
+                // Move swarm node into the task - it will run its own event loop
+                // We don't hold a reference because Swarm is not Send-safe
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(async move {
+                        swarm_node.run().await;
+                    });
+                });
+
+                // Start P2P event handler
+                let storage_for_p2p = self.storage.clone();
+                let broadcast_tx_for_sync = self.broadcast_tx.clone();
+                let node_name = self.config.node.name.clone();
+                let event_task = tokio::spawn(async move {
+                    while let Some(event) = p2p_event_rx.recv().await {
+                        match event {
+                            SwarmP2PEvent::NewBlock(block) => {
+                                let height = block.header.height;
+                                // Check if we already have this block
+                                if storage_for_p2p.get_block_by_height(height).ok().flatten().is_some() {
+                                    debug!("Already have block #{}, skipping", height);
+                                    continue;
+                                }
+                                if let Err(e) = storage_for_p2p.store_block(&block) {
+                                    warn!("Failed to store received block: {}", e);
+                                } else {
+                                    info!("📥 Synced block #{} from peer", height);
+                                }
+                            }
+                            SwarmP2PEvent::NewTransaction(_tx) => {
+                                debug!("📥 Received transaction from peer");
+                            }
+                            SwarmP2PEvent::PeerConnected(peer_id) => {
+                                info!("👋 Peer connected: {}", peer_id);
+                                // Request sync when peer connects
+                                let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+                                if let Some(ref tx) = broadcast_tx_for_sync {
+                                    // Request blocks we don't have (up to 100 ahead)
+                                    let _ = tx.send(SwarmCommand::RequestSync {
+                                        from_height: my_height + 1,
+                                        to_height: my_height + 100,
+                                        my_id: node_name.clone(),
+                                    });
+                                    info!("🔄 Requesting sync from height {}", my_height + 1);
+                                }
+                            }
+                            SwarmP2PEvent::PeerDisconnected(peer_id) => {
+                                info!("👋 Peer disconnected: {}", peer_id);
+                            }
+                            SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
+                                info!("🔄 Got sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
+                                // Collect blocks we have in range
+                                let mut blocks_to_send = Vec::new();
+                                for h in from_height..=to_height {
+                                    if let Ok(Some(block)) = storage_for_p2p.get_block_by_height(h) {
+                                        blocks_to_send.push(block);
+                                    }
+                                }
+                                if !blocks_to_send.is_empty() {
+                                    info!("📤 Sending {} blocks to {}", blocks_to_send.len(), requester_id);
+                                    if let Some(ref tx) = broadcast_tx_for_sync {
+                                        let _ = tx.send(SwarmCommand::SendBlocks { blocks: blocks_to_send });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok::<(), anyhow::Error>(())
+                });
+                self.tasks.push(event_task);
+            }
+            Err(e) => {
+                warn!("Failed to start P2P Swarm: {}. Running in standalone mode.", e);
+            }
+        }
 
 
         // Start block production if validator
@@ -209,6 +321,12 @@ impl NodeService {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let evm_state_for_block = evm_state.clone();
 
+            // Leader election params
+            let validator_id = self.config.node.validator_id.clone()
+                .unwrap_or_else(|| self.config.node.name.clone());
+            let validators = self.config.consensus.validators.clone();
+            let genesis_timestamp = self.genesis_timestamp;
+            let broadcast_tx = self.broadcast_tx.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -221,11 +339,19 @@ impl NodeService {
                     epoch_length,
                     shutdown_rx,
                     evm_state_for_block,
+                    validator_id,
+                    validators,
+                    genesis_timestamp,
+                    broadcast_tx,
                 ).await
             });
 
             self.tasks.push(task);
             info!("  ✓ Block production started");
+            if let Some(ref vid) = self.config.node.validator_id {
+                info!("    Validator ID: {}", vid);
+            }
+            info!("    Known validators: {:?}", self.config.consensus.validators);
         }
 
         info!("✅ All services started successfully");
@@ -281,12 +407,39 @@ impl NodeService {
         epoch_length: u64,
         mut shutdown: broadcast::Receiver<()>,
         evm_state: Arc<parking_lot::RwLock<luxtensor_rpc::EvmState>>,
+        validator_id: String,
+        validators: Vec<String>,
+        genesis_timestamp: u64,
+        broadcast_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
+        let mut slot_counter: u64 = 0;
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    // Calculate current slot
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let slot = if now > genesis_timestamp {
+                        (now - genesis_timestamp) / block_time
+                    } else {
+                        slot_counter
+                    };
+                    slot_counter = slot + 1;
+
+                    // Check if we are the leader for this slot
+                    if !validators.is_empty() && !is_leader_for_slot(&validator_id, slot, &validators) {
+                        debug!("⏳ Slot {}: Not our turn (leader: {})",
+                               slot,
+                               validators.get((slot % validators.len() as u64) as usize).unwrap_or(&"unknown".to_string()));
+                        continue;
+                    }
+
+                    info!("🎯 Slot {}: We are the leader! Producing block...", slot);
+
                     // Poll tx_queue from EVM state and add to mempool
                     let pending_txs = evm_state.read().drain_tx_queue();
                     for ready_tx in pending_txs {
@@ -319,11 +472,25 @@ impl NodeService {
                     }
 
                     // Produce a block
-                    if let Err(e) = Self::produce_block(
+                    match Self::produce_block(
                         &consensus, &storage, &state_db, &mempool, &executor,
                         &reward_executor, epoch_length
                     ).await {
-                        error!("Failed to produce block: {}", e);
+                        Ok(block) => {
+                            // Broadcast block to P2P network
+                            if let Some(ref tx) = broadcast_tx {
+                                if let Err(e) = tx.send(SwarmCommand::BroadcastBlock(block.clone())) {
+                                    warn!("Failed to send block to broadcast channel: {}", e);
+                                } else {
+                                    info!("📡 Block #{} broadcasted to network", block.header.height);
+                                }
+                            } else {
+                                info!("📦 Block #{} produced (standalone mode)", block.header.height);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to produce block: {}", e);
+                        }
                     }
                 }
                 _ = shutdown.recv() => {
@@ -345,7 +512,7 @@ impl NodeService {
         executor: &Arc<TransactionExecutor>,
         reward_executor: &Arc<RwLock<RewardExecutor>>,
         epoch_length: u64,
-    ) -> Result<()> {
+    ) -> Result<Block> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
         let new_height = height + 1;
@@ -484,7 +651,7 @@ impl NodeService {
                 epoch_num, result.total_emission, result.participants_rewarded, result.dao_allocation);
         }
 
-        Ok(())
+        Ok(block)
     }
 
     /// Print node status

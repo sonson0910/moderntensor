@@ -206,8 +206,6 @@ impl RpcServer {
         // Register account methods
         self.register_account_methods(&mut io);
 
-        // Register staking methods
-        // self.register_staking_methods(&mut io);
         // Register modular handlers
         register_staking_handlers(&mut io, self.validators.clone());
         register_subnet_handlers(&mut io, self.subnets.clone());
@@ -239,12 +237,46 @@ impl RpcServer {
         let db = self.db.clone();
 
         // eth_blockNumber - Get current block height
+        // Note: Uses direct block lookup like eth_getBlockByNumber to ensure consistency
         io.add_sync_method("eth_blockNumber", move |_params: Params| {
-            let height = db
-                .get_best_height()
+            // Start from 0 and scan forward to find highest block
+            let mut height: u64 = 0;
+
+            // Check if we have genesis block
+            if db.get_block_by_height(0)
                 .map_err(|_| jsonrpc_core::Error::internal_error())?
-                .unwrap_or(0);
-            Ok(Value::String(format!("0x{:x}", height)))
+                .is_none()
+            {
+                return Ok(Value::String("0x0".to_string()));
+            }
+
+            // Linear scan with exponential jump to find approximate max
+            let mut step = 1u64;
+            while db.get_block_by_height(height + step)
+                .map_err(|_| jsonrpc_core::Error::internal_error())?
+                .is_some()
+            {
+                height += step;
+                step *= 2; // Exponential increase for efficiency
+                if step > 1000 { step = 1000; } // Cap to avoid overflow
+            }
+
+            // Binary search to find exact max
+            let mut low = height;
+            let mut high = height + step;
+            while low < high {
+                let mid = low + (high - low + 1) / 2;
+                if db.get_block_by_height(mid)
+                    .map_err(|_| jsonrpc_core::Error::internal_error())?
+                    .is_some()
+                {
+                    low = mid;
+                } else {
+                    high = mid - 1;
+                }
+            }
+
+            Ok(Value::String(format!("0x{:x}", low)))
         });
 
         let db = self.db.clone();

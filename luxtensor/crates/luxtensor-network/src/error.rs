@@ -60,6 +60,9 @@ pub enum NetworkError {
 
     #[error("Deserialization failed: {0}")]
     DeserializationFailed(String),
+
+    #[error("Connection error: {0}")]
+    Connection(String),
 }
 
 pub type Result<T> = std::result::Result<T, NetworkError>;

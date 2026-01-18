@@ -12,10 +12,13 @@ chain_id = 1
 data_dir = "./data"
 
 # Whether this node is a validator
-is_validator = false
+is_validator = true
 
 # Path to validator private key (only if is_validator = true)
 # validator_key_path = "./validator.key"
+
+# Unique validator ID for leader election
+validator_id = "validator-2"
 
 [consensus]
 # Block time in seconds
@@ -29,6 +32,9 @@ min_stake = "1000000000000000000"  # 1 token (as string for u128)
 
 # Maximum number of validators
 max_validators = 100
+
+# Known validators for leader election (round-robin order)
+validators = ["validator-1", "validator-2", "validator-3"]
 
 [network]
 # P2P listening address

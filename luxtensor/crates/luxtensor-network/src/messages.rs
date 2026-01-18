@@ -8,41 +8,48 @@ use serde::{Deserialize, Serialize};
 pub enum NetworkMessage {
     /// New transaction announcement
     NewTransaction(Transaction),
-    
+
     /// New block announcement
     NewBlock(Block),
-    
+
     /// Request block by hash
     GetBlock(Hash),
-    
+
     /// Response with requested block
     Block(Block),
-    
+
     /// Request block headers starting from hash
     GetBlockHeaders {
         start_hash: Hash,
         max_count: u32,
     },
-    
+
     /// Response with block headers
     BlockHeaders(Vec<BlockHeader>),
-    
+
     /// Request blocks by hashes
     GetBlocks(Vec<Hash>),
-    
+
     /// Response with blocks
     Blocks(Vec<Block>),
-    
+
     /// Status message with chain info
     Status {
         best_hash: Hash,
         best_height: u64,
         genesis_hash: Hash,
     },
-    
+
+    /// Sync request - asking for blocks from a range
+    SyncRequest {
+        from_height: u64,
+        to_height: u64,
+        requester_id: String,
+    },
+
     /// Ping message
     Ping,
-    
+
     /// Pong response
     Pong,
 }
@@ -60,6 +67,7 @@ impl NetworkMessage {
             Self::GetBlocks(_) => "GetBlocks",
             Self::Blocks(_) => "Blocks",
             Self::Status { .. } => "Status",
+            Self::SyncRequest { .. } => "SyncRequest",
             Self::Ping => "Ping",
             Self::Pong => "Pong",
         }
@@ -69,6 +77,7 @@ impl NetworkMessage {
 /// Topics for gossipsub
 pub const TOPIC_BLOCKS: &str = "luxtensor/blocks/1.0.0";
 pub const TOPIC_TRANSACTIONS: &str = "luxtensor/transactions/1.0.0";
+pub const TOPIC_SYNC: &str = "luxtensor/sync/1.0.0";
 
 #[cfg(test)]
 mod tests {
@@ -79,7 +88,7 @@ mod tests {
         let msg = NetworkMessage::Ping;
         let serialized = bincode::serialize(&msg).unwrap();
         let deserialized: NetworkMessage = bincode::deserialize(&serialized).unwrap();
-        
+
         match deserialized {
             NetworkMessage::Ping => {},
             _ => panic!("Expected Ping message"),
@@ -93,12 +102,12 @@ mod tests {
             best_height: 100,
             genesis_hash: [0u8; 32],
         };
-        
+
         assert_eq!(msg.message_type(), "Status");
-        
+
         let serialized = bincode::serialize(&msg).unwrap();
         let deserialized: NetworkMessage = bincode::deserialize(&serialized).unwrap();
-        
+
         match deserialized {
             NetworkMessage::Status { best_height, .. } => {
                 assert_eq!(best_height, 100);
@@ -113,10 +122,10 @@ mod tests {
             start_hash: [1u8; 32],
             max_count: 10,
         };
-        
+
         let serialized = bincode::serialize(&msg).unwrap();
         let deserialized: NetworkMessage = bincode::deserialize(&serialized).unwrap();
-        
+
         match deserialized {
             NetworkMessage::GetBlockHeaders { max_count, .. } => {
                 assert_eq!(max_count, 10);

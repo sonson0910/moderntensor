@@ -3,6 +3,7 @@ mod service;
 mod mempool;
 mod executor;
 mod genesis_config;
+mod p2p_handler;
 pub mod root_subnet;
 
 pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};

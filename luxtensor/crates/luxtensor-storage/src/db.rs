@@ -4,6 +4,7 @@ use luxtensor_crypto::Hash;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Column family names
 const CF_BLOCKS: &str = "blocks";
@@ -11,10 +12,16 @@ const CF_HEADERS: &str = "headers";
 const CF_TRANSACTIONS: &str = "transactions";
 const CF_HEIGHT_TO_HASH: &str = "height_to_hash";
 const CF_TX_TO_BLOCK: &str = "tx_to_block";
+const CF_META: &str = "metadata";
+
+/// Metadata keys
+const META_BEST_HEIGHT: &[u8] = b"best_height";
 
 /// Blockchain database using RocksDB
 pub struct BlockchainDB {
     db: Arc<DB>,
+    /// In-memory cache of best block height for fast access
+    best_height: Arc<AtomicU64>,
 }
 
 impl BlockchainDB {
@@ -33,11 +40,32 @@ impl BlockchainDB {
             ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEIGHT_TO_HASH, Options::default()),
             ColumnFamilyDescriptor::new(CF_TX_TO_BLOCK, Options::default()),
+            ColumnFamilyDescriptor::new(CF_META, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;
 
-        Ok(Self { db: Arc::new(db) })
+        // Load best_height from storage into memory
+        let initial_height = if let Some(cf_meta) = db.cf_handle(CF_META) {
+            db.get_cf(cf_meta, META_BEST_HEIGHT)
+                .ok()
+                .flatten()
+                .and_then(|bytes| {
+                    if bytes.len() == 8 {
+                        Some(u64::from_be_bytes(bytes.as_slice().try_into().ok()?))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        Ok(Self {
+            db: Arc::new(db),
+            best_height: Arc::new(AtomicU64::new(initial_height)),
+        })
     }
 
     /// Get the inner DB reference for state database
@@ -89,8 +117,35 @@ impl BlockchainDB {
             batch.put_cf(cf_tx_to_block, tx_hash, block_hash);
         }
 
+        // Update best height if this block is higher (or first block)
+        let cf_meta = self.db.cf_handle(CF_META).ok_or_else(|| {
+            StorageError::DatabaseError("CF_META not found".to_string())
+        })?;
+        let current_best = self.db.get_cf(cf_meta, META_BEST_HEIGHT)?
+            .and_then(|bytes| {
+                if bytes.len() == 8 {
+                    Some(u64::from_be_bytes(bytes.as_slice().try_into().ok()?))
+                } else {
+                    None
+                }
+            });
+
+        // Update if no best height yet OR this block is higher
+        let should_update = match current_best {
+            None => true,  // First block ever
+            Some(current) => height > current,
+        };
+
+        if should_update {
+            batch.put_cf(cf_meta, META_BEST_HEIGHT, height.to_be_bytes());
+        }
+
         // Write batch atomically
         self.db.write(batch)?;
+
+        // Update in-memory best_height atomically
+        // Use fetch_max to ensure we only increase, never decrease
+        self.best_height.fetch_max(height, Ordering::SeqCst);
 
         Ok(())
     }
@@ -177,23 +232,31 @@ impl BlockchainDB {
     }
 
     /// Get the current best block height
+    /// Uses binary search with get_block_by_height for guaranteed accuracy
     pub fn get_best_height(&self) -> Result<Option<u64>> {
-        let cf_height = self.db.cf_handle(CF_HEIGHT_TO_HASH).ok_or_else(|| {
-            StorageError::DatabaseError("CF_HEIGHT_TO_HASH not found".to_string())
-        })?;
+        // Quick cache check - if cache is ahead of 0, use as starting point
+        let cached = self.best_height.load(Ordering::SeqCst);
 
-        // Iterate backwards from u64::MAX to find the highest height
-        let mut iter = self.db.iterator_cf(cf_height, rocksdb::IteratorMode::End);
-        if let Some(Ok((key, _))) = iter.next() {
-            let height = u64::from_be_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| StorageError::DatabaseError("Invalid height key".to_string()))?,
-            );
-            Ok(Some(height))
-        } else {
-            Ok(None)
+        // Linear scan from cached value - most efficient for normal operation
+        // since new blocks are added incrementally
+        let mut height = cached;
+
+        // First check if we have any blocks
+        if self.get_block_by_height(0)?.is_none() {
+            return Ok(None);
         }
+
+        // Scan forward from cached position to find actual best
+        while self.get_block_by_height(height + 1)?.is_some() {
+            height += 1;
+        }
+
+        // Update cache if we found higher blocks
+        if height > cached {
+            self.best_height.store(height, Ordering::SeqCst);
+        }
+
+        Ok(Some(height))
     }
 }
 
