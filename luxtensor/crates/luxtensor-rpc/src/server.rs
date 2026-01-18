@@ -119,6 +119,63 @@ impl RpcServer {
         }
     }
 
+    /// Create a new RPC server with external EVM state and P2P broadcaster
+    /// Use this for production multi-node setup
+    pub fn new_with_evm_and_broadcaster(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        evm_state: Arc<RwLock<EvmState>>,
+        broadcaster: Arc<dyn TransactionBroadcaster>,
+    ) -> Self {
+        let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
+        let metagraph = Arc::new(
+            MetagraphDB::open(&temp_dir).expect("Failed to create MetagraphDB")
+        );
+
+        Self {
+            db,
+            state,
+            validators: Arc::new(RwLock::new(ValidatorSet::new())),
+            metagraph,
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            pending_txs: Arc::new(RwLock::new(HashMap::new())),
+            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            broadcaster,
+            evm_state,
+        }
+    }
+
+    /// Create a new RPC server with external shared pending_txs for unified storage
+    /// Use this when you need P2P handlers to share the same TX pool as RPC
+    pub fn new_with_shared_pending_txs(
+        db: Arc<BlockchainDB>,
+        state: Arc<RwLock<StateDB>>,
+        evm_state: Arc<RwLock<EvmState>>,
+        broadcaster: Arc<dyn TransactionBroadcaster>,
+        pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+    ) -> Self {
+        let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
+        let metagraph = Arc::new(
+            MetagraphDB::open(&temp_dir).expect("Failed to create MetagraphDB")
+        );
+
+        Self {
+            db,
+            state,
+            validators: Arc::new(RwLock::new(ValidatorSet::new())),
+            metagraph,
+            subnets: Arc::new(RwLock::new(HashMap::new())),
+            neurons: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            pending_txs,
+            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            broadcaster,
+            evm_state,
+        }
+    }
+
     /// Create a new RPC server with validator set
     pub fn with_validators(
         db: Arc<BlockchainDB>,
@@ -221,6 +278,93 @@ impl RpcServer {
         // Register Ethereum-compatible methods (eth_*)
         register_eth_methods(&mut io, self.evm_state.clone());
 
+        // 🔧 Override eth_sendTransaction with P2P broadcasting
+        // This ensures transactions are propagated to peers
+        let evm_state_for_tx = self.evm_state.clone();
+        let broadcaster_for_tx = self.broadcaster.clone();
+        let state_for_tx = self.state.clone();
+        let pending_txs_for_tx = self.pending_txs.clone();
+
+        io.add_sync_method("eth_sendTransaction", move |params: Params| {
+            use crate::eth_rpc::{hex_to_address, generate_tx_hash};
+
+            let p: Vec<serde_json::Value> = params.parse()?;
+            let tx_obj = p.get(0).ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing transaction object"))?;
+
+            let from_str = tx_obj.get("from")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing 'from' field"))?;
+
+            let from = hex_to_address(from_str)
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid 'from' address"))?;
+
+            let to = tx_obj.get("to")
+                .and_then(|v| v.as_str())
+                .and_then(hex_to_address);
+
+            let value = tx_obj.get("value")
+                .and_then(|v| v.as_str())
+                .and_then(|s| {
+                    let s = s.strip_prefix("0x").unwrap_or(s);
+                    u128::from_str_radix(s, 16).ok()
+                })
+                .unwrap_or(0);
+
+            let data = tx_obj.get("data")
+                .and_then(|v| v.as_str())
+                .map(|s| {
+                    let s = s.strip_prefix("0x").unwrap_or(s);
+                    hex::decode(s).unwrap_or_default()
+                })
+                .unwrap_or_default();
+
+            let gas = tx_obj.get("gas")
+                .and_then(|v| v.as_str())
+                .and_then(|s| {
+                    let s = s.strip_prefix("0x").unwrap_or(s);
+                    u64::from_str_radix(s, 16).ok()
+                })
+                .unwrap_or(10_000_000);
+
+            // Get nonce from state
+            let nonce = state_for_tx.read().get_nonce(&luxtensor_core::Address::from(from));
+            let tx_hash = generate_tx_hash(&from, nonce);
+
+            // Create luxtensor_core::Transaction for broadcasting
+            let to_addr = to.map(luxtensor_core::Address::from);
+            let core_tx = luxtensor_core::Transaction::new(
+                nonce,
+                luxtensor_core::Address::from(from),
+                to_addr,
+                value,
+                1, // gas_price
+                gas,
+                data.clone(),
+            );
+
+            // Add to pending transactions
+            {
+                let mut pending = pending_txs_for_tx.write();
+                pending.insert(tx_hash, core_tx.clone());
+                info!("📤 Transaction added to mempool: 0x{}", hex::encode(&tx_hash));
+            }
+
+            // 🚀 BROADCAST TO P2P NETWORK
+            if let Err(e) = broadcaster_for_tx.broadcast(&core_tx) {
+                warn!("Failed to broadcast transaction to P2P: {}", e);
+            } else {
+                info!("📡 Transaction broadcasted to P2P network: 0x{}", hex::encode(&tx_hash));
+            }
+
+            // Also update EVM state for compatibility
+            {
+                let mut state_guard = evm_state_for_tx.write();
+                state_guard.increment_nonce(&from);
+            }
+
+            Ok(serde_json::json!(format!("0x{}", hex::encode(tx_hash))))
+        });
+
         // Start HTTP server
         let server = ServerBuilder::new(io)
             .threads(4)
@@ -234,54 +378,46 @@ impl RpcServer {
 
     /// Register blockchain query methods
     fn register_blockchain_methods(&self, io: &mut IoHandler) {
-        let db = self.db.clone();
-
         // eth_blockNumber - Get current block height
-        // Note: Uses direct block lookup like eth_getBlockByNumber to ensure consistency
+        let db_for_block_num = self.db.clone();
         io.add_sync_method("eth_blockNumber", move |_params: Params| {
-            // Start from 0 and scan forward to find highest block
-            let mut height: u64 = 0;
-
-            // Check if we have genesis block
-            if db.get_block_by_height(0)
-                .map_err(|_| jsonrpc_core::Error::internal_error())?
-                .is_none()
-            {
-                return Ok(Value::String("0x0".to_string()));
+            // Check genesis first
+            match db_for_block_num.get_block_by_height(0) {
+                Ok(None) => return Ok(Value::String("0x0".to_string())),
+                Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                Ok(Some(_)) => {}
             }
 
-            // Linear scan with exponential jump to find approximate max
-            let mut step = 1u64;
-            while db.get_block_by_height(height + step)
-                .map_err(|_| jsonrpc_core::Error::internal_error())?
-                .is_some()
-            {
-                height += step;
-                step *= 2; // Exponential increase for efficiency
-                if step > 1000 { step = 1000; } // Cap to avoid overflow
+            // Jump search to find ceiling
+            let mut ceiling: u64 = 1;
+            loop {
+                match db_for_block_num.get_block_by_height(ceiling) {
+                    Ok(Some(_)) => {
+                        ceiling *= 2;
+                        if ceiling > 1_000_000 { break; }
+                    }
+                    Ok(None) => break,
+                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                }
             }
 
-            // Binary search to find exact max
-            let mut low = height;
-            let mut high = height + step;
+            // Binary search for exact height
+            let mut low = ceiling / 2;
+            let mut high = ceiling;
             while low < high {
-                let mid = low + (high - low + 1) / 2;
-                if db.get_block_by_height(mid)
-                    .map_err(|_| jsonrpc_core::Error::internal_error())?
-                    .is_some()
-                {
-                    low = mid;
-                } else {
-                    high = mid - 1;
+                let mid = (low + high + 1) / 2;
+                match db_for_block_num.get_block_by_height(mid) {
+                    Ok(Some(_)) => low = mid,
+                    Ok(None) => high = mid - 1,
+                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
                 }
             }
 
             Ok(Value::String(format!("0x{:x}", low)))
         });
 
-        let db = self.db.clone();
-
         // eth_getBlockByNumber - Get block by number
+        let db_for_get_block = self.db.clone();
         io.add_sync_method("eth_getBlockByNumber", move |params: Params| {
             let parsed: Vec<serde_json::Value> = params.parse()?;
             if parsed.is_empty() {
@@ -294,7 +430,7 @@ impl RpcServer {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            match db.get_block_by_height(height) {
+            match db_for_get_block.get_block_by_height(height) {
                 Ok(Some(block)) => {
                     let rpc_block = RpcBlock::from(block);
                     serde_json::to_value(rpc_block)
@@ -339,8 +475,10 @@ impl RpcServer {
         });
 
         let db = self.db.clone();
+        let pending_txs_query = self.pending_txs.clone();
 
         // eth_getTransactionByHash - Get transaction by hash
+        // Checks pending transactions first, then confirmed transactions in DB
         io.add_sync_method("eth_getTransactionByHash", move |params: Params| {
             let parsed: Vec<String> = params.parse()?;
             if parsed.is_empty() {
@@ -362,6 +500,17 @@ impl RpcServer {
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&hash_bytes);
 
+            // 1. Check pending transactions first (in-memory mempool)
+            {
+                let pending = pending_txs_query.read();
+                if let Some(tx) = pending.get(&hash) {
+                    let rpc_tx = RpcTransaction::from(tx.clone());
+                    return serde_json::to_value(rpc_tx)
+                        .map_err(|_| jsonrpc_core::Error::internal_error());
+                }
+            }
+
+            // 2. Fallback to confirmed transactions in database
             match db.get_transaction(&hash) {
                 Ok(Some(tx)) => {
                     let rpc_tx = RpcTransaction::from(tx);

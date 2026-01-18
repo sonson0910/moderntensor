@@ -312,13 +312,16 @@ impl SwarmP2PNode {
         let data = bincode::serialize(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
-        match self.swarm.behaviour_mut().gossipsub.publish(self.transactions_topic.clone(), data) {
+        // 🔧 WORKAROUND: Use blocks topic instead of transactions topic
+        // Blocks topic has more active mesh connections, transactions topic may not have peers
+        info!("📡 SWARM: Publishing TX to blocks topic (workaround for mesh issue)");
+        match self.swarm.behaviour_mut().gossipsub.publish(self.blocks_topic.clone(), data) {
             Ok(_) => {
-                debug!("📡 Broadcast transaction");
+                info!("📡 SWARM: TX broadcast successful via blocks topic");
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {
-                debug!("No peers to broadcast transaction");
+                warn!("⚠️ SWARM: No peers subscribed to blocks topic - TX NOT propagated!");
                 Ok(())
             }
             Err(e) => {

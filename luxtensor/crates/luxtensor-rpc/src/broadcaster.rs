@@ -5,7 +5,7 @@ use luxtensor_core::Transaction;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Errors that can occur during transaction broadcasting
 #[derive(Debug, Error)]
@@ -87,7 +87,7 @@ impl TransactionBroadcaster for ChannelBroadcaster {
             .send(tx.clone())
             .map_err(|e| BroadcastError::ChannelClosed(e.to_string()))?;
 
-        debug!("{} broadcaster: Sent tx 0x{}", self.name, hex::encode(tx.hash()));
+        info!("📤 {} broadcaster: Sent tx 0x{} to channel", self.name, hex::encode(tx.hash()));
         Ok(())
     }
 

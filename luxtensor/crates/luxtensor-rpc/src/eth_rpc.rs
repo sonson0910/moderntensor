@@ -139,7 +139,7 @@ impl EvmState {
     }
 }
 
-fn hex_to_address(s: &str) -> Option<Address> {
+pub fn hex_to_address(s: &str) -> Option<Address> {
     let s = s.strip_prefix("0x").unwrap_or(s);
     if s.len() != 40 {
         return None;
@@ -158,7 +158,7 @@ fn hash_to_hex(hash: &TxHash) -> String {
     format!("0x{}", hex::encode(hash))
 }
 
-fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
+pub fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
     use std::hash::{Hash as StdHash, Hasher};
     use std::collections::hash_map::DefaultHasher;
 
@@ -207,12 +207,8 @@ pub fn register_eth_methods(
         Ok(json!(format!("0x{:x}", chain_id)))
     });
 
-    // eth_blockNumber
-    let state = evm_state.clone();
-    io.add_sync_method("eth_blockNumber", move |_params: Params| {
-        let block = state.read().block_number;
-        Ok(json!(format!("0x{:x}", block)))
-    });
+    // NOTE: eth_blockNumber is registered in server.rs with proper DB query
+    // The old implementation here used EvmState.block_number which was incorrect
 
     // eth_getBalance
     let state = evm_state.clone();

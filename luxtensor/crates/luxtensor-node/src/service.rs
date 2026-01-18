@@ -184,39 +184,20 @@ impl NodeService {
             luxtensor_rpc::EvmState::new(self.config.node.chain_id as u64)
         ));
 
-        // Start RPC server if enabled
-        if self.config.rpc.enabled {
-            info!("🔌 Starting RPC server...");
+        // ============================================================
+        // Create shared pending_txs for unified TX storage (RPC + P2P)
+        // ============================================================
+        let shared_pending_txs: Arc<parking_lot::RwLock<std::collections::HashMap<luxtensor_core::Hash, Transaction>>> =
+            Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
 
-            // For production, configure P2P and WebSocket broadcasters here
-            // For now, use NoOp broadcaster (transactions stay in mempool only)
-            let rpc_server = RpcServer::new_for_testing_with_evm(
-                self.storage.clone(),
-                self.state_db.clone(),
-                evm_state.clone(),
-            );
-
-            let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
-
-            let task = tokio::spawn(async move {
-                info!("  ✓ RPC server listening on {}", addr);
-                match rpc_server.start(&addr) {
-                    Ok(_server) => {
-                        info!("RPC server started successfully");
-                        // Keep server running
-                        tokio::signal::ctrl_c().await.ok();
-                        Ok(())
-                    }
-                    Err(e) => Err(e.into()),
-                }
-            });
-
-            self.tasks.push(task);
-        }
-
-        // Start P2P network with Swarm
+        // ============================================================
+        // PHASE 1: Start P2P Swarm FIRST (to get command channel)
+        // ============================================================
         info!("🌐 Starting P2P Swarm network...");
         let (p2p_event_tx, mut p2p_event_rx) = mpsc::unbounded_channel::<SwarmP2PEvent>();
+
+        // Channel for RPC to send transactions to P2P layer
+        let (tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::unbounded_channel::<Transaction>();
 
         match SwarmP2PNode::new(self.config.network.listen_port, p2p_event_tx).await {
             Ok((mut swarm_node, command_tx)) => {
@@ -225,10 +206,12 @@ impl NodeService {
                 info!("    mDNS discovery enabled");
 
                 // Save broadcast_tx for block production
-                self.broadcast_tx = Some(command_tx);
+                self.broadcast_tx = Some(command_tx.clone());
+
+                // Clone for transaction broadcasting task
+                let command_tx_for_rpc = command_tx.clone();
 
                 // Move swarm node into the task - it will run its own event loop
-                // We don't hold a reference because Swarm is not Send-safe
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
@@ -239,10 +222,19 @@ impl NodeService {
                     });
                 });
 
+                // Start transaction relay task (RPC → P2P)
+                tokio::spawn(async move {
+                    while let Some(tx) = tx_broadcast_rx.recv().await {
+                        info!("📡 TX RELAY: Received TX, forwarding to P2P swarm: 0x{}", hex::encode(tx.hash()));
+                        let _ = command_tx_for_rpc.send(SwarmCommand::BroadcastTransaction(tx));
+                    }
+                });
+
                 // Start P2P event handler
                 let storage_for_p2p = self.storage.clone();
                 let broadcast_tx_for_sync = self.broadcast_tx.clone();
                 let node_name = self.config.node.name.clone();
+                let shared_pending_txs_for_p2p = shared_pending_txs.clone(); // Shared TX storage
                 let event_task = tokio::spawn(async move {
                     while let Some(event) = p2p_event_rx.recv().await {
                         match event {
@@ -259,8 +251,14 @@ impl NodeService {
                                     info!("📥 Synced block #{} from peer", height);
                                 }
                             }
-                            SwarmP2PEvent::NewTransaction(_tx) => {
-                                debug!("📥 Received transaction from peer");
+                            SwarmP2PEvent::NewTransaction(tx) => {
+                                // 🚀 Add received TX to shared pending_txs for RPC query
+                                let tx_hash = tx.hash();
+                                let mut pending = shared_pending_txs_for_p2p.write();
+                                if !pending.contains_key(&tx_hash) {
+                                    pending.insert(tx_hash, tx);
+                                    info!("📥 Added transaction from peer to shared pool");
+                                }
                             }
                             SwarmP2PEvent::PeerConnected(peer_id) => {
                                 info!("👋 Peer connected: {}", peer_id);
@@ -304,6 +302,44 @@ impl NodeService {
             Err(e) => {
                 warn!("Failed to start P2P Swarm: {}. Running in standalone mode.", e);
             }
+        }
+
+        // ============================================================
+        // PHASE 2: Start RPC server WITH P2P broadcaster
+        // ============================================================
+        if self.config.rpc.enabled {
+            info!("🔌 Starting RPC server with P2P broadcaster...");
+
+            // Create ChannelBroadcaster connected to P2P transaction relay
+            let broadcaster: Arc<dyn luxtensor_rpc::TransactionBroadcaster> = Arc::new(
+                luxtensor_rpc::ChannelBroadcaster::for_p2p(tx_broadcast_tx)
+            );
+
+            // Use shared pending_txs for unified TX storage between RPC and P2P
+            let rpc_server = RpcServer::new_with_shared_pending_txs(
+                self.storage.clone(),
+                self.state_db.clone(),
+                evm_state.clone(),
+                broadcaster,
+                shared_pending_txs.clone(),
+            );
+
+            let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
+
+            let task = tokio::spawn(async move {
+                info!("  ✓ RPC server listening on {}", addr);
+                match rpc_server.start(&addr) {
+                    Ok(_server) => {
+                        info!("RPC server started successfully");
+                        // Keep server running
+                        tokio::signal::ctrl_c().await.ok();
+                        Ok(())
+                    }
+                    Err(e) => Err(e.into()),
+                }
+            });
+
+            self.tasks.push(task);
         }
 
 

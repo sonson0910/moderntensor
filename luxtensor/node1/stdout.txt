@@ -1,0 +1,119 @@
+
+╔═══════════════════════════════════════════════╗
+║                                               ║
+║          🦀 LuxTensor Node v0.4.0           ║
+║                                               ║
+║      High-Performance Layer 1 Blockchain     ║
+║                                               ║
+╚═══════════════════════════════════════════════╝
+
+[2m2026-01-18T15:31:11.320473Z[0m [32m INFO[0m 🦀 Initializing LuxTensor Node v0.4.0
+[2m2026-01-18T15:31:11.320999Z[0m [32m INFO[0m Node name: node-1
+[2m2026-01-18T15:31:11.321472Z[0m [32m INFO[0m Chain ID: 1
+[2m2026-01-18T15:31:11.321856Z[0m [32m INFO[0m 📦 Initializing storage...
+[2m2026-01-18T15:31:11.492630Z[0m [32m INFO[0m   ✓ Storage initialized at "./data/db"
+[2m2026-01-18T15:31:11.492819Z[0m [32m INFO[0m 💾 Initializing state database...
+[2m2026-01-18T15:31:11.492895Z[0m [32m INFO[0m   ✓ State database initialized
+[2m2026-01-18T15:31:11.492945Z[0m [32m INFO[0m ⚡ Initializing transaction executor...
+[2m2026-01-18T15:31:11.493026Z[0m [32m INFO[0m   ✓ Transaction executor initialized
+[2m2026-01-18T15:31:11.493087Z[0m [32m INFO[0m ⚖️  Initializing consensus...
+[2m2026-01-18T15:31:11.493139Z[0m [32m INFO[0m   ✓ PoS consensus initialized
+[2m2026-01-18T15:31:11.493271Z[0m [32m INFO[0m     - Min stake: 1000000000000000000
+[2m2026-01-18T15:31:11.493383Z[0m [32m INFO[0m     - Max validators: 100
+[2m2026-01-18T15:31:11.493439Z[0m [32m INFO[0m     - Epoch length: 100 blocks
+[2m2026-01-18T15:31:11.493500Z[0m [32m INFO[0m 📝 Initializing transaction mempool...
+[2m2026-01-18T15:31:11.493546Z[0m [32m INFO[0m   ✓ Mempool initialized (max size: 10000)
+[2m2026-01-18T15:31:11.493600Z[0m [32m INFO[0m 🌱 Creating genesis block...
+[2m2026-01-18T15:31:11.493794Z[0m [32m INFO[0m   ✓ Genesis block created: [11, 151, 5, 37, 33, 9, 42, 84, 110, 15, 75, 107, 220, 39, 176, 203, 162, 107, 83, 164, 223, 149, 7, 127, 234, 155, 115, 146, 94, 239, 177, 235]
+[2m2026-01-18T15:31:11.493875Z[0m [32m INFO[0m   ✓ 3 genesis accounts initialized with 10000 ETH each
+[2m2026-01-18T15:31:11.493961Z[0m [32m INFO[0m   ✓ Reward executor initialized
+[2m2026-01-18T15:31:11.494007Z[0m [32m INFO[0m   ✓ Token allocation initialized
+[2m2026-01-18T15:31:11.494044Z[0m [32m INFO[0m   ✓ Node registry initialized
+[2m2026-01-18T15:31:11.494107Z[0m [32m INFO[0m 🚀 Starting node services...
+[2m2026-01-18T15:31:11.494157Z[0m [32m INFO[0m 🔌 Starting RPC server...
+[2m2026-01-18T15:31:11.617431Z[0m [32m INFO[0m 🌐 Starting P2P Swarm network...
+[2m2026-01-18T15:31:11.617454Z[0m [32m INFO[0m   ✓ RPC server listening on 127.0.0.1:8545
+[2m2026-01-18T15:31:11.618083Z[0m [33m WARN[0m Multi-threaded server is not available on Windows. Falling back to single thread.
+[2m2026-01-18T15:31:11.618092Z[0m [32m INFO[0m 🔗 Local Peer ID: 12D3KooWMjBuGSCtPWsBiEukazMhbj2gnUzsibSx89vjRAe5dvWa
+[2m2026-01-18T15:31:11.619934Z[0m [32m INFO[0m [3mlocal_peer_id[0m[2m=[0m12D3KooWMjBuGSCtPWsBiEukazMhbj2gnUzsibSx89vjRAe5dvWa
+[2m2026-01-18T15:31:11.620441Z[0m [32m INFO[0m 🌐 Listening on /ip4/0.0.0.0/tcp/30303
+[2m2026-01-18T15:31:11.620741Z[0m [32m INFO[0m 📡 Subscribed to topics: blocks, transactions, sync
+[2m2026-01-18T15:31:11.620814Z[0m [32m INFO[0m   ✓ P2P Swarm started
+[2m2026-01-18T15:31:11.620924Z[0m [32m INFO[0m     Listen port: 30303
+[2m2026-01-18T15:31:11.621300Z[0m [32m INFO[0m     mDNS discovery enabled
+[2m2026-01-18T15:31:11.621432Z[0m [32m INFO[0m 🔨 Starting block production...
+[2m2026-01-18T15:31:11.621538Z[0m [32m INFO[0m   ✓ Block production started
+[2m2026-01-18T15:31:11.621779Z[0m [32m INFO[0m     Validator ID: validator-1
+[2m2026-01-18T15:31:11.621830Z[0m [32m INFO[0m RPC server started successfully
+[2m2026-01-18T15:31:11.621829Z[0m [32m INFO[0m     Known validators: ["validator-1", "validator-2", "validator-3"]
+[2m2026-01-18T15:31:11.621554Z[0m [32m INFO[0m 🚀 P2P Swarm event loop started
+[2m2026-01-18T15:31:11.622031Z[0m [32m INFO[0m ✅ All services started successfully
+[2m2026-01-18T15:31:11.622138Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.622181Z[0m [32m INFO[0m ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2m2026-01-18T15:31:11.622221Z[0m [32m INFO[0m   📊 LuxTensor Node Status
+[2m2026-01-18T15:31:11.622260Z[0m [32m INFO[0m ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2m2026-01-18T15:31:11.622298Z[0m [32m INFO[0m   Name:         node-1
+[2m2026-01-18T15:31:11.622337Z[0m [32m INFO[0m   Chain ID:     1
+[2m2026-01-18T15:31:11.622376Z[0m [32m INFO[0m   Validator:    true
+[2m2026-01-18T15:31:11.622414Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.622462Z[0m [32m INFO[0m   🌐 Network
+[2m2026-01-18T15:31:11.622502Z[0m [32m INFO[0m     Address:    0.0.0.0:30303
+[2m2026-01-18T15:31:11.622541Z[0m [32m INFO[0m     Max Peers:  50
+[2m2026-01-18T15:31:11.622583Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.622621Z[0m [32m INFO[0m   🔌 RPC
+[2m2026-01-18T15:31:11.622679Z[0m [32m INFO[0m     Enabled:    Yes
+[2m2026-01-18T15:31:11.622775Z[0m [32m INFO[0m     Address:    127.0.0.1:8545
+[2m2026-01-18T15:31:11.622872Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.622927Z[0m [32m INFO[0m   💾 Storage
+[2m2026-01-18T15:31:11.622992Z[0m [32m INFO[0m     Path:       "./data/db"
+[2m2026-01-18T15:31:11.623063Z[0m [32m INFO[0m     Cache:      256 MB
+[2m2026-01-18T15:31:11.623119Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.623161Z[0m [32m INFO[0m   ⚖️  Consensus
+[2m2026-01-18T15:31:11.623200Z[0m [32m INFO[0m     Type:       Proof of Stake
+[2m2026-01-18T15:31:11.623239Z[0m [32m INFO[0m     Block Time: 3 seconds
+[2m2026-01-18T15:31:11.623285Z[0m [32m INFO[0m     Epoch:      100 blocks
+[2m2026-01-18T15:31:11.623339Z[0m [32m INFO[0m ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2m2026-01-18T15:31:11.623381Z[0m [32m INFO[0m 
+[2m2026-01-18T15:31:11.623430Z[0m [32m INFO[0m Node is running. Press Ctrl+C to shutdown.
+[2m2026-01-18T15:31:11.625013Z[0m [32m INFO[0m creating instance on iface address [3maddress[0m[2m=[0m192.168.1.17
+[2m2026-01-18T15:31:11.626148Z[0m [32m INFO[0m 🎧 Listening on /ip4/192.168.1.17/tcp/30303
+[2m2026-01-18T15:31:11.626340Z[0m [32m INFO[0m 🎧 Listening on /ip4/127.0.0.1/tcp/30303
+[2m2026-01-18T15:31:14.625074Z[0m [32m INFO[0m 🎯 Slot 589583424: We are the leader! Producing block...
+[2m2026-01-18T15:31:14.627144Z[0m [32m INFO[0m 📦 Produced block #1 with 0 transactions, 0 gas used, hash [165, 31, 212, 159, 249, 79, 162, 33, 27, 38, 94, 177, 202, 247, 178, 151, 144, 181, 254, 149, 54, 179, 159, 54, 52, 156, 123, 52, 37, 103, 43, 239]
+[2m2026-01-18T15:31:14.627248Z[0m [32m INFO[0m 📡 Block #1 broadcasted to network
+[2m2026-01-18T15:31:23.636067Z[0m [32m INFO[0m 🎯 Slot 589583427: We are the leader! Producing block...
+[2m2026-01-18T15:31:23.638643Z[0m [32m INFO[0m 📦 Produced block #2 with 0 transactions, 0 gas used, hash [76, 155, 26, 113, 215, 185, 102, 186, 19, 252, 125, 165, 101, 161, 231, 36, 128, 16, 172, 121, 169, 74, 57, 246, 157, 127, 125, 12, 154, 135, 30, 167]
+[2m2026-01-18T15:31:23.638937Z[0m [32m INFO[0m 📡 Block #2 broadcasted to network
+[2m2026-01-18T15:31:32.629497Z[0m [32m INFO[0m 🎯 Slot 589583430: We are the leader! Producing block...
+[2m2026-01-18T15:31:32.631560Z[0m [32m INFO[0m 📦 Produced block #3 with 0 transactions, 0 gas used, hash [224, 91, 55, 246, 95, 43, 36, 37, 242, 30, 94, 107, 174, 160, 54, 116, 8, 172, 176, 137, 35, 154, 130, 102, 183, 44, 84, 211, 44, 13, 183, 94]
+[2m2026-01-18T15:31:32.631680Z[0m [32m INFO[0m 📡 Block #3 broadcasted to network
+[2m2026-01-18T15:31:41.623478Z[0m [32m INFO[0m 🎯 Slot 589583433: We are the leader! Producing block...
+[2m2026-01-18T15:31:41.626288Z[0m [32m INFO[0m 📦 Produced block #4 with 0 transactions, 0 gas used, hash [221, 175, 205, 230, 169, 12, 147, 88, 227, 79, 137, 42, 1, 97, 85, 161, 11, 135, 177, 54, 102, 64, 43, 220, 159, 219, 38, 136, 110, 68, 149, 128]
+[2m2026-01-18T15:31:41.626641Z[0m [32m INFO[0m 📡 Block #4 broadcasted to network
+[2m2026-01-18T15:31:50.623785Z[0m [32m INFO[0m 🎯 Slot 589583436: We are the leader! Producing block...
+[2m2026-01-18T15:31:50.625917Z[0m [32m INFO[0m 📦 Produced block #5 with 0 transactions, 0 gas used, hash [101, 86, 124, 218, 158, 124, 12, 140, 145, 69, 93, 130, 142, 231, 232, 235, 45, 238, 130, 102, 126, 240, 101, 102, 16, 68, 17, 255, 179, 134, 162, 234]
+[2m2026-01-18T15:31:50.626041Z[0m [32m INFO[0m 📡 Block #5 broadcasted to network
+[2m2026-01-18T15:31:59.635673Z[0m [32m INFO[0m 🎯 Slot 589583439: We are the leader! Producing block...
+[2m2026-01-18T15:31:59.637831Z[0m [32m INFO[0m 📦 Produced block #6 with 0 transactions, 0 gas used, hash [204, 50, 243, 213, 219, 3, 57, 67, 190, 143, 7, 171, 72, 90, 68, 51, 140, 64, 48, 207, 206, 79, 3, 54, 191, 173, 84, 144, 77, 129, 177, 1]
+[2m2026-01-18T15:31:59.637912Z[0m [32m INFO[0m 📡 Block #6 broadcasted to network
+[2m2026-01-18T15:32:08.627796Z[0m [32m INFO[0m 🎯 Slot 589583442: We are the leader! Producing block...
+[2m2026-01-18T15:32:08.628046Z[0m [32m INFO[0m 📦 Produced block #7 with 0 transactions, 0 gas used, hash [19, 59, 153, 115, 134, 48, 168, 132, 169, 239, 114, 155, 53, 212, 45, 57, 244, 230, 193, 6, 52, 244, 129, 131, 37, 165, 133, 147, 14, 34, 238, 41]
+[2m2026-01-18T15:32:08.628230Z[0m [32m INFO[0m 📡 Block #7 broadcasted to network
+[2m2026-01-18T15:32:17.627873Z[0m [32m INFO[0m 🎯 Slot 589583445: We are the leader! Producing block...
+[2m2026-01-18T15:32:17.628598Z[0m [32m INFO[0m 📦 Produced block #8 with 0 transactions, 0 gas used, hash [251, 15, 74, 111, 86, 58, 240, 235, 66, 209, 226, 68, 30, 19, 167, 116, 75, 46, 211, 142, 172, 33, 0, 229, 160, 158, 68, 29, 255, 88, 179, 210]
+[2m2026-01-18T15:32:17.628699Z[0m [32m INFO[0m 📡 Block #8 broadcasted to network
+[2m2026-01-18T15:32:26.633282Z[0m [32m INFO[0m 🎯 Slot 589583448: We are the leader! Producing block...
+[2m2026-01-18T15:32:26.633923Z[0m [32m INFO[0m 📦 Produced block #9 with 0 transactions, 0 gas used, hash [115, 129, 175, 132, 131, 59, 145, 12, 135, 70, 66, 145, 60, 20, 62, 203, 79, 104, 206, 222, 162, 206, 76, 194, 192, 187, 61, 70, 162, 184, 145, 68]
+[2m2026-01-18T15:32:26.634012Z[0m [32m INFO[0m 📡 Block #9 broadcasted to network
+[2m2026-01-18T15:32:35.624050Z[0m [32m INFO[0m 🎯 Slot 589583451: We are the leader! Producing block...
+[2m2026-01-18T15:32:35.627005Z[0m [32m INFO[0m 📦 Produced block #10 with 0 transactions, 0 gas used, hash [65, 109, 3, 89, 182, 27, 193, 76, 6, 125, 159, 131, 17, 243, 242, 72, 207, 153, 224, 122, 122, 43, 219, 219, 50, 221, 190, 200, 164, 77, 93, 119]
+[2m2026-01-18T15:32:35.627445Z[0m [32m INFO[0m 📡 Block #10 broadcasted to network
+[2m2026-01-18T15:32:44.634884Z[0m [32m INFO[0m 🎯 Slot 589583454: We are the leader! Producing block...
+[2m2026-01-18T15:32:44.635724Z[0m [32m INFO[0m 📦 Produced block #11 with 0 transactions, 0 gas used, hash [232, 165, 219, 94, 122, 242, 253, 52, 4, 247, 182, 192, 111, 70, 179, 122, 43, 172, 203, 100, 222, 155, 182, 13, 170, 88, 23, 26, 184, 42, 96, 242]
+[2m2026-01-18T15:32:44.635907Z[0m [32m INFO[0m 📡 Block #11 broadcasted to network
+[2m2026-01-18T15:32:53.627471Z[0m [32m INFO[0m 🎯 Slot 589583457: We are the leader! Producing block...
+[2m2026-01-18T15:32:53.629461Z[0m [32m INFO[0m 📦 Produced block #12 with 0 transactions, 0 gas used, hash [104, 124, 107, 89, 209, 70, 47, 106, 153, 251, 187, 49, 202, 171, 222, 215, 107, 128, 184, 19, 112, 138, 162, 63, 79, 64, 31, 236, 188, 64, 14, 152]
+[2m2026-01-18T15:32:53.630082Z[0m [32m INFO[0m 📡 Block #12 broadcasted to network
+[2m2026-01-18T15:33:02.627606Z[0m [32m INFO[0m 🎯 Slot 589583460: We are the leader! Producing block...
+[2m2026-01-18T15:33:02.628232Z[0m [32m INFO[0m 📦 Produced block #13 with 0 transactions, 0 gas used, hash [101, 240, 221, 78, 210, 198, 107, 21, 230, 155, 86, 28, 208, 239, 88, 147, 47, 10, 172, 232, 194, 103, 21, 175, 75, 126, 35, 238, 41, 214, 192, 116]
+[2m2026-01-18T15:33:02.628355Z[0m [32m INFO[0m 📡 Block #13 broadcasted to network
