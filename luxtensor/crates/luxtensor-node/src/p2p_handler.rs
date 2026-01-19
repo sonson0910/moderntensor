@@ -9,12 +9,14 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use crate::mempool::Mempool;
 
 /// Handle P2P events
 pub async fn p2p_event_loop(
     mut event_rx: mpsc::UnboundedReceiver<P2PEvent>,
     storage: Arc<BlockchainDB>,
     state_db: Arc<RwLock<StateDB>>,
+    mempool: Arc<Mempool>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<()> {
     info!("🌐 P2P event loop started");
@@ -22,7 +24,7 @@ pub async fn p2p_event_loop(
     loop {
         tokio::select! {
             Some(event) = event_rx.recv() => {
-                if let Err(e) = handle_p2p_event(event, &storage, &state_db).await {
+                if let Err(e) = handle_p2p_event(event, &storage, &state_db, &mempool).await {
                     error!("Error handling P2P event: {}", e);
                 }
             }
@@ -41,13 +43,14 @@ async fn handle_p2p_event(
     event: P2PEvent,
     storage: &Arc<BlockchainDB>,
     _state_db: &Arc<RwLock<StateDB>>,
+    mempool: &Arc<Mempool>,
 ) -> Result<()> {
     match event {
         P2PEvent::NewBlock(block) => {
             handle_new_block(block, storage).await?;
         }
         P2PEvent::NewTransaction(tx) => {
-            handle_new_transaction(tx).await?;
+            handle_new_transaction(tx, mempool).await?;
         }
         P2PEvent::PeerConnected(peer_id) => {
             info!("👋 Peer connected: {}", peer_id);
@@ -109,9 +112,26 @@ async fn handle_new_block(block: Block, storage: &Arc<BlockchainDB>) -> Result<(
 }
 
 /// Handle incoming transaction from P2P network
-async fn handle_new_transaction(tx: Transaction) -> Result<()> {
-    debug!("📥 Received transaction {:?} from P2P", tx.hash());
-    // TODO: Add to mempool if valid
+async fn handle_new_transaction(tx: Transaction, mempool: &Arc<Mempool>) -> Result<()> {
+    let tx_hash = tx.hash();
+    debug!("📥 Received transaction 0x{} from P2P", hex::encode(&tx_hash[..8]));
+
+    // Validate signature
+    if let Err(e) = tx.verify_signature() {
+        warn!("Invalid transaction signature from P2P: {}", e);
+        return Ok(());
+    }
+
+    // Add to mempool
+    match mempool.add_transaction(tx) {
+        Ok(_) => {
+            info!("📬 Added P2P transaction 0x{} to mempool", hex::encode(&tx_hash[..8]));
+        }
+        Err(e) => {
+            debug!("Could not add P2P transaction to mempool: {}", e);
+        }
+    }
+
     Ok(())
 }
 

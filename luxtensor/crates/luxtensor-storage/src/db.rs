@@ -400,6 +400,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = BlockchainDB::open(temp_dir.path()).unwrap();
 
+        // Must store block 0 first (genesis) for get_best_height to work
+        db.store_block(&create_test_block(0)).unwrap();
         db.store_block(&create_test_block(1)).unwrap();
         db.store_block(&create_test_block(5)).unwrap();
         db.store_block(&create_test_block(3)).unwrap();

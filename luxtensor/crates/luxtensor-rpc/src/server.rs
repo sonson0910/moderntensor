@@ -3,7 +3,7 @@ use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_core::{StateDB, Transaction, Hash};
 use luxtensor_storage::{BlockchainDB, MetagraphDB};
-use luxtensor_consensus::ValidatorSet;
+use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -50,6 +50,7 @@ pub struct RpcServer {
     ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
     broadcaster: Arc<dyn TransactionBroadcaster>,
     evm_state: Arc<RwLock<EvmState>>,
+    commit_reveal: Arc<RwLock<CommitRevealManager>>,
 }
 
 impl RpcServer {
@@ -76,6 +77,7 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             evm_state: Arc::new(RwLock::new(EvmState::new(1337))), // Chain ID 1337
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
         }
     }
 
@@ -144,6 +146,7 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             evm_state,
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
         }
     }
 
@@ -173,6 +176,7 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             evm_state,
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
         }
     }
 
@@ -199,6 +203,7 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             evm_state: Arc::new(RwLock::new(EvmState::new(1337))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
         }
     }
 
@@ -328,7 +333,6 @@ impl RpcServer {
 
             // Get nonce from state
             let nonce = state_for_tx.read().get_nonce(&luxtensor_core::Address::from(from));
-            let tx_hash = generate_tx_hash(&from, nonce);
 
             // Create luxtensor_core::Transaction for broadcasting
             let to_addr = to.map(luxtensor_core::Address::from);
@@ -341,6 +345,10 @@ impl RpcServer {
                 gas,
                 data.clone(),
             );
+
+            // 🔧 FIX: Use deterministic hash from Transaction::hash() for consistency
+            // This ensures the same hash is used across all nodes
+            let tx_hash = core_tx.hash();
 
             // Add to pending transactions
             {
@@ -1206,14 +1214,44 @@ impl RpcServer {
             Ok(Value::Object(stakes))
         });
 
-        // query_weightCommits - Get weight commits
+        // query_weightCommits - Get weight commits for a subnet
+        let commit_reveal = self.commit_reveal.clone();
         io.add_sync_method("query_weightCommits", move |params: Params| {
             let parsed: Vec<u64> = params.parse()?;
             if parsed.is_empty() {
                 return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
             }
-            // Return empty for now - weight commits not implemented
-            Ok(Value::Object(serde_json::Map::new()))
+            let subnet_id = parsed[0];
+
+            // Get commits from CommitRevealManager
+            let commits = commit_reveal.read().get_pending_commits(subnet_id);
+            let epoch_state = commit_reveal.read().get_epoch_state(subnet_id);
+
+            let mut result = serde_json::Map::new();
+
+            // Add epoch info
+            if let Some(state) = epoch_state {
+                result.insert("epochNumber".into(), serde_json::json!(state.epoch_number));
+                result.insert("phase".into(), serde_json::json!(format!("{:?}", state.phase)));
+                result.insert("commitStartBlock".into(), serde_json::json!(state.commit_start_block));
+                result.insert("revealStartBlock".into(), serde_json::json!(state.reveal_start_block));
+                result.insert("finalizeBlock".into(), serde_json::json!(state.finalize_block));
+            }
+
+            // Add commits
+            let commit_list: Vec<serde_json::Value> = commits.iter().map(|c| {
+                serde_json::json!({
+                    "validator": format!("0x{}", hex::encode(c.validator.as_bytes())),
+                    "commitHash": format!("0x{}", hex::encode(&c.commit_hash)),
+                    "committedAt": c.committed_at,
+                    "revealed": c.revealed
+                })
+            }).collect();
+
+            result.insert("commits".into(), serde_json::json!(commit_list));
+            result.insert("commitCount".into(), serde_json::json!(commits.len()));
+
+            Ok(Value::Object(result))
         });
 
         // query_weightsVersion - Get weights version
@@ -1413,7 +1451,7 @@ impl RpcServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use luxtensor_core::{Block, BlockHeader, Transaction};
+    use luxtensor_core::{Block, BlockHeader, Transaction, Address};
     use luxtensor_storage::BlockchainDB;
     use std::sync::Arc;
     use tempfile::TempDir;

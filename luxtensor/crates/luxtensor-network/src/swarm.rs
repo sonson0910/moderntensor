@@ -87,6 +87,12 @@ impl SwarmP2PNode {
             .heartbeat_interval(Duration::from_secs(1))
             .validation_mode(ValidationMode::Strict)
             .message_id_fn(message_id_fn)
+            // 🔧 FIX: Lower mesh thresholds for small networks (2-5 nodes)
+            .mesh_n_low(1)           // Minimum peers in mesh (default: 4)
+            .mesh_n_high(6)          // Maximum peers in mesh (default: 12)
+            .mesh_n(2)               // Desired peers in mesh (default: 6)
+            .mesh_outbound_min(1)    // Minimum outbound peers (default: 2)
+            .flood_publish(true)     // Publish to ALL connected peers, not just mesh
             .build()
             .map_err(|e| NetworkError::GossipsubInit(e.to_string()))?;
 
@@ -202,6 +208,7 @@ impl SwarmP2PNode {
                             }
                         }
                         SwarmCommand::BroadcastTransaction(tx) => {
+                            info!("📨 SWARM: Received BroadcastTransaction command");
                             if let Err(e) = self.broadcast_transaction(&tx) {
                                 warn!("Failed to broadcast transaction: {}", e);
                             }
@@ -212,9 +219,28 @@ impl SwarmP2PNode {
                             }
                         }
                         SwarmCommand::SendBlocks { blocks } => {
-                            for block in blocks {
-                                if let Err(e) = self.broadcast_block(&block) {
-                                    warn!("Failed to send sync block: {}", e);
+                            // 🔧 FIX: Send all blocks in a single message for faster sync
+                            if !blocks.is_empty() {
+                                info!("📤 SWARM: Broadcasting {} blocks for sync", blocks.len());
+                                let message = NetworkMessage::Blocks(blocks);
+                                let data = match bincode::serialize(&message) {
+                                    Ok(d) => d,
+                                    Err(e) => {
+                                        warn!("Failed to serialize blocks: {}", e);
+                                        continue;
+                                    }
+                                };
+
+                                // Use blocks_topic for sync (more reliable than sync_topic)
+                                match self.swarm.behaviour_mut().gossipsub.publish(
+                                    self.blocks_topic.clone(),
+                                    data
+                                ) {
+                                    Ok(_) => info!("📡 Sync blocks broadcast successful"),
+                                    Err(gossipsub::PublishError::InsufficientPeers) => {
+                                        warn!("⚠️ InsufficientPeers for sync blocks broadcast");
+                                    }
+                                    Err(e) => warn!("Failed to broadcast sync blocks: {}", e),
                                 }
                             }
                         }
@@ -250,7 +276,7 @@ impl SwarmP2PNode {
     /// Handle incoming gossip message
     fn handle_gossip_message(&mut self, source: PeerId, message: gossipsub::Message) {
         let topic = message.topic.to_string();
-        debug!("📨 Gossip from {} on {}: {} bytes", source, topic, message.data.len());
+        info!("📨 GOSSIP RECEIVED: from {} on topic {} - {} bytes", source, topic, message.data.len());
 
         // Deserialize message
         match bincode::deserialize::<NetworkMessage>(&message.data) {
@@ -259,7 +285,7 @@ impl SwarmP2PNode {
                 let _ = self.event_sender.send(SwarmP2PEvent::NewBlock(block));
             }
             Ok(NetworkMessage::NewTransaction(tx)) => {
-                debug!("📥 Received transaction from peer {}", source);
+                info!("📥 SWARM: Received NewTransaction from peer {}", source);
                 let _ = self.event_sender.send(SwarmP2PEvent::NewTransaction(tx));
             }
             Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id }) => {

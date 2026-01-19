@@ -595,8 +595,10 @@ class LuxtensorClient:
         """
         try:
             result = self._call_rpc("staking_getStake", [address])
-            # Convert hex string to int
-            if isinstance(result, str):
+            if isinstance(result, dict):
+                stake_val = result.get("stake", "0x0")
+                return int(stake_val, 16) if stake_val.startswith('0x') else int(stake_val)
+            elif isinstance(result, str):
                 return int(result, 16) if result.startswith('0x') else int(result)
             return result if result else 0
         except Exception as e:
@@ -612,13 +614,251 @@ class LuxtensorClient:
         """
         try:
             result = self._call_rpc("staking_getTotalStake", [])
-            # Convert hex string to int
             if isinstance(result, str):
                 return int(result, 16) if result.startswith('0x') else int(result)
             return result if result else 0
         except Exception as e:
             logger.warning(f"Failed to get total stake: {e}")
             return 0
+
+    def stake(self, address: str, amount: int) -> Dict[str, Any]:
+        """
+        Stake tokens as a validator.
+
+        Args:
+            address: Validator address (0x...)
+            amount: Amount to stake in base units
+
+        Returns:
+            Result with success status and new stake amount
+        """
+        try:
+            result = self._call_rpc("staking_stake", [address, str(amount)])
+            return result if result else {"success": False, "error": "No result"}
+        except Exception as e:
+            logger.error(f"Failed to stake for {address}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def unstake(self, address: str, amount: int) -> Dict[str, Any]:
+        """
+        Unstake tokens from validator position.
+
+        Args:
+            address: Validator address (0x...)
+            amount: Amount to unstake in base units
+
+        Returns:
+            Result with success status and remaining stake
+        """
+        try:
+            result = self._call_rpc("staking_unstake", [address, str(amount)])
+            return result if result else {"success": False, "error": "No result"}
+        except Exception as e:
+            logger.error(f"Failed to unstake for {address}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delegate(self, delegator: str, validator: str, amount: int, lock_days: int = 0) -> Dict[str, Any]:
+        """
+        Delegate tokens to a validator.
+
+        Args:
+            delegator: Delegator address (0x...)
+            validator: Validator address to delegate to (0x...)
+            amount: Amount to delegate in base units
+            lock_days: Optional lock period for bonus rewards (0, 30, 90, 180, 365)
+
+        Returns:
+            Result with success status and delegation info
+        """
+        try:
+            result = self._call_rpc("staking_delegate", [delegator, validator, str(amount), str(lock_days)])
+            return result if result else {"success": False, "error": "No result"}
+        except Exception as e:
+            logger.error(f"Failed to delegate from {delegator} to {validator}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def undelegate(self, delegator: str) -> Dict[str, Any]:
+        """
+        Remove delegation and return tokens.
+
+        Args:
+            delegator: Delegator address (0x...)
+
+        Returns:
+            Result with success status and returned amount
+        """
+        try:
+            result = self._call_rpc("staking_undelegate", [delegator])
+            return result if result else {"success": False, "error": "No result"}
+        except Exception as e:
+            logger.error(f"Failed to undelegate for {delegator}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_delegation(self, delegator: str) -> Optional[Dict[str, Any]]:
+        """
+        Get delegation info for a delegator.
+
+        Args:
+            delegator: Delegator address (0x...)
+
+        Returns:
+            Delegation info (validator, amount, lock_days) or None
+        """
+        try:
+            result = self._call_rpc("staking_getDelegation", [delegator])
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to get delegation for {delegator}: {e}")
+            return None
+
+    def get_staking_minimums(self) -> Dict[str, int]:
+        """
+        Get minimum staking requirements.
+
+        Returns:
+            Dict with minValidatorStake and minDelegation amounts
+        """
+        try:
+            result = self._call_rpc("staking_getMinimums", [])
+            minimums = {}
+            if result:
+                min_stake = result.get("minValidatorStake", "0x0")
+                min_del = result.get("minDelegation", "0x0")
+                minimums["minValidatorStake"] = int(min_stake, 16) if min_stake.startswith('0x') else int(min_stake)
+                minimums["minDelegation"] = int(min_del, 16) if min_del.startswith('0x') else int(min_del)
+            return minimums
+        except Exception as e:
+            logger.warning(f"Failed to get staking minimums: {e}")
+            return {"minValidatorStake": 0, "minDelegation": 0}
+
+    # ========================================================================
+    # Rewards Methods
+    # ========================================================================
+
+    def get_pending_rewards(self, address: str) -> int:
+        """
+        Get pending (unclaimed) rewards for an address.
+
+        Args:
+            address: Account address (0x...)
+
+        Returns:
+            Pending rewards amount in base units
+        """
+        try:
+            result = self._call_rpc("rewards_getPending", [address])
+            if isinstance(result, dict):
+                pending = result.get("pending", "0x0")
+                return int(pending, 16) if pending.startswith('0x') else int(pending)
+            return 0
+        except Exception as e:
+            logger.warning(f"Failed to get pending rewards for {address}: {e}")
+            return 0
+
+    def get_reward_balance(self, address: str) -> Dict[str, int]:
+        """
+        Get full reward balance info for an address.
+
+        Args:
+            address: Account address (0x...)
+
+        Returns:
+            Dict with available, pending, staked, and locked_until values
+        """
+        try:
+            result = self._call_rpc("rewards_getBalance", [address])
+            if result:
+                balance = {}
+                for key in ["available", "pendingRewards", "staked"]:
+                    val = result.get(key, "0x0")
+                    balance[key] = int(val, 16) if isinstance(val, str) and val.startswith('0x') else int(val) if val else 0
+                balance["lockedUntil"] = result.get("lockedUntil", 0)
+                return balance
+            return {"available": 0, "pendingRewards": 0, "staked": 0, "lockedUntil": 0}
+        except Exception as e:
+            logger.warning(f"Failed to get reward balance for {address}: {e}")
+            return {"available": 0, "pendingRewards": 0, "staked": 0, "lockedUntil": 0}
+
+    def claim_rewards(self, address: str) -> Dict[str, Any]:
+        """
+        Claim pending rewards for an address.
+
+        Args:
+            address: Account address (0x...)
+
+        Returns:
+            Claim result with success, claimed amount, and new balance
+        """
+        try:
+            result = self._call_rpc("rewards_claim", [address])
+            return result if result else {"success": False, "claimed": 0}
+        except Exception as e:
+            logger.error(f"Failed to claim rewards for {address}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_reward_history(self, address: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get reward history for an address.
+
+        Args:
+            address: Account address (0x...)
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of reward history entries
+        """
+        try:
+            result = self._call_rpc("rewards_getHistory", [address, limit])
+            return result.get("history", []) if result else []
+        except Exception as e:
+            logger.warning(f"Failed to get reward history for {address}: {e}")
+            return []
+
+    def get_reward_stats(self) -> Dict[str, Any]:
+        """
+        Get global reward executor statistics.
+
+        Returns:
+            Stats including current epoch, total pending, DAO balance, etc.
+        """
+        try:
+            result = self._call_rpc("rewards_getStats", [])
+            return result if result else {}
+        except Exception as e:
+            logger.warning(f"Failed to get reward stats: {e}")
+            return {}
+
+    def get_burn_stats(self) -> Dict[str, Any]:
+        """
+        Get token burn statistics.
+
+        Returns:
+            Burn stats including total burned, tx fee burned, slashing burned, etc.
+        """
+        try:
+            result = self._call_rpc("rewards_getBurnStats", [])
+            return result if result else {}
+        except Exception as e:
+            logger.warning(f"Failed to get burn stats: {e}")
+            return {}
+
+    def get_dao_balance(self) -> int:
+        """
+        Get DAO treasury balance.
+
+        Returns:
+            DAO balance in base units
+        """
+        try:
+            result = self._call_rpc("rewards_getDaoBalance", [])
+            if isinstance(result, dict):
+                balance = result.get("balance", "0x0")
+                return int(balance, 16) if balance.startswith('0x') else int(balance)
+            return 0
+        except Exception as e:
+            logger.warning(f"Failed to get DAO balance: {e}")
+            return 0
+
 
     # ========================================================================
     # Utility Methods

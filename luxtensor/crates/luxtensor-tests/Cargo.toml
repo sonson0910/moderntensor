@@ -10,16 +10,27 @@ publish = false
 tokio = { workspace = true }
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
+luxtensor-consensus = { path = "../luxtensor-consensus" }
 luxtensor-storage = { path = "../luxtensor-storage" }
 luxtensor-network = { path = "../luxtensor-network" }
 tempfile = { workspace = true }
 hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "performance_benchmarks"
+harness = false
+
+[[bench]]
+name = "stress_tests"
 harness = false
 
 [[test]]
@@ -29,6 +40,14 @@ path = "integration_tests.rs"
 [[test]]
 name = "data_sync_integration_test"
 path = "data_sync_integration_test.rs"
+
+[[test]]
+name = "rpc_tests"
+path = "src/rpc_tests.rs"
+
+[[test]]
+name = "network_tests"
+path = "src/network_tests.rs"
 
 [lib]
 name = "luxtensor_tests"

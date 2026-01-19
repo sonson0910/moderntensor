@@ -554,7 +554,7 @@ mod tests {
     fn test_address(n: u8) -> Address {
         let mut addr = [0u8; 20];
         addr[0] = n;
-        addr
+        Address::from(addr)
     }
 
     #[test]

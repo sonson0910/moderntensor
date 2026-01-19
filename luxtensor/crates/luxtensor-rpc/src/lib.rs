@@ -15,6 +15,7 @@ pub mod logs;
 pub mod subnet_rpc;
 pub mod helpers;
 pub mod handlers;
+pub mod staking_rpc;
 
 pub use broadcaster::{
     TransactionBroadcaster, BroadcastError,

@@ -43,6 +43,16 @@ pub struct NodeConfig {
     /// Unique validator ID for leader election (e.g., "validator-1")
     #[serde(default)]
     pub validator_id: Option<String>,
+
+    /// DAO treasury address for rewards distribution (hex with 0x prefix)
+    #[serde(default = "default_dao_address")]
+    pub dao_address: String,
+}
+
+/// Default DAO treasury address (ModernTensor foundation)
+fn default_dao_address() -> String {
+    // Default DAO address - should be configured in production
+    "0x1234567890123456789012345678901234567890".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +150,7 @@ impl Default for Config {
                 is_validator: false,
                 validator_key_path: None,
                 validator_id: None,
+                dao_address: default_dao_address(),
             },
             consensus: ConsensusConfig {
                 block_time: 3,

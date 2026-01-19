@@ -324,11 +324,8 @@ mod tests {
         let mut chain = create_test_chain(3);
 
         // Break the chain by modifying a block's height
-        if let Some(block) = chain.get_mut(2) {
-            let mut header = block.header().clone();
-            // Access the height field through a method if available, or recreate
-            // For this test, we'll just create an invalid chain differently
-        }
+        // This is done by creating an invalid chain differently
+        let _ = chain.get_mut(2); // Just to use chain
 
         // Create an actually invalid chain
         let block1 = create_test_block(0, [0u8; 32]);
@@ -387,9 +384,9 @@ mod tests {
 
         // Create a fork: take first 8 blocks (0-7), then create different block at height 8
         let mut fork_chain = main_chain[..8].to_vec();
-        
+
         // Create a different block 8 by using a different state_root
-        let mut different_state_root = [1u8; 32]; // Different from normal
+        let different_state_root = [1u8; 32]; // Different from normal
         let fork_block_header = BlockHeader::new(
             1,
             8,

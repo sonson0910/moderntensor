@@ -26,6 +26,18 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
+/// Parse a hex address string (with or without 0x prefix) into [u8; 20]
+fn parse_address_from_hex(addr_str: &str) -> Result<[u8; 20]> {
+    let addr_str = addr_str.strip_prefix("0x").unwrap_or(addr_str);
+    if addr_str.len() != 40 {
+        return Err(anyhow::anyhow!("Invalid address length"));
+    }
+    let bytes = hex::decode(addr_str)?;
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&bytes);
+    Ok(addr)
+}
+
 /// Node service that orchestrates all components
 pub struct NodeService {
     config: Config,
@@ -127,9 +139,13 @@ impl NodeService {
         info!("  ✓ {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
 
         // Initialize reward executor for epoch processing
-        let dao_address = [0u8; 20]; // TODO: Configure DAO address
+        let dao_address = parse_address_from_hex(&config.node.dao_address)
+            .unwrap_or_else(|_| {
+                warn!("Invalid DAO address in config, using default zero address");
+                [0u8; 20]
+            });
         let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
-        info!("  ✓ Reward executor initialized");
+        info!("  ✓ Reward executor initialized with DAO: 0x{}", hex::encode(&dao_address));
 
         // Initialize token allocation for TGE and vesting
         let tge_timestamp = current_timestamp();
@@ -211,15 +227,10 @@ impl NodeService {
                 // Clone for transaction broadcasting task
                 let command_tx_for_rpc = command_tx.clone();
 
-                // Move swarm node into the task - it will run its own event loop
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    rt.block_on(async move {
-                        swarm_node.run().await;
-                    });
+                // 🔧 FIX: Run swarm in tokio::spawn (same runtime as RPC)
+                // This ensures channels work correctly between tasks
+                tokio::spawn(async move {
+                    swarm_node.run().await;
                 });
 
                 // Start transaction relay task (RPC → P2P)
@@ -298,6 +309,37 @@ impl NodeService {
                     Ok::<(), anyhow::Error>(())
                 });
                 self.tasks.push(event_task);
+
+                // ============================================================
+                // PERIODIC SYNC TASK: Retry sync every 10 seconds
+                // This ensures late-joining nodes can sync even if initial
+                // sync request fails due to InsufficientPeers
+                // ============================================================
+                let sync_command_tx = command_tx.clone();
+                let sync_storage = self.storage.clone();
+                let sync_node_name = self.config.node.name.clone();
+                let sync_task = tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                    loop {
+                        interval.tick().await;
+
+                        // Check if we're behind
+                        let my_height = sync_storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+
+                        // Always request sync for next 50 blocks (peers respond with blocks they have)
+                        let _ = sync_command_tx.send(SwarmCommand::RequestSync {
+                            from_height: my_height + 1,
+                            to_height: my_height + 50,
+                            my_id: sync_node_name.clone(),
+                        });
+
+                        // Log if we're at height 0 (likely still syncing)
+                        if my_height == 0 {
+                            info!("🔄 Periodic sync: Still at height 0, requesting blocks...");
+                        }
+                    }
+                });
+                self.tasks.push(sync_task);
             }
             Err(e) => {
                 warn!("Failed to start P2P Swarm: {}. Running in standalone mode.", e);
@@ -305,15 +347,19 @@ impl NodeService {
         }
 
         // ============================================================
-        // PHASE 2: Start RPC server WITH P2P broadcaster
+        // PHASE 2: Start RPC server WITH DIRECT Swarm broadcaster
         // ============================================================
         if self.config.rpc.enabled {
-            info!("🔌 Starting RPC server with P2P broadcaster...");
+            info!("🔌 Starting RPC server with direct Swarm broadcaster...");
 
-            // Create ChannelBroadcaster connected to P2P transaction relay
-            let broadcaster: Arc<dyn luxtensor_rpc::TransactionBroadcaster> = Arc::new(
-                luxtensor_rpc::ChannelBroadcaster::for_p2p(tx_broadcast_tx)
-            );
+            // Use command_tx directly from P2P swarm (bypassing tx_relay task)
+            let broadcaster: Arc<dyn luxtensor_rpc::TransactionBroadcaster> = match &self.broadcast_tx {
+                Some(cmd_tx) => Arc::new(crate::swarm_broadcaster::SwarmBroadcaster::new(cmd_tx.clone())),
+                None => {
+                    warn!("No P2P swarm available, using NoOp broadcaster");
+                    Arc::new(luxtensor_rpc::NoOpBroadcaster)
+                }
+            };
 
             // Use shared pending_txs for unified TX storage between RPC and P2P
             let rpc_server = RpcServer::new_with_shared_pending_txs(

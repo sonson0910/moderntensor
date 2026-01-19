@@ -13,6 +13,8 @@ const CF_NEURONS: &str = "neurons";
 const CF_WEIGHTS: &str = "weights";
 const CF_AI_TASKS: &str = "ai_tasks";
 const CF_METADATA: &str = "metagraph_meta";
+const CF_STAKING: &str = "staking";
+const CF_DELEGATIONS: &str = "delegations";
 
 /// Subnet information (stored)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +72,26 @@ pub struct AITaskData {
     pub completed_at: Option<u64>,
 }
 
+/// Validator stake data (stored)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StakingData {
+    pub address: [u8; 20],
+    pub stake: u128,
+    pub staked_at: u64,
+    pub last_reward_claim: u64,
+}
+
+/// Delegation data (stored)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegationData {
+    pub delegator: [u8; 20],
+    pub validator: [u8; 20],
+    pub amount: u128,
+    pub lock_days: u32,
+    pub start_block: u64,
+    pub delegated_at: u64,
+}
+
 /// Metagraph database for persistent storage
 pub struct MetagraphDB {
     db: Arc<DB>,
@@ -88,7 +110,9 @@ impl MetagraphDB {
             ColumnFamilyDescriptor::new(CF_NEURONS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_WEIGHTS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_AI_TASKS, cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_METADATA, cf_opts),
+            ColumnFamilyDescriptor::new(CF_METADATA, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_STAKING, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_DELEGATIONS, cf_opts),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)
@@ -374,6 +398,126 @@ impl MetagraphDB {
             Ok(None) => Ok(0),
             Err(e) => Err(StorageError::DatabaseError(e.to_string())),
         }
+    }
+
+    // ==================== STAKING OPERATIONS ====================
+
+    /// Store a validator stake
+    pub fn store_stake(&self, data: &StakingData) -> Result<()> {
+        let cf = self.db.cf_handle(CF_STAKING)
+            .ok_or_else(|| StorageError::DatabaseError("Missing staking CF".into()))?;
+
+        let value = bincode::serialize(data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        self.db.put_cf(&cf, data.address, value)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Get stake for an address
+    pub fn get_stake(&self, address: &[u8; 20]) -> Result<Option<StakingData>> {
+        let cf = self.db.cf_handle(CF_STAKING)
+            .ok_or_else(|| StorageError::DatabaseError("Missing staking CF".into()))?;
+
+        match self.db.get_cf(&cf, address) {
+            Ok(Some(data)) => {
+                let stake: StakingData = bincode::deserialize(&data)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                Ok(Some(stake))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::DatabaseError(e.to_string())),
+        }
+    }
+
+    /// Get all validator stakes
+    pub fn get_all_stakes(&self) -> Result<Vec<StakingData>> {
+        let cf = self.db.cf_handle(CF_STAKING)
+            .ok_or_else(|| StorageError::DatabaseError("Missing staking CF".into()))?;
+
+        let mut stakes = Vec::new();
+        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            let stake: StakingData = bincode::deserialize(&value)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            stakes.push(stake);
+        }
+
+        Ok(stakes)
+    }
+
+    /// Delete stake for an address
+    pub fn delete_stake(&self, address: &[u8; 20]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_STAKING)
+            .ok_or_else(|| StorageError::DatabaseError("Missing staking CF".into()))?;
+
+        self.db.delete_cf(&cf, address)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    // ==================== DELEGATION OPERATIONS ====================
+
+    /// Store a delegation
+    pub fn store_delegation(&self, data: &DelegationData) -> Result<()> {
+        let cf = self.db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
+
+        let value = bincode::serialize(data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        self.db.put_cf(&cf, data.delegator, value)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Get delegation for a delegator
+    pub fn get_delegation(&self, delegator: &[u8; 20]) -> Result<Option<DelegationData>> {
+        let cf = self.db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
+
+        match self.db.get_cf(&cf, delegator) {
+            Ok(Some(data)) => {
+                let delegation: DelegationData = bincode::deserialize(&data)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                Ok(Some(delegation))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::DatabaseError(e.to_string())),
+        }
+    }
+
+    /// Get all delegations
+    pub fn get_all_delegations(&self) -> Result<Vec<DelegationData>> {
+        let cf = self.db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
+
+        let mut delegations = Vec::new();
+        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            let delegation: DelegationData = bincode::deserialize(&value)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            delegations.push(delegation);
+        }
+
+        Ok(delegations)
+    }
+
+    /// Delete delegation for a delegator
+    pub fn delete_delegation(&self, delegator: &[u8; 20]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
+
+        self.db.delete_cf(&cf, delegator)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Get delegations for a specific validator
+    pub fn get_delegations_for_validator(&self, validator: &[u8; 20]) -> Result<Vec<DelegationData>> {
+        let all = self.get_all_delegations()?;
+        Ok(all.into_iter().filter(|d| &d.validator == validator).collect())
     }
 }
 
