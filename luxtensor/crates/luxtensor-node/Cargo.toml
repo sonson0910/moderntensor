@@ -23,6 +23,7 @@ thiserror = { workspace = true }
 bincode = { workspace = true }
 hex = { workspace = true }
 futures = { workspace = true }
+sha3 = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }

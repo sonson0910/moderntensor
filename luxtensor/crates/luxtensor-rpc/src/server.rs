@@ -118,6 +118,7 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster: Arc::new(NoOpBroadcaster),
             evm_state,
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
         }
     }
 

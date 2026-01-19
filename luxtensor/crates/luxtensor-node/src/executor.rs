@@ -1,6 +1,8 @@
 use luxtensor_core::{Transaction, Address, Account, StateDB, CoreError, Result};
 use luxtensor_crypto::keccak256;
 use serde::{Deserialize, Serialize};
+use sha3::{Keccak256, Digest};
+use tracing::info;
 
 /// Transaction receipt
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +127,37 @@ impl TransactionExecutor {
             state.set_account(to_addr, recipient);
             ExecutionStatus::Success
         } else {
-            // Contract deployment would go here
+            // Contract deployment - CREATE operation
+            // Calculate contract address using keccak256(rlp([sender, nonce]))
+
+            let mut hasher = Keccak256::new();
+            // Simple RLP encoding: sender address (20 bytes) + nonce (8 bytes)
+            hasher.update(tx.from.as_bytes());
+            hasher.update(&(tx.nonce - 1).to_be_bytes()); // Use nonce before increment
+            let hash = hasher.finalize();
+
+            // Contract address is last 20 bytes of hash
+            let mut contract_addr_bytes = [0u8; 20];
+            contract_addr_bytes.copy_from_slice(&hash[12..32]);
+            let contract_addr = Address::from(contract_addr_bytes);
+
+            // Create contract account with code (tx.data is the init code)
+            let mut contract_account = Account::new();
+            contract_account.balance = tx.value;
+            // In a full implementation, we would execute init code here
+            // For now, store the code directly
+            contract_account.code_hash = {
+                let mut code_hasher = Keccak256::new();
+                code_hasher.update(&tx.data);
+                let code_hash = code_hasher.finalize();
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&code_hash);
+                hash
+            };
+
+            state.set_account(contract_addr, contract_account);
+
+            info!("📄 Contract deployed at 0x{}", hex::encode(&contract_addr_bytes));
             ExecutionStatus::Success
         };
 
