@@ -15,7 +15,7 @@ data_dir = "./data"
 is_validator = true
 
 # Path to validator private key (only if is_validator = true)
-# validator_key_path = "./validator.key"
+validator_key_path = "./validator.key"
 
 # Unique validator ID for leader election
 validator_id = "validator-1"

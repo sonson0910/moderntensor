@@ -1,17 +1,34 @@
 // Weight RPC handlers
 // Extracted from server.rs
+// Now with on-chain persistent storage
 
 use crate::types::WeightInfo;
 use jsonrpc_core::{Params, Value};
+use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Register weight-related RPC methods
+/// Weights are persisted to BlockchainDB for on-chain storage
 pub fn register_weight_handlers(
     io: &mut jsonrpc_core::IoHandler,
     weights: Arc<RwLock<HashMap<(u64, u64), Vec<WeightInfo>>>>,
+    db: Arc<BlockchainDB>,
 ) {
+    // Load existing weights from DB into memory on startup
+    if let Ok(stored_weights) = db.get_all_weights() {
+        let mut weights_map = weights.write();
+        for ((subnet_id, uid), data) in stored_weights {
+            if let Ok(weight_list) = bincode::deserialize::<Vec<WeightInfo>>(&data) {
+                weights_map.insert((subnet_id, uid), weight_list);
+            }
+        }
+        if !weights_map.is_empty() {
+            tracing::info!("📊 Loaded {} weight entries from blockchain DB", weights_map.len());
+        }
+    }
+
     let weights_clone = weights.clone();
 
     // weight_getWeights - Get weights for neuron
@@ -50,8 +67,9 @@ pub fn register_weight_handlers(
     });
 
     let weights_clone = weights.clone();
+    let db_for_set = db.clone();
 
-    // weight_setWeights - Set weights for neuron
+    // weight_setWeights - Set weights for neuron (persisted to DB)
     io.add_sync_method("weight_setWeights", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 4 {
@@ -100,7 +118,12 @@ pub fn register_weight_handlers(
             })
             .collect();
 
-        weights_map.insert((subnet_id, neuron_uid), weight_info);
+        weights_map.insert((subnet_id, neuron_uid), weight_info.clone());
+
+        // Persist weights to blockchain DB
+        if let Ok(data) = bincode::serialize(&weight_info) {
+            let _ = db_for_set.store_weights(subnet_id, neuron_uid, &data);
+        }
 
         Ok(serde_json::json!({
             "success": true
@@ -138,6 +161,37 @@ pub fn register_weight_handlers(
             })
             .collect();
 
+        Ok(Value::Array(all_weights))
+    });
+
+    // === SDK Aliases ===
+
+    // query_getWeights - Alias for weight_getAll
+    let weights_clone = weights.clone();
+    io.add_sync_method("query_getWeights", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+        let weights_map = weights_clone.read();
+        let all_weights: Vec<Value> = weights_map
+            .iter()
+            .filter(|((sid, _), _)| *sid == subnet_id)
+            .map(|((_, neuron_uid), weights)| {
+                serde_json::json!({
+                    "neuron_uid": neuron_uid,
+                    "weights": weights.iter().map(|w| {
+                        serde_json::json!({
+                            "target_uid": w.neuron_uid,
+                            "weight": w.weight
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            })
+            .collect();
         Ok(Value::Array(all_weights))
     });
 }

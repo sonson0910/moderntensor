@@ -31,6 +31,7 @@ impl EvmExecutor {
     }
 
     /// Execute contract deployment
+    /// Returns: (contract_address, gas_used, logs, deployed_bytecode)
     pub fn deploy(
         &self,
         deployer: Address,
@@ -39,7 +40,7 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
-    ) -> Result<(Vec<u8>, u64, Vec<u8>), ContractError> {
+    ) -> Result<(Vec<u8>, u64, Vec<u8>, Vec<u8>), ContractError> {
         let deployer_addr = address_to_revm(&deployer);
 
         // Ensure deployer account exists
@@ -69,6 +70,9 @@ impl EvmExecutor {
             ContractError::ExecutionFailed(format!("EVM error: {:?}", e))
         })?;
 
+        // Debug: log raw EVM result
+        tracing::info!("🔍 EVM Deploy raw result: {:?}", result);
+
         match result {
             RevmExecutionResult::Success {
                 output,
@@ -76,7 +80,7 @@ impl EvmExecutor {
                 logs,
                 ..
             } => {
-                let (contract_address, _deployed_code) = match output {
+                let (contract_address, deployed_code) = match output {
                     Output::Create(bytes, Some(addr)) => (addr.0 .0.to_vec(), bytes.to_vec()),
                     Output::Create(_bytes, None) => {
                         return Err(ContractError::ExecutionFailed(
@@ -102,7 +106,7 @@ impl EvmExecutor {
                     .flat_map(|log| log.data.data.iter().copied())
                     .collect();
 
-                Ok((contract_address, gas_used, logs_data))
+                Ok((contract_address, gas_used, logs_data, deployed_code))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();

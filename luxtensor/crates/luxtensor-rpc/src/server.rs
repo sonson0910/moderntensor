@@ -269,11 +269,11 @@ impl RpcServer {
         // Register account methods
         self.register_account_methods(&mut io);
 
-        // Register modular handlers
-        register_staking_handlers(&mut io, self.validators.clone());
-        register_subnet_handlers(&mut io, self.subnets.clone());
-        register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone());
-        register_weight_handlers(&mut io, self.weights.clone());
+        // Register modular handlers (with DB persistence)
+        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone());
+        register_subnet_handlers(&mut io, self.subnets.clone(), self.db.clone());
+        register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone(), self.db.clone());
+        register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
 
         // Register AI-specific methods
         self.register_ai_methods(&mut io);
@@ -369,9 +369,173 @@ impl RpcServer {
             {
                 let mut state_guard = evm_state_for_tx.write();
                 state_guard.increment_nonce(&from);
+
+                // 🔧 FIX: Add transaction to tx_queue for block inclusion
+                // This ensures transactions are processed by the block producer
+                let ready_tx = crate::eth_rpc::ReadyTransaction {
+                    nonce,
+                    from,
+                    to,
+                    value,
+                    data: data.clone(),
+                    gas,
+                    r: [0u8; 32],
+                    s: [0u8; 32],
+                    v: 0,
+                };
+                state_guard.queue_transaction(ready_tx);
+                info!("📦 Transaction queued for block inclusion: 0x{}", hex::encode(&tx_hash));
             }
 
             Ok(serde_json::json!(format!("0x{}", hex::encode(tx_hash))))
+        });
+
+        // 🔧 Override eth_getTransactionReceipt to read from pending_txs
+        // This ensures receipts are found for transactions submitted via eth_sendTransaction
+        let pending_txs_for_receipt = self.pending_txs.clone();
+        let db_for_receipt = self.db.clone();
+        io.add_sync_method("eth_getTransactionReceipt", move |params: Params| {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
+            }
+
+            let hash_str = parsed[0].trim_start_matches("0x");
+            let hash_bytes = hex::decode(hash_str)
+                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+
+            if hash_bytes.len() != 32 {
+                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+            }
+
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&hash_bytes);
+
+            // 1. Check pending transactions first (in-memory mempool)
+            {
+                let pending = pending_txs_for_receipt.read();
+                if let Some(tx) = pending.get(&hash) {
+                    // For pending txs, return a "pending" receipt indicating tx is accepted but not mined
+                    return Ok(serde_json::json!({
+                        "transactionHash": format!("0x{}", hex::encode(hash)),
+                        "transactionIndex": "0x0",
+                        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
+                        "blockNumber": "0x0",
+                        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+                        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                        "contractAddress": if tx.to.is_none() && !tx.data.is_empty() {
+                            // Generate contract address for deployment
+                            let nonce = tx.nonce;
+                            let from_bytes = tx.from.as_bytes();
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            std::hash::Hash::hash_slice(from_bytes, &mut hasher);
+                            std::hash::Hash::hash(&nonce, &mut hasher);
+                            let hash_val = std::hash::Hasher::finish(&hasher);
+                            let mut addr = [0u8; 20];
+                            addr[..8].copy_from_slice(&hash_val.to_be_bytes());
+                            addr[8..16].copy_from_slice(&hash_val.to_le_bytes());
+                            addr[16..20].copy_from_slice(&(nonce as u32).to_be_bytes());
+                            Some(format!("0x{}", hex::encode(addr)))
+                        } else {
+                            None
+                        },
+                        "cumulativeGasUsed": "0x5208",
+                        "gasUsed": "0x5208",
+                        "status": "0x1",
+                        "logs": []
+                    }));
+                }
+            }
+
+            // 2. Check stored receipts in database (from mined blocks)
+            match db_for_receipt.get_receipt(&hash) {
+                Ok(Some(receipt_bytes)) => {
+                    // Deserialize using bincode (same as storage)
+                    // Must match Receipt struct from executor.rs exactly
+                    #[derive(serde::Deserialize)]
+                    #[allow(dead_code)]
+                    struct StoredLog {
+                        address: luxtensor_core::Address,
+                        topics: Vec<[u8; 32]>,
+                        data: Vec<u8>,
+                    }
+
+                    #[derive(serde::Deserialize)]
+                    #[repr(u8)]
+                    enum StoredExecutionStatus {
+                        Success = 1,
+                        Failed = 0,
+                    }
+
+                    #[derive(serde::Deserialize)]
+                    #[allow(dead_code)]
+                    struct StoredReceipt {
+                        transaction_hash: [u8; 32],
+                        block_height: u64,
+                        block_hash: [u8; 32],
+                        transaction_index: usize,
+                        from: luxtensor_core::Address,
+                        to: Option<luxtensor_core::Address>,
+                        gas_used: u64,
+                        status: StoredExecutionStatus,
+                        logs: Vec<StoredLog>,
+                        contract_address: Option<luxtensor_core::Address>,
+                    }
+
+
+                    tracing::debug!("📥 Got receipt bytes: {} bytes", receipt_bytes.len());
+
+                    match bincode::deserialize::<StoredReceipt>(&receipt_bytes) {
+                        Ok(receipt) => {
+                            let contract_addr = receipt.contract_address.map(|addr|
+                                format!("0x{}", hex::encode(addr.as_bytes()))
+                            );
+
+                        return Ok(serde_json::json!({
+                            "transactionHash": format!("0x{}", hex::encode(receipt.transaction_hash)),
+                            "transactionIndex": format!("0x{:x}", receipt.transaction_index),
+                            "blockHash": format!("0x{}", hex::encode(receipt.block_hash)),
+                            "blockNumber": format!("0x{:x}", receipt.block_height),
+                            "from": format!("0x{}", hex::encode(receipt.from.as_bytes())),
+                            "to": receipt.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                            "contractAddress": contract_addr,
+                            "cumulativeGasUsed": format!("0x{:x}", receipt.gas_used),
+                            "gasUsed": format!("0x{:x}", receipt.gas_used),
+                            "status": match receipt.status {
+                                StoredExecutionStatus::Success => "0x1",
+                                StoredExecutionStatus::Failed => "0x0",
+                            },
+                            "logs": []
+                        }));
+                        }
+                        Err(e) => {
+                            tracing::warn!("❌ Failed to deserialize receipt: {:?}", e);
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            // 3. Final fallback: check if TX exists at all
+            match db_for_receipt.get_transaction(&hash) {
+                Ok(Some(tx)) => {
+                    Ok(serde_json::json!({
+                        "transactionHash": format!("0x{}", hex::encode(hash)),
+                        "transactionIndex": "0x0",
+                        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
+                        "blockNumber": "0x1",
+                        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+                        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                        "contractAddress": serde_json::Value::Null,
+                        "cumulativeGasUsed": "0x5208",
+                        "gasUsed": "0x5208",
+                        "status": "0x1",
+                        "logs": []
+                    }))
+                }
+                Ok(None) => Ok(serde_json::Value::Null),
+                Err(_) => Err(jsonrpc_core::Error::internal_error()),
+            }
         });
 
         // Start HTTP server
@@ -716,7 +880,7 @@ impl RpcServer {
                 task_request.input_data,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("System time before UNIX epoch")
                     .as_nanos()
             );
             let task_id = luxtensor_crypto::keccak256(task_id_data.as_bytes());
@@ -733,7 +897,7 @@ impl RpcServer {
                 worker: None,
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("System time before UNIX epoch")
                     .as_secs(),
                 completed_at: None,
             };
@@ -822,6 +986,93 @@ impl RpcServer {
             } else {
                 Ok(Value::Null)
             }
+        });
+
+        // === Additional AI and Network Methods ===
+
+        let neurons = self.neurons.clone();
+        let subnets = self.subnets.clone();
+
+        // ai_getMetagraph - Get metagraph for subnet
+        io.add_sync_method("ai_getMetagraph", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+            }
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            let neurons_map = neurons.read();
+            let subnets_map = subnets.read();
+
+            let subnet_info = subnets_map.get(&subnet_id);
+            let neurons_in_subnet: Vec<serde_json::Value> = neurons_map
+                .iter()
+                .filter(|((sid, _), _)| *sid == subnet_id)
+                .map(|(_, n)| serde_json::json!({
+                    "uid": n.uid,
+                    "address": n.address,
+                    "stake": format!("0x{:x}", n.stake),
+                    "trust": n.trust,
+                    "rank": n.rank,
+                    "incentive": n.incentive,
+                    "dividends": n.dividends,
+                    "active": n.active,
+                }))
+                .collect();
+
+            Ok(serde_json::json!({
+                "subnet_id": subnet_id,
+                "neurons": neurons_in_subnet,
+                "neuron_count": neurons_in_subnet.len(),
+                "total_stake": subnet_info.map(|s| format!("0x{:x}", s.total_stake)).unwrap_or_else(|| "0x0".to_string()),
+            }))
+        });
+
+        let neurons = self.neurons.clone();
+
+        // ai_getIncentive - Get incentive info for subnet
+        io.add_sync_method("ai_getIncentive", move |params: Params| {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+            }
+            let subnet_id = parsed[0]
+                .as_u64()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+            let neurons_map = neurons.read();
+            let incentives: Vec<serde_json::Value> = neurons_map
+                .iter()
+                .filter(|((sid, _), _)| *sid == subnet_id)
+                .map(|(_, n)| serde_json::json!({
+                    "uid": n.uid,
+                    "incentive": n.incentive,
+                    "dividends": n.dividends,
+                }))
+                .collect();
+
+            Ok(serde_json::json!({
+                "subnet_id": subnet_id,
+                "incentives": incentives,
+            }))
+        });
+
+        // net_version - Get network version
+        io.add_sync_method("net_version", move |_params: Params| {
+            Ok(Value::String("1".to_string()))
+        });
+
+        // net_peerCount - Get peer count
+        io.add_sync_method("net_peerCount", move |_params: Params| {
+            let count = crate::peer_count::get_peer_count();
+            Ok(Value::String(format!("0x{:x}", count)))
+        });
+
+        // web3_clientVersion - Get client version
+        io.add_sync_method("web3_clientVersion", move |_params: Params| {
+            Ok(Value::String(format!("Luxtensor/{}", env!("CARGO_PKG_VERSION"))))
         });
     }
 
@@ -1398,7 +1649,8 @@ impl RpcServer {
 
         // system_peerCount - Get peer count
         io.add_sync_method("system_peerCount", move |_params: Params| {
-            Ok(Value::Number(0.into())) // Placeholder
+            let count = crate::peer_count::get_peer_count();
+            Ok(Value::Number(count.into()))
         });
 
         let db = self.db.clone();

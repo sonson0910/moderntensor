@@ -15,6 +15,7 @@ const CF_AI_TASKS: &str = "ai_tasks";
 const CF_METADATA: &str = "metagraph_meta";
 const CF_STAKING: &str = "staking";
 const CF_DELEGATIONS: &str = "delegations";
+const CF_VALIDATORS: &str = "validators";
 
 /// Subnet information (stored)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +93,27 @@ pub struct DelegationData {
     pub delegated_at: u64,
 }
 
+/// Registered Validator data (stored)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorData {
+    /// Validator address
+    pub address: [u8; 20],
+    /// Public key for signing
+    pub public_key: Vec<u8>,
+    /// Total stake
+    pub stake: u128,
+    /// Whether validator is active
+    pub is_active: bool,
+    /// Name/identifier for the validator
+    pub name: String,
+    /// When registered
+    pub registered_at: u64,
+    /// Last block produced
+    pub last_block_produced: u64,
+    /// Number of blocks produced
+    pub blocks_produced: u64,
+}
+
 /// Metagraph database for persistent storage
 pub struct MetagraphDB {
     db: Arc<DB>,
@@ -112,7 +134,8 @@ impl MetagraphDB {
             ColumnFamilyDescriptor::new(CF_AI_TASKS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_METADATA, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_STAKING, cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_DELEGATIONS, cf_opts),
+            ColumnFamilyDescriptor::new(CF_DELEGATIONS, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_VALIDATORS, cf_opts),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)
@@ -518,6 +541,85 @@ impl MetagraphDB {
     pub fn get_delegations_for_validator(&self, validator: &[u8; 20]) -> Result<Vec<DelegationData>> {
         let all = self.get_all_delegations()?;
         Ok(all.into_iter().filter(|d| &d.validator == validator).collect())
+    }
+
+    // ==================== VALIDATOR REGISTRY OPERATIONS ====================
+
+    /// Register a new validator
+    pub fn register_validator(&self, validator: &ValidatorData) -> Result<()> {
+        let cf = self.db.cf_handle(CF_VALIDATORS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing validators CF".into()))?;
+
+        let data = bincode::serialize(validator)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        self.db.put_cf(&cf, &validator.address, &data)
+            .map_err(|e| StorageError::DatabaseError(e.to_string()))
+    }
+
+    /// Get a validator by address
+    pub fn get_validator(&self, address: &[u8; 20]) -> Result<Option<ValidatorData>> {
+        let cf = self.db.cf_handle(CF_VALIDATORS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing validators CF".into()))?;
+
+        match self.db.get_cf(&cf, address) {
+            Ok(Some(data)) => {
+                let validator: ValidatorData = bincode::deserialize(&data)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                Ok(Some(validator))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::DatabaseError(e.to_string())),
+        }
+    }
+
+    /// Get all registered validators
+    pub fn get_all_validators(&self) -> Result<Vec<ValidatorData>> {
+        let cf = self.db.cf_handle(CF_VALIDATORS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing validators CF".into()))?;
+
+        let mut validators = Vec::new();
+        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            let validator: ValidatorData = bincode::deserialize(&value)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            validators.push(validator);
+        }
+
+        Ok(validators)
+    }
+
+    /// Get only active validators (for consensus)
+    pub fn get_active_validators(&self) -> Result<Vec<ValidatorData>> {
+        let all = self.get_all_validators()?;
+        Ok(all.into_iter().filter(|v| v.is_active).collect())
+    }
+
+    /// Update validator data (e.g., after block production)
+    pub fn update_validator(&self, validator: &ValidatorData) -> Result<()> {
+        self.register_validator(validator) // Same operation, just overwrites
+    }
+
+    /// Deactivate a validator
+    pub fn deactivate_validator(&self, address: &[u8; 20]) -> Result<()> {
+        if let Some(mut validator) = self.get_validator(address)? {
+            validator.is_active = false;
+            self.register_validator(&validator)
+        } else {
+            Err(StorageError::DatabaseError("Validator not found".into()))
+        }
+    }
+
+    /// Get validator count
+    pub fn get_validator_count(&self) -> Result<usize> {
+        Ok(self.get_all_validators()?.len())
+    }
+
+    /// Get active validator count
+    pub fn get_active_validator_count(&self) -> Result<usize> {
+        Ok(self.get_active_validators()?.len())
     }
 }
 

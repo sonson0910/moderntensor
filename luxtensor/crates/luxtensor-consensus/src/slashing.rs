@@ -393,6 +393,7 @@ mod tests {
             active: true,
             rewards: 0,
             last_active_slot: 0,
+            activation_epoch: 0,
         };
         validator_set.write().add_validator(validator.clone()).unwrap();
 

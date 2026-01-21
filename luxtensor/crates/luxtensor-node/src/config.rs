@@ -69,9 +69,18 @@ pub struct ConsensusConfig {
     /// Maximum number of validators
     pub max_validators: usize,
 
+    /// Block gas limit (default: 30_000_000)
+    #[serde(default = "default_gas_limit")]
+    pub gas_limit: u64,
+
     /// List of known validators for leader election (in order)
     #[serde(default)]
     pub validators: Vec<String>,
+}
+
+/// Default block gas limit: 30 million
+fn default_gas_limit() -> u64 {
+    30_000_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +166,7 @@ impl Default for Config {
                 epoch_length: 100,
                 min_stake: "1000000000000000000".to_string(), // 1 token (10^18)
                 max_validators: 100,
+                gas_limit: default_gas_limit(),
                 validators: vec!["validator-1".to_string(), "validator-2".to_string(), "validator-3".to_string()],
             },
             network: NetworkConfig {

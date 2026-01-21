@@ -223,6 +223,7 @@ mod tests {
             active: true,
             rewards: 0,
             last_active_slot: 0,
+            activation_epoch: 0,
         };
 
         (address, validator)

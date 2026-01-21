@@ -7,6 +7,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::warn;
 
+/// Pre-deployed MDTStaking contract address (deterministic for all networks)
+pub const STAKING_CONTRACT_ADDRESS: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+
+/// MDT Native Token address (0x...01 is standard precompile convention for wrapped native token)
+/// Similar to WETH address convention. This IS the production address.
+pub const MDT_TOKEN_ADDRESS: &str = "0x0000000000000000000000000000000000000001";
+
+
 /// Genesis account configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenesisAccount {

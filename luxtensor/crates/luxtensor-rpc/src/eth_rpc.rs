@@ -63,6 +63,8 @@ pub struct EvmState {
     pub pending_txs: HashMap<TxHash, PendingTransaction>,
     pub nonces: HashMap<Address, u64>,
     pub balances: HashMap<Address, u128>,
+    /// Contract storage: (contract_address, slot) -> value
+    pub storage: HashMap<(Address, [u8; 32]), [u8; 32]>,
     pub block_number: u64,
     pub chain_id: u64,
     /// Queue of transactions ready for block inclusion
@@ -89,6 +91,7 @@ impl EvmState {
             pending_txs: HashMap::new(),
             nonces: HashMap::new(),
             balances,
+            storage: HashMap::new(),
             block_number: 1,
             chain_id,
             tx_queue: Arc::new(RwLock::new(Vec::new())),
@@ -136,6 +139,16 @@ impl EvmState {
 
     pub fn contract_exists(&self, address: &Address) -> bool {
         self.contracts.contains_key(address)
+    }
+
+    /// Get storage value at slot for contract
+    pub fn get_storage(&self, address: &Address, slot: &[u8; 32]) -> [u8; 32] {
+        self.storage.get(&(*address, *slot)).copied().unwrap_or([0u8; 32])
+    }
+
+    /// Set storage value at slot for contract
+    pub fn set_storage(&mut self, address: &Address, slot: [u8; 32], value: [u8; 32]) {
+        self.storage.insert((*address, slot), value);
     }
 }
 
@@ -416,20 +429,98 @@ pub fn register_eth_methods(
         }
     });
 
-    // eth_call
+    // eth_call - Execute a call without creating a transaction (read-only)
+    let state_for_call = evm_state.clone();
     io.add_sync_method("eth_call", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let _call_obj = p.get(0).ok_or_else(|| RpcError {
+        let call_obj = p.get(0).ok_or_else(|| RpcError {
             code: ErrorCode::InvalidParams,
             message: "Missing call object".to_string(),
             data: None,
         })?;
 
-        // For now, return empty for read calls
-        Ok(json!("0x"))
+        // Parse call parameters
+        let from_str = call_obj.get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x0000000000000000000000000000000000000000");
+
+        let to_str = call_obj.get("to")
+            .and_then(|v| v.as_str());
+
+        let data_hex = call_obj.get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x");
+
+        let value_str = call_obj.get("value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x0");
+
+        // Parse addresses
+        let from_addr = hex_to_address(from_str).unwrap_or([0u8; 20]);
+        let to_addr = match to_str {
+            None => return Ok(json!("0x")),
+            Some(addr_str) => match hex_to_address(addr_str) {
+                None => return Ok(json!("0x")),
+                Some(addr) => addr,
+            }
+        };
+
+        // Parse data
+        let data = {
+            let s = data_hex.strip_prefix("0x").unwrap_or(data_hex);
+            hex::decode(s).unwrap_or_default()
+        };
+
+        // Parse value
+        let value: u128 = {
+            let s = value_str.strip_prefix("0x").unwrap_or(value_str);
+            u128::from_str_radix(s, 16).unwrap_or(0)
+        };
+
+        // Check if contract exists and get code
+        let state_guard = state_for_call.read();
+        let contract_code = match state_guard.contracts.get(&to_addr) {
+            Some(contract) => contract.code.clone(),
+            None => {
+                // No contract code, return empty
+                return Ok(json!("0x"));
+            }
+        };
+        let block_number = state_guard.block_number;
+        drop(state_guard);
+
+        // Execute call using EvmExecutor
+        let executor = luxtensor_contracts::EvmExecutor::new();
+
+        // Get current timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Execute the call
+        match executor.call(
+            luxtensor_core::Address::from(from_addr),
+            luxtensor_contracts::ContractAddress::from(to_addr),
+            contract_code,
+            data,
+            value,
+            1_000_000, // Gas limit for eth_call
+            block_number,
+            timestamp,
+        ) {
+            Ok((output, _gas_used, _logs)) => {
+                Ok(json!(format!("0x{}", hex::encode(output))))
+            }
+            Err(e) => {
+                // Log error but return empty for compatibility
+                tracing::warn!("eth_call execution error: {:?}", e);
+                Ok(json!("0x"))
+            }
+        }
     });
 
-    // eth_getCode
+    // eth_getCode - Read from global contract_registry first, then fall back to EvmState
     let state = evm_state.clone();
     io.add_sync_method("eth_getCode", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
@@ -447,6 +538,12 @@ pub fn register_eth_methods(
             data: None,
         })?;
 
+        // First check global contract registry (synced from executor)
+        if let Some(code) = crate::contract_registry::get_contract_code(&address) {
+            return Ok(json!(format!("0x{}", hex::encode(&code))));
+        }
+
+        // Fall back to EvmState for in-memory deployed contracts
         if state.read().contract_exists(&address) {
             if let Some(contract) = state.read().contracts.get(&address) {
                 return Ok(json!(format!("0x{}", hex::encode(&contract.code))));
@@ -581,6 +678,95 @@ pub fn register_eth_methods(
 
         info!("📥 Received signed raw transaction: {}", hash_to_hex(&tx_hash));
         Ok(json!(hash_to_hex(&tx_hash)))
+    });
+
+    // === Additional ETH methods for full compatibility ===
+
+    // eth_syncing - Returns syncing status
+    io.add_sync_method("eth_syncing", move |_params: Params| {
+        Ok(json!(false)) // Not syncing
+    });
+
+    // eth_mining - Returns whether client is mining
+    io.add_sync_method("eth_mining", move |_params: Params| {
+        Ok(json!(false))
+    });
+
+    // eth_hashrate - Returns hashrate
+    io.add_sync_method("eth_hashrate", move |_params: Params| {
+        Ok(json!("0x0"))
+    });
+
+    // eth_coinbase - Returns coinbase address
+    io.add_sync_method("eth_coinbase", move |_params: Params| {
+        Ok(json!("0x0000000000000000000000000000000000000000"))
+    });
+
+    // eth_protocolVersion - Returns protocol version
+    io.add_sync_method("eth_protocolVersion", move |_params: Params| {
+        Ok(json!("0x41")) // Protocol version 65
+    });
+
+    let evm_state_storage = evm_state.clone();
+
+    // eth_getStorageAt - Returns storage at position
+    io.add_sync_method("eth_getStorageAt", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(RpcError::invalid_params("Missing address or position"));
+        }
+
+        // Parse address
+        let addr = match hex_to_address(&parsed[0]) {
+            Some(a) => a,
+            None => return Ok(json!("0x0000000000000000000000000000000000000000000000000000000000000000")),
+        };
+
+        // Parse slot (32 bytes)
+        let slot_str = parsed[1].trim_start_matches("0x");
+        let mut slot = [0u8; 32];
+        if let Ok(bytes) = hex::decode(slot_str) {
+            let start = 32_usize.saturating_sub(bytes.len());
+            slot[start..].copy_from_slice(&bytes);
+        }
+
+        // Get storage value from EvmState
+        let state = evm_state_storage.read();
+        let value = state.get_storage(&addr, &slot);
+
+        Ok(json!(format!("0x{}", hex::encode(value))))
+    });
+
+    // net_listening - Returns whether node is listening
+    io.add_sync_method("net_listening", move |_params: Params| {
+        Ok(json!(true))
+    });
+
+    // web3_sha3 - Returns Keccak-256 hash
+    io.add_sync_method("web3_sha3", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(RpcError::invalid_params("Missing data"));
+        }
+        let data = parsed[0].trim_start_matches("0x");
+        let bytes = hex::decode(data).unwrap_or_default();
+        use sha3::{Digest, Keccak256};
+        let hash = Keccak256::digest(&bytes);
+        Ok(json!(format!("0x{}", hex::encode(hash))))
+    });
+
+    // rpc_modules - Returns available RPC modules
+    io.add_sync_method("rpc_modules", move |_params: Params| {
+        Ok(json!({
+            "eth": "1.0",
+            "net": "1.0",
+            "web3": "1.0",
+            "staking": "1.0",
+            "subnet": "1.0",
+            "neuron": "1.0",
+            "weight": "1.0",
+            "ai": "1.0"
+        }))
     });
 }
 

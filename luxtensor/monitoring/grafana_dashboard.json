@@ -1,0 +1,110 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "panels": [
+        {
+            "title": "Block Height",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "luxtensor_block_height",
+                    "legendFormat": "{{instance}}"
+                }
+            ]
+        },
+        {
+            "title": "Peer Count",
+            "type": "gauge",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "luxtensor_peer_count",
+                    "legendFormat": "{{instance}}"
+                }
+            ]
+        },
+        {
+            "title": "Mempool Size",
+            "type": "gauge",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "luxtensor_mempool_size",
+                    "legendFormat": "{{instance}}"
+                }
+            ]
+        },
+        {
+            "title": "Total Stake",
+            "type": "stat",
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "luxtensor_total_stake_wei / 1e18",
+                    "legendFormat": "Tokens"
+                }
+            ]
+        },
+        {
+            "title": "Block Height Over Time",
+            "type": "graph",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 4
+            },
+            "targets": [
+                {
+                    "expr": "rate(luxtensor_block_height[1m]) * 60",
+                    "legendFormat": "blocks/min"
+                }
+            ]
+        },
+        {
+            "title": "Transactions Over Time",
+            "type": "graph",
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 4
+            },
+            "targets": [
+                {
+                    "expr": "rate(luxtensor_tx_total[5m])",
+                    "legendFormat": "tx/sec"
+                }
+            ]
+        }
+    ],
+    "schemaVersion": 38,
+    "title": "Luxtensor Node Dashboard",
+    "uid": "luxtensor-main",
+    "version": 1
+}

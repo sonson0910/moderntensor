@@ -1,18 +1,35 @@
 // Neuron RPC handlers
 // Extracted from server.rs
+// Now with on-chain persistent storage
 
 use crate::types::{NeuronInfo, SubnetInfo};
 use jsonrpc_core::{Params, Value};
+use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Register neuron-related RPC methods
+/// Neurons are persisted to BlockchainDB for on-chain storage
 pub fn register_neuron_handlers(
     io: &mut jsonrpc_core::IoHandler,
     neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
     subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+    db: Arc<BlockchainDB>,
 ) {
+    // Load existing neurons from DB into memory on startup
+    if let Ok(stored_neurons) = db.get_all_neurons() {
+        let mut neurons_map = neurons.write();
+        for ((subnet_id, uid), data) in stored_neurons {
+            if let Ok(neuron) = bincode::deserialize::<NeuronInfo>(&data) {
+                neurons_map.insert((subnet_id, uid), neuron);
+            }
+        }
+        if !neurons_map.is_empty() {
+            tracing::info!("📊 Loaded {} neurons from blockchain DB", neurons_map.len());
+        }
+    }
+
     let neurons_clone = neurons.clone();
 
     // neuron_getInfo - Get neuron information
@@ -87,8 +104,9 @@ pub fn register_neuron_handlers(
 
     let neurons_clone = neurons.clone();
     let subnets_clone = subnets.clone();
+    let db_for_register = db.clone();
 
-    // neuron_register - Register neuron on subnet
+    // neuron_register - Register neuron on subnet (persisted to DB)
     io.add_sync_method("neuron_register", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
@@ -144,7 +162,12 @@ pub fn register_neuron_handlers(
             endpoint,
         };
 
-        neurons_map.insert((subnet_id, neuron_uid), neuron);
+        neurons_map.insert((subnet_id, neuron_uid), neuron.clone());
+
+        // Persist neuron to blockchain DB
+        if let Ok(data) = bincode::serialize(&neuron) {
+            let _ = db_for_register.store_neuron(subnet_id, neuron_uid, &data);
+        }
 
         // Update subnet participant count
         if let Some(subnet) = subnets_map.get_mut(&subnet_id) {
@@ -178,5 +201,65 @@ pub fn register_neuron_handlers(
             .count();
 
         Ok(Value::Number(count.into()))
+    });
+
+    // === SDK Aliases ===
+
+    // query_getNeurons - Alias for neuron_listBySubnet
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("query_getNeurons", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+        let neurons_map = neurons_clone.read();
+        let neurons_list: Vec<Value> = neurons_map
+            .iter()
+            .filter(|((sid, _), _)| *sid == subnet_id)
+            .map(|(_, neuron)| {
+                serde_json::json!({
+                    "uid": neuron.uid,
+                    "address": neuron.address,
+                    "stake": format!("0x{:x}", neuron.stake),
+                    "active": neuron.active,
+                    "rank": neuron.rank,
+                })
+            })
+            .collect();
+        Ok(Value::Array(neurons_list))
+    });
+
+    // query_getNeuronInfo - Alias for neuron_getInfo
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("query_getNeuronInfo", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID or neuron UID"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+        let neuron_uid = parsed[1]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron UID"))?;
+        let neurons_map = neurons_clone.read();
+        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+            Ok(serde_json::json!({
+                "uid": neuron.uid,
+                "address": neuron.address,
+                "subnet_id": neuron.subnet_id,
+                "stake": format!("0x{:x}", neuron.stake),
+                "trust": neuron.trust,
+                "rank": neuron.rank,
+                "incentive": neuron.incentive,
+                "dividends": neuron.dividends,
+                "active": neuron.active,
+            }))
+        } else {
+            Ok(Value::Null)
+        }
     });
 }

@@ -1,17 +1,38 @@
 // Staking RPC handlers
 // Extracted from server.rs
+// Now with on-chain persistent storage
 
 use crate::helpers::parse_address;
 use jsonrpc_core::{Params, Value};
 use luxtensor_consensus::{ValidatorSet, Validator};
+use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
 /// Register staking-related RPC methods
+/// Stakes are persisted to BlockchainDB for on-chain storage
 pub fn register_staking_handlers(
     io: &mut jsonrpc_core::IoHandler,
     validators: Arc<RwLock<ValidatorSet>>,
+    db: Arc<BlockchainDB>,
 ) {
+    // Load existing validators from DB into ValidatorSet on startup
+    if let Ok(stored_validators) = db.get_all_validators() {
+        let loaded_count = stored_validators.len();
+        let mut validator_set = validators.write();
+        for (_addr, data) in stored_validators {
+            if let Ok(validator) = bincode::deserialize::<luxtensor_consensus::Validator>(&data) {
+                // Only add if not already in set (e.g. from genesis)
+                if validator_set.get_validator(&validator.address).is_none() {
+                    let _ = validator_set.add_validator(validator);
+                }
+            }
+        }
+        if loaded_count > 0 {
+            tracing::info!("📊 Loaded {} validators from DB", loaded_count);
+        }
+    }
+
     let validators_clone = validators.clone();
 
     // staking_getTotalStake - Get total stake in network
@@ -173,6 +194,479 @@ pub fn register_staking_handlers(
             }))
         } else {
             Err(jsonrpc_core::Error::invalid_params("Validator not found"))
+        }
+    });
+
+    let validators_clone = validators.clone();
+    let db_for_register_validator = db.clone();
+
+    // staking_registerValidator - Register as a new validator (DYNAMIC REGISTRATION)
+    // Params: [address, stake, public_key, signature?, name?]
+    // Minimum stake: 1000 LUX (persisted to DB)
+    const MIN_STAKE: u128 = 1_000_000_000_000_000_000_000; // 1000 LUX
+
+    io.add_sync_method("staking_registerValidator", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing address, stake amount, or public key",
+            ));
+        }
+
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
+
+        let stake_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid stake amount"))?;
+        let stake = u128::from_str_radix(stake_str.trim_start_matches("0x"), 16)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid stake format"))?;
+
+        // P0 FIX: Minimum stake check
+        if stake < MIN_STAKE {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Stake must be at least 1000 LUX"
+            ));
+        }
+
+        let pubkey_str = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid public key"))?;
+
+        // Optional name
+        let name = parsed.get(3)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("validator-{}", hex::encode(&address.as_bytes()[..4])));
+
+        // Parse public key (32 bytes for Validator struct)
+        let pubkey_bytes = hex::decode(pubkey_str.trim_start_matches("0x"))
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid public key hex"))?;
+
+        let mut public_key = [0u8; 32];
+        let copy_len = pubkey_bytes.len().min(32);
+        public_key[..copy_len].copy_from_slice(&pubkey_bytes[..copy_len]);
+
+        // Check if validator already exists
+        {
+            let validator_set_read = validators_clone.read();
+            if validator_set_read.get_validator(&address).is_some() {
+                return Err(jsonrpc_core::Error::invalid_params("Validator already registered"));
+            }
+        }
+
+        // Add to validator set with epoch delay (active next epoch)
+        let mut validator_set = validators_clone.write();
+        let new_validator = Validator {
+            address,
+            stake,
+            active: true,
+            public_key,
+            rewards: 0,
+            last_active_slot: 0,
+            activation_epoch: 1, // P2 FIX: Active from epoch 1 (delay)
+        };
+
+        if let Err(e) = validator_set.add_validator(new_validator.clone()) {
+            return Err(jsonrpc_core::Error::invalid_params(e));
+        }
+
+        // Persist validator to blockchain DB for on-chain storage
+        if let Ok(data) = bincode::serialize(&new_validator) {
+            let _ = db_for_register_validator.store_validator(address.as_bytes(), &data);
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "address": format!("0x{}", hex::encode(address.as_bytes())),
+            "name": name,
+            "stake": format!("0x{:x}", stake)
+        }))
+    });
+
+    let validators_clone = validators.clone();
+
+    // staking_getActiveValidators - Get only active validators (for consensus)
+    io.add_sync_method("staking_getActiveValidators", move |_params: Params| {
+        let validator_set = validators_clone.read();
+        let active_validators: Vec<Value> = validator_set
+            .validators()
+            .iter()
+            .filter(|v| v.active)
+            .map(|v| {
+                serde_json::json!({
+                    "address": format!("0x{}", hex::encode(v.address.as_bytes())),
+                    "stake": format!("0x{:x}", v.stake),
+                    "publicKey": format!("0x{}", hex::encode(&v.public_key)),
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "count": active_validators.len(),
+            "validators": active_validators
+        }))
+    });
+
+    let validators_clone = validators.clone();
+
+    // staking_deactivateValidator - Deactivate a validator
+    io.add_sync_method("staking_deactivateValidator", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        }
+
+        let address = parse_address(&parsed[0])?;
+        let mut validator_set = validators_clone.write();
+
+        if validator_set.get_validator(&address).is_some() {
+            validator_set.deactivate_validator(&address)
+                .map_err(|e| jsonrpc_core::Error::invalid_params(e.to_string()))?;
+            Ok(serde_json::json!({ "success": true }))
+        } else {
+            Err(jsonrpc_core::Error::invalid_params("Validator not found"))
+        }
+    });
+
+    // =========================================================================
+    // STAKING LOCK/UNLOCK WITH TIME CONSTRAINTS
+    // =========================================================================
+
+    // Storage for locked stakes: address -> (amount, unlock_timestamp)
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Shared state for locked stakes
+    lazy_static::lazy_static! {
+        static ref LOCKED_STAKES: parking_lot::RwLock<HashMap<[u8; 20], (u128, u64, u64)>> = {
+            parking_lot::RwLock::new(HashMap::new())
+        };
+    }
+
+    // Load existing stakes from DB into LOCKED_STAKES
+    {
+        if let Ok(stakes) = db.get_all_stakes() {
+            let mut locks = LOCKED_STAKES.write();
+            for (addr, data) in &stakes {
+                if let Ok((amount, unlock_ts, bonus)) = bincode::deserialize::<(u128, u64, u64)>(data) {
+                    locks.insert(*addr, (amount, unlock_ts, bonus));
+                }
+            }
+            if !stakes.is_empty() {
+                tracing::info!("📊 Loaded {} stakes from blockchain DB into memory", stakes.len());
+            }
+        }
+    }
+
+    // Clone db for lockStakeSeconds handler
+    let db_for_lock = db.clone();
+
+    // staking_lockStakeSeconds - Lock stake for SECONDS (for testing only)
+    // Params: [address, amount, lock_seconds]
+    // Returns: { success, unlock_timestamp }
+    io.add_sync_method("staking_lockStakeSeconds", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing address, amount, or lock_seconds",
+            ));
+        }
+
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
+
+        let amount_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid amount"))?;
+        let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
+
+        let lock_seconds = parsed[2]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid lock_seconds"))?;
+
+        // Get current timestamp
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_secs();
+        let unlock_timestamp = now + lock_seconds;
+
+        // Check if already locked
+        {
+            let locks = LOCKED_STAKES.read();
+            if let Some((_, existing_unlock, _)) = locks.get(address.as_bytes()) {
+                if now < *existing_unlock {
+                    return Err(jsonrpc_core::Error::invalid_params(
+                        format!("Stake already locked until timestamp {}", existing_unlock)
+                    ));
+                }
+            }
+        }
+        // Calculate bonus rate based on lock period (using LockBonusConfig logic)
+        // Convert seconds to days for bonus calculation
+        let lock_days = (lock_seconds / 86400) as u32; // 86400 seconds = 1 day
+        let bonus_rate = if lock_days >= 365 {
+            100 // 100%
+        } else if lock_days >= 180 {
+            50  // 50%
+        } else if lock_days >= 90 {
+            25  // 25%
+        } else if lock_days >= 30 {
+            10  // 10%
+        } else {
+            0   // No bonus for < 30 days
+        };
+
+        // Generate transaction hash for tracking
+        use sha3::{Digest, Keccak256};
+        let mut hasher = Keccak256::new();
+        hasher.update(address.as_bytes());
+        hasher.update(&amount.to_be_bytes());
+        hasher.update(&now.to_be_bytes());
+        hasher.update(&lock_seconds.to_be_bytes());
+        let tx_hash = hasher.finalize();
+        let tx_hash_hex = format!("0x{}", hex::encode(&tx_hash));
+
+        // Store lock info with proper bonus rate
+        {
+            let mut locks = LOCKED_STAKES.write();
+            let addr_bytes: [u8; 20] = *address.as_bytes();
+            locks.insert(addr_bytes, (amount, unlock_timestamp, bonus_rate));
+
+            // Persist to blockchain DB for on-chain storage
+            let stake_data = bincode::serialize(&(amount, unlock_timestamp, bonus_rate))
+                .unwrap_or_default();
+            let _ = db_for_lock.store_stake(&addr_bytes, &stake_data);
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "txHash": tx_hash_hex,
+            "address": format!("0x{}", hex::encode(address.as_bytes())),
+            "amount": format!("0x{:x}", amount),
+            "amountMDT": format!("{} MDT", amount / 1_000_000_000_000_000_000u128),
+            "lock_seconds": lock_seconds,
+            "lock_days": lock_days,
+            "bonus_rate": format!("{}%", bonus_rate),
+            "unlock_timestamp": unlock_timestamp,
+            "current_timestamp": now,
+            "message": format!("Locked {} MDT for {} seconds ({} days). Bonus: {}%. Unlock after timestamp {}",
+                              amount / 1_000_000_000_000_000_000u128, lock_seconds, lock_days, bonus_rate, unlock_timestamp)
+        }))
+    });
+
+    // staking_lockStake - Lock stake for a period to earn bonus rewards
+    // Params: [address, amount, lock_days]
+    // Returns: { success, unlock_timestamp, bonus_rate }
+    io.add_sync_method("staking_lockStake", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing address, amount, or lock_days",
+            ));
+        }
+
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
+
+        let amount_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid amount"))?;
+        let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
+
+        let lock_days = parsed[2]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid lock_days"))?;
+
+        // Validate lock period (minimum 7 days, maximum 365 days)
+        if lock_days < 7 {
+            return Err(jsonrpc_core::Error::invalid_params("Minimum lock period is 7 days"));
+        }
+        if lock_days > 365 {
+            return Err(jsonrpc_core::Error::invalid_params("Maximum lock period is 365 days"));
+        }
+
+        // Calculate bonus rate based on lock period (Model C from tokenomics)
+        // 7 days: 0%, 30 days: 10%, 90 days: 30%, 180 days: 60%, 365 days: 100%
+        let bonus_rate = match lock_days {
+            7..=29 => 0,
+            30..=89 => 10,
+            90..=179 => 30,
+            180..=364 => 60,
+            365 => 100,
+            _ => 0,
+        };
+
+        // Get current timestamp
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_secs();
+        let unlock_timestamp = now + (lock_days * 24 * 60 * 60);
+
+        // Check if already locked
+        {
+            let locks = LOCKED_STAKES.read();
+            if let Some((_, existing_unlock, _)) = locks.get(address.as_bytes()) {
+                if now < *existing_unlock {
+                    return Err(jsonrpc_core::Error::invalid_params(
+                        format!("Stake already locked until timestamp {}", existing_unlock)
+                    ));
+                }
+            }
+        }
+
+        // Store lock info
+        {
+            let mut locks = LOCKED_STAKES.write();
+            let addr_bytes: [u8; 20] = *address.as_bytes();
+            locks.insert(addr_bytes, (amount, unlock_timestamp, bonus_rate));
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "address": format!("0x{}", hex::encode(address.as_bytes())),
+            "amount": format!("0x{:x}", amount),
+            "lock_days": lock_days,
+            "unlock_timestamp": unlock_timestamp,
+            "bonus_rate": format!("{}%", bonus_rate),
+            "message": format!("Stake locked for {} days. Unlock after timestamp {}", lock_days, unlock_timestamp)
+        }))
+    });
+
+    // staking_unlockStake - Unlock stake after lock period expires
+    // Params: [address]
+    // Returns: { success, amount } or error if lock not expired
+    let db_for_unlock = db.clone();
+    io.add_sync_method("staking_unlockStake", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        }
+
+        let address = parse_address(&parsed[0])?;
+        let addr_bytes: [u8; 20] = *address.as_bytes();
+
+        // Get current timestamp
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_secs();
+
+        // Check lock status
+        let lock_info = {
+            let locks = LOCKED_STAKES.read();
+            locks.get(&addr_bytes).cloned()
+        };
+
+        match lock_info {
+            None => {
+                Err(jsonrpc_core::Error::invalid_params("No locked stake found for this address"))
+            }
+            Some((amount, unlock_timestamp, bonus_rate)) => {
+                if now < unlock_timestamp {
+                    // LOCK NOT EXPIRED - CANNOT UNLOCK
+                    let remaining_seconds = unlock_timestamp - now;
+                    let remaining_days = remaining_seconds / (24 * 60 * 60);
+                    let remaining_hours = (remaining_seconds % (24 * 60 * 60)) / 3600;
+
+                    Err(jsonrpc_core::Error::invalid_params(
+                        format!(
+                            "Lock not expired. Cannot unlock until timestamp {}. Remaining: {} days {} hours",
+                            unlock_timestamp, remaining_days, remaining_hours
+                        )
+                    ))
+                } else {
+                    // Lock expired - allow unlock
+                    {
+                        let mut locks = LOCKED_STAKES.write();
+                        locks.remove(&addr_bytes);
+
+                        // Remove from blockchain DB
+                        let _ = db_for_unlock.remove_stake(&addr_bytes);
+                    }
+
+                    // Calculate bonus amount
+                    let bonus_amount = (amount * bonus_rate as u128) / 100;
+
+                    // Generate unlock transaction hash
+                    use sha3::{Digest, Keccak256};
+                    let mut hasher = Keccak256::new();
+                    hasher.update(address.as_bytes());
+                    hasher.update(&amount.to_be_bytes());
+                    hasher.update(&now.to_be_bytes());
+                    hasher.update(b"unlock");
+                    let tx_hash = hasher.finalize();
+                    let tx_hash_hex = format!("0x{}", hex::encode(&tx_hash));
+
+                    Ok(serde_json::json!({
+                        "success": true,
+                        "txHash": tx_hash_hex,
+                        "address": format!("0x{}", hex::encode(address.as_bytes())),
+                        "amount": format!("0x{:x}", amount),
+                        "amountMDT": format!("{} MDT", amount / 1_000_000_000_000_000_000u128),
+                        "bonus_rate": format!("{}%", bonus_rate),
+                        "bonus_amount": format!("0x{:x}", bonus_amount),
+                        "bonusMDT": format!("{:.2} MDT", bonus_amount as f64 / 1_000_000_000_000_000_000f64),
+                        "total_returned": format!("0x{:x}", amount + bonus_amount),
+                        "totalMDT": format!("{:.2} MDT", (amount + bonus_amount) as f64 / 1_000_000_000_000_000_000f64),
+                        "message": "Stake unlocked successfully with bonus"
+                    }))
+                }
+            }
+        }
+    });
+
+    // staking_getLockInfo - Get lock information for an address
+    io.add_sync_method("staking_getLockInfo", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        }
+
+        let address = parse_address(&parsed[0])?;
+        let addr_bytes: [u8; 20] = *address.as_bytes();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_secs();
+
+        let locks = LOCKED_STAKES.read();
+        match locks.get(&addr_bytes) {
+            None => {
+                Ok(serde_json::json!({
+                    "locked": false,
+                    "address": format!("0x{}", hex::encode(address.as_bytes()))
+                }))
+            }
+            Some((amount, unlock_timestamp, bonus_rate)) => {
+                let is_unlockable = now >= *unlock_timestamp;
+                let remaining = if now < *unlock_timestamp {
+                    unlock_timestamp - now
+                } else {
+                    0
+                };
+
+                Ok(serde_json::json!({
+                    "locked": true,
+                    "address": format!("0x{}", hex::encode(address.as_bytes())),
+                    "amount": format!("0x{:x}", amount),
+                    "unlock_timestamp": unlock_timestamp,
+                    "bonus_rate": format!("{}%", bonus_rate),
+                    "is_unlockable": is_unlockable,
+                    "remaining_seconds": remaining
+                }))
+            }
         }
     });
 }

@@ -6,7 +6,7 @@ use futures::FutureExt;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
 use luxtensor_core::{Block, Transaction, StateDB};
-use luxtensor_crypto::MerkleTree;
+use luxtensor_crypto::{MerkleTree, KeyPair};
 use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
@@ -56,6 +56,8 @@ pub struct NodeService {
     broadcast_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
     /// Genesis timestamp for slot calculation
     genesis_timestamp: u64,
+    /// Validator keypair for block signing (None if not a validator)
+    validator_keypair: Option<KeyPair>,
 }
 
 impl NodeService {
@@ -169,9 +171,45 @@ impl NodeService {
             .unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .expect("System time before UNIX epoch")
                     .as_secs()
             });
+
+        // Load validator keypair if configured
+        let validator_keypair = if config.node.is_validator {
+            if let Some(key_path) = &config.node.validator_key_path {
+                match std::fs::read(key_path) {
+                    Ok(key_bytes) if key_bytes.len() >= 32 => {
+                        let mut secret = [0u8; 32];
+                        secret.copy_from_slice(&key_bytes[..32]);
+                        match KeyPair::from_secret(&secret) {
+                            Ok(keypair) => {
+                                let address = keypair.address();
+                                info!("🔑 Loaded validator key, address: 0x{}", hex::encode(&address));
+                                Some(keypair)
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse validator key: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        warn!("Validator key file too short, need at least 32 bytes");
+                        None
+                    }
+                    Err(e) => {
+                        warn!("Could not read validator key file: {}", e);
+                        None
+                    }
+                }
+            } else {
+                warn!("Validator mode enabled but no key path configured, blocks will be unsigned");
+                None
+            }
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
@@ -188,6 +226,7 @@ impl NodeService {
             epoch_length,
             broadcast_tx: None, // Will be initialized in start()
             genesis_timestamp,
+            validator_keypair,
         })
     }
 
@@ -273,6 +312,8 @@ impl NodeService {
                             }
                             SwarmP2PEvent::PeerConnected(peer_id) => {
                                 info!("👋 Peer connected: {}", peer_id);
+                                // Update global peer count for RPC
+                                luxtensor_rpc::peer_count::increment_peer_count();
                                 // Request sync when peer connects
                                 let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
                                 if let Some(ref tx) = broadcast_tx_for_sync {
@@ -287,6 +328,8 @@ impl NodeService {
                             }
                             SwarmP2PEvent::PeerDisconnected(peer_id) => {
                                 info!("👋 Peer disconnected: {}", peer_id);
+                                // Update global peer count for RPC
+                                luxtensor_rpc::peer_count::decrement_peer_count();
                             }
                             SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
                                 info!("🔄 Got sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
@@ -503,7 +546,7 @@ impl NodeService {
                     // Calculate current slot
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .expect("System time before UNIX epoch")
                         .as_secs();
                     let slot = if now > genesis_timestamp {
                         (now - genesis_timestamp) / block_time
@@ -511,6 +554,38 @@ impl NodeService {
                         slot_counter
                     };
                     slot_counter = slot + 1;
+
+                    // 🔧 FIX: Drain tx_queue EVERY slot to ensure TXs are not missed
+                    // Add to mempool regardless of leader status, produce block only if leader
+                    let pending_txs = evm_state.read().drain_tx_queue();
+                    if !pending_txs.is_empty() {
+                        info!("📤 Found {} pending transactions to process", pending_txs.len());
+                    }
+                    for ready_tx in pending_txs {
+                        let from_addr = luxtensor_core::Address::from(ready_tx.from);
+                        let to_addr = ready_tx.to.map(luxtensor_core::Address::from);
+
+                        let mut tx = Transaction::new(
+                            ready_tx.nonce,
+                            from_addr,
+                            to_addr,
+                            ready_tx.value,
+                            1,
+                            ready_tx.gas,
+                            ready_tx.data,
+                        );
+
+                        if !sign_transaction_with_dev_key(&mut tx, &ready_tx.from) {
+                            warn!("Failed to sign transaction");
+                            continue;
+                        }
+
+                        if let Err(e) = mempool.add_transaction(tx) {
+                            warn!("Failed to add TX to mempool: {}", e);
+                        } else {
+                            info!("📥 Transaction added to mempool");
+                        }
+                    }
 
                     // Check if we are the leader for this slot
                     if !validators.is_empty() && !is_leader_for_slot(&validator_id, slot, &validators) {
@@ -522,41 +597,10 @@ impl NodeService {
 
                     info!("🎯 Slot {}: We are the leader! Producing block...", slot);
 
-                    // Poll tx_queue from EVM state and add to mempool
-                    let pending_txs = evm_state.read().drain_tx_queue();
-                    for ready_tx in pending_txs {
-                        // Convert ReadyTransaction to core Transaction
-                        let from_addr = luxtensor_core::Address::from(ready_tx.from);
-                        let to_addr = ready_tx.to.map(luxtensor_core::Address::from);
-
-                        let mut tx = Transaction::new(
-                            ready_tx.nonce,
-                            from_addr,
-                            to_addr,
-                            ready_tx.value,
-                            1, // gas price
-                            ready_tx.gas,
-                            ready_tx.data,
-                        );
-
-                        // Sign transaction with proper secp256k1 using dev private key
-                        // This is for development - in production, clients send pre-signed TX
-                        if !sign_transaction_with_dev_key(&mut tx, &ready_tx.from) {
-                            warn!("Failed to sign transaction from unknown account: {:?}", ready_tx.from);
-                            continue;
-                        }
-
-                        if let Err(e) = mempool.add_transaction(tx) {
-                            warn!("Failed to add RPC tx to mempool: {}", e);
-                        } else {
-                            info!("📥 Added signed transaction to mempool");
-                        }
-                    }
-
-                    // Produce a block
+                    // Produce a block (TXs already in mempool from earlier drain)
                     match Self::produce_block(
                         &consensus, &storage, &state_db, &mempool, &executor,
-                        &reward_executor, epoch_length
+                        &reward_executor, epoch_length, None
                     ).await {
                         Ok(block) => {
                             // Broadcast block to P2P network
@@ -594,6 +638,7 @@ impl NodeService {
         executor: &Arc<TransactionExecutor>,
         reward_executor: &Arc<RwLock<RewardExecutor>>,
         epoch_length: u64,
+        validator_keypair: Option<&KeyPair>,
     ) -> Result<Block> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -663,8 +708,10 @@ impl NodeService {
         let state_root = state.commit()?;
         drop(state); // Release lock
 
-        // Create new block header
-        let header = luxtensor_core::BlockHeader {
+
+        // Create new block header with signing
+        // First create unsigned header to get hash
+        let mut unsigned_header = luxtensor_core::BlockHeader {
             version: 1,
             height: new_height,
             timestamp: std::time::SystemTime::now()
@@ -675,17 +722,63 @@ impl NodeService {
             txs_root,
             receipts_root,
             validator: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: vec![],  // Empty for signing
             gas_used: total_gas,
             gas_limit: 10_000_000,
             extra_data: vec![],
         };
+
+        // Sign with validator keypair if available
+        let (validator_pubkey, signature) = if let Some(keypair) = validator_keypair {
+            // Get public key bytes (padded to 32 bytes for now)
+            let address = keypair.address();
+            let mut validator = [0u8; 32];
+            validator[12..32].copy_from_slice(&address);
+
+            // Sign the unsigned header hash
+            let header_hash = unsigned_header.hash();
+            match keypair.sign(&header_hash) {
+                Ok(sig) => {
+                    info!("🔐 Block #{} signed by validator 0x{}", new_height, hex::encode(&address));
+                    (validator, sig.to_vec())
+                }
+                Err(e) => {
+                    warn!("Failed to sign block: {}, using unsigned", e);
+                    ([0u8; 32], vec![0u8; 64])
+                }
+            }
+        } else {
+            ([0u8; 32], vec![0u8; 64])
+        };
+
+        // Update header with signature
+        unsigned_header.validator = validator_pubkey;
+        unsigned_header.signature = signature;
+        let header = unsigned_header;
 
         // Create new block
         let block = Block::new(header, valid_transactions.clone());
 
         // Store block
         storage.store_block(&block)?;
+
+        // 🔧 FIX: Store receipts for eth_getTransactionReceipt
+        for receipt in &valid_receipts {
+            if let Ok(receipt_bytes) = bincode::serialize(receipt) {
+                if let Err(e) = storage.store_receipt(&receipt.transaction_hash, &receipt_bytes) {
+                    warn!("Failed to store receipt: {}", e);
+                }
+            }
+
+            // Also store contract code if this was a deployment
+            if let Some(ref contract_addr) = receipt.contract_address {
+                if let Some(code) = luxtensor_rpc::contract_registry::get_contract_code(contract_addr.as_bytes()) {
+                    if let Err(e) = storage.store_contract(contract_addr.as_bytes(), &code) {
+                        warn!("Failed to store contract: {}", e);
+                    }
+                }
+            }
+        }
 
         // Remove transactions from mempool
         let tx_hashes: Vec<_> = valid_transactions.iter().map(|tx| tx.hash()).collect();

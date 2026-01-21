@@ -222,7 +222,7 @@ impl ContractExecutor {
 
         // Execute deployment with EVM
         let evm = self.evm.read();
-        let (returned_address, gas_used, logs_data) = evm
+        let (returned_address, gas_used, logs_data, _deployed_code) = evm
             .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
 
         // Parse logs from EVM execution

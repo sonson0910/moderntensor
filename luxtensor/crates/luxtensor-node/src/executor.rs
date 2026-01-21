@@ -16,6 +16,8 @@ pub struct Receipt {
     pub gas_used: u64,
     pub status: ExecutionStatus,
     pub logs: Vec<Log>,
+    /// Contract address if this was a contract deployment
+    pub contract_address: Option<Address>,
 }
 
 /// Execution status
@@ -120,45 +122,75 @@ impl TransactionExecutor {
         state.set_account(tx.from, sender);
 
         // Transfer value to recipient if present
-        let status = if let Some(to_addr) = tx.to {
+        let (status, contract_address) = if let Some(to_addr) = tx.to {
             let mut recipient = state.get_account(&to_addr)
                 .unwrap_or_else(|| Account::new());
             recipient.balance += tx.value;
             state.set_account(to_addr, recipient);
-            ExecutionStatus::Success
+            (ExecutionStatus::Success, None)
         } else {
-            // Contract deployment - CREATE operation
-            // Calculate contract address using keccak256(rlp([sender, nonce]))
+            // Contract deployment - CREATE operation using real EVM execution
+            use luxtensor_contracts::EvmExecutor;
 
-            let mut hasher = Keccak256::new();
-            // Simple RLP encoding: sender address (20 bytes) + nonce (8 bytes)
-            hasher.update(tx.from.as_bytes());
-            hasher.update(&(tx.nonce - 1).to_be_bytes()); // Use nonce before increment
-            let hash = hasher.finalize();
+            // Get current timestamp
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
 
-            // Contract address is last 20 bytes of hash
-            let mut contract_addr_bytes = [0u8; 20];
-            contract_addr_bytes.copy_from_slice(&hash[12..32]);
-            let contract_addr = Address::from(contract_addr_bytes);
+            // Execute init code using EvmExecutor
+            let executor = EvmExecutor::new();
 
-            // Create contract account with code (tx.data is the init code)
-            let mut contract_account = Account::new();
-            contract_account.balance = tx.value;
-            // In a full implementation, we would execute init code here
-            // For now, store the code directly
-            contract_account.code_hash = {
-                let mut code_hasher = Keccak256::new();
-                code_hasher.update(&tx.data);
-                let code_hash = code_hasher.finalize();
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&code_hash);
-                hash
-            };
+            match executor.deploy(
+                tx.from,
+                tx.data.clone(),  // Init code (constructor bytecode)
+                tx.value,
+                tx.gas_limit,
+                block_height,
+                timestamp,
+            ) {
+                Ok((contract_address_vec, gas_used, _logs, deployed_code)) => {
+                    // 🔧 FIX: Use contract address returned by revm, not manual calculation
+                    let mut contract_addr_bytes = [0u8; 20];
+                    if contract_address_vec.len() >= 20 {
+                        contract_addr_bytes.copy_from_slice(&contract_address_vec[..20]);
+                    }
+                    let contract_addr = Address::from(contract_addr_bytes);
 
-            state.set_account(contract_addr, contract_account);
+                    // Create contract account with proper code hash from deployed bytecode
+                    let mut contract_account = Account::new();
+                    contract_account.balance = tx.value;
+                    contract_account.code_hash = {
+                        let mut code_hasher = Keccak256::new();
+                        code_hasher.update(&deployed_code); // Use actual deployed bytecode
+                        let code_hash = code_hasher.finalize();
+                        let mut hash = [0u8; 32];
+                        hash.copy_from_slice(&code_hash);
+                        hash
+                    };
 
-            info!("📄 Contract deployed at 0x{}", hex::encode(&contract_addr_bytes));
-            ExecutionStatus::Success
+                    state.set_account(contract_addr, contract_account);
+
+                    // ✅ FIX: Register deployed contract with actual runtime bytecode from revm
+                    luxtensor_rpc::contract_registry::register_contract(
+                        contract_addr_bytes,
+                        deployed_code.clone(), // Use actual deployed bytecode
+                        *tx.from.as_bytes(),
+                        block_height,
+                    );
+
+                    info!("📄 Contract deployed at 0x{} (gas used: {})",
+                          hex::encode(&contract_addr_bytes), gas_used);
+                    (ExecutionStatus::Success, Some(contract_addr))
+                }
+                Err(e) => {
+                    tracing::error!("❌ Contract deployment FAILED: {:?}", e);
+                    tracing::error!("   From: 0x{}", hex::encode(tx.from.as_bytes()));
+                    tracing::error!("   Data len: {} bytes", tx.data.len());
+                    tracing::error!("   Gas limit: {}", tx.gas_limit);
+                    (ExecutionStatus::Failed, None)
+                }
+            }
         };
 
         // Create receipt
@@ -172,6 +204,7 @@ impl TransactionExecutor {
             gas_used: gas_cost,
             status,
             logs: vec![],
+            contract_address,
         };
 
         Ok(receipt)

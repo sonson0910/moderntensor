@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'luxtensor'
+    static_configs:
+      # Local development nodes
+      - targets:
+          - 'localhost:9545'  # Node 1 metrics
+          - 'localhost:9555'  # Node 2 metrics
+          - 'localhost:9565'  # Node 3 metrics
+        labels:
+          network: 'local'
+
+      # Production nodes (add your IPs)
+      # - targets:
+      #     - '1.2.3.4:9545'
+      #     - '5.6.7.8:9545'
+      #   labels:
+      #     network: 'mainnet'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

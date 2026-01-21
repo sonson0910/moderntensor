@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use luxtensor_core::{Block, Transaction, StateDB};
-use luxtensor_network::P2PEvent;
+use luxtensor_network::{P2PEvent, SwarmCommand};
 use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -11,20 +11,55 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use crate::mempool::Mempool;
 
+/// Sync state tracker
+pub struct SyncState {
+    /// Whether we are currently syncing
+    pub is_syncing: bool,
+    /// Height we are syncing to
+    pub target_height: u64,
+    /// Node ID for sync requests
+    pub node_id: String,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            is_syncing: false,
+            target_height: 0,
+            node_id: "node".to_string(),
+        }
+    }
+}
+
 /// Handle P2P events
 pub async fn p2p_event_loop(
     mut event_rx: mpsc::UnboundedReceiver<P2PEvent>,
     storage: Arc<BlockchainDB>,
     state_db: Arc<RwLock<StateDB>>,
     mempool: Arc<Mempool>,
+    sync_command_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
+    node_id: String,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<()> {
     info!("🌐 P2P event loop started");
 
+    let sync_state = Arc::new(RwLock::new(SyncState {
+        is_syncing: false,
+        target_height: 0,
+        node_id: node_id.clone(),
+    }));
+
     loop {
         tokio::select! {
             Some(event) = event_rx.recv() => {
-                if let Err(e) = handle_p2p_event(event, &storage, &state_db, &mempool).await {
+                if let Err(e) = handle_p2p_event(
+                    event,
+                    &storage,
+                    &state_db,
+                    &mempool,
+                    sync_command_tx.as_ref(),
+                    &sync_state,
+                ).await {
                     error!("Error handling P2P event: {}", e);
                 }
             }
@@ -44,10 +79,12 @@ async fn handle_p2p_event(
     storage: &Arc<BlockchainDB>,
     _state_db: &Arc<RwLock<StateDB>>,
     mempool: &Arc<Mempool>,
+    sync_command_tx: Option<&mpsc::UnboundedSender<SwarmCommand>>,
+    sync_state: &Arc<RwLock<SyncState>>,
 ) -> Result<()> {
     match event {
         P2PEvent::NewBlock(block) => {
-            handle_new_block(block, storage).await?;
+            handle_new_block(block, storage, sync_command_tx, sync_state).await?;
         }
         P2PEvent::NewTransaction(tx) => {
             handle_new_transaction(tx, mempool).await?;
@@ -71,7 +108,12 @@ async fn handle_p2p_event(
 }
 
 /// Handle incoming block from P2P network
-async fn handle_new_block(block: Block, storage: &Arc<BlockchainDB>) -> Result<()> {
+async fn handle_new_block(
+    block: Block,
+    storage: &Arc<BlockchainDB>,
+    sync_command_tx: Option<&mpsc::UnboundedSender<SwarmCommand>>,
+    sync_state: &Arc<RwLock<SyncState>>,
+) -> Result<()> {
     let block_height = block.header.height;
     let block_hash = block.hash();
 
@@ -91,8 +133,31 @@ async fn handle_new_block(block: Block, storage: &Arc<BlockchainDB>) -> Result<(
 
     if block_height > current_height + 1 {
         // We're missing blocks, need to sync
-        warn!("Missing blocks between {} and {}, need sync", current_height, block_height);
-        // TODO: Request missing blocks from peer
+        warn!("Missing blocks between {} and {}, initiating sync", current_height, block_height);
+
+        // Request sync if we have a sync command sender and not already syncing
+        if let Some(tx) = sync_command_tx {
+            let mut state = sync_state.write();
+            if !state.is_syncing {
+                state.is_syncing = true;
+                state.target_height = block_height;
+
+                let sync_cmd = SwarmCommand::RequestSync {
+                    from_height: current_height + 1,
+                    to_height: block_height,
+                    my_id: state.node_id.clone(),
+                };
+
+                if let Err(e) = tx.send(sync_cmd) {
+                    error!("Failed to send sync request: {}", e);
+                    state.is_syncing = false;
+                } else {
+                    info!("🔄 Sync request sent for blocks {}-{}", current_height + 1, block_height);
+                }
+            } else {
+                debug!("Already syncing to height {}", state.target_height);
+            }
+        }
         return Ok(());
     }
 
@@ -107,6 +172,15 @@ async fn handle_new_block(block: Block, storage: &Arc<BlockchainDB>) -> Result<(
     // Store the block
     storage.store_block(&block)?;
     info!("📥 Received and stored block #{} hash {:?} from P2P", block_height, &block_hash[..4]);
+
+    // Reset sync state if we've caught up
+    {
+        let mut state = sync_state.write();
+        if state.is_syncing && block_height >= state.target_height {
+            state.is_syncing = false;
+            info!("✅ Sync complete! Caught up to block #{}", block_height);
+        }
+    }
 
     Ok(())
 }

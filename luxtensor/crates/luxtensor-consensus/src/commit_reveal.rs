@@ -238,21 +238,13 @@ pub fn compute_commit_hash(weights: &[(u64, u16)], salt: &[u8; 32]) -> Hash {
     hash
 }
 
-/// Generate random salt
+/// Generate cryptographically secure random salt
 pub fn generate_salt() -> [u8; 32] {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use rand::Rng;
 
     let mut salt = [0u8; 32];
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-
-    // Use time-based pseudo-random for now
-    // In production, use proper RNG
-    let bytes = nanos.to_be_bytes();
-    salt[..16].copy_from_slice(&bytes);
-    salt[16..].copy_from_slice(&bytes);
+    let mut rng = rand::thread_rng();
+    rng.fill(&mut salt);
 
     salt
 }
