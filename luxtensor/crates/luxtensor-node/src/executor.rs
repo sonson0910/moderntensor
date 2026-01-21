@@ -116,16 +116,16 @@ impl TransactionExecutor {
             ));
         }
 
-        // Deduct cost from sender
-        sender.balance -= total_cost;
-        sender.nonce += 1;
+        // Deduct cost from sender (already verified balance >= total_cost)
+        sender.balance = sender.balance.saturating_sub(total_cost);
+        sender.nonce = sender.nonce.saturating_add(1);
         state.set_account(tx.from, sender);
 
         // Transfer value to recipient if present
         let (status, contract_address) = if let Some(to_addr) = tx.to {
             let mut recipient = state.get_account(&to_addr)
                 .unwrap_or_else(|| Account::new());
-            recipient.balance += tx.value;
+            recipient.balance = recipient.balance.saturating_add(tx.value);
             state.set_account(to_addr, recipient);
             (ExecutionStatus::Success, None)
         } else {

@@ -86,7 +86,7 @@ impl ValidatorSet {
     /// Remove a validator from the set
     pub fn remove_validator(&mut self, address: &Address) -> Result<(), &'static str> {
         if let Some(validator) = self.validators.remove(address) {
-            self.total_stake -= validator.stake;
+            self.total_stake = self.total_stake.saturating_sub(validator.stake);
             Ok(())
         } else {
             Err("Validator not found")
@@ -96,7 +96,7 @@ impl ValidatorSet {
     /// Update validator stake
     pub fn update_stake(&mut self, address: &Address, new_stake: u128) -> Result<(), &'static str> {
         if let Some(validator) = self.validators.get_mut(address) {
-            self.total_stake = self.total_stake - validator.stake + new_stake;
+            self.total_stake = self.total_stake.saturating_sub(validator.stake).saturating_add(new_stake);
             validator.stake = new_stake;
             Ok(())
         } else {
@@ -108,8 +108,8 @@ impl ValidatorSet {
     pub fn slash_stake(&mut self, address: &Address, amount: u128) -> Result<u128, &'static str> {
         if let Some(validator) = self.validators.get_mut(address) {
             let slash_amount = amount.min(validator.stake);
-            validator.stake -= slash_amount;
-            self.total_stake -= slash_amount;
+            validator.stake = validator.stake.saturating_sub(slash_amount);
+            self.total_stake = self.total_stake.saturating_sub(slash_amount);
             Ok(slash_amount)
         } else {
             Err("Validator not found")

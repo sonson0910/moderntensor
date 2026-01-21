@@ -225,7 +225,7 @@ impl TokenAllocation {
         ] {
             let amount = category.amount();
             minted.insert(category, amount);
-            *total += amount;
+            *total = total.saturating_add(amount);
             result.pre_minted.push((category, amount));
         }
 
@@ -255,7 +255,7 @@ impl TokenAllocation {
         }
 
         // Deduct from category pool
-        minted.insert(category, available - amount);
+        minted.insert(category, available.saturating_sub(amount));
 
         // Create vesting entry
         let entry = VestingEntry {
@@ -280,8 +280,8 @@ impl TokenAllocation {
             if entry.beneficiary == beneficiary {
                 let claimable = entry.claimable(current_timestamp);
                 if claimable > 0 {
-                    entry.claimed_amount += claimable;
-                    total_claimed += claimable;
+                    entry.claimed_amount = entry.claimed_amount.saturating_add(claimable);
+                    total_claimed = total_claimed.saturating_add(claimable);
                 }
             }
         }
@@ -320,8 +320,8 @@ impl TokenAllocation {
         if amount > *pool {
             return Err("Emission pool exhausted");
         }
-        *pool -= amount;
-        *self.total_minted.write() += amount;
+        *pool = pool.saturating_sub(amount);
+        *self.total_minted.write() = self.total_minted.read().saturating_add(amount);
         Ok(amount)
     }
 

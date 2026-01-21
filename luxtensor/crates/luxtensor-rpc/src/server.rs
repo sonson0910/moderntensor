@@ -1647,6 +1647,16 @@ impl RpcServer {
             Ok(Value::String("1.0.0".to_string()))
         });
 
+        // system_health - Check node health
+        io.add_sync_method("system_health", move |_params: Params| {
+            Ok(serde_json::json!({
+                "status": "healthy",
+                "version": "1.0.0",
+                "syncing": false,
+                "peers": crate::peer_count::get_peer_count()
+            }))
+        });
+
         // system_peerCount - Get peer count
         io.add_sync_method("system_peerCount", move |_params: Params| {
             let count = crate::peer_count::get_peer_count();

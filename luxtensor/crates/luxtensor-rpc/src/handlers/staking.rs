@@ -310,6 +310,23 @@ pub fn register_staking_handlers(
         }))
     });
 
+    let validators_config = validators.clone();
+
+    // staking_getConfig - Get staking configuration
+    io.add_sync_method("staking_getConfig", move |_params: Params| {
+        // Min stake: 1000 MDT (18 decimals)
+        let min_stake: u128 = 1_000_000_000_000_000_000_000;
+        Ok(serde_json::json!({
+            "min_stake": format!("0x{:x}", min_stake),
+            "min_stake_decimal": "1000000000000000000000",
+            "max_validators": 100,
+            "epoch_length": 100,
+            "block_time_seconds": 3,
+            "lock_period_days": 7,
+            "unbonding_period_days": 21
+        }))
+    });
+
     let validators_clone = validators.clone();
 
     // staking_deactivateValidator - Deactivate a validator

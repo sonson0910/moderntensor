@@ -12,3 +12,5 @@ mod core_tests;
 mod crypto_tests;
 #[cfg(test)]
 mod stake_reward_tests;
+#[cfg(test)]
+mod edge_case_tests;
