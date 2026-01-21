@@ -63,15 +63,35 @@ struct BlockchainBehaviour {
 }
 
 impl SwarmP2PNode {
-    /// Create a new P2P swarm node
+    /// Create a new P2P swarm node with random keypair (for backwards compatibility)
     /// Returns the node and a sender for commands (broadcast blocks/txs)
     pub async fn new(
         listen_port: u16,
         event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
     ) -> Result<(Self, mpsc::UnboundedSender<SwarmCommand>), NetworkError> {
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        // Generate keypair
         let keypair = Keypair::generate_ed25519();
+        Self::with_keypair(listen_port, event_sender, keypair, vec![], true).await
+    }
+
+    /// Create a new P2P swarm node with provided keypair for persistent identity
+    ///
+    /// # Arguments
+    /// * `listen_port` - Port to listen on
+    /// * `event_sender` - Channel to send events to
+    /// * `keypair` - Keypair for node identity (load from file for persistent ID)
+    /// * `bootstrap_nodes` - List of bootstrap multiaddrs to connect to
+    /// * `enable_mdns` - Whether to enable mDNS discovery
+    ///
+    /// # Returns
+    /// * Tuple of (SwarmP2PNode, command sender)
+    pub async fn with_keypair(
+        listen_port: u16,
+        event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
+        keypair: Keypair,
+        bootstrap_nodes: Vec<String>,
+        enable_mdns: bool,
+    ) -> Result<(Self, mpsc::UnboundedSender<SwarmCommand>), NetworkError> {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
         let local_peer_id = PeerId::from(keypair.public());
 
         info!("🔗 Local Peer ID: {}", local_peer_id);
@@ -149,6 +169,36 @@ impl SwarmP2PNode {
             .map_err(|e| NetworkError::SubscriptionFailed(e.to_string()))?;
 
         info!("📡 Subscribed to topics: blocks, transactions, sync");
+
+        // Connect to bootstrap nodes if provided
+        if !bootstrap_nodes.is_empty() {
+            info!("🔗 Connecting to {} bootstrap node(s)...", bootstrap_nodes.len());
+            for addr_str in &bootstrap_nodes {
+                match addr_str.parse::<Multiaddr>() {
+                    Ok(addr) => {
+                        // Extract peer ID from multiaddr if present
+                        if let Some(libp2p::multiaddr::Protocol::P2p(peer_id)) = addr.iter().last() {
+                            // Add as explicit peer for gossipsub
+                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            info!("   Added explicit peer: {}", peer_id);
+                        }
+
+                        // Dial the bootstrap node
+                        match swarm.dial(addr.clone()) {
+                            Ok(_) => info!("   📞 Dialing bootstrap: {}", addr_str),
+                            Err(e) => warn!("   ⚠️ Failed to dial {}: {}", addr_str, e),
+                        }
+                    }
+                    Err(e) => {
+                        warn!("   ⚠️ Invalid bootstrap address '{}': {}", addr_str, e);
+                    }
+                }
+            }
+        } else if enable_mdns {
+            info!("📡 mDNS enabled - will discover local peers automatically");
+        } else {
+            warn!("⚠️ No bootstrap nodes and mDNS disabled - node will be isolated!");
+        }
 
         Ok((Self {
             swarm,

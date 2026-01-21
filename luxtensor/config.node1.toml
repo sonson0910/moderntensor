@@ -44,14 +44,21 @@ listen_addr = "0.0.0.0"
 listen_port = 30303
 
 # Bootstrap nodes for initial peer discovery
-# Leave empty for first node or use mDNS
+# Format: "/ip4/IP_ADDRESS/tcp/PORT/p2p/PEER_ID"
+# Leave empty for first node (seed node) or use mDNS for local network
 bootstrap_nodes = []
 
 # Maximum number of connected peers
 max_peers = 50
 
 # Enable mDNS peer discovery on local network
+# Set to false when using bootstrap_nodes for remote networks
 enable_mdns = true
+
+# Path to node identity key file (for persistent Peer ID)
+# If not set, uses "./node.key" in data_dir
+# The Peer ID will be printed on startup for use in bootstrap_nodes
+# node_key_path = "./node.key"
 
 [storage]
 # Database directory

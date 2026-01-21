@@ -1,0 +1,34 @@
+﻿
+============================================================
+python : Traceback (most recent call last):
+At line:1 char:1
++ python scripts/full_integration_test.py 2>&1 | 
+Out-File -FilePath tes ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback 
+    (most recent call last)::String) [], RemoteExcept  
+  ion
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\venera\cardano\moderntensor\moderntensor\lux
+tensor\scripts\full_integration_test.py", line 355, in 
+<module>
+    main()
+    ~~~~^^
+  File "D:\venera\cardano\moderntensor\moderntensor\lux
+tensor\scripts\full_integration_test.py", line 319, in 
+main
+    print("\U0001f980 LUXTENSOR FULL BLOCKCHAIN 
+INTEGRATION TEST")
+    
+~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File 
+"C:\Users\Admin\anaconda3\Lib\encodings\cp1252.py", 
+line 19, in encode
+    return codecs.charmap_encode(input,self.errors,enco
+ding_table)[0]
+           
+~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode 
+character '\U0001f980' in position 0: character maps 
+to <undefined>

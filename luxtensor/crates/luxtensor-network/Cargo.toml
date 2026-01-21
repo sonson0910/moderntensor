@@ -21,3 +21,4 @@ luxtensor-crypto = { path = "../luxtensor-crypto" }
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = { workspace = true }

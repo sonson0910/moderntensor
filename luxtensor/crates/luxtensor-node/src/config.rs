@@ -91,14 +91,19 @@ pub struct NetworkConfig {
     /// P2P listening port
     pub listen_port: u16,
 
-    /// Bootstrap nodes
+    /// Bootstrap nodes (multiaddr format, e.g., "/ip4/1.2.3.4/tcp/30303/p2p/12D3KooW...")
     pub bootstrap_nodes: Vec<String>,
 
     /// Maximum number of peers
     pub max_peers: usize,
 
-    /// Enable mDNS discovery
+    /// Enable mDNS discovery (local network only)
     pub enable_mdns: bool,
+
+    /// Path to node identity key file (for persistent Peer ID)
+    /// If not set, uses "./node.key" in data_dir
+    #[serde(default)]
+    pub node_key_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +180,7 @@ impl Default for Config {
                 bootstrap_nodes: vec![],
                 max_peers: 50,
                 enable_mdns: true,
+                node_key_path: None,  // Will use ./node.key in data_dir
             },
             storage: StorageConfig {
                 db_path: PathBuf::from("./data/db"),

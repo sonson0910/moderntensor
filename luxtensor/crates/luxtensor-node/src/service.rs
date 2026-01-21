@@ -7,7 +7,7 @@ use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::{MerkleTree, KeyPair};
-use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand};
+use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand, NodeIdentity, print_connection_info, get_seeds_for_chain};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
@@ -254,11 +254,68 @@ impl NodeService {
         // Channel for RPC to send transactions to P2P layer
         let (tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::unbounded_channel::<Transaction>();
 
-        match SwarmP2PNode::new(self.config.network.listen_port, p2p_event_tx).await {
+        // Load or generate persistent node identity (Peer ID)
+        let node_key_path = self.config.network.node_key_path
+            .clone()
+            .unwrap_or_else(|| self.config.node.data_dir.join("node.key"));
+        let node_key_path_str = node_key_path.to_string_lossy().to_string();
+
+        let node_identity = match NodeIdentity::load_or_generate(&node_key_path_str) {
+            Ok(id) => {
+                info!("🔑 Node Identity loaded");
+                info!("   Peer ID: {}", id.peer_id_string());
+                id
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to load node identity: {}. Using random ID.", e);
+                NodeIdentity::generate_new()?
+            }
+        };
+
+        // Print connection info for other nodes
+        let peer_id_str = node_identity.peer_id_string();
+        print_connection_info(
+            &peer_id_str,
+            self.config.network.listen_port,
+            None, // TODO: Auto-detect external IP
+        );
+
+        // Create swarm with persistent identity
+        let keypair = node_identity.into_keypair();
+
+        // Get bootstrap nodes: config > hardcoded seeds > empty (use mDNS)
+        let bootstrap_nodes = if !self.config.network.bootstrap_nodes.is_empty() {
+            info!("📡 Using bootstrap nodes from config");
+            self.config.network.bootstrap_nodes.clone()
+        } else {
+            let hardcoded = get_seeds_for_chain(self.config.node.chain_id);
+            if !hardcoded.is_empty() {
+                info!("📡 Using {} hardcoded seed node(s) for chain {}", hardcoded.len(), self.config.node.chain_id);
+                hardcoded
+            } else {
+                info!("📡 No bootstrap nodes configured, using mDNS discovery");
+                vec![]
+            }
+        };
+
+        let enable_mdns = self.config.network.enable_mdns;
+
+        match SwarmP2PNode::with_keypair(
+            self.config.network.listen_port,
+            p2p_event_tx,
+            keypair,
+            bootstrap_nodes.clone(),
+            enable_mdns,
+        ).await {
             Ok((mut swarm_node, command_tx)) => {
                 info!("  ✓ P2P Swarm started");
                 info!("    Listen port: {}", self.config.network.listen_port);
-                info!("    mDNS discovery enabled");
+                if enable_mdns {
+                    info!("    mDNS discovery: enabled");
+                }
+                if !bootstrap_nodes.is_empty() {
+                    info!("    Bootstrap nodes: {}", bootstrap_nodes.len());
+                }
 
                 // Save broadcast_tx for block production
                 self.broadcast_tx = Some(command_tx.clone());
