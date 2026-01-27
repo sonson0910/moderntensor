@@ -20,6 +20,8 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 reqwest = { version = "0.11", features = ["json", "blocking"] }
 parking_lot = { workspace = true }
+sha3 = "0.10"
+bincode = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

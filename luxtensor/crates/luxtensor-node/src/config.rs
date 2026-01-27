@@ -49,10 +49,21 @@ pub struct NodeConfig {
     pub dao_address: String,
 }
 
-/// Default DAO treasury address (ModernTensor foundation)
+/// Default DAO treasury address (ModernTensor Foundation)
+///
+/// IMPORTANT: For production deployments, configure this in your config.toml:
+/// ```toml
+/// [node]
+/// dao_address = "0xYOUR_ACTUAL_DAO_ADDRESS_HERE"
+/// ```
+///
+/// Official addresses:
+/// - Mainnet: Will be announced before mainnet launch
+/// - Testnet: 0xDAO0000000000000000000000000000000000002
 fn default_dao_address() -> String {
-    // Default DAO address - should be configured in production
-    "0x1234567890123456789012345678901234567890".to_string()
+    // PLACEHOLDER - Must be configured in production config.toml
+    // This default is for development/testing only
+    "0xDAO0000000000000000000000000000000000001".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

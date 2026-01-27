@@ -3,10 +3,12 @@
 
 use crate::error::NetworkError;
 use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
+use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig, PeerCapabilities};
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity, ValidationMode},
     identity::Keypair,
+    kad::{self, store::MemoryStore, Mode as KadMode},
     mdns,
     swarm::SwarmEvent,
     Multiaddr, PeerId, Swarm,
@@ -53,13 +55,24 @@ pub struct SwarmP2PNode {
     blocks_topic: IdentTopic,
     transactions_topic: IdentTopic,
     sync_topic: IdentTopic,
+    /// Track sync requests per peer for flood protection
+    sync_requests: std::collections::HashMap<PeerId, (u32, std::time::Instant)>,
+    /// Peer discovery with latency-based selection
+    peer_discovery: std::sync::Arc<PeerDiscovery>,
 }
+
+/// Maximum sync requests per peer per minute
+const MAX_SYNC_REQUESTS_PER_PEER: u32 = 10;
+/// Sync rate limit window
+const SYNC_RATE_LIMIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
 // Define behaviour using macro
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct BlockchainBehaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::tokio::Behaviour,
+    /// Kademlia DHT for distributed peer discovery
+    kademlia: kad::Behaviour<MemoryStore>,
 }
 
 impl SwarmP2PNode {
@@ -128,8 +141,30 @@ impl SwarmP2PNode {
             local_peer_id,
         ).map_err(|e| NetworkError::Connection(e.to_string()))?;
 
+        // Create Kademlia DHT for distributed peer discovery
+        let store = MemoryStore::new(local_peer_id);
+        let mut kademlia_config = kad::Config::default();
+        kademlia_config.set_protocol_names(vec![
+            libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")
+        ]);
+        let mut kademlia = kad::Behaviour::with_config(local_peer_id, store, kademlia_config);
+
+        // Set Kademlia mode to Server (full DHT participant)
+        kademlia.set_mode(Some(KadMode::Server));
+
+        // Add bootstrap nodes to Kademlia
+        for addr_str in &bootstrap_nodes {
+            if let Ok(addr) = addr_str.parse::<Multiaddr>() {
+                // Extract peer ID from multiaddr if present
+                if let Some(peer_id) = extract_peer_id_from_multiaddr(&addr) {
+                    kademlia.add_address(&peer_id, addr.clone());
+                    info!("📍 Added peer to Kademlia DHT: {}", peer_id);
+                }
+            }
+        }
+
         // Combine behaviours
-        let behaviour = BlockchainBehaviour { gossipsub, mdns };
+        let behaviour = BlockchainBehaviour { gossipsub, mdns, kademlia };
 
         // Build swarm using the new API
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
@@ -200,6 +235,9 @@ impl SwarmP2PNode {
             warn!("⚠️ No bootstrap nodes and mDNS disabled - node will be isolated!");
         }
 
+        // Initialize peer discovery for auto-selecting nearest peers
+        let peer_discovery = std::sync::Arc::new(PeerDiscovery::new(DiscoveryConfig::default()));
+
         Ok((Self {
             swarm,
             event_sender,
@@ -207,6 +245,8 @@ impl SwarmP2PNode {
             blocks_topic,
             transactions_topic,
             sync_topic,
+            sync_requests: std::collections::HashMap::new(),
+            peer_discovery,
         }, command_tx))
     }
 
@@ -306,17 +346,33 @@ impl SwarmP2PNode {
             mdns::Event::Discovered(peers) => {
                 for (peer_id, addr) in peers {
                     info!("🔍 mDNS discovered peer: {} at {}", peer_id, addr);
+
+                    // Register with peer discovery for latency tracking
+                    let peer_id_str = peer_id.to_string();
+                    self.peer_discovery.on_peer_discovered(
+                        peer_id_str.clone(),
+                        vec![addr.to_string()],
+                    );
+
                     // Add peer to gossipsub
                     self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                    // Dial the peer
+
+                    // Dial the peer and measure connection time as initial latency
+                    let start = std::time::Instant::now();
                     if let Err(e) = self.swarm.dial(addr.clone()) {
                         warn!("Failed to dial {}: {}", addr, e);
+                    } else {
+                        // Approximate latency from dial time
+                        let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        self.peer_discovery.update_latency(&peer_id_str, latency_ms);
+                        self.peer_discovery.on_peer_connected(&peer_id_str);
                     }
                 }
             }
             mdns::Event::Expired(peers) => {
                 for (peer_id, _addr) in peers {
                     debug!("mDNS peer expired: {}", peer_id);
+                    self.peer_discovery.on_peer_disconnected(&peer_id.to_string());
                     self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
                 }
             }
@@ -339,6 +395,24 @@ impl SwarmP2PNode {
                 let _ = self.event_sender.send(SwarmP2PEvent::NewTransaction(tx));
             }
             Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id }) => {
+                // SECURITY: Rate limit sync requests per peer
+                let now = std::time::Instant::now();
+                let entry = self.sync_requests.entry(source).or_insert((0, now));
+
+                // Reset counter if window expired
+                if now.duration_since(entry.1) >= SYNC_RATE_LIMIT_WINDOW {
+                    entry.0 = 0;
+                    entry.1 = now;
+                }
+
+                // Check rate limit
+                if entry.0 >= MAX_SYNC_REQUESTS_PER_PEER {
+                    warn!("🚫 Rate limiting sync requests from peer {} ({} requests/min)",
+                          source, entry.0);
+                    return;
+                }
+
+                entry.0 += 1;
                 info!("🔄 Sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
                 let _ = self.event_sender.send(SwarmP2PEvent::SyncRequest {
                     from_height,
@@ -416,6 +490,21 @@ impl SwarmP2PNode {
         self.swarm.local_peer_id()
     }
 
+    /// Get the best (lowest latency) discovered peer
+    pub fn get_best_peer(&self) -> Option<crate::peer_discovery::DiscoveredPeer> {
+        self.peer_discovery.get_best_peer()
+    }
+
+    /// Get peer discovery statistics
+    pub fn get_peer_discovery_stats(&self) -> crate::peer_discovery::DiscoveryStats {
+        self.peer_discovery.get_stats()
+    }
+
+    /// Get reference to peer discovery for advanced usage
+    pub fn peer_discovery(&self) -> &std::sync::Arc<PeerDiscovery> {
+        &self.peer_discovery
+    }
+
     /// Send sync request to network
     fn send_sync_request(&mut self, from_height: u64, to_height: u64, my_id: String) -> Result<(), NetworkError> {
         let message = NetworkMessage::SyncRequest {
@@ -440,4 +529,15 @@ impl SwarmP2PNode {
             }
         }
     }
+}
+
+/// Extract PeerId from a multiaddr that ends with /p2p/<peer_id>
+fn extract_peer_id_from_multiaddr(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter().find_map(|p| {
+        if let libp2p::multiaddr::Protocol::P2p(peer_id) = p {
+            Some(peer_id)
+        } else {
+            None
+        }
+    })
 }

@@ -40,7 +40,12 @@ pip install -e .
 ### Connect to Luxtensor
 
 ```python
-from sdk import connect
+# ✅ After pip install (recommended)
+from moderntensor.sdk import connect, LuxtensorClient
+
+# ✅ Development mode (from repo root)
+# import sys; sys.path.insert(0, 'moderntensor')
+# from sdk import connect
 
 # Connect to Luxtensor blockchain
 client = connect(url="http://localhost:8545", network="testnet")
@@ -58,26 +63,37 @@ account = client.get_account("0x...")
 print(f"Balance: {account.balance}")
 ```
 
-### Async Usage
+### Async Usage (High Performance)
 
 ```python
-from sdk import async_connect
+from moderntensor.sdk import async_connect
 import asyncio
 
 async def main():
     # Async client for high performance
-    client = async_connect(url="http://localhost:8545")
+    client = await async_connect(url="http://localhost:8545")
 
-    # Batch queries
+    # Batch multiple queries in single round-trip
     calls = [
-        ("chain_getBlockNumber", []),
-        ("validators_getActive", []),
+        ("eth_blockNumber", []),
+        ("staking_getValidators", []),
     ]
     results = await client.batch_call(calls)
     print(f"Block: {results[0]}, Validators: {len(results[1])}")
 
 asyncio.run(main())
 ```
+
+### Sync vs Async Client
+
+| Feature | `LuxtensorClient` (Sync) | `AsyncLuxtensorClient` |
+|---------|-------------------------|------------------------|
+| **Use Case** | Simple scripts, CLI | High-perf apps, servers |
+| **Batch Calls** | ❌ Not available | ✅ `batch_call()` |
+| **Concurrent Requests** | ❌ Sequential | ✅ `asyncio.gather()` |
+| **Thread-safe** | ✅ Yes | N/A (async) |
+
+> **Tip:** Use sync for learning/prototyping, async for production servers.
 
 ## Features
 
@@ -192,9 +208,11 @@ pytest tests/
 
 ## Documentation
 
-- [SDK Redesign Roadmap](../SDK_REDESIGN_ROADMAP.md) - Complete implementation plan
-- [Architecture Clarification](../SDK_ARCHITECTURE_CLARIFICATION.md) - SDK vs Blockchain separation
-- [Luxtensor README](../luxtensor/README.md) - Blockchain layer documentation
+- **[QUICKSTART.md](QUICKSTART.md)** - Complete examples for common use cases ⭐
+- [SDK Redesign Roadmap](../SDK_REDESIGN_ROADMAP.md) - Implementation plan
+- [Architecture Clarification](../SDK_ARCHITECTURE_CLARIFICATION.md) - SDK vs Blockchain
+- [API Reference](API_REFERENCE.md) - All RPC methods
+- [Luxtensor README](../luxtensor/README.md) - Blockchain layer docs
 
 ## API Reference
 

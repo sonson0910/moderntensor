@@ -256,6 +256,17 @@ class LuxtensorClient:
     - Network information
 
     Similar to subtensor.py in Bittensor SDK but for Luxtensor.
+
+    Architecture (v2.0 - Clean Code Refactor):
+        Uses Composition with domain-specific clients for SRP compliance.
+        Access domain clients directly for new code:
+            client.blocks.get_block_number()
+            client.stakes.get_stake(address)
+            client.neurons.get_neurons(subnet_id)
+            client.subnets.get_subnet_info(subnet_id)
+            client.transactions.submit_transaction(signed_tx)
+
+        Legacy methods are preserved with deprecation warnings.
     """
 
     def __init__(
@@ -277,12 +288,32 @@ class LuxtensorClient:
         self.timeout = timeout
         self._request_id = 0
 
+        # Domain-specific clients (Composition pattern - SRP)
+        from .clients import BlockClient, StakeClient, NeuronClient, SubnetClient, TransactionClient
+
+        self.blocks = BlockClient(url, timeout, self._get_request_id)
+        self.stakes = StakeClient(url, timeout, self._get_request_id)
+        self.neurons = NeuronClient(url, timeout, self._get_request_id)
+        self.subnets = SubnetClient(url, timeout, self._get_request_id)
+        self.transactions = TransactionClient(url, timeout, self._get_request_id)
+
         logger.info(f"Initialized Luxtensor client for {network} at {url}")
 
     def _get_request_id(self) -> int:
         """Get next request ID"""
         self._request_id += 1
         return self._request_id
+
+    @staticmethod
+    def _deprecated(old_method: str, new_path: str):
+        """Helper to emit deprecation warning"""
+        import warnings
+        warnings.warn(
+            f"{old_method}() is deprecated. Use {new_path} instead.",
+            DeprecationWarning,
+            stacklevel=3
+        )
+
 
     def _call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """

@@ -72,6 +72,7 @@ class LuxtensorTransaction:
 
     Corresponds to the Transaction struct in luxtensor-core/src/transaction.rs
     """
+    chain_id: int  # Chain ID for replay protection (default: 1)
     nonce: int
     from_address: str  # ModernTensor address (0x...)
     to_address: Optional[str]  # None for contract creation
@@ -90,6 +91,7 @@ class LuxtensorTransaction:
         Get the signing message for this transaction.
 
         This matches the signing_message() method in Luxtensor Rust code:
+        - chain_id (8 bytes, little endian) - FIRST for replay protection
         - nonce (8 bytes, little endian)
         - from address (20 bytes)
         - to address (20 bytes if present)
@@ -99,6 +101,9 @@ class LuxtensorTransaction:
         - data
         """
         msg = bytearray()
+
+        # Chain ID (u64 little endian) - FIRST for cross-chain replay protection
+        msg.extend(struct.pack('<Q', self.chain_id))
 
         # Nonce (u64 little endian)
         msg.extend(struct.pack('<Q', self.nonce))
@@ -143,6 +148,7 @@ class LuxtensorTransaction:
     def to_dict(self) -> Dict[str, Any]:
         """Convert transaction to dictionary for RPC submission."""
         return {
+            'chainId': self.chain_id,
             'nonce': self.nonce,
             'from': self.from_address,
             'to': self.to_address,
@@ -164,7 +170,8 @@ def create_transfer_transaction(
     private_key: str,
     gas_price: int = 50,
     gas_limit: int = 21000,
-    data: bytes = b''
+    data: bytes = b'',
+    chain_id: int = 1
 ) -> Dict[str, Any]:
     """
     Create and sign a transfer transaction for Luxtensor blockchain.
@@ -178,6 +185,7 @@ def create_transfer_transaction(
         gas_price: Gas price (default: 50)
         gas_limit: Gas limit (default: 21000)
         data: Additional transaction data (default: empty)
+        chain_id: Chain ID for replay protection (default: 1)
 
     Returns:
         Signed transaction dictionary ready for submission via RPC
@@ -188,12 +196,14 @@ def create_transfer_transaction(
         ...     to_address="0x892d35Cc6634C0532925a3b844Bc9e7595f0cCd3",
         ...     amount=1000000000,  # 1 MDT
         ...     nonce=0,
-        ...     private_key="0x..."
+        ...     private_key="0x...",
+        ...     chain_id=1  # mainnet
         ... )
         >>> client.submit_transaction(tx)
     """
     # Create unsigned transaction
     tx = LuxtensorTransaction(
+        chain_id=chain_id,
         nonce=nonce,
         from_address=from_address,
         to_address=to_address,

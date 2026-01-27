@@ -63,10 +63,17 @@ impl EventDecoder {
 
         debug!("Decoded tx {} type={}", &hash, &tx_type);
 
+        // Get chain_id from transaction data
+        let chain_id = tx_data.get("chainId")
+            .and_then(|c| c.as_str())
+            .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .unwrap_or(1); // Default to chain_id 1
+
         // Store transaction
         let transaction = Transaction {
             hash: hash.clone(),
             block_number,
+            chain_id,
             from_address: from_address.clone(),
             to_address: to_address.clone(),
             value: value.clone(),

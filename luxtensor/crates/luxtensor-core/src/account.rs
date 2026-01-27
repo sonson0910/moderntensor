@@ -10,6 +10,28 @@ pub struct Account {
     pub code_hash: Hash,
 }
 
+/// Error when balance operation fails
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BalanceError {
+    /// Insufficient balance for subtraction
+    InsufficientBalance { have: u128, need: u128 },
+    /// Overflow would occur
+    Overflow,
+}
+
+impl std::fmt::Display for BalanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BalanceError::InsufficientBalance { have, need } => {
+                write!(f, "Insufficient balance: have {}, need {}", have, need)
+            }
+            BalanceError::Overflow => write!(f, "Balance overflow"),
+        }
+    }
+}
+
+impl std::error::Error for BalanceError {}
+
 impl Account {
     pub fn new() -> Self {
         Self {
@@ -19,7 +41,7 @@ impl Account {
             code_hash: [0u8; 32],
         }
     }
-    
+
     pub fn with_balance(balance: u128) -> Self {
         Self {
             nonce: 0,
@@ -27,6 +49,51 @@ impl Account {
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
         }
+    }
+
+    /// Add to balance with overflow protection
+    /// Returns error if overflow would occur
+    pub fn checked_add_balance(&mut self, amount: u128) -> Result<(), BalanceError> {
+        self.balance = self.balance
+            .checked_add(amount)
+            .ok_or(BalanceError::Overflow)?;
+        Ok(())
+    }
+
+    /// Subtract from balance with underflow protection
+    /// Returns error if insufficient balance
+    pub fn checked_sub_balance(&mut self, amount: u128) -> Result<(), BalanceError> {
+        if self.balance < amount {
+            return Err(BalanceError::InsufficientBalance {
+                have: self.balance,
+                need: amount,
+            });
+        }
+        self.balance -= amount;
+        Ok(())
+    }
+
+    /// Add to balance with saturating arithmetic (caps at u128::MAX)
+    pub fn saturating_add_balance(&mut self, amount: u128) {
+        self.balance = self.balance.saturating_add(amount);
+    }
+
+    /// Subtract from balance with saturating arithmetic (floors at 0)
+    pub fn saturating_sub_balance(&mut self, amount: u128) {
+        self.balance = self.balance.saturating_sub(amount);
+    }
+
+    /// Increment nonce with overflow protection
+    pub fn increment_nonce(&mut self) -> Result<(), BalanceError> {
+        self.nonce = self.nonce
+            .checked_add(1)
+            .ok_or(BalanceError::Overflow)?;
+        Ok(())
+    }
+
+    /// Check if account can afford a transfer
+    pub fn can_afford(&self, amount: u128, gas_cost: u128) -> bool {
+        self.balance >= amount.saturating_add(gas_cost)
     }
 }
 
@@ -39,14 +106,14 @@ impl Default for Account {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_account_creation() {
         let account = Account::new();
         assert_eq!(account.nonce, 0);
         assert_eq!(account.balance, 0);
     }
-    
+
     #[test]
     fn test_account_with_balance() {
         let account = Account::with_balance(1000);

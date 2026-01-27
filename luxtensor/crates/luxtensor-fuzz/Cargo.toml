@@ -1,0 +1,46 @@
+[package]
+name = "luxtensor-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.luxtensor-core]
+path = "../luxtensor-core"
+
+[dependencies.luxtensor-tests]
+path = "../luxtensor-tests"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "tx_parser"
+path = "fuzz_targets/tx_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "block_validator"
+path = "fuzz_targets/block_validator.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rpc_input"
+path = "fuzz_targets/rpc_input.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "address_parser"
+path = "fuzz_targets/address_parser.rs"
+test = false
+doc = false

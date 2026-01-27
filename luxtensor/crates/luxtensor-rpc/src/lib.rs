@@ -18,7 +18,16 @@ pub mod handlers;
 pub mod staking_rpc;
 pub mod peer_count;
 pub mod contract_registry;
+pub mod rate_limiter;
+pub mod admin_auth;
+pub mod load_balancer;
 
+pub use rate_limiter::{RateLimiter, RateLimiterConfig};
+pub use admin_auth::{AdminAuth, AdminAuthConfig, requires_admin_auth};
+pub use load_balancer::{
+    RpcLoadBalancer, LoadBalancerConfig, LoadBalancerStats,
+    NodeEndpoint, NodeHealth, SmartRpcClient,
+};
 pub use broadcaster::{
     TransactionBroadcaster, BroadcastError,
     NoOpBroadcaster, ChannelBroadcaster, CompositeBroadcaster,

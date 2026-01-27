@@ -148,12 +148,23 @@
 
 ## Python SDK Usage
 
+### Import Guide
+
+```python
+# ✅ After pip install
+from moderntensor.sdk import LuxtensorClient
+
+# ✅ Development mode
+import sys; sys.path.insert(0, 'moderntensor')
+from sdk import LuxtensorClient
+```
+
 ### Basic Usage
 
 ```python
-from sdk import LuxtensorClient
+from moderntensor.sdk import LuxtensorClient
 
-client = LuxtensorClient("http://localhost:8545")
+client = LuxtensorClient(\"http://localhost:8545\")
 
 # Blockchain
 block = client.get_block_number()

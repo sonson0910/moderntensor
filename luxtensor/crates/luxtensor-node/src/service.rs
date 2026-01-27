@@ -5,11 +5,14 @@ use crate::p2p_handler::is_leader_for_slot;
 use futures::FutureExt;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
+use luxtensor_consensus::long_range_protection::{LongRangeProtection, LongRangeConfig};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::{MerkleTree, KeyPair};
 use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand, NodeIdentity, print_connection_info, get_seeds_for_chain};
+use luxtensor_network::eclipse_protection::{EclipseProtection, EclipseConfig};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
+use luxtensor_storage::maintenance::{DbMaintenance, BackupConfig, PruningConfig};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -38,6 +41,28 @@ fn parse_address_from_hex(addr_str: &str) -> Result<[u8; 20]> {
     Ok(addr)
 }
 
+/// Detect external IP address using local network interfaces
+/// Returns the first non-loopback IPv4 address found
+fn detect_external_ip() -> Option<String> {
+    // Try to get local IP by connecting to a public address (doesn't actually send data)
+    use std::net::UdpSocket;
+
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        // Connect to Google's DNS to determine local IP that would be used for external traffic
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip().to_string();
+                // Don't return loopback or link-local addresses
+                if !ip.starts_with("127.") && !ip.starts_with("169.254.") {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Node service that orchestrates all components
 pub struct NodeService {
     config: Config,
@@ -58,6 +83,12 @@ pub struct NodeService {
     genesis_timestamp: u64,
     /// Validator keypair for block signing (None if not a validator)
     validator_keypair: Option<KeyPair>,
+    /// Database maintenance (backup/restore/pruning)
+    db_maintenance: Arc<DbMaintenance>,
+    /// Eclipse attack protection
+    eclipse_protection: Arc<EclipseProtection>,
+    /// Long-range attack protection
+    long_range_protection: Arc<LongRangeProtection>,
 }
 
 impl NodeService {
@@ -158,6 +189,32 @@ impl NodeService {
         let node_registry = Arc::new(RwLock::new(NodeRegistry::new()));
         info!("  ✓ Node registry initialized");
 
+        // Initialize database maintenance (backup/restore/pruning)
+        let db_maintenance = Arc::new(DbMaintenance::new(
+            config.storage.db_path.clone(),
+            BackupConfig {
+                backup_dir: config.node.data_dir.join("backups"),
+                max_backups: 5,
+                compress: true,
+            },
+            PruningConfig::default(),
+        ));
+        info!("  ✓ Database maintenance initialized");
+
+        // Initialize eclipse attack protection
+        let eclipse_protection = Arc::new(EclipseProtection::new(EclipseConfig::default()));
+        info!("  ✓ Eclipse protection initialized");
+
+        // Initialize long-range attack protection
+        let genesis_hash = storage.get_block_by_height(0)?
+            .map(|b| b.hash())
+            .unwrap_or([0u8; 32]);
+        let long_range_protection = Arc::new(LongRangeProtection::new(
+            LongRangeConfig::default(),
+            genesis_hash,
+        ));
+        info!("  ✓ Long-range protection initialized");
+
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(16);
 
@@ -227,6 +284,9 @@ impl NodeService {
             broadcast_tx: None, // Will be initialized in start()
             genesis_timestamp,
             validator_keypair,
+            db_maintenance,
+            eclipse_protection,
+            long_range_protection,
         })
     }
 
@@ -277,7 +337,7 @@ impl NodeService {
         print_connection_info(
             &peer_id_str,
             self.config.network.listen_port,
-            None, // TODO: Auto-detect external IP
+            detect_external_ip(),
         );
 
         // Create swarm with persistent identity

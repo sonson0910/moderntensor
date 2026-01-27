@@ -17,6 +17,8 @@ pub mod node_tier;
 pub mod token_allocation;
 pub mod commit_reveal;
 pub mod weight_consensus;
+pub mod long_range_protection;
+
 
 
 pub use error::*;

@@ -1,0 +1,178 @@
+# ============================================================
+# Luxtensor Node - Production Configuration Template
+# ============================================================
+#
+# IMPORTANT: Copy this file and customize for your deployment
+# cp config.production.toml config.toml
+#
+# Required Changes Before Mainnet:
+# 1. Set dao_address to real DAO treasury address
+# 2. Add bootstrap_nodes with real seed node addresses
+# 3. Configure validator_key_path if validator
+# 4. Update data directories for your environment
+# ============================================================
+
+[node]
+# Human-readable node name (for logs and monitoring)
+name = "luxtensor-mainnet-01"
+
+# Chain ID: 8899 = Mainnet, 9999 = Testnet, 1 = Devnet
+chain_id = 8899
+
+# Data directory for all node data
+data_dir = "/var/lib/luxtensor"
+
+# Is this a validator node?
+is_validator = true
+
+# Path to validator private key (required if is_validator = true)
+# Generate with: ./luxtensor-node --generate-validator-key
+validator_key_path = "/var/lib/luxtensor/validator.key"
+
+# Unique validator ID for leader election
+validator_id = "validator-1"
+
+# DAO Treasury Address - MUST UPDATE BEFORE MAINNET
+# This receives a portion of block rewards for ecosystem development
+# Format: 0x followed by 40 hex characters
+dao_address = "0xYOUR_DAO_TREASURY_ADDRESS_HERE"
+
+
+[consensus]
+# Block time in seconds (3 seconds recommended)
+block_time = 3
+
+# Epoch length in blocks (100 = ~5 minutes at 3s blocks)
+epoch_length = 100
+
+# Minimum stake to become validator (1,000,000 tokens = 10^24 base units)
+min_stake = "1000000000000000000000000"
+
+# Maximum validators in active set
+max_validators = 100
+
+# Block gas limit
+gas_limit = 30000000
+
+# Static validator list for deterministic leader election
+# Only used initially - dynamic validators take over after registration
+validators = ["validator-1", "validator-2", "validator-3"]
+
+
+[network]
+# P2P listening address (0.0.0.0 for all interfaces)
+listen_addr = "0.0.0.0"
+
+# P2P listening port
+listen_port = 30303
+
+# Bootstrap/Seed nodes for initial peer discovery
+# Format: "/ip4/IP/tcp/PORT/p2p/PEER_ID" or "/dns4/HOSTNAME/tcp/PORT/p2p/PEER_ID"
+# MUST UPDATE BEFORE MAINNET
+bootstrap_nodes = [
+    # Seed Node 1 - US East
+    # "/dns4/seed-us-east.luxtensor.network/tcp/30303/p2p/12D3KooW...",
+
+    # Seed Node 2 - EU West
+    # "/dns4/seed-eu-west.luxtensor.network/tcp/30303/p2p/12D3KooW...",
+
+    # Seed Node 3 - Asia Pacific
+    # "/dns4/seed-ap.luxtensor.network/tcp/30303/p2p/12D3KooW...",
+]
+
+# Maximum peer connections
+max_peers = 50
+
+# Enable mDNS for local network discovery (disable in production)
+enable_mdns = false
+
+# Path to persistent node identity key
+node_key_path = "/var/lib/luxtensor/node.key"
+
+
+[storage]
+# Database path
+db_path = "/var/lib/luxtensor/db"
+
+# Enable LZ4 compression (recommended)
+enable_compression = true
+
+# Maximum open file descriptors for RocksDB
+max_open_files = 10000
+
+# LRU cache size in MB (increase for better performance)
+cache_size = 1024
+
+
+[rpc]
+# Enable RPC server
+enabled = true
+
+# RPC listening address
+# Use 127.0.0.1 for local only, 0.0.0.0 for external access
+listen_addr = "0.0.0.0"
+
+# RPC listening port
+listen_port = 8545
+
+# Number of worker threads
+threads = 8
+
+# CORS allowed origins (use specific domains in production)
+cors_origins = ["https://app.moderntensor.io", "https://explorer.luxtensor.network"]
+
+# Rate limiting: requests per minute per IP
+# rate_limit = 100
+
+# Admin API key for protected methods (generate secure random string)
+# admin_api_key = "your-secure-api-key-here"
+
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log to file
+log_to_file = true
+
+# Log file path
+log_file = "/var/log/luxtensor/node.log"
+
+# Use JSON format (recommended for production - easy parsing)
+json_format = true
+
+
+# ============================================================
+# Additional Production Recommendations
+# ============================================================
+#
+# 1. Firewall Configuration:
+#    - Open port 30303 (P2P)
+#    - Open port 8545 (RPC) only if needed externally
+#    - Consider using reverse proxy (nginx) for RPC
+#
+# 2. Systemd Service:
+#    - Create /etc/systemd/system/luxtensor-node.service
+#    - Enable auto-restart on failure
+#    - Set resource limits
+#
+# 3. Monitoring:
+#    - Expose metrics on separate port for Prometheus
+#    - Configure Grafana dashboards
+#    - Set up alerts for:
+#      * Node not producing blocks
+#      * Peer count < 3
+#      * Memory usage > 80%
+#      * Disk space < 20%
+#
+# 4. Backup Strategy:
+#    - Daily automated backups
+#    - Test restore procedure monthly
+#    - Keep 7 day retention minimum
+#
+# 5. Security:
+#    - Run as non-root user
+#    - Use encrypted validator key storage
+#    - Enable admin API authentication
+#    - Regular security updates
+# ============================================================

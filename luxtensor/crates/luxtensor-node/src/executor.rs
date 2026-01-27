@@ -275,7 +275,7 @@ mod tests {
         // Sign transaction
         let msg = tx.signing_message();
         let msg_hash = keccak256(&msg);
-        let sig = keypair.sign(&msg_hash);
+        let sig = keypair.sign(&msg_hash).expect("Failed to sign");
 
         tx.r.copy_from_slice(&sig[..32]);
         tx.s.copy_from_slice(&sig[32..]);
@@ -399,6 +399,7 @@ mod tests {
                 gas_used: 21000,
                 status: ExecutionStatus::Success,
                 logs: vec![],
+                contract_address: None,
             },
         ];
 

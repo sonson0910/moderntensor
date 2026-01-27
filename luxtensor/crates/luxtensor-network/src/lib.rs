@@ -9,6 +9,8 @@ pub mod p2p;
 pub mod rate_limiter;
 pub mod seeds;
 pub mod swarm;
+pub mod eclipse_protection;
+pub mod peer_discovery;
 
 pub use error::*;
 pub use identity::{NodeIdentity, print_connection_info};
@@ -19,3 +21,5 @@ pub use libp2p::Multiaddr;
 pub use rate_limiter::{RateLimiter, RateLimiterConfig, RateLimiterStats};
 pub use seeds::{get_seeds_for_chain, has_hardcoded_seeds};
 pub use swarm::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand};
+pub use eclipse_protection::{EclipseProtection, EclipseConfig, EclipseStats, PeerInfo as EclipsePeerInfo};
+pub use peer_discovery::{PeerDiscovery, DiscoveryConfig, DiscoveredPeer, DiscoveryStats, PeerCapabilities};

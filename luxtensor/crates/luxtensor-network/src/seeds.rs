@@ -16,23 +16,35 @@
 use tracing::info;
 
 /// Get seed nodes for mainnet (Chain ID: 8899)
-/// Production network - add official seed nodes before mainnet launch
+/// Production network - update these addresses before mainnet launch
+///
+/// ## Deployment Instructions:
+/// 1. Deploy 3+ seed nodes on geographically distributed servers
+/// 2. Run each seed node and note its Peer ID from startup logs
+/// 3. Update the addresses below with real IPs and Peer IDs
+/// 4. Rebuild and release the binary
 pub fn mainnet_seeds() -> Vec<String> {
     vec![
-        // TODO: Add mainnet seed nodes before mainnet launch
-        // Format: "/ip4/IP/tcp/30303/p2p/PEER_ID" or "/dns4/HOSTNAME/tcp/30303/p2p/PEER_ID"
-        // Example:
-        // "/dns4/seed-1.luxtensor.network/tcp/30303/p2p/12D3KooW...".to_string(),
+        // Seed Node 1 - Region: US-East (placeholder - update before mainnet)
+        // "/dns4/seed-us-east.luxtensor.network/tcp/30303/p2p/12D3KooWxxxxxxxxx".to_string(),
+
+        // Seed Node 2 - Region: EU-West (placeholder - update before mainnet)
+        // "/dns4/seed-eu-west.luxtensor.network/tcp/30303/p2p/12D3KooWyyyyyyyyy".to_string(),
+
+        // Seed Node 3 - Region: Asia-Pacific (placeholder - update before mainnet)
+        // "/dns4/seed-ap.luxtensor.network/tcp/30303/p2p/12D3KooWzzzzzzzzz".to_string(),
     ]
 }
 
 /// Get seed nodes for testnet (Chain ID: 9999)
-/// Public testnet - add seed nodes when launching testnet
+/// Public testnet - update these addresses before testnet launch
 pub fn testnet_seeds() -> Vec<String> {
     vec![
-        // TODO: Add testnet seed nodes when launching testnet
-        // Example:
-        // "/ip4/203.0.113.10/tcp/30303/p2p/12D3KooWHxUxbJpYmFt...".to_string(),
+        // Testnet Seed 1 (placeholder - update before testnet)
+        // "/ip4/203.0.113.10/tcp/30303/p2p/12D3KooWtest1...".to_string(),
+
+        // Testnet Seed 2 (placeholder - update before testnet)
+        // "/ip4/203.0.113.20/tcp/30303/p2p/12D3KooWtest2...".to_string(),
     ]
 }
 

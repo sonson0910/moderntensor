@@ -21,6 +21,7 @@ pub struct Block {
 pub struct Transaction {
     pub hash: String,
     pub block_number: i64,
+    pub chain_id: i64,  // Chain ID for replay protection
     pub from_address: String,
     pub to_address: Option<String>,
     pub value: String, // Stored as string for large numbers
