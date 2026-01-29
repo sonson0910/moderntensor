@@ -4,11 +4,10 @@ Account Mixin for LuxtensorClient
 Provides account query methods.
 """
 
-from typing import TYPE_CHECKING
-from .base import Account
+from typing import Dict, Any
+import logging
 
-if TYPE_CHECKING:
-    from .base import BaseClient
+logger = logging.getLogger(__name__)
 
 
 class AccountMixin:
@@ -21,31 +20,28 @@ class AccountMixin:
         - get_nonce()
     """
 
-    # Type hints for mixin
-    _call_rpc: callable
-    get_stake: callable  # From staking mixin
-
-    def get_account(self, address: str) -> Account:
+    def get_account(self, address: str):
         """
         Get account information.
 
         Args:
-            address: Account address (0x...)
+            address: Account address
 
         Returns:
             Account object with balance, nonce, stake
         """
+        from .base import Account
+
         balance_hex = self._call_rpc("eth_getBalance", [address, "latest"])
         nonce_hex = self._call_rpc("eth_getTransactionCount", [address, "latest"])
 
         balance = int(balance_hex, 16) if isinstance(balance_hex, str) else balance_hex
         nonce = int(nonce_hex, 16) if isinstance(nonce_hex, str) else nonce_hex
 
-        # Try to get stake, default to 0 if method not available
-        try:
+        # Get stake if staking mixin is available
+        stake = 0
+        if hasattr(self, 'get_stake'):
             stake = self.get_stake(address)
-        except:
-            stake = 0
 
         return Account(
             address=address,
@@ -59,7 +55,7 @@ class AccountMixin:
         Get account balance.
 
         Args:
-            address: Account address (0x...)
+            address: Account address
 
         Returns:
             Balance in LTS (smallest unit)
@@ -72,35 +68,10 @@ class AccountMixin:
         Get account nonce (transaction count).
 
         Args:
-            address: Account address (0x...)
+            address: Account address
 
         Returns:
             Current nonce
         """
         result = self._call_rpc("eth_getTransactionCount", [address, "latest"])
         return int(result, 16) if isinstance(result, str) else result
-
-    def get_code(self, address: str) -> str:
-        """
-        Get contract code at address.
-
-        Args:
-            address: Contract address (0x...)
-
-        Returns:
-            Contract bytecode (hex string)
-        """
-        return self._call_rpc("eth_getCode", [address, "latest"]) or "0x"
-
-    def is_contract(self, address: str) -> bool:
-        """
-        Check if address is a contract.
-
-        Args:
-            address: Address to check
-
-        Returns:
-            True if contract, False if EOA
-        """
-        code = self.get_code(address)
-        return code != "0x" and len(code) > 2

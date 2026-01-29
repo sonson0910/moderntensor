@@ -46,9 +46,9 @@ FUNCTION_SELECTORS = {
     'weight_commit': _compute_selector('commitWeights(uint256,bytes32)'),
     'weight_reveal': _compute_selector('revealWeights(uint256,uint256[],uint256[],bytes32)'),
 
-    # Weight consensus pallet
+    # Weight consensus pallet (updated 2026-01-29 for stake-weighted voting)
     'weight_propose': _compute_selector('proposeWeights(uint256,uint256[],uint256[])'),
-    'weight_vote': _compute_selector('voteProposal(bytes32,bool)'),
+    'weight_vote': _compute_selector('voteProposal(bytes32,bool,uint128)'),  # +stake_weight
     'weight_finalize': _compute_selector('finalizeProposal(bytes32)'),
 }
 
@@ -530,16 +530,21 @@ def encode_propose_weights(
     )
 
 
-def encode_vote_proposal(proposal_id: str, approve: bool) -> EncodedCall:
+def encode_vote_proposal(proposal_id: str, approve: bool, stake_weight: int = 0) -> EncodedCall:
     """
-    Encode a voteProposal call.
+    Encode a voteProposal call with stake-weighted voting.
 
     Args:
         proposal_id: Proposal ID (32 bytes, hex string with 0x prefix)
         approve: True to approve, False to reject
+        stake_weight: Voter's stake weight for Sybil-resistant consensus (u128)
 
     Returns:
         EncodedCall with encoded data and gas estimate
+
+    Note:
+        Updated 2026-01-29 to support stake-weighted voting.
+        stake_weight should be the voter's current stake amount.
     """
     # Function selector
     selector = FUNCTION_SELECTORS['weight_vote']
@@ -553,13 +558,16 @@ def encode_vote_proposal(proposal_id: str, approve: bool) -> EncodedCall:
     # Encode approve (1 byte)
     approve_byte = b'\x01' if approve else b'\x00'
 
+    # Encode stake_weight (u128, 16 bytes little endian)
+    stake_bytes = struct.pack('<QQ', stake_weight & 0xFFFFFFFFFFFFFFFF, stake_weight >> 64)
+
     # Combine
-    data = selector + id_bytes + approve_byte
+    data = selector + id_bytes + approve_byte + stake_bytes
 
     return EncodedCall(
         data=data,
         gas_estimate=100000,
-        description=f"Vote {'approve' if approve else 'reject'} on proposal",
+        description=f"Vote {'approve' if approve else 'reject'} on proposal (stake: {stake_weight})",
         contract_address=WEIGHT_CONSENSUS_CONTRACT,
     )
 

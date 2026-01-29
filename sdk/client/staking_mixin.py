@@ -4,11 +4,8 @@ Staking Mixin for LuxtensorClient
 Provides staking query methods.
 """
 
-from typing import Dict, Any, List, TYPE_CHECKING
+from typing import Dict, Any, List
 import logging
-
-if TYPE_CHECKING:
-    from .base import BaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +19,8 @@ class StakingMixin:
         - get_total_stake()
         - get_stake_for_coldkey_and_hotkey()
         - get_all_stakes_for_coldkey()
+        - get_delegates()
     """
-
-    _call_rpc: callable
 
     def get_stake(self, address: str) -> int:
         """

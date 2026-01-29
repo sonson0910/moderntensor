@@ -4,11 +4,10 @@ Transaction Mixin for LuxtensorClient
 Provides transaction submission and query methods.
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from .base import TransactionResult
+from typing import Dict, Any, Optional
+import logging
 
-if TYPE_CHECKING:
-    from .base import BaseClient
+logger = logging.getLogger(__name__)
 
 
 class TransactionMixin:
@@ -22,18 +21,18 @@ class TransactionMixin:
         - wait_for_transaction()
     """
 
-    _call_rpc: callable
-
-    def submit_transaction(self, signed_tx: str) -> TransactionResult:
+    def submit_transaction(self, signed_tx: str):
         """
         Submit signed transaction to Luxtensor.
 
         Args:
-            signed_tx: Signed transaction (hex encoded, 0x prefix)
+            signed_tx: Signed transaction (hex encoded, with 0x prefix)
 
         Returns:
             TransactionResult with tx_hash and status
         """
+        from .base import TransactionResult
+
         tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
         return TransactionResult(
             tx_hash=tx_hash,
@@ -42,15 +41,15 @@ class TransactionMixin:
             error=None
         )
 
-    def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
+    def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
         """
         Get transaction by hash.
 
         Args:
-            tx_hash: Transaction hash
+            tx_hash: Transaction hash (with 0x prefix)
 
         Returns:
-            Transaction data or None if not found
+            Transaction data
         """
         return self._call_rpc("eth_getTransactionByHash", [tx_hash])
 
@@ -62,7 +61,7 @@ class TransactionMixin:
             tx_hash: Transaction hash
 
         Returns:
-            Receipt data or None if not yet mined
+            Transaction receipt or None if not mined
         """
         return self._call_rpc("eth_getTransactionReceipt", [tx_hash])
 
@@ -77,44 +76,20 @@ class TransactionMixin:
 
         Args:
             tx_hash: Transaction hash
-            timeout: Max seconds to wait
-            poll_interval: Seconds between polls
+            timeout: Maximum wait time in seconds
+            poll_interval: Poll interval in seconds
 
         Returns:
-            Transaction receipt or None if timeout
+            Transaction receipt or None if timed out
         """
         import time
-        start = time.time()
 
+        start = time.time()
         while time.time() - start < timeout:
             receipt = self.get_transaction_receipt(tx_hash)
-            if receipt is not None:
+            if receipt:
                 return receipt
             time.sleep(poll_interval)
 
+        logger.warning(f"Transaction {tx_hash} not mined after {timeout}s")
         return None
-
-    def estimate_gas(self, tx: Dict[str, Any]) -> int:
-        """
-        Estimate gas for transaction.
-
-        Args:
-            tx: Transaction dict (from, to, value, data, etc.)
-
-        Returns:
-            Estimated gas
-        """
-        result = self._call_rpc("eth_estimateGas", [tx])
-        return int(result, 16) if isinstance(result, str) else result
-
-    def send_raw_transaction(self, raw_tx: str) -> str:
-        """
-        Send raw transaction.
-
-        Args:
-            raw_tx: Raw transaction hex (0x prefix)
-
-        Returns:
-            Transaction hash
-        """
-        return self._call_rpc("eth_sendRawTransaction", [raw_tx])

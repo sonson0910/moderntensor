@@ -2,6 +2,7 @@
 LuxtensorClient Base Module
 
 Core RPC functionality and data classes.
+All mixins inherit from this base.
 """
 
 import logging
@@ -42,30 +43,13 @@ class TransactionResult:
 class BaseClient:
     """
     Base client with core RPC functionality.
-
-    All mixin classes inherit from this.
+    All mixin classes expect these methods to be available.
     """
 
-    def __init__(
-        self,
-        url: str = "http://localhost:8545",
-        network: str = "testnet",
-        timeout: int = 30,
-    ):
-        """
-        Initialize Luxtensor client.
-
-        Args:
-            url: Luxtensor RPC endpoint URL
-            network: Network name (mainnet, testnet, devnet)
-            timeout: Request timeout in seconds
-        """
-        self.url = url
-        self.network = network
-        self.timeout = timeout
-        self._request_id = 0
-
-        logger.info(f"Initialized Luxtensor client for {network} at {url}")
+    url: str
+    network: str
+    timeout: int
+    _request_id: int
 
     def _get_request_id(self) -> int:
         """Get next request ID"""

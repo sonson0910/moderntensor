@@ -57,19 +57,32 @@ class ProposalStatus(str, Enum):
 
 @dataclass
 class WeightConsensusConfig:
-    """Configuration for consensus mechanism"""
+    """Configuration for consensus mechanism
+
+    Updated 2026-01-29: Added security-related fields from luxtensor.
+    """
     min_validators: int = 2
     approval_threshold_percent: int = 67  # 2/3 majority
     proposal_timeout: int = 200  # blocks
     proposal_cooldown: int = 50  # blocks between proposals
+    # Security additions (luxtensor compatibility 2026-01-29)
+    ai_scoring_timeout_blocks: int = 100  # ~20 minutes before fallback
+    use_fallback_weights_on_timeout: bool = True
+    commit_phase_blocks: int = 50  # ~10 minutes to commit
+    reveal_phase_blocks: int = 50  # ~10 minutes to reveal
+    commit_deadline_jitter_blocks: int = 5  # Anti-timing attack
 
 
 @dataclass
 class ProposalVote:
-    """A vote on a proposal"""
+    """A vote on a proposal
+
+    Updated 2026-01-29: Added stake_weight for Sybil-resistant voting.
+    """
     voter: str
     approve: bool
     block: int
+    stake_weight: int = 0  # Voter's stake for weighted consensus
 
 
 @dataclass
@@ -87,15 +100,31 @@ class WeightProposal:
     eligible_voters: int = 0
 
     def approval_count(self) -> int:
+        """Count approval votes (deprecated: use approval_stake_weight)"""
         return sum(1 for v in self.votes if v.approve)
 
     def rejection_count(self) -> int:
+        """Count rejection votes (deprecated: use rejection_stake_weight)"""
         return sum(1 for v in self.votes if not v.approve)
 
+    def approval_stake_weight(self) -> int:
+        """Sum of stake weights from approval votes (Sybil-resistant)"""
+        return sum(v.stake_weight for v in self.votes if v.approve)
+
+    def rejection_stake_weight(self) -> int:
+        """Sum of stake weights from rejection votes"""
+        return sum(v.stake_weight for v in self.votes if not v.approve)
+
+    def total_stake_weight(self) -> int:
+        """Total stake weight of all votes cast"""
+        return sum(v.stake_weight for v in self.votes)
+
     def approval_percentage(self) -> int:
-        if not self.votes:
+        """Calculate approval percentage by stake weight (0-100)"""
+        total = self.total_stake_weight()
+        if total == 0:
             return 0
-        return (self.approval_count() * 100) // len(self.votes)
+        return (self.approval_stake_weight() * 100) // total
 
     def has_voted(self, voter: str) -> bool:
         return any(v.voter.lower() == voter.lower() for v in self.votes)
@@ -112,6 +141,9 @@ class WeightProposal:
             "status": self.status.value,
             "approval_count": self.approval_count(),
             "rejection_count": self.rejection_count(),
+            "approval_stake_weight": self.approval_stake_weight(),
+            "rejection_stake_weight": self.rejection_stake_weight(),
+            "total_stake_weight": self.total_stake_weight(),
             "total_votes": len(self.votes),
             "approval_percentage": self.approval_percentage(),
         }
@@ -119,17 +151,27 @@ class WeightProposal:
 
 @dataclass
 class ConsensusResult:
-    """Result of consensus check"""
+    """Result of consensus check
+
+    Updated 2026-01-29: Added stake-weighted fields for Sybil resistance.
+    """
     reached: bool
-    approval_count: int
-    rejection_count: int
-    total_votes: int
-    approval_percentage: int
-    threshold: int
+    approval_stake_weight: int = 0  # Sum of stake from approvals
+    rejection_stake_weight: int = 0  # Sum of stake from rejections
+    total_stake_weight: int = 0
+    # Keep for backwards compatibility
+    approval_count: int = 0
+    rejection_count: int = 0
+    total_votes: int = 0
+    approval_percentage: int = 0
+    threshold: int = 67
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "reached": self.reached,
+            "approval_stake_weight": self.approval_stake_weight,
+            "rejection_stake_weight": self.rejection_stake_weight,
+            "total_stake_weight": self.total_stake_weight,
             "approval_count": self.approval_count,
             "rejection_count": self.rejection_count,
             "total_votes": self.total_votes,
@@ -352,6 +394,9 @@ class WeightConsensusClient:
 
             return ConsensusResult(
                 reached=result.get("reached", False),
+                approval_stake_weight=result.get("approvalStakeWeight", 0),
+                rejection_stake_weight=result.get("rejectionStakeWeight", 0),
+                total_stake_weight=result.get("totalStakeWeight", 0),
                 approval_count=result.get("approvalCount", 0),
                 rejection_count=result.get("rejectionCount", 0),
                 total_votes=result.get("totalVotes", 0),
@@ -362,11 +407,6 @@ class WeightConsensusClient:
             logger.error(f"Failed to check consensus: {e}")
             return ConsensusResult(
                 reached=False,
-                approval_count=0,
-                rejection_count=0,
-                total_votes=0,
-                approval_percentage=0,
-                threshold=67,
             )
 
     def finalize_proposal(
@@ -436,6 +476,7 @@ class WeightConsensusClient:
                     voter=v["voter"],
                     approve=v["approve"],
                     block=v["block"],
+                    stake_weight=v.get("stakeWeight", 0),
                 )
                 for v in result.get("votes", [])
             ]

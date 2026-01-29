@@ -1,13 +1,13 @@
 """
 Blockchain Mixin for LuxtensorClient
 
-Provides block and chain information methods.
+Provides block query methods.
 """
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, Optional
+import logging
 
-if TYPE_CHECKING:
-    from .base import BaseClient
+logger = logging.getLogger(__name__)
 
 
 class BlockchainMixin:
@@ -19,13 +19,7 @@ class BlockchainMixin:
         - get_block()
         - get_block_hash()
         - get_chain_info()
-        - get_gas_price()
     """
-
-    # Type hint for mixin (self will be BaseClient)
-    _call_rpc: callable
-    url: str
-    network: str
 
     def get_block_number(self) -> int:
         """
@@ -45,7 +39,7 @@ class BlockchainMixin:
             block_number: Block number (None for latest)
 
         Returns:
-            Block data dictionary
+            Block data
         """
         if block_number is not None:
             block_param = f"0x{block_number:x}"
@@ -62,55 +56,36 @@ class BlockchainMixin:
             block_number: Block number
 
         Returns:
-            Block hash string
+            Block hash
         """
         block = self.get_block(block_number)
         return block.get("hash", "") if block else ""
 
-    def get_gas_price(self) -> int:
+    def get_chain_info(self):
         """
-        Get current gas price.
+        Get chain information.
 
         Returns:
-            Gas price in LTS
+            ChainInfo object
         """
-        result = self._call_rpc("eth_gasPrice")
-        return int(result, 16) if isinstance(result, str) else result
+        from .base import ChainInfo
 
-    def get_chain_id(self) -> int:
-        """
-        Get chain ID.
+        try:
+            chain_id = self._call_rpc("eth_chainId")
+            block = self.get_block_number()
+            version = self._call_rpc("web3_clientVersion")
 
-        Returns:
-            Chain ID as integer
-        """
-        result = self._call_rpc("eth_chainId")
-        return int(result, 16) if isinstance(result, str) else result
-
-    def get_network_version(self) -> str:
-        """
-        Get network version.
-
-        Returns:
-            Network version string
-        """
-        return self._call_rpc("net_version") or ""
-
-    def get_client_version(self) -> str:
-        """
-        Get client version.
-
-        Returns:
-            Client version string (e.g., "LuxTensor/v1.0.0")
-        """
-        return self._call_rpc("web3_clientVersion") or ""
-
-    def get_peer_count(self) -> int:
-        """
-        Get connected peer count.
-
-        Returns:
-            Number of connected peers
-        """
-        result = self._call_rpc("net_peerCount")
-        return int(result, 16) if isinstance(result, str) else 0
+            return ChainInfo(
+                chain_id=chain_id,
+                network=self.network,
+                block_height=block,
+                version=version or "unknown"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get chain info: {e}")
+            return ChainInfo(
+                chain_id="0x0",
+                network=self.network,
+                block_height=0,
+                version="unknown"
+            )

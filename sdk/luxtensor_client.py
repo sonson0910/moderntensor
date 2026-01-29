@@ -214,37 +214,29 @@ from dataclasses import dataclass
 import httpx
 import json
 
+# Import from modular client structure
+from .client.base import ChainInfo, Account, TransactionResult
+from .client.blockchain_mixin import BlockchainMixin
+from .client.account_mixin import AccountMixin
+from .client.transaction_mixin import TransactionMixin
+from .client.staking_mixin import StakingMixin
+from .client.subnet_mixin import SubnetMixin
+from .client.neuron_mixin import NeuronMixin
+
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class ChainInfo:
-    """Blockchain information"""
-    chain_id: str
-    network: str
-    block_height: int
-    version: str
+# Re-export data classes for backward compatibility
+__all__ = ["LuxtensorClient", "AsyncLuxtensorClient", "ChainInfo", "Account", "TransactionResult", "connect", "async_connect"]
 
 
-@dataclass
-class Account:
-    """Account information from Luxtensor"""
-    address: str
-    balance: int
-    nonce: int
-    stake: int = 0
-
-
-@dataclass
-class TransactionResult:
-    """Transaction submission result"""
-    tx_hash: str
-    status: str
-    block_number: Optional[int] = None
-    error: Optional[str] = None
-
-
-class LuxtensorClient:
+class LuxtensorClient(
+    BlockchainMixin,
+    AccountMixin,
+    TransactionMixin,
+    StakingMixin,
+    SubnetMixin,
+    NeuronMixin,
+):
     """
     Synchronous Python client for Luxtensor blockchain.
 
@@ -355,157 +347,21 @@ class LuxtensorClient:
             logger.error(f"RPC call failed: {e}")
             raise
 
-    # ========================================================================
-    # Chain Information Methods
-    # ========================================================================
-
-    def get_block_number(self) -> int:
-        """
-        Get current block height.
-
-        Returns:
-            Current block number
-        """
-        result = self._call_rpc("eth_blockNumber")
-        # Convert hex string to int
-        return int(result, 16) if isinstance(result, str) else result
-
-    def get_block(self, block_number: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Get block by number.
-
-        Args:
-            block_number: Block number (None for latest)
-
-        Returns:
-            Block data
-        """
-        # Format block number as hex string or use "latest"
-        if block_number is not None:
-            block_param = f"0x{block_number:x}"
-        else:
-            block_param = "latest"
-
-        return self._call_rpc("eth_getBlockByNumber", [block_param, True])
-
-    def get_block_hash(self, block_number: int) -> str:
-        """
-        Get block hash by number.
-
-        Args:
-            block_number: Block number
-
-        Returns:
-            Block hash
-        """
-        block = self.get_block(block_number)
-        return block.get("hash", "") if block else ""
 
     # ========================================================================
-    # Account Methods
+    # Extended Methods (Luxtensor-specific, not in base mixins)
+    # Methods inherited from mixins:
+    #   - BlockchainMixin: get_block_number(), get_block(), get_block_hash(), get_chain_info()
+    #   - AccountMixin: get_account(), get_balance(), get_nonce()
+    #   - TransactionMixin: submit_transaction(), get_transaction(), wait_for_transaction()
+    #   - StakingMixin: get_stake(), get_total_stake(), get_delegates()
+    #   - SubnetMixin: get_all_subnets(), get_subnet_info(), subnet_exists()
+    #   - NeuronMixin: get_neuron(), get_neurons(), get_weights()
     # ========================================================================
 
-    def get_account(self, address: str) -> Account:
-        """
-        Get account information.
-
-        Args:
-            address: Account address
-
-        Returns:
-            Account object with balance, nonce, stake
-        """
-        # Get balance and nonce separately using eth_ methods
-        balance_hex = self._call_rpc("eth_getBalance", [address, "latest"])
-        nonce_hex = self._call_rpc("eth_getTransactionCount", [address, "latest"])
-
-        # Convert hex strings to integers
-        balance = int(balance_hex, 16) if isinstance(balance_hex, str) else balance_hex
-        nonce = int(nonce_hex, 16) if isinstance(nonce_hex, str) else nonce_hex
-
-        return Account(
-            address=address,
-            balance=balance,
-            nonce=nonce,
-            stake=self.get_stake(address)  # Get stake from staking RPC method
-        )
-
-    def get_balance(self, address: str) -> int:
-        """
-        Get account balance.
-
-        Args:
-            address: Account address
-
-        Returns:
-            Balance in LTS (smallest unit)
-        """
-        result = self._call_rpc("eth_getBalance", [address, "latest"])
-        # Convert hex string to int
-        return int(result, 16) if isinstance(result, str) else result
-
-    def get_nonce(self, address: str) -> int:
-        """
-        Get account nonce (transaction count).
-
-        Args:
-            address: Account address
-
-        Returns:
-            Current nonce
-        """
-        result = self._call_rpc("eth_getTransactionCount", [address, "latest"])
-        # Convert hex string to int
-        return int(result, 16) if isinstance(result, str) else result
 
     # ========================================================================
-    # Transaction Methods
-    # ========================================================================
-
-    def submit_transaction(self, signed_tx: str) -> TransactionResult:
-        """
-        Submit signed transaction to Luxtensor.
-
-        Args:
-            signed_tx: Signed transaction (hex encoded, with 0x prefix)
-
-        Returns:
-            TransactionResult with tx_hash and status
-        """
-        tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
-        return TransactionResult(
-            tx_hash=tx_hash,
-            status="pending",
-            block_number=None,
-            error=None
-        )
-
-    def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
-        """
-        Get transaction by hash.
-
-        Args:
-            tx_hash: Transaction hash (with 0x prefix)
-
-        Returns:
-            Transaction data
-        """
-        return self._call_rpc("eth_getTransactionByHash", [tx_hash])
-
-    def get_transaction_receipt(self, tx_hash: str) -> Dict[str, Any]:
-        """
-        Get transaction receipt.
-
-        Args:
-            tx_hash: Transaction hash
-
-        Returns:
-            Transaction receipt with execution result
-        """
-        return self._call_rpc("tx_getReceipt", [tx_hash])
-
-    # ========================================================================
-    # AI/ML Specific Methods
+    # AI/ML Specific Methods (Luxtensor-only, not in base mixins)
     # ========================================================================
 
     def submit_ai_task(self, task_data: Dict[str, Any]) -> str:
@@ -562,22 +418,24 @@ class LuxtensorClient:
         """
         Get subnet information.
 
+        .. deprecated::
+            Use ``client.subnets.get_subnet_info(subnet_id)`` instead.
+
         Args:
             subnet_id: Subnet ID
 
         Returns:
             Subnet metadata and configuration
         """
-        try:
-            result = self._call_rpc("subnet_getInfo", [subnet_id])
-            return result if result else {}
-        except Exception as e:
-            logger.error(f"Failed to get subnet info for {subnet_id}: {e}")
-            raise
+        self._deprecated("get_subnet_info", "client.subnets.get_subnet_info()")
+        return self.subnets.get_subnet_info(subnet_id)
 
     def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """
         Get neurons (miners/validators) in subnet.
+
+        .. deprecated::
+            Use ``client.neurons.get_neurons(subnet_id)`` instead.
 
         Args:
             subnet_id: Subnet ID
@@ -585,12 +443,8 @@ class LuxtensorClient:
         Returns:
             List of neuron information
         """
-        try:
-            result = self._call_rpc("neuron_listBySubnet", [subnet_id])
-            return result if result else []
-        except Exception as e:
-            logger.error(f"Failed to get neurons for subnet {subnet_id}: {e}")
-            return []
+        self._deprecated("get_neurons", "client.neurons.get_neurons()")
+        return self.neurons.get_neurons(subnet_id)
 
     def get_weights(self, subnet_id: int, neuron_uid: int) -> List[float]:
         """
@@ -618,39 +472,30 @@ class LuxtensorClient:
         """
         Get staked amount for address.
 
+        .. deprecated::
+            Use ``client.stakes.get_stake(address)`` instead.
+
         Args:
             address: Account address
 
         Returns:
             Staked amount in base units
         """
-        try:
-            result = self._call_rpc("staking_getStake", [address])
-            if isinstance(result, dict):
-                stake_val = result.get("stake", "0x0")
-                return int(stake_val, 16) if stake_val.startswith('0x') else int(stake_val)
-            elif isinstance(result, str):
-                return int(result, 16) if result.startswith('0x') else int(result)
-            return result if result else 0
-        except Exception as e:
-            logger.warning(f"Failed to get stake for {address}: {e}")
-            return 0
+        self._deprecated("get_stake", "client.stakes.get_stake()")
+        return self.stakes.get_stake(address)
 
     def get_total_stake(self) -> int:
         """
         Get total staked in network.
 
+        .. deprecated::
+            Use ``client.stakes.get_total_stake()`` instead.
+
         Returns:
             Total stake amount in base units
         """
-        try:
-            result = self._call_rpc("staking_getTotalStake", [])
-            if isinstance(result, str):
-                return int(result, 16) if result.startswith('0x') else int(result)
-            return result if result else 0
-        except Exception as e:
-            logger.warning(f"Failed to get total stake: {e}")
-            return 0
+        self._deprecated("get_total_stake", "client.stakes.get_total_stake()")
+        return self.stakes.get_total_stake()
 
     def stake(self, address: str, amount: int) -> Dict[str, Any]:
         """
