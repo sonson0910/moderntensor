@@ -1,0 +1,184 @@
+﻿cargo :    Compiling multiaddr v0.18.2
+At line:1 char:1
++ cargo build -p luxtensor-tests 2>&1 | 
+Out-File -FilePath tests_build. ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   
+    Compiling multiaddr v0.18.2:String) [], Re  
+  moteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+   Compiling hickory-proto v0.25.2
+   Compiling h2 v0.3.27
+   Compiling luxtensor-consensus v0.4.0 (D:\vene
+ra\cardano\moderntensor\moderntensor\luxtensor\c
+rates\luxtensor-consensus)
+   Compiling luxtensor-storage v0.4.0 (D:\venera
+\cardano\moderntensor\moderntensor\luxtensor\cra
+tes\luxtensor-storage)
+warning: unused import: `Write`
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:27
+   |
+10 | use std::io::{self, Read, Write};
+   |                           ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: 
+`std::collections::HashMap`
+ --> crates\luxtensor-consensus\src\long_range_p
+rotection.rs:6:5
+  |
+6 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+   Compiling libp2p-core v0.43.2
+warning: unused import: `Read`
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:21
+   |
+10 | use std::io::{self, Read, Write};
+   |                     ^^^^
+
+warning: unused variable: `block_height`
+   --> 
+crates\luxtensor-consensus\src\pos.rs:146:36
+    |
+146 |     pub fn get_halving_info(&self, 
+block_height: u64) -> 
+crate::halving::HalvingInfo {
+    |                                    
+^^^^^^^^^^^^ help: if this is intentional, 
+prefix it with an underscore: `_block_height`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+   Compiling libp2p-swarm v0.47.1
+   Compiling libp2p-yamux v0.47.0
+   Compiling libp2p-noise v0.46.1
+   Compiling libp2p-tcp v0.44.1
+warning: unused variable: `current_block`
+   --> crates\luxtensor-consensus\src\weight_con
+sensus.rs:377:9
+    |
+377 |         current_block: u64,
+    |         ^^^^^^^^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_current_block`
+
+warning: field `dao_address` is never read
+  --> crates\luxtensor-consensus\src\reward_exec
+utor.rs:70:5
+   |
+49 | pub struct RewardExecutor {
+   |            -------------- field in this 
+struct
+...
+70 |     dao_address: [u8; 20],
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+   Compiling libp2p-kad v0.48.0
+   Compiling libp2p-allow-block-list v0.6.0
+   Compiling libp2p-connection-limits v0.6.0
+   Compiling libp2p-identify v0.47.0
+   Compiling libp2p-gossipsub v0.49.2
+   Compiling libp2p-mdns v0.48.0
+   Compiling hyper v0.14.32
+warning: `luxtensor-storage` (lib) generated 2 
+warnings (run `cargo fix --lib -p 
+luxtensor-storage` to apply 1 suggestion)
+warning: `luxtensor-consensus` (lib) generated 
+4 warnings (run `cargo fix --lib -p 
+luxtensor-consensus` to apply 3 suggestions)
+   Compiling libp2p v0.56.0
+   Compiling luxtensor-network v0.4.0 (D:\venera
+\cardano\moderntensor\moderntensor\luxtensor\cra
+tes\luxtensor-network)
+   Compiling hyper-tls v0.5.0
+warning: unused import: `warn`
+ --> 
+crates\luxtensor-network\src\identity.rs:8:21
+  |
+8 | use tracing::{info, warn};
+  |                     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `PeerCapabilities`
+ --> crates\luxtensor-network\src\swarm.rs:6:61
+  |
+6 | use crate::peer_discovery::{PeerDiscovery, 
+DiscoveryConfig, PeerCapabilities};
+  |                                             
+                ^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> 
+crates\luxtensor-network\src\swarm.rs:22:22
+   |
+22 | use tracing::{debug, error, info, warn};
+   |                      ^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\luxtensor-network\src\peer_discover
+y.rs:14:5
+   |
+14 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+   Compiling reqwest v0.11.27
+warning: variable does not need to be mutable
+   --> 
+crates\luxtensor-network\src\swarm.rs:146:13
+    |
+146 |         let mut kademlia_config = 
+kad::Config::new(
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `config` is never read
+   --> crates\luxtensor-network\src\p2p.rs:113:5
+    |
+111 | pub struct P2PNode {
+    |            ------- field in this struct
+112 |     peer_manager: PeerManager,
+113 |     config: P2PConfig,
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `transactions_topic` is never 
+read
+  --> crates\luxtensor-network\src\swarm.rs:56:5
+   |
+51 | pub struct SwarmP2PNode {
+   |            ------------ field in this 
+struct
+...
+56 |     transactions_topic: IdentTopic,
+   |     ^^^^^^^^^^^^^^^^^^
+
+   Compiling luxtensor-tests v0.4.0 (D:\venera\c
+ardano\moderntensor\moderntensor\luxtensor\crate
+s\luxtensor-tests)
+warning: `luxtensor-network` (lib) generated 7 
+warnings (run `cargo fix --lib -p 
+luxtensor-network` to apply 5 suggestions)
+    Finished `dev` profile [unoptimized + 
+debuginfo] target(s) in 10.10s

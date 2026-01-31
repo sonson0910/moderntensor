@@ -253,6 +253,84 @@ impl EclipseProtection {
         candidates.into_iter().map(|(id, _)| id).collect()
     }
 
+    /// Calculate peer trust score with stake weighting
+    /// This provides enhanced Sybil resistance by considering stake
+    ///
+    /// # Arguments
+    /// * `peer_id` - The peer to calculate trust for
+    /// * `peer_stake` - Optional stake amount (from validator set)
+    /// * `current_time` - Current timestamp for connection duration calculation
+    ///
+    /// Returns score 0-100
+    pub fn calculate_peer_trust_score(
+        &self,
+        peer_id: &str,
+        peer_stake: Option<u64>,
+        current_time: u64,
+    ) -> u32 {
+        let peers = self.peers.read();
+
+        if let Some(peer) = peers.get(peer_id) {
+            let mut score: u32 = 50; // Base score
+
+            // Stake-weighted trust (+0-30 points)
+            if let Some(stake) = peer_stake {
+                // 1 billion = max +30 points
+                let stake_bonus = (stake / 1_000_000_000).min(30);
+                score += stake_bonus as u32;
+            }
+
+            // Connection duration bonus (+0-20 points)
+            let hours_connected = current_time.saturating_sub(peer.connected_at) / 3600;
+            let duration_bonus = hours_connected.min(20);
+            score += duration_bonus as u32;
+
+            // Behavior score adjustment (-50 to +20)
+            // behavior_score ranges from -100 to 100
+            if peer.behavior_score > 0 {
+                score += (peer.behavior_score / 5) as u32; // Max +20
+            } else {
+                // Negative behavior reduces trust significantly
+                let penalty = (peer.behavior_score.abs() / 2) as u32;
+                score = score.saturating_sub(penalty);
+            }
+
+            // Outbound bonus (we initiated, more trusted)
+            if peer.is_outbound {
+                score += 5;
+            }
+
+            score.min(100)
+        } else {
+            0 // Unknown peer
+        }
+    }
+
+    /// Get the most trusted peers (for preferential treatment)
+    pub fn get_trusted_peers(&self, min_trust: u32, stakes: &HashMap<String, u64>) -> Vec<String> {
+        let peers = self.peers.read();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let mut trusted: Vec<_> = peers.keys()
+            .filter_map(|peer_id| {
+                let stake = stakes.get(peer_id).copied();
+                let trust = self.calculate_peer_trust_score(peer_id, stake, now);
+                if trust >= min_trust {
+                    Some((peer_id.clone(), trust))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by trust (highest first)
+        trusted.sort_by_key(|(_, trust)| std::cmp::Reverse(*trust));
+        trusted.into_iter().map(|(id, _)| id).collect()
+    }
+
     /// Get statistics
     pub fn get_stats(&self) -> EclipseStats {
         let peers = self.peers.read();
@@ -334,13 +412,57 @@ mod tests {
 
         protection.add_peer("bad_peer".to_string(), ip, false);
 
-        // Lower score significantly
-        for _ in 0..6 {
+        // Lower score significantly to trigger ban (need to go below -50)
+        // Starts at 50, need to subtract more than 100 to get below -50
+        for _ in 0..12 {
             protection.update_peer_score("bad_peer", -10);
         }
 
-        // New connection from same subnet should be blocked
+        // New connection from same /16 subnet should be blocked
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2));
         assert!(!protection.should_allow_connection(&ip2, false));
+    }
+
+    #[test]
+    fn test_stake_weighted_trust() {
+        let protection = EclipseProtection::new(EclipseConfig::default());
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        protection.add_peer("staker".to_string(), ip, true);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Base score with no stake
+        let base_trust = protection.calculate_peer_trust_score("staker", None, now);
+        assert!(base_trust >= 50); // Base + outbound bonus
+
+        // With stake
+        let staked_trust = protection.calculate_peer_trust_score(
+            "staker",
+            Some(10_000_000_000), // 10 billion
+            now
+        );
+        assert!(staked_trust > base_trust); // Stake adds trust
+        assert!(staked_trust <= 100);
+    }
+
+    #[test]
+    fn test_trusted_peers() {
+        let protection = EclipseProtection::new(EclipseConfig::default());
+
+        protection.add_peer("p1".to_string(), IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), true);
+        protection.add_peer("p2".to_string(), IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)), false);
+
+        let mut stakes = HashMap::new();
+        stakes.insert("p1".to_string(), 5_000_000_000);
+        stakes.insert("p2".to_string(), 0);
+
+        let trusted = protection.get_trusted_peers(50, &stakes);
+        assert!(!trusted.is_empty());
+        // p1 should be first (has stake + outbound)
+        assert_eq!(trusted[0], "p1");
     }
 }

@@ -33,6 +33,10 @@ pub struct LongRangeConfig {
     pub max_reorg_depth: u64,
     /// Minimum finality confirmations
     pub min_finality_confirmations: u64,
+    /// Whether to require a recent checkpoint for syncing from scratch
+    pub require_recent_checkpoint: bool,
+    /// Maximum age of checkpoint in seconds for initial sync
+    pub max_checkpoint_age_secs: u64,
 }
 
 impl Default for LongRangeConfig {
@@ -42,6 +46,8 @@ impl Default for LongRangeConfig {
             checkpoint_interval: 100,          // Checkpoint every 100 blocks
             max_reorg_depth: 1000,             // Max 1000 block reorg
             min_finality_confirmations: 32,    // 32 blocks for finality
+            require_recent_checkpoint: true,   // SECURITY: Require recent checkpoint
+            max_checkpoint_age_secs: 604_800,  // 7 days max checkpoint age
         }
     }
 }
@@ -168,6 +174,81 @@ impl LongRangeProtection {
             checkpoints.drain(0..remove_count);
         }
     }
+
+    /// Check if we have a recent enough checkpoint for initial sync
+    /// Returns true if sync can proceed, false if we need a more recent checkpoint
+    pub fn can_sync_from_scratch(&self, current_timestamp: u64) -> Result<bool, &'static str> {
+        if !self.config.require_recent_checkpoint {
+            return Ok(true); // Not required
+        }
+
+        let checkpoints = self.checkpoints.read();
+
+        if let Some(latest) = checkpoints.last() {
+            if latest.height == 0 {
+                // Only genesis checkpoint - need more recent
+                return Err("No recent checkpoint available, need trusted checkpoint for initial sync");
+            }
+
+            let age = current_timestamp.saturating_sub(latest.timestamp);
+            if age > self.config.max_checkpoint_age_secs {
+                return Err("Latest checkpoint is too old for safe initial sync");
+            }
+
+            Ok(true)
+        } else {
+            Err("No checkpoints available")
+        }
+    }
+
+    /// Validate a checkpoint from external source (e.g., trusted node)
+    pub fn validate_external_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), &'static str> {
+        // Check height is reasonable
+        let finalized = *self.finalized_height.read();
+        if checkpoint.height < finalized {
+            return Err("External checkpoint is below finalized height");
+        }
+
+        // Check timestamp is not in the future
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        if checkpoint.timestamp > now + 60 {
+            return Err("Checkpoint timestamp is in the future");
+        }
+
+        // Check block hash is not empty
+        if checkpoint.block_hash == [0u8; 32] {
+            return Err("Invalid checkpoint: empty block hash");
+        }
+
+        Ok(())
+    }
+
+    /// Get checkpoint status (for RPC)
+    pub fn get_checkpoint_status(&self) -> CheckpointStatus {
+        let checkpoints = self.checkpoints.read();
+        let latest = checkpoints.last().cloned();
+        let finalized = *self.finalized_height.read();
+
+        CheckpointStatus {
+            total_checkpoints: checkpoints.len(),
+            latest_checkpoint: latest,
+            finalized_height: finalized,
+            weak_subjectivity_period: self.config.weak_subjectivity_period,
+        }
+    }
+}
+
+/// Status of checkpoint system for monitoring
+#[derive(Debug, Clone)]
+pub struct CheckpointStatus {
+    pub total_checkpoints: usize,
+    pub latest_checkpoint: Option<Checkpoint>,
+    pub finalized_height: u64,
+    pub weak_subjectivity_period: u64,
 }
 
 #[cfg(test)]
@@ -230,5 +311,90 @@ mod tests {
 
         // Any block at non-checkpoint height
         assert!(protection.validate_against_checkpoints([7u8; 32], 101));
+    }
+
+    #[test]
+    fn test_checkpoint_status() {
+        let genesis_hash = [1u8; 32];
+        let protection = LongRangeProtection::new(LongRangeConfig::default(), genesis_hash);
+
+        let status = protection.get_checkpoint_status();
+        assert_eq!(status.total_checkpoints, 1); // Genesis
+        assert_eq!(status.finalized_height, 0);
+        assert!(status.latest_checkpoint.is_some());
+    }
+
+    #[test]
+    fn test_external_checkpoint_validation() {
+        let genesis_hash = [1u8; 32];
+        let protection = LongRangeProtection::new(LongRangeConfig::default(), genesis_hash);
+
+        // Valid checkpoint
+        let valid_cp = Checkpoint {
+            block_hash: [5u8; 32],
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            timestamp: 1000,
+        };
+        assert!(protection.validate_external_checkpoint(&valid_cp).is_ok());
+
+        // Invalid: empty block hash
+        let invalid_cp = Checkpoint {
+            block_hash: [0u8; 32],
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            timestamp: 1000,
+        };
+        assert!(protection.validate_external_checkpoint(&invalid_cp).is_err());
+    }
+
+    #[test]
+    fn test_sync_from_scratch_requires_checkpoint() {
+        let mut config = LongRangeConfig::default();
+        config.require_recent_checkpoint = true;
+
+        let genesis_hash = [1u8; 32];
+        let protection = LongRangeProtection::new(config, genesis_hash);
+
+        // With only genesis checkpoint, sync should fail
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let result = protection.can_sync_from_scratch(now);
+        assert!(result.is_err()); // Only genesis, needs more recent
+    }
+
+    #[test]
+    fn test_sync_with_recent_checkpoint() {
+        let mut config = LongRangeConfig::default();
+        config.require_recent_checkpoint = true;
+        config.max_checkpoint_age_secs = 3600; // 1 hour
+
+        let genesis_hash = [1u8; 32];
+        let protection = LongRangeProtection::new(config, genesis_hash);
+
+        // Add a recent checkpoint
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let cp = Checkpoint {
+            block_hash: [5u8; 32],
+            height: 100,
+            epoch: 1,
+            state_root: [0u8; 32],
+            timestamp: now - 1800, // 30 minutes ago
+        };
+        protection.add_checkpoint(cp).unwrap();
+
+        // Sync should succeed with recent checkpoint
+        let result = protection.can_sync_from_scratch(now);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 }

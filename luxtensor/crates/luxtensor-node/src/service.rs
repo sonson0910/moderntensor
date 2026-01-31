@@ -6,6 +6,7 @@ use futures::FutureExt;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
 use luxtensor_consensus::long_range_protection::{LongRangeProtection, LongRangeConfig};
+use luxtensor_consensus::liveness::{LivenessMonitor, LivenessConfig};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::{MerkleTree, KeyPair};
 use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand, NodeIdentity, print_connection_info, get_seeds_for_chain};
@@ -13,6 +14,9 @@ use luxtensor_network::eclipse_protection::{EclipseProtection, EclipseConfig};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
 use luxtensor_storage::maintenance::{DbMaintenance, BackupConfig, PruningConfig};
+use luxtensor_storage::{CheckpointManager, CHECKPOINT_INTERVAL};
+use crate::graceful_shutdown::{GracefulShutdown, ShutdownConfig};
+use crate::health::{HealthMonitor, HealthConfig};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -63,6 +67,21 @@ fn detect_external_ip() -> Option<String> {
     None
 }
 
+/// Convert PeerId to synthetic IP for subnet diversity tracking
+/// This is a hash-based approach since libp2p PeerIds don't directly contain IPs
+fn peer_id_to_synthetic_ip(peer_id: &str) -> std::net::IpAddr {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    peer_id.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    // Create a synthetic IPv4 from the hash for subnet diversity calculation
+    let bytes = hash.to_be_bytes();
+    std::net::IpAddr::V4(std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]))
+}
+
 /// Node service that orchestrates all components
 pub struct NodeService {
     config: Config,
@@ -89,6 +108,12 @@ pub struct NodeService {
     eclipse_protection: Arc<EclipseProtection>,
     /// Long-range attack protection
     long_range_protection: Arc<LongRangeProtection>,
+    /// Liveness monitor for detecting stalled validators
+    liveness_monitor: Arc<RwLock<LivenessMonitor>>,
+    /// Graceful shutdown handler
+    graceful_shutdown: Arc<GracefulShutdown>,
+    /// Health monitor for node health checks
+    health_monitor: Arc<RwLock<HealthMonitor>>,
 }
 
 impl NodeService {
@@ -129,6 +154,7 @@ impl NodeService {
             min_stake: config.consensus.min_stake.parse().unwrap_or(1_000_000_000_000_000_000),
             block_reward: 1_000_000_000_000_000_000, // 1 token reward
             epoch_length: config.consensus.epoch_length,
+            ..Default::default()
         };
         let consensus = Arc::new(RwLock::new(ProofOfStake::new(consensus_config)));
         info!("  ✓ PoS consensus initialized");
@@ -215,6 +241,18 @@ impl NodeService {
         ));
         info!("  ✓ Long-range protection initialized");
 
+        // Initialize liveness monitor
+        let liveness_monitor = Arc::new(RwLock::new(LivenessMonitor::new(LivenessConfig::default())));
+        info!("  ✓ Liveness monitor initialized");
+
+        // Initialize graceful shutdown handler
+        let graceful_shutdown = Arc::new(GracefulShutdown::new(ShutdownConfig::default()));
+        info!("  ✓ Graceful shutdown handler initialized");
+
+        // Initialize health monitor
+        let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
+        info!("  ✓ Health monitor initialized");
+
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(16);
 
@@ -287,6 +325,9 @@ impl NodeService {
             db_maintenance,
             eclipse_protection,
             long_range_protection,
+            liveness_monitor,
+            graceful_shutdown,
+            health_monitor,
         })
     }
 
@@ -337,7 +378,7 @@ impl NodeService {
         print_connection_info(
             &peer_id_str,
             self.config.network.listen_port,
-            detect_external_ip(),
+            detect_external_ip().as_deref(),
         );
 
         // Create swarm with persistent identity
@@ -402,20 +443,54 @@ impl NodeService {
                 let broadcast_tx_for_sync = self.broadcast_tx.clone();
                 let node_name = self.config.node.name.clone();
                 let shared_pending_txs_for_p2p = shared_pending_txs.clone(); // Shared TX storage
+                let eclipse_protection_for_p2p = self.eclipse_protection.clone(); // Eclipse attack protection
+                let long_range_protection_for_p2p = self.long_range_protection.clone(); // Long-range attack protection
+                let liveness_monitor_for_p2p = self.liveness_monitor.clone(); // Liveness monitoring
+                let health_monitor_for_p2p = self.health_monitor.clone(); // Health monitoring
                 let event_task = tokio::spawn(async move {
                     while let Some(event) = p2p_event_rx.recv().await {
                         match event {
                             SwarmP2PEvent::NewBlock(block) => {
                                 let height = block.header.height;
+                                let block_hash = block.hash();
+
+                                // 🛡️ Long-range attack protection: validate against checkpoints
+                                if !long_range_protection_for_p2p.validate_against_checkpoints(block_hash, height) {
+                                    warn!("🛡️ Block #{} rejected: checkpoint mismatch (potential long-range attack)", height);
+                                    continue;
+                                }
+
                                 // Check if we already have this block
                                 if storage_for_p2p.get_block_by_height(height).ok().flatten().is_some() {
                                     debug!("Already have block #{}, skipping", height);
                                     continue;
                                 }
+
+                                // Check weak subjectivity
+                                if !long_range_protection_for_p2p.is_within_weak_subjectivity(height) {
+                                    warn!("🛡️ Block #{} rejected: outside weak subjectivity window", height);
+                                    continue;
+                                }
+
                                 if let Err(e) = storage_for_p2p.store_block(&block) {
                                     warn!("Failed to store received block: {}", e);
                                 } else {
                                     info!("📥 Synced block #{} from peer", height);
+
+                                    // 🎯 Record block for liveness monitoring
+                                    liveness_monitor_for_p2p.write().record_block(height);
+
+                                    // 🏥 Update health monitor with block height
+                                    health_monitor_for_p2p.write().update_block_height(height);
+
+                                    // Update finalized state for blocks past confirmation threshold
+                                    let finality_depth = 32; // Same as min_finality_confirmations
+                                    if height > finality_depth {
+                                        let finalized_height = height - finality_depth;
+                                        if let Ok(Some(finalized_block)) = storage_for_p2p.get_block_by_height(finalized_height) {
+                                            long_range_protection_for_p2p.update_finalized(finalized_block.hash(), finalized_height);
+                                        }
+                                    }
                                 }
                             }
                             SwarmP2PEvent::NewTransaction(tx) => {
@@ -428,9 +503,29 @@ impl NodeService {
                                 }
                             }
                             SwarmP2PEvent::PeerConnected(peer_id) => {
-                                info!("👋 Peer connected: {}", peer_id);
+                                // 🛡️ Register peer with Eclipse Protection
+                                let peer_id_str = peer_id.to_string();
+                                let synthetic_ip = peer_id_to_synthetic_ip(&peer_id_str);
+                                let is_outbound = false; // Default to inbound
+
+                                if eclipse_protection_for_p2p.should_allow_connection(&synthetic_ip, is_outbound) {
+                                    eclipse_protection_for_p2p.add_peer(peer_id_str.clone(), synthetic_ip, is_outbound);
+                                    info!("👋 Peer connected: {} (diversity: {}%)",
+                                        peer_id, eclipse_protection_for_p2p.calculate_diversity_score());
+                                } else {
+                                    warn!("🛡️ Peer blocked by eclipse protection: {}", peer_id);
+                                }
+
                                 // Update global peer count for RPC
                                 luxtensor_rpc::peer_count::increment_peer_count();
+
+                                // 🎯 Update liveness monitor with current peer count
+                                let current_peer_count = luxtensor_rpc::peer_count::get_peer_count();
+                                liveness_monitor_for_p2p.write().update_peer_count(current_peer_count);
+
+                                // 🏥 Update health monitor with peer count
+                                health_monitor_for_p2p.write().update_peer_count(current_peer_count);
+
                                 // Request sync when peer connects
                                 let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
                                 if let Some(ref tx) = broadcast_tx_for_sync {
@@ -444,9 +539,18 @@ impl NodeService {
                                 }
                             }
                             SwarmP2PEvent::PeerDisconnected(peer_id) => {
+                                // 🛡️ Remove peer from Eclipse Protection tracking
+                                eclipse_protection_for_p2p.remove_peer(&peer_id.to_string());
                                 info!("👋 Peer disconnected: {}", peer_id);
                                 // Update global peer count for RPC
                                 luxtensor_rpc::peer_count::decrement_peer_count();
+
+                                // 🎯 Update liveness monitor with current peer count
+                                let current_peer_count = luxtensor_rpc::peer_count::get_peer_count();
+                                liveness_monitor_for_p2p.write().update_peer_count(current_peer_count);
+
+                                // 🏥 Update health monitor with peer count
+                                health_monitor_for_p2p.write().update_peer_count(current_peer_count);
                             }
                             SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
                                 info!("🔄 Got sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
@@ -617,10 +721,13 @@ impl NodeService {
     async fn shutdown(&mut self) -> Result<()> {
         info!("🛑 Shutting down node services...");
 
+        // Start graceful shutdown sequence
+        self.graceful_shutdown.initiate_shutdown();
+
         // Send shutdown signal to all tasks
         let _ = self.shutdown_tx.send(());
 
-        // Wait for all tasks to complete
+        // Wait for all tasks to complete with timeout from graceful_shutdown
         for task in self.tasks.drain(..) {
             match task.await {
                 Ok(Ok(())) => {}
@@ -633,6 +740,36 @@ impl NodeService {
         info!("💾 Flushing storage...");
         // Storage flush happens automatically on drop
 
+        // Save shutdown checkpoint for recovery
+        self.graceful_shutdown.begin_state_save();
+        let current_height = self.storage.get_block_by_height(0)
+            .ok()
+            .flatten()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
+        let current_hash = self.storage.get_block_by_height(current_height)
+            .ok()
+            .flatten()
+            .map(|b| b.hash())
+            .unwrap_or([0u8; 32]);
+
+        let checkpoint = crate::graceful_shutdown::ShutdownCheckpoint {
+            block_height: current_height,
+            block_hash: current_hash,
+            shutdown_time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            node_version: env!("CARGO_PKG_VERSION").to_string(),
+            pending_tx_count: self.mempool.len(),
+            peer_count: 0, // Would need P2P reference
+        };
+
+        if let Err(e) = self.graceful_shutdown.save_checkpoint(&checkpoint) {
+            warn!("Failed to save shutdown checkpoint: {}", e);
+        }
+
+        self.graceful_shutdown.complete_shutdown();
         info!("✅ Shutdown complete");
         Ok(())
     }
@@ -729,6 +866,19 @@ impl NodeService {
                                 }
                             } else {
                                 info!("📦 Block #{} produced (standalone mode)", block.header.height);
+                            }
+
+                            // Auto-checkpoint: create snapshot at checkpoint intervals
+                            let current_height = block.header.height;
+                            if current_height > 0 && current_height % CHECKPOINT_INTERVAL == 0 {
+                                let checkpoint_dir = std::path::PathBuf::from("./data/checkpoints");
+                                let mut manager = CheckpointManager::new(&checkpoint_dir, storage.inner_db());
+
+                                if let Err(e) = manager.create_checkpoint(current_height, block.header.hash(), block.header.state_root) {
+                                    warn!("⚠️ Failed to create checkpoint at height {}: {:?}", current_height, e);
+                                } else {
+                                    info!("📸 Checkpoint created at height {} (every {} blocks)", current_height, CHECKPOINT_INTERVAL);
+                                }
                             }
                         }
                         Err(e) => {

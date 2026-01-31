@@ -4,9 +4,11 @@
 use anyhow::Result;
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_network::{P2PEvent, SwarmCommand};
+use luxtensor_network::eclipse_protection::EclipseProtection;
 use luxtensor_storage::BlockchainDB;
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::net::IpAddr;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use crate::mempool::Mempool;
@@ -39,6 +41,7 @@ pub async fn p2p_event_loop(
     mempool: Arc<Mempool>,
     sync_command_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
     node_id: String,
+    eclipse_protection: Arc<EclipseProtection>,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<()> {
     info!("🌐 P2P event loop started");
@@ -59,6 +62,7 @@ pub async fn p2p_event_loop(
                     &mempool,
                     sync_command_tx.as_ref(),
                     &sync_state,
+                    &eclipse_protection,
                 ).await {
                     error!("Error handling P2P event: {}", e);
                 }
@@ -81,23 +85,43 @@ async fn handle_p2p_event(
     mempool: &Arc<Mempool>,
     sync_command_tx: Option<&mpsc::UnboundedSender<SwarmCommand>>,
     sync_state: &Arc<RwLock<SyncState>>,
+    eclipse_protection: &Arc<EclipseProtection>,
 ) -> Result<()> {
     match event {
         P2PEvent::NewBlock(block) => {
-            handle_new_block(block, storage, sync_command_tx, sync_state).await?;
+            // Update peer score positively for valid block contribution
+            // (We don't have source peer here, but in handle_new_block we could track it)
+            handle_new_block(block, storage, sync_command_tx, sync_state, eclipse_protection).await?;
         }
         P2PEvent::NewTransaction(tx) => {
             handle_new_transaction(tx, mempool).await?;
         }
         P2PEvent::PeerConnected(peer_id) => {
-            info!("👋 Peer connected: {}", peer_id);
+            // Register peer with Eclipse Protection
+            // Note: We use a synthetic IP since libp2p PeerId doesn't carry IP directly
+            // In production, this should be enhanced to extract IP from observed addresses
+            let peer_id_str = peer_id.to_string();
+            let synthetic_ip: IpAddr = peer_id_to_synthetic_ip(&peer_id_str);
+            let is_outbound = false; // Assume inbound for now, could be enhanced
+
+            if eclipse_protection.should_allow_connection(&synthetic_ip, is_outbound) {
+                eclipse_protection.add_peer(peer_id_str.clone(), synthetic_ip, is_outbound);
+                info!("👋 Peer connected and registered: {} (diversity: {}%)",
+                    peer_id, eclipse_protection.calculate_diversity_score());
+            } else {
+                warn!("🛡️ Peer connection blocked by eclipse protection: {}", peer_id);
+                // TODO: Send disconnect command back to swarm
+            }
         }
         P2PEvent::PeerDisconnected(peer_id) => {
-            info!("👋 Peer disconnected: {}", peer_id);
+            // Remove peer from Eclipse Protection tracking
+            eclipse_protection.remove_peer(&peer_id.to_string());
+            info!("👋 Peer disconnected and unregistered: {}", peer_id);
         }
         P2PEvent::GossipMessage { source, data, topic } => {
             debug!("📨 Gossip message from {:?} on topic {}: {} bytes",
                    source, topic, data.len());
+            // Could update peer score here based on message validity
         }
         _ => {
             debug!("Unhandled P2P event");
@@ -107,12 +131,28 @@ async fn handle_p2p_event(
     Ok(())
 }
 
+/// Convert PeerId to synthetic IP for subnet diversity tracking
+/// This is a hash-based approach since libp2p PeerIds don't directly contain IPs
+fn peer_id_to_synthetic_ip(peer_id: &str) -> IpAddr {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    peer_id.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    // Create a synthetic IPv4 from the hash for subnet diversity calculation
+    let bytes = hash.to_be_bytes();
+    IpAddr::V4(std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]))
+}
+
 /// Handle incoming block from P2P network
 async fn handle_new_block(
     block: Block,
     storage: &Arc<BlockchainDB>,
     sync_command_tx: Option<&mpsc::UnboundedSender<SwarmCommand>>,
     sync_state: &Arc<RwLock<SyncState>>,
+    _eclipse_protection: &Arc<EclipseProtection>, // For future peer scoring on block delivery
 ) -> Result<()> {
     let block_height = block.header.height;
     let block_hash = block.hash();

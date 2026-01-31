@@ -5,6 +5,10 @@ mod executor;
 mod genesis_config;
 mod p2p_handler;
 mod swarm_broadcaster;
+mod health;
+mod metrics;
+mod shutdown;
+mod graceful_shutdown;
 pub mod root_subnet;
 
 pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};

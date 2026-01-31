@@ -204,6 +204,7 @@ mod tests {
 
     fn create_test_tx() -> Transaction {
         Transaction {
+            chain_id: 1,  // Add chain_id for replay protection
             nonce: 1,
             from: Address::zero(),
             to: Some(Address::zero()),

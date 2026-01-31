@@ -412,8 +412,10 @@ impl BlockchainDB {
         for item in iter {
             let (key, value) = item?;
             if key.len() == 8 {
-                let id = u64::from_be_bytes(key[..8].try_into().unwrap());
-                subnets.push((id, value.to_vec()));
+                if let Ok(bytes) = key[..8].try_into() {
+                    let id = u64::from_be_bytes(bytes);
+                    subnets.push((id, value.to_vec()));
+                }
             }
         }
         Ok(subnets)
@@ -451,9 +453,11 @@ impl BlockchainDB {
         for item in iter {
             let (key, value) = item?;
             if key.len() == 16 {
-                let subnet_id = u64::from_be_bytes(key[..8].try_into().unwrap());
-                let uid = u64::from_be_bytes(key[8..16].try_into().unwrap());
-                neurons.push(((subnet_id, uid), value.to_vec()));
+                if let (Ok(subnet_bytes), Ok(uid_bytes)) = (key[..8].try_into(), key[8..16].try_into()) {
+                    let subnet_id = u64::from_be_bytes(subnet_bytes);
+                    let uid = u64::from_be_bytes(uid_bytes);
+                    neurons.push(((subnet_id, uid), value.to_vec()));
+                }
             }
         }
         Ok(neurons)
@@ -491,9 +495,11 @@ impl BlockchainDB {
         for item in iter {
             let (key, value) = item?;
             if key.len() == 16 {
-                let subnet_id = u64::from_be_bytes(key[..8].try_into().unwrap());
-                let uid = u64::from_be_bytes(key[8..16].try_into().unwrap());
-                weights.push(((subnet_id, uid), value.to_vec()));
+                if let (Ok(subnet_bytes), Ok(uid_bytes)) = (key[..8].try_into(), key[8..16].try_into()) {
+                    let subnet_id = u64::from_be_bytes(subnet_bytes);
+                    let uid = u64::from_be_bytes(uid_bytes);
+                    weights.push(((subnet_id, uid), value.to_vec()));
+                }
             }
         }
         Ok(weights)

@@ -38,10 +38,10 @@ pub fn fuzz_block_validator(data: &[u8]) -> bool {
     match bincode::deserialize::<Block>(data) {
         Ok(block) => {
             // If it parses, validate it doesn't panic
-            let _ = block.hash.clone();
+            let _ = block.hash();
             let _ = block.header.height;
             let _ = block.header.timestamp;
-            let _ = block.header.parent_hash.clone();
+            let _ = block.header.previous_hash.clone();
             let _ = block.transactions.len();
             let _ = format!("{:?}", block.header);
             true
@@ -56,9 +56,9 @@ pub fn fuzz_block_header(data: &[u8]) -> bool {
         Ok(header) => {
             let _ = header.height;
             let _ = header.timestamp;
-            let _ = header.parent_hash.clone();
+            let _ = header.previous_hash.clone();
             let _ = header.state_root.clone();
-            let _ = header.transactions_root.clone();
+            let _ = header.txs_root.clone();
             true
         }
         Err(_) => false,

@@ -1,34 +1,2292 @@
-﻿
-============================================================
-python : Traceback (most recent call last):
+﻿cargo : warning: unused import: `Write`
 At line:1 char:1
-+ python scripts/full_integration_test.py 2>&1 | 
-Out-File -FilePath tes ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (Traceback 
-    (most recent call last)::String) [], RemoteExcept  
-  ion
-    + FullyQualifiedErrorId : NativeCommandError
++ cargo test --workspace 2>&1 | Out-File 
+-FilePath test_results.txt -En ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (wa 
+   rning: unused import: `Write`:String) [], R  
+  emoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
  
-  File "D:\venera\cardano\moderntensor\moderntensor\lux
-tensor\scripts\full_integration_test.py", line 355, in 
-<module>
-    main()
-    ~~~~^^
-  File "D:\venera\cardano\moderntensor\moderntensor\lux
-tensor\scripts\full_integration_test.py", line 319, in 
-main
-    print("\U0001f980 LUXTENSOR FULL BLOCKCHAIN 
-INTEGRATION TEST")
-    
-~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File 
-"C:\Users\Admin\anaconda3\Lib\encodings\cp1252.py", 
-line 19, in encode
-    return codecs.charmap_encode(input,self.errors,enco
-ding_table)[0]
-           
-~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-UnicodeEncodeError: 'charmap' codec can't encode 
-character '\U0001f980' in position 0: character maps 
-to <undefined>
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:27
+   |
+10 | use std::io::{self, Read, Write};
+   |                           ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `Read`
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:21
+   |
+10 | use std::io::{self, Read, Write};
+   |                     ^^^^
+
+warning: `luxtensor-storage` (lib) generated 2 
+warnings (run `cargo fix --lib -p 
+luxtensor-storage` to apply 1 suggestion)
+warning: unused import: 
+`std::collections::HashMap`
+ --> crates\luxtensor-consensus\src\long_range_p
+rotection.rs:6:5
+  |
+6 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused variable: `current_block`
+   --> crates\luxtensor-consensus\src\weight_con
+sensus.rs:377:9
+    |
+377 |         current_block: u64,
+    |         ^^^^^^^^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_current_block`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: field `dao_address` is never read
+  --> crates\luxtensor-consensus\src\reward_exec
+utor.rs:70:5
+   |
+49 | pub struct RewardExecutor {
+   |            -------------- field in this 
+struct
+...
+70 |     dao_address: [u8; 20],
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `luxtensor-consensus` (lib) generated 
+3 warnings (run `cargo fix --lib -p 
+luxtensor-consensus` to apply 2 suggestions)
+warning: unused import: `warn`
+ --> 
+crates\luxtensor-network\src\identity.rs:8:21
+  |
+8 | use tracing::{info, warn};
+  |                     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `PeerCapabilities`
+ --> crates\luxtensor-network\src\swarm.rs:6:61
+  |
+6 | use crate::peer_discovery::{PeerDiscovery, 
+DiscoveryConfig, PeerCapabilities};
+  |                                             
+                ^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> 
+crates\luxtensor-network\src\swarm.rs:22:22
+   |
+22 | use tracing::{debug, error, info, warn};
+   |                      ^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\luxtensor-network\src\peer_discover
+y.rs:14:5
+   |
+14 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> 
+crates\luxtensor-network\src\swarm.rs:146:13
+    |
+146 |         let mut kademlia_config = 
+kad::Config::new(
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `config` is never read
+   --> crates\luxtensor-network\src\p2p.rs:113:5
+    |
+111 | pub struct P2PNode {
+    |            ------- field in this struct
+112 |     peer_manager: PeerManager,
+113 |     config: P2PConfig,
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `transactions_topic` is never 
+read
+  --> crates\luxtensor-network\src\swarm.rs:56:5
+   |
+51 | pub struct SwarmP2PNode {
+   |            ------------ field in this 
+struct
+...
+56 |     transactions_topic: IdentTopic,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: `luxtensor-network` (lib) generated 7 
+warnings (run `cargo fix --lib -p 
+luxtensor-network` to apply 5 suggestions)
+warning: field `pending_ops` is never read
+   --> crates\luxtensor-contracts\src\account_ab
+straction.rs:178:5
+    |
+170 | pub struct EntryPoint {
+    |            ---------- field in this struct
+...
+178 |     pending_ops: Arc<RwLock<HashMap<Hash, 
+UserOperation>>>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `luxtensor-contracts` (lib) generated 
+1 warning
+   Compiling luxtensor-tests v0.4.0 (D:\venera\c
+ardano\moderntensor\moderntensor\luxtensor\crate
+s\luxtensor-tests)
+   Compiling luxtensor v0.4.0 (D:\venera\cardano
+\moderntensor\moderntensor\luxtensor)
+   Compiling luxtensor-crypto v0.4.0 (D:\venera\
+cardano\moderntensor\moderntensor\luxtensor\crat
+es\luxtensor-crypto)
+warning: constant `YELLOW` is never used
+  --> examples\data_sync_demo.rs:23:7
+   |
+23 | const YELLOW: &str = "\x1b[33m";
+   |       ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `name` is never read
+   --> examples\data_sync_demo.rs:145:5
+    |
+144 | struct Node {
+    |        ---- field in this struct
+145 |     name: String,
+    |     ^^^^
+
+warning: `luxtensor-contracts` (lib test) 
+generated 1 warning (1 duplicate)
+warning: `luxtensor` (example "data_sync_demo") 
+generated 2 warnings
+warning: `luxtensor-consensus` (lib test) 
+generated 3 warnings (3 duplicates)
+warning: `luxtensor-network` (lib test) 
+generated 7 warnings (7 duplicates)
+warning: `luxtensor-storage` (lib test) 
+generated 2 warnings (2 duplicates)
+warning: unused imports: `Deserialize` and 
+`Serialize`
+ --> crates\luxtensor-rpc\src\error.rs:2:13
+  |
+2 | use serde::{Deserialize, Serialize};
+  |             ^^^^^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `generate_tx_hash`
+   --> crates\luxtensor-rpc\src\server.rs:295:50
+    |
+295 |             use 
+crate::eth_rpc::{hex_to_address, 
+generate_tx_hash};
+    |                                           
+       ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> 
+crates\luxtensor-rpc\src\admin_auth.rs:10:5
+   |
+10 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+  --> 
+crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove 
+the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightl
+y/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+   = note: `#[warn(unexpected_cfgs)]` on by 
+default
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+   --> 
+crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ 
+help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/night
+ly/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+
+warning: unused variable: `validators_config`
+   --> crates\luxtensor-rpc\src\handlers\staking
+.rs:313:9
+    |
+313 |     let validators_config = 
+validators.clone();
+    |         ^^^^^^^^^^^^^^^^^ help: if this 
+is intentional, prefix it with an underscore: 
+`_validators_config`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+   Compiling luxtensor-cli v0.4.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\
+luxtensor-cli)
+   Compiling luxtensor-rpc v0.4.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\
+luxtensor-rpc)
+warning: `luxtensor-rpc` (lib) generated 6 
+warnings (run `cargo fix --lib -p 
+luxtensor-rpc` to apply 4 suggestions)
+   Compiling luxtensor-node v0.4.0 (D:\venera\ca
+rdano\moderntensor\moderntensor\luxtensor\crates
+\luxtensor-node)
+error[E0063]: missing field `chain_id` in 
+initializer of `Transaction`
+  --> examples\full_transaction_example.rs:53:14
+   |
+53 |     let tx = Transaction {
+   |              ^^^^^^^^^^^ missing `chain_id`
+
+For more information about this error, try 
+`rustc --explain E0063`.
+error: could not compile `luxtensor` (example 
+"full_transaction_example") due to 1 previous 
+error
+warning: build failed, waiting for other jobs 
+to finish...
+error[E0599]: no method named `len` found for 
+enum `std::result::Result<T, E>` in the current 
+scope
+   --> 
+crates\luxtensor-crypto\src\signature.rs:157:30
+    |
+157 |         assert_eq!(signature.len(), 64);
+    |                              ^^^ method 
+not found in `std::result::Result<[u8; 64], 
+error::CryptoError>`
+    |
+note: the method `len` exists on the type `[u8; 
+64]`
+   --> C:\Users\Admin\.rustup\toolchains\stable-
+x86_64-pc-windows-msvc\lib/rustlib/src/rust\libr
+ary\core\src\slice\mod.rs:114:5
+    |
+114 |     pub const fn len(&self) -> usize {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: consider using `Result::expect` to unwrap 
+the `[u8; 64]` value, panicking if the value is 
+a `Result::Err`
+    |
+157 |         
+assert_eq!(signature.expect("REASON").len(), 
+64);
+    |                             
++++++++++++++++++
+
+For more information about this error, try 
+`rustc --explain E0599`.
+error: could not compile `luxtensor-crypto` 
+(lib test) due to 1 previous error
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:315:9
+    |
+315 |     use 
+luxtensor_contracts::executor::ContractExecutor;
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+315 -     use 
+luxtensor_contracts::executor::ContractExecutor;
+315 +     use 
+luxtensor_consensus::executor::ContractExecutor;
+    |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:316:9
+    |
+316 |     use 
+luxtensor_contracts::types::ContractCode;
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+316 -     use 
+luxtensor_contracts::types::ContractCode;
+316 +     use 
+luxtensor_consensus::types::ContractCode;
+    |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:335:9
+    |
+335 |     use 
+luxtensor_contracts::executor::ContractExecutor;
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+335 -     use 
+luxtensor_contracts::executor::ContractExecutor;
+335 +     use 
+luxtensor_consensus::executor::ContractExecutor;
+    |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:336:9
+    |
+336 |     use 
+luxtensor_contracts::types::ContractCode;
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+336 -     use 
+luxtensor_contracts::types::ContractCode;
+336 +     use 
+luxtensor_consensus::types::ContractCode;
+    |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:358:9
+    |
+358 |     use luxtensor_contracts::executor::{Co
+ntractExecutor, ExecutionContext};
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+358 -     use luxtensor_contracts::executor::{Co
+ntractExecutor, ExecutionContext};
+358 +     use luxtensor_consensus::executor::{Co
+ntractExecutor, ExecutionContext};
+    |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:359:9
+    |
+359 |     use 
+luxtensor_contracts::types::ContractAddress;
+    |         ^^^^^^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_contracts`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+359 -     use 
+luxtensor_contracts::types::ContractAddress;
+359 +     use 
+luxtensor_consensus::types::ContractAddress;
+    |
+
+error[E0432]: unresolved import 
+`luxtensor_consensus::SlashingReason`
+ --> crates\luxtensor-tests\src\consensus_securi
+ty.rs:5:58
+  |
+5 | use luxtensor_consensus::{ProofOfStake, 
+ConsensusConfig, SlashingReason};
+  |                                             
+             ^^^^^^^^^^^^^^
+  |                                             
+             |
+  |                                             
+             no `SlashingReason` in the root
+  |                                             
+             help: a similar name exists in the 
+module: `SlashReason`
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+  --> crates\luxtensor-tests\src\edge_case_tests
+.rs:25:20
+   |
+25 |     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+   |                    ^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+   |
+help: there is a crate or module with a similar 
+name
+   |
+25 -     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+25 +     let executor = luxtensor_core::executor
+::TransactionExecutor::new();
+   |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+  --> crates\luxtensor-tests\src\edge_case_tests
+.rs:46:20
+   |
+46 |     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+   |                    ^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+   |
+help: there is a crate or module with a similar 
+name
+   |
+46 -     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+46 +     let executor = luxtensor_core::executor
+::TransactionExecutor::new();
+   |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+  --> crates\luxtensor-tests\src\edge_case_tests
+.rs:66:20
+   |
+66 |     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+   |                    ^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+   |
+help: there is a crate or module with a similar 
+name
+   |
+66 -     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+66 +     let executor = luxtensor_core::executor
+::TransactionExecutor::new();
+   |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+  --> crates\luxtensor-tests\src\edge_case_tests
+.rs:87:20
+   |
+87 |     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+   |                    ^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+   |
+help: there is a crate or module with a similar 
+name
+   |
+87 -     let executor = luxtensor_node::executor
+::TransactionExecutor::new();
+87 +     let executor = luxtensor_core::executor
+::TransactionExecutor::new();
+   |
+
+error[E0433]: failed to resolve: use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:107:20
+    |
+107 |     let executor = luxtensor_node::executo
+r::TransactionExecutor::new();
+    |                    ^^^^^^^^^^^^^^ use of 
+unresolved module or unlinked crate 
+`luxtensor_node`
+    |
+help: there is a crate or module with a similar 
+name
+    |
+107 -     let executor = luxtensor_node::executo
+r::TransactionExecutor::new();
+107 +     let executor = luxtensor_core::executo
+r::TransactionExecutor::new();
+    |
+
+warning: unused import: `Hash`
+ --> 
+crates\luxtensor-tests\src\core_tests.rs:5:43
+  |
+5 |     Account, Address, Block, BlockHeader, 
+Hash, Transaction,
+  |                                           
+^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `SubnetInfo`
+ --> crates\luxtensor-tests\src\stake_reward_tes
+ts.rs:6:46
+  |
+6 |     MinerInfo, ValidatorInfo, 
+DelegatorInfo, SubnetInfo,
+  |                                             
+ ^^^^^^^^^^
+
+warning: unused import: `TOTAL_SUPPLY`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:258:66
+    |
+258 |     use luxtensor_consensus::token_allocat
+ion::{TokenAllocation, TOTAL_SUPPLY};
+    |                                           
+                       ^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+   --> crates\luxtensor-tests\src\crypto_verific
+ation.rs:174:9
+    |
+174 |     use super::*;
+    |         ^^^^^^^^
+
+error[E0061]: this function takes 7 arguments 
+but 5 arguments were supplied
+  --> crates\luxtensor-tests\src\edge_case_tests
+.rs:84:18
+   |
+84 |     let mut tx = Transaction::new(0, addr, 
+Some(Address::from([2u8; 20])), 0, vec![]);
+   |                  ^^^^^^^^^^^^^^^^----------
+------------------------------------------ two 
+arguments of type `u64` and `u64` are missing
+   |
+note: associated function defined here
+  --> D:\venera\cardano\moderntensor\moderntenso
+r\luxtensor\crates\luxtensor-core\src\transactio
+n.rs:26:12
+   |
+26 |     pub fn new(
+   |            ^^^
+help: provide the arguments
+   |
+84 |     let mut tx = Transaction::new(0, addr, 
+Some(Address::from([2u8; 20])), 0, /* u64 */, 
+/* u64 */, vec![]);
+   |                                            
+                                   
++++++++++++++++++++++
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:122:18
+    |
+122 |     let mut vs = ValidatorSet::new(1000); 
+// min stake = 1000
+    |                  ^^^^^^^^^^^^^^^^^ ---- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+122 -     let mut vs = ValidatorSet::new(1000); 
+// min stake = 1000
+122 +     let mut vs = ValidatorSet::new(); // 
+min stake = 1000
+    |
+
+error[E0063]: missing field `chain_id` in 
+initializer of `luxtensor_core::Transaction`
+   --> 
+crates\luxtensor-rpc\src\broadcaster.rs:206:9
+    |
+206 |         Transaction {
+    |         ^^^^^^^^^^^ missing `chain_id`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:128:9
+    |
+128 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:129:9
+    |
+129 |         name: "test".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0599]: no method named `is_active` found 
+for struct `ValidatorSet` in the current scope
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:134:36
+    |
+134 |     assert!(result.is_err() || 
+!vs.is_active(&Address::from([1u8; 20])));
+    |                                    
+^^^^^^^^^ method not found in `ValidatorSet`
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:155:18
+    |
+155 |     let mut vs = ValidatorSet::new(100);
+    |                  ^^^^^^^^^^^^^^^^^ --- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+155 -     let mut vs = ValidatorSet::new(100);
+155 +     let mut vs = ValidatorSet::new();
+    |
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:163:9
+    |
+163 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:164:9
+    |
+164 |         name: "test".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:174:9
+    |
+174 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:175:9
+    |
+175 |         name: "test2".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:191:18
+    |
+191 |     let mut vs = ValidatorSet::new(100);
+    |                  ^^^^^^^^^^^^^^^^^ --- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+191 -     let mut vs = ValidatorSet::new(100);
+191 +     let mut vs = ValidatorSet::new();
+    |
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:203:18
+    |
+203 |     let mut vs = ValidatorSet::new(100);
+    |                  ^^^^^^^^^^^^^^^^^ --- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+203 -     let mut vs = ValidatorSet::new(100);
+203 +     let mut vs = ValidatorSet::new();
+    |
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:211:9
+    |
+211 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:212:9
+    |
+212 |         name: "test".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:234:18
+    |
+234 |     let mut vs = ValidatorSet::new(100);
+    |                  ^^^^^^^^^^^^^^^^^ --- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+234 -     let mut vs = ValidatorSet::new(100);
+234 +     let mut vs = ValidatorSet::new();
+    |
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:241:9
+    |
+241 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:242:9
+    |
+242 |         name: "test".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0609]: no field `dao_reward` on type 
+`DistributionResult`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:293:20
+    |
+293 |     assert!(result.dao_reward > 0);
+    |                    ^^^^^^^^^^ unknown 
+field
+    |
+    = note: available fields are: `epoch`, 
+`total_distributed`, `miner_rewards`, 
+`validator_rewards`, `delegator_rewards` ... 
+and 2 others
+
+error[E0061]: this function takes 0 arguments 
+but 1 argument was supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:424:18
+    |
+424 |     let mut vs = ValidatorSet::new(100);
+    |                  ^^^^^^^^^^^^^^^^^ --- 
+unexpected argument of type `{integer}`
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\vali
+dator.rs:64:12
+    |
+ 64 |     pub fn new() -> Self {
+    |            ^^^
+help: remove the extra argument
+    |
+424 -     let mut vs = ValidatorSet::new(100);
+424 +     let mut vs = ValidatorSet::new();
+    |
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:431:9
+    |
+431 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:432:9
+    |
+432 |         name: "test1".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `commission_rate`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:441:9
+    |
+441 |         commission_rate: 10,
+    |         ^^^^^^^^^^^^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0560]: struct 
+`luxtensor_consensus::Validator` has no field 
+named `name`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:442:9
+    |
+442 |         name: "test2".to_string(),
+    |         ^^^^ 
+`luxtensor_consensus::Validator` does not have 
+this field
+    |
+    = note: available fields are: `public_key`, 
+`rewards`, `last_active_slot`
+
+error[E0061]: this function takes 7 arguments 
+but 5 arguments were supplied
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:461:18
+    |
+461 |     let mut tx = Transaction::new(nonce, 
+from, to, value, vec![]);
+    |                  ^^^^^^^^^^^^^^^^---------
+----------------------- two arguments of type 
+`u64` and `u64` are missing
+    |
+note: associated function defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-core\src\transacti
+on.rs:26:12
+    |
+ 26 |     pub fn new(
+    |            ^^^
+help: provide the arguments
+    |
+461 |     let mut tx = Transaction::new(nonce, 
+from, to, value, /* u64 */, /* u64 */, vec![]);
+    |                                           
+                +++++++++++++++++++++
+
+error[E0609]: no field `signature` on type 
+`luxtensor_core::Transaction`
+   --> crates\luxtensor-tests\src\edge_case_test
+s.rs:468:8
+    |
+468 |     tx.signature = sig;
+    |        ^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `chain_id`, 
+`nonce`, `from`, `to`, `value` ... and 6 others
+
+error[E0599]: no method named `public_key` 
+found for struct `luxtensor_crypto::KeyPair` in 
+the current scope
+  --> crates\luxtensor-tests\src\crypto_verifica
+tion.rs:52:34
+   |
+52 |         let public_key = 
+keypair.public_key();
+   |                                  
+^^^^^^^^^^ private field, not a method
+   |
+help: there is a method `public_key_bytes` with 
+a similar name
+   |
+52 |         let public_key = 
+keypair.public_key_bytes();
+   |                                            
+++++++
+
+error[E0599]: no method named `verify` found 
+for struct `luxtensor_crypto::KeyPair` in the 
+current scope
+  --> crates\luxtensor-tests\src\crypto_verifica
+tion.rs:53:32
+   |
+53 |         let is_valid = 
+keypair.verify(&message_hash, &signature);
+   |                                ^^^^^^ 
+method not found in `luxtensor_crypto::KeyPair`
+
+error[E0599]: no method named `verify` found 
+for struct `luxtensor_crypto::KeyPair` in the 
+current scope
+  --> crates\luxtensor-tests\src\crypto_verifica
+tion.rs:58:34
+   |
+58 |         let is_invalid = 
+keypair.verify(&wrong_hash, &signature);
+   |                                  ^^^^^^ 
+method not found in `luxtensor_crypto::KeyPair`
+
+error[E0599]: no method named `public_key` 
+found for struct `luxtensor_crypto::KeyPair` in 
+the current scope
+  --> crates\luxtensor-tests\src\crypto_verifica
+tion.rs:72:34
+   |
+72 |         let public_key = 
+keypair.public_key();
+   |                                  
+^^^^^^^^^^ private field, not a method
+   |
+help: there is a method `public_key_bytes` with 
+a similar name
+   |
+72 |         let public_key = 
+keypair.public_key_bytes();
+   |                                            
+++++++
+
+error[E0599]: no function or associated item 
+named `from_secret_key` found for struct 
+`luxtensor_crypto::KeyPair` in the current scope
+  --> crates\luxtensor-tests\src\crypto_verifica
+tion.rs:85:32
+   |
+85 |         let keypair = KeyPair::from_secret_
+key(&key_bytes).expect("Valid key");
+   |                                
+^^^^^^^^^^^^^^^ function or associated item not 
+found in `luxtensor_crypto::KeyPair`
+   |
+note: if you're trying to build a new 
+`luxtensor_crypto::KeyPair` consider using one 
+of the following associated functions:
+      luxtensor_crypto::KeyPair::generate
+      luxtensor_crypto::KeyPair::from_secret
+  --> D:\venera\cardano\moderntensor\moderntenso
+r\luxtensor\crates\luxtensor-crypto\src\signatur
+e.rs:12:5
+   |
+12 |     pub fn generate() -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+24 |     pub fn from_secret(bytes: &[u8; 32]) 
+-> Result<Self> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^
+help: there is an associated function 
+`from_secret` with a similar name
+   |
+85 -         let keypair = KeyPair::from_secret_
+key(&key_bytes).expect("Valid key");
+85 +         let keypair = 
+KeyPair::from_secret(&key_bytes).expect("Valid 
+key");
+   |
+
+error[E0599]: no method named `verify` found 
+for struct `luxtensor_crypto::KeyPair` in the 
+current scope
+   --> crates\luxtensor-tests\src\crypto_verific
+ation.rs:113:25
+    |
+113 |         
+assert!(keypair.verify(&message_hash, 
+&signature));
+    |                         ^^^^^^ method not 
+found in `luxtensor_crypto::KeyPair`
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\crypto_verific
+ation.rs:165:16
+    |
+165 |         if let Some(proof) = 
+tree.get_proof(0) {
+    |                ^^^^^^^^^^^   
+----------------- this expression has type 
+`Vec<[u8; 32]>`
+    |                |
+    |                expected `Vec<[u8; 32]>`, 
+found `Option<_>`
+    |
+    = note: expected struct `Vec<[u8; 32]>`
+                 found enum 
+`std::option::Option<_>`
+
+error[E0599]: no method named `verify_proof` 
+found for struct `MerkleTree` in the current 
+scope
+   --> crates\luxtensor-tests\src\crypto_verific
+ation.rs:166:33
+    |
+166 |             let is_valid = 
+tree.verify_proof(&leaves[0], &proof);
+    |                            
+-----^^^^^^^^^^^^--------------------
+    |                            |    |
+    |                            |    this is 
+an associated function, not a method
+    |                            help: use 
+associated function syntax instead: 
+`MerkleTree::verify_proof(&leaves[0], &proof)`
+    |
+    = note: found the following associated 
+functions; to be used as methods, functions 
+must have a `self` parameter
+    = note: the candidate is defined in an impl 
+for the type `MerkleTree`
+help: there is a method `get_proof` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-crypto\src\merkle.
+rs:68:5
+    |
+ 68 |     pub fn get_proof(&self, index: usize) 
+-> Vec<Hash> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:26:39
+   |
+26 |         let validator_addr: Address = 
+[1u8; 20];
+   |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+   |                             |
+   |                             expected due 
+to this
+   |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+   |
+26 |         let validator_addr: Address = 
+[1u8; 20].into();
+   |                                            
+    +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:29:32
+    |
+ 29 |         let result = 
+consensus.register_validator(validator_addr, 
+stake);
+    |                                
+^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:38:39
+   |
+38 |         let validator_addr: Address = 
+[1u8; 20];
+   |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+   |                             |
+   |                             expected due 
+to this
+   |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+   |
+38 |         let validator_addr: Address = 
+[1u8; 20].into();
+   |                                            
+    +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:41:32
+    |
+ 41 |         let result = 
+consensus.register_validator(validator_addr, 
+low_stake);
+    |                                
+^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:52:33
+   |
+52 |             let addr: Address = [i as u8; 
+20];
+   |                       -------   
+^^^^^^^^^^^^^ expected `Address`, found `[u8; 
+20]`
+   |                       |
+   |                       expected due to this
+   |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+   |
+52 |             let addr: Address = [i as u8; 
+20].into();
+   |                                            
+  +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:53:23
+    |
+ 53 |             
+consensus.register_validator(addr, 
+10_000_000_000_000_000_000).ok();
+    |                       ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_slot_leader` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:58:35
+    |
+ 58 |         let selected1 = 
+consensus.get_slot_leader(slot);
+    |                                   
+^^^^^^^^^^^^^^^
+    |
+help: there is a method `get_slot` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:181:5
+    |
+181 |     pub fn get_slot(&self, timestamp: 
+u64, genesis_time: u64) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_slot_leader` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:59:35
+    |
+ 59 |         let selected2 = 
+consensus.get_slot_leader(slot);
+    |                                   
+^^^^^^^^^^^^^^^
+    |
+help: there is a method `get_slot` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:181:5
+    |
+181 |     pub fn get_slot(&self, timestamp: 
+u64, genesis_time: u64) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:85:27
+   |
+85 |         
+assert!(consensus.is_epoch_boundary(10));
+   |                           
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:86:27
+   |
+86 |         
+assert!(consensus.is_epoch_boundary(20));
+   |                           
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:87:27
+   |
+87 |         
+assert!(consensus.is_epoch_boundary(100));
+   |                           
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:90:28
+   |
+90 |         
+assert!(!consensus.is_epoch_boundary(5));
+   |                            
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:91:28
+   |
+91 |         
+assert!(!consensus.is_epoch_boundary(15));
+   |                            
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`is_epoch_boundary` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+  --> crates\luxtensor-tests\src\consensus_secur
+ity.rs:92:28
+   |
+92 |         
+assert!(!consensus.is_epoch_boundary(99));
+   |                            
+^^^^^^^^^^^^^^^^^ method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named `get_epoch` found 
+for struct `luxtensor_consensus::ProofOfStake` 
+in the current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:100:30
+    |
+100 |         
+assert_eq!(consensus.get_epoch(0), 0);
+    |                              ^^^^^^^^^
+    |
+help: there is a method `current_epoch` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:170:5
+    |
+170 |     pub fn current_epoch(&self) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_epoch` found 
+for struct `luxtensor_consensus::ProofOfStake` 
+in the current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:101:30
+    |
+101 |         
+assert_eq!(consensus.get_epoch(9), 0);
+    |                              ^^^^^^^^^
+    |
+help: there is a method `current_epoch` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:170:5
+    |
+170 |     pub fn current_epoch(&self) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_epoch` found 
+for struct `luxtensor_consensus::ProofOfStake` 
+in the current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:102:30
+    |
+102 |         
+assert_eq!(consensus.get_epoch(10), 1);
+    |                              ^^^^^^^^^
+    |
+help: there is a method `current_epoch` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:170:5
+    |
+170 |     pub fn current_epoch(&self) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_epoch` found 
+for struct `luxtensor_consensus::ProofOfStake` 
+in the current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:103:30
+    |
+103 |         
+assert_eq!(consensus.get_epoch(25), 2);
+    |                              ^^^^^^^^^
+    |
+help: there is a method `current_epoch` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:170:5
+    |
+170 |     pub fn current_epoch(&self) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `get_epoch` found 
+for struct `luxtensor_consensus::ProofOfStake` 
+in the current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:104:30
+    |
+104 |         
+assert_eq!(consensus.get_epoch(100), 10);
+    |                              ^^^^^^^^^
+    |
+help: there is a method `current_epoch` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:170:5
+    |
+170 |     pub fn current_epoch(&self) -> u64 {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:126:39
+    |
+126 |         let validator_addr: Address = 
+[1u8; 20];
+    |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+    |                             |
+    |                             expected due 
+to this
+    |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+    |
+126 |         let validator_addr: Address = 
+[1u8; 20].into();
+    |                                           
+     +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:129:19
+    |
+129 |         
+consensus.register_validator(validator_addr, 
+initial_stake).unwrap();
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `slash_validator` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:132:38
+    |
+132 |         let slash_result = 
+consensus.slash_validator(
+    |                            
+----------^^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0599]: no method named 
+`get_validator_stake` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:140:41
+    |
+140 |         let remaining_stake = 
+consensus.get_validator_stake(validator_addr);
+    |                                         
+^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method 
+`update_validator_stake` with a similar name, 
+but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:150:5
+    |
+150 | /     pub fn update_validator_stake(
+151 | |         &self,
+152 | |         address: &Address,
+153 | |         new_stake: u128,
+154 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:148:39
+    |
+148 |         let validator_addr: Address = 
+[1u8; 20];
+    |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+    |                             |
+    |                             expected due 
+to this
+    |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+    |
+148 |         let validator_addr: Address = 
+[1u8; 20].into();
+    |                                           
+     +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:151:19
+    |
+151 |         
+consensus.register_validator(validator_addr, 
+initial_stake).unwrap();
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `slash_validator` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:153:19
+    |
+153 |         
+consensus.slash_validator(validator_addr, 
+SlashingReason::DoubleSign).unwrap();
+    |                   ^^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0599]: no method named 
+`get_validator_stake` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:155:35
+    |
+155 |         let remaining = 
+consensus.get_validator_stake(validator_addr);
+    |                                   
+^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method 
+`update_validator_stake` with a similar name, 
+but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:150:5
+    |
+150 | /     pub fn update_validator_stake(
+151 | |         &self,
+152 | |         address: &Address,
+153 | |         new_stake: u128,
+154 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:179:39
+    |
+179 |         let validator_addr: Address = 
+[1u8; 20];
+    |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+    |                             |
+    |                             expected due 
+to this
+    |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+    |
+179 |         let validator_addr: Address = 
+[1u8; 20].into();
+    |                                           
+     +++++++
+
+warning: unused import: `futures::FutureExt`
+ --> crates\luxtensor-node\src\service.rs:5:5
+  |
+5 | use futures::FutureExt;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:182:19
+    |
+182 |         
+consensus.register_validator(validator_addr, 
+initial_stake).unwrap();
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `jail_validator` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:185:19
+    |
+185 |         
+consensus.jail_validator(validator_addr, 
+100).ok(); // Jailed for 100 blocks
+    |                   ^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0599]: no method named 
+`get_active_validators` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:188:32
+    |
+188 |         let active = 
+consensus.get_active_validators();
+    |                                
+^^^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:196:39
+    |
+196 |         let validator_addr: Address = 
+[1u8; 20];
+    |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+    |                             |
+    |                             expected due 
+to this
+    |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+    |
+196 |         let validator_addr: Address = 
+[1u8; 20].into();
+    |                                           
+     +++++++
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:199:19
+    |
+199 |         
+consensus.register_validator(validator_addr, 
+initial_stake).unwrap();
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `jail_validator` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:200:19
+    |
+200 |         
+consensus.jail_validator(validator_addr, 
+10).ok(); // Jailed for 10 blocks
+    |                   ^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0599]: no method named `process_block` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:204:23
+    |
+204 |             consensus.process_block(0);
+    |                       ^^^^^^^^^^^^^ 
+method not found in 
+`luxtensor_consensus::ProofOfStake`
+
+error[E0599]: no method named 
+`unjail_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:208:32
+    |
+208 |         let result = 
+consensus.unjail_validator(validator_addr);
+    |                                
+^^^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0308]: mismatched types
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:216:39
+    |
+216 |         let validator_addr: Address = 
+[1u8; 20];
+    |                             -------   
+^^^^^^^^^ expected `Address`, found `[u8; 20]`
+    |                             |
+    |                             expected due 
+to this
+    |
+help: call `Into::into` on this expression to 
+convert `[u8; 20]` into 
+`luxtensor_core::Address`
+    |
+216 |         let validator_addr: Address = 
+[1u8; 20].into();
+    |                                           
+     +++++++
+
+warning: unused variable: `tx_broadcast_tx`
+   --> 
+crates\luxtensor-node\src\service.rs:315:14
+    |
+315 |         let (tx_broadcast_tx, mut 
+tx_broadcast_rx) = 
+mpsc::unbounded_channel::<Transaction>();
+    |              ^^^^^^^^^^^^^^^ help: if 
+this is intentional, prefix it with an 
+underscore: `_tx_broadcast_tx`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+error[E0599]: no method named 
+`register_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:219:19
+    |
+219 |         
+consensus.register_validator(validator_addr, 
+initial_stake).unwrap();
+    |                   ^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `remove_validator` with 
+a similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:141:5
+    |
+141 |     pub fn remove_validator(&self, 
+address: &Address) -> Result<(), 
+ConsensusError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `jail_validator` 
+found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:220:19
+    |
+220 |         
+consensus.jail_validator(validator_addr, 
+100).ok(); // Jailed for 100 blocks
+    |                   ^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+error[E0599]: no method named 
+`unjail_validator` found for struct 
+`luxtensor_consensus::ProofOfStake` in the 
+current scope
+   --> crates\luxtensor-tests\src\consensus_secu
+rity.rs:223:32
+    |
+223 |         let result = 
+consensus.unjail_validator(validator_addr);
+    |                                
+^^^^^^^^^^^^^^^^
+    |
+help: there is a method `add_validator` with a 
+similar name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\pos.
+rs:119:5
+    |
+119 | /     pub fn add_validator(
+120 | |         &self,
+121 | |         address: Address,
+122 | |         stake: u128,
+123 | |         public_key: [u8; 32],
+124 | |     ) -> Result<(), ConsensusError> {
+    | |___________________________________^
+
+Some errors have detailed explanations: E0061, 
+E0308, E0432, E0433, E0560, E0599, E0609.
+For more information about an error, try `rustc 
+--explain E0061`.
+warning: `luxtensor-tests` (lib test) generated 
+4 warnings
+error: could not compile `luxtensor-tests` (lib 
+test) due to 85 previous errors; 4 warnings 
+emitted
+warning: fields `token_allocation`, 
+`node_registry`, `validator_keypair`, 
+`db_maintenance`, `eclipse_protection`, and 
+`long_range_protection` are never read
+  --> crates\luxtensor-node\src\service.rs:75:5
+   |
+67 | pub struct NodeService {
+   |            ----------- fields in this 
+struct
+...
+75 |     token_allocation: 
+Arc<RwLock<TokenAllocation>>,
+   |     ^^^^^^^^^^^^^^^^
+76 |     node_registry: 
+Arc<RwLock<NodeRegistry>>,
+   |     ^^^^^^^^^^^^^
+...
+85 |     validator_keypair: Option<KeyPair>,
+   |     ^^^^^^^^^^^^^^^^^
+86 |     /// Database maintenance 
+(backup/restore/pruning)
+87 |     db_maintenance: Arc<DbMaintenance>,
+   |     ^^^^^^^^^^^^^^
+88 |     /// Eclipse attack protection
+89 |     eclipse_protection: 
+Arc<EclipseProtection>,
+   |     ^^^^^^^^^^^^^^^^^^
+90 |     /// Long-range attack protection
+91 |     long_range_protection: 
+Arc<LongRangeProtection>,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: methods `add_transaction` and 
+`mempool` are never used
+    --> 
+crates\luxtensor-node\src\service.rs:1006:12
+     |
+  94 | impl NodeService {
+     | ---------------- methods in this 
+implementation
+...
+1006 |     pub fn add_transaction(&self, tx: 
+Transaction) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^
+...
+1012 |     pub fn mempool(&self) -> 
+&Arc<Mempool> {
+     |            ^^^^^^^
+
+warning: fields `validator_count`, 
+`is_validator`, and `mempool_size` are never 
+read
+    --> 
+crates\luxtensor-node\src\service.rs:1021:9
+     |
+1019 | pub struct NodeStats {
+     |            --------- fields in this 
+struct
+1020 |     pub height: u64,
+1021 |     pub validator_count: usize,
+     |         ^^^^^^^^^^^^^^^
+1022 |     pub is_validator: bool,
+     |         ^^^^^^^^^^^^
+1023 |     pub chain_id: u64,
+1024 |     pub mempool_size: usize,
+     |         ^^^^^^^^^^^^
+     |
+     = note: `NodeStats` has derived impls for 
+the traits `Clone` and `Debug`, but these are 
+intentionally ignored during dead code analysis
+
+warning: methods `clear`, `get_transaction`, 
+`save_to_file`, and `load_from_file` are never 
+used
+   --> 
+crates\luxtensor-node\src\mempool.rs:130:12
+    |
+ 24 | impl Mempool {
+    | ------------ methods in this 
+implementation
+...
+130 |     pub fn clear(&self) {
+    |            ^^^^^
+...
+135 |     pub fn get_transaction(&self, hash: 
+&Hash) -> Option<Transaction> {
+    |            ^^^^^^^^^^^^^^^
+...
+141 |     pub fn save_to_file(&self, path: 
+&str) -> std::io::Result<usize> {
+    |            ^^^^^^^^^^^^
+...
+161 |     pub fn load_from_file(&self, path: 
+&str) -> std::io::Result<usize> {
+    |            ^^^^^^^^^^^^^^
+
+warning: associated function `new_dev_mode` is 
+never used
+  --> 
+crates\luxtensor-node\src\executor.rs:58:12
+   |
+46 | impl TransactionExecutor {
+   | ------------------------ associated 
+function in this implementation
+...
+58 |     pub fn new_dev_mode() -> Self {
+   |            ^^^^^^^^^^^^
+
+warning: constant `STAKING_CONTRACT_ADDRESS` is 
+never used
+  --> crates\luxtensor-node\src\genesis_config.r
+s:11:11
+   |
+11 | pub const STAKING_CONTRACT_ADDRESS: &str = 
+"0x5FbDB2315678afecb367f032d93F642f64180aa3";
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MDT_TOKEN_ADDRESS` is never 
+used
+  --> crates\luxtensor-node\src\genesis_config.r
+s:15:11
+   |
+15 | pub const MDT_TOKEN_ADDRESS: &str = 
+"0x0000000000000000000000000000000000000001";
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: struct `SyncState` is never constructed
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:15:12
+   |
+15 | pub struct SyncState {
+   |            ^^^^^^^^^
+
+warning: function `p2p_event_loop` is never used
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:35:14
+   |
+35 | pub async fn p2p_event_loop(
+   |              ^^^^^^^^^^^^^^
+
+warning: function `handle_p2p_event` is never 
+used
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:77:10
+   |
+77 | async fn handle_p2p_event(
+   |          ^^^^^^^^^^^^^^^^
+
+warning: function `handle_new_block` is never 
+used
+   --> 
+crates\luxtensor-node\src\p2p_handler.rs:111:10
+    |
+111 | async fn handle_new_block(
+    |          ^^^^^^^^^^^^^^^^
+
+warning: function `handle_new_transaction` is 
+never used
+   --> 
+crates\luxtensor-node\src\p2p_handler.rs:189:10
+    |
+189 | async fn handle_new_transaction(tx: 
+Transaction, mempool: &Arc<Mempool>) -> 
+Result<()> {
+    |          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `last_weight_update` is never 
+read
+  --> 
+crates\luxtensor-node\src\root_subnet.rs:37:5
+   |
+17 | pub struct RootSubnetState {
+   |            --------------- field in this 
+struct
+...
+37 |     last_weight_update: u64,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `limits`
+   --> 
+crates\luxtensor-rpc\src\validation.rs:204:13
+    |
+204 |         let limits = RpcLimits::default();
+    |             ^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_limits`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: unused variable: `validators_config`
+   --> crates\luxtensor-rpc\src\handlers\staking
+.rs:313:9
+    |
+313 |     let validators_config = 
+validators.clone();
+    |         ^^^^^^^^^^^^^^^^^ help: if this 
+is intentional, prefix it with an underscore: 
+`_validators_config`
+
+warning: `luxtensor-rpc` (lib test) generated 7 
+warnings (5 duplicates)
+error: could not compile `luxtensor-rpc` (lib 
+test) due to 1 previous error; 7 warnings 
+emitted
+warning: `luxtensor-node` (bin "luxtensor-node" 
+test) generated 15 warnings (run `cargo fix 
+--bin "luxtensor-node" -p luxtensor-node 
+--tests` to apply 1 suggestion)

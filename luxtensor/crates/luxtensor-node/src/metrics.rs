@@ -29,6 +29,34 @@ pub struct NodeMetrics {
     start_time: Instant,
     /// Last block production time in ms
     last_block_time_ms: AtomicU64,
+
+    // Network metrics (Phase 4 Enhancement)
+    /// Inbound connection count
+    pub inbound_connections: AtomicU64,
+    /// Outbound connection count
+    pub outbound_connections: AtomicU64,
+    /// Total bytes sent
+    pub bytes_sent: AtomicU64,
+    /// Total bytes received
+    pub bytes_received: AtomicU64,
+
+    // Consensus metrics (Phase 4 Enhancement)
+    /// Active validator count
+    pub validator_count: AtomicU64,
+    /// Current epoch number
+    pub epoch_number: AtomicU64,
+    /// Blocks produced by this node
+    pub blocks_produced: AtomicU64,
+    /// Missed block slots
+    pub missed_blocks: AtomicU64,
+    /// Slashing events
+    pub slashing_events: AtomicU64,
+
+    // RPC metrics (Phase 4 Enhancement)
+    /// Total RPC requests
+    pub rpc_requests: AtomicU64,
+    /// RPC errors
+    pub rpc_errors: AtomicU64,
 }
 
 impl Default for NodeMetrics {
@@ -42,6 +70,20 @@ impl Default for NodeMetrics {
             block_times: RwLock::new(VecDeque::with_capacity(MAX_HISTORY)),
             start_time: Instant::now(),
             last_block_time_ms: AtomicU64::new(0),
+            // Network metrics
+            inbound_connections: AtomicU64::new(0),
+            outbound_connections: AtomicU64::new(0),
+            bytes_sent: AtomicU64::new(0),
+            bytes_received: AtomicU64::new(0),
+            // Consensus metrics
+            validator_count: AtomicU64::new(0),
+            epoch_number: AtomicU64::new(0),
+            blocks_produced: AtomicU64::new(0),
+            missed_blocks: AtomicU64::new(0),
+            slashing_events: AtomicU64::new(0),
+            // RPC metrics
+            rpc_requests: AtomicU64::new(0),
+            rpc_errors: AtomicU64::new(0),
         }
     }
 }
@@ -130,6 +172,50 @@ luxtensor_uptime_seconds {}
 # HELP luxtensor_tx_throughput Estimated transactions per second
 # TYPE luxtensor_tx_throughput gauge
 luxtensor_tx_throughput {:.4}
+
+# HELP luxtensor_inbound_connections Inbound peer connections
+# TYPE luxtensor_inbound_connections gauge
+luxtensor_inbound_connections {}
+
+# HELP luxtensor_outbound_connections Outbound peer connections
+# TYPE luxtensor_outbound_connections gauge
+luxtensor_outbound_connections {}
+
+# HELP luxtensor_bytes_sent Total bytes sent
+# TYPE luxtensor_bytes_sent counter
+luxtensor_bytes_sent {}
+
+# HELP luxtensor_bytes_received Total bytes received
+# TYPE luxtensor_bytes_received counter
+luxtensor_bytes_received {}
+
+# HELP luxtensor_validator_count Active validators
+# TYPE luxtensor_validator_count gauge
+luxtensor_validator_count {}
+
+# HELP luxtensor_epoch Current epoch number
+# TYPE luxtensor_epoch gauge
+luxtensor_epoch {}
+
+# HELP luxtensor_blocks_produced Blocks produced by this node
+# TYPE luxtensor_blocks_produced counter
+luxtensor_blocks_produced {}
+
+# HELP luxtensor_missed_blocks Missed block slots
+# TYPE luxtensor_missed_blocks counter
+luxtensor_missed_blocks {}
+
+# HELP luxtensor_slashing_events Total slashing events
+# TYPE luxtensor_slashing_events counter
+luxtensor_slashing_events {}
+
+# HELP luxtensor_rpc_requests Total RPC requests
+# TYPE luxtensor_rpc_requests counter
+luxtensor_rpc_requests {}
+
+# HELP luxtensor_rpc_errors Total RPC errors
+# TYPE luxtensor_rpc_errors counter
+luxtensor_rpc_errors {}
 "#,
             self.block_height.load(Ordering::Relaxed),
             self.peer_count.load(Ordering::Relaxed),
@@ -140,6 +226,17 @@ luxtensor_tx_throughput {:.4}
             self.last_block_time_ms.load(Ordering::Relaxed),
             self.uptime_secs(),
             self.tx_throughput(),
+            self.inbound_connections.load(Ordering::Relaxed),
+            self.outbound_connections.load(Ordering::Relaxed),
+            self.bytes_sent.load(Ordering::Relaxed),
+            self.bytes_received.load(Ordering::Relaxed),
+            self.validator_count.load(Ordering::Relaxed),
+            self.epoch_number.load(Ordering::Relaxed),
+            self.blocks_produced.load(Ordering::Relaxed),
+            self.missed_blocks.load(Ordering::Relaxed),
+            self.slashing_events.load(Ordering::Relaxed),
+            self.rpc_requests.load(Ordering::Relaxed),
+            self.rpc_errors.load(Ordering::Relaxed),
         )
     }
 
@@ -155,6 +252,20 @@ luxtensor_tx_throughput {:.4}
             "lastBlockTimeMs": self.last_block_time_ms.load(Ordering::Relaxed),
             "uptimeSecs": self.uptime_secs(),
             "txThroughput": self.tx_throughput(),
+            // Network metrics
+            "inboundConnections": self.inbound_connections.load(Ordering::Relaxed),
+            "outboundConnections": self.outbound_connections.load(Ordering::Relaxed),
+            "bytesSent": self.bytes_sent.load(Ordering::Relaxed),
+            "bytesReceived": self.bytes_received.load(Ordering::Relaxed),
+            // Consensus metrics
+            "validatorCount": self.validator_count.load(Ordering::Relaxed),
+            "epochNumber": self.epoch_number.load(Ordering::Relaxed),
+            "blocksProduced": self.blocks_produced.load(Ordering::Relaxed),
+            "missedBlocks": self.missed_blocks.load(Ordering::Relaxed),
+            "slashingEvents": self.slashing_events.load(Ordering::Relaxed),
+            // RPC metrics
+            "rpcRequests": self.rpc_requests.load(Ordering::Relaxed),
+            "rpcErrors": self.rpc_errors.load(Ordering::Relaxed),
         })
     }
 }

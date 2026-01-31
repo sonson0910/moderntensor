@@ -1,9 +1,9 @@
-use luxtensor_core::{Transaction, Hash};
+use luxtensor_core::{Transaction, Hash, Address};
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{warn, info};
+use tracing::{warn, info, debug};
 
 /// Transaction with timestamp for expiration tracking
 struct TimedTransaction {
@@ -11,10 +11,18 @@ struct TimedTransaction {
     added_at: Instant,
 }
 
-/// Transaction mempool with signature validation and expiration
+/// Transaction mempool with signature validation, expiration, and DoS protection
 pub struct Mempool {
     transactions: Arc<RwLock<HashMap<Hash, TimedTransaction>>>,
+    /// Transactions per sender for DoS protection
+    sender_tx_count: Arc<RwLock<HashMap<Address, usize>>>,
     max_size: usize,
+    /// Maximum transactions per sender (DoS protection)
+    max_per_sender: usize,
+    /// Minimum gas price to accept (DoS protection)
+    min_gas_price: u64,
+    /// Maximum transaction size in bytes (DoS protection)
+    max_tx_size: usize,
     /// Whether to validate signatures before adding (should be true in production)
     validate_signatures: bool,
     /// Transaction expiration time (default: 30 minutes)
@@ -26,18 +34,45 @@ impl Mempool {
     pub fn new(max_size: usize) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
+            sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
             max_size,
-            validate_signatures: true, // PRODUCTION: always validate
+            max_per_sender: 16,                    // DoS: Max 16 pending tx per sender
+            min_gas_price: 1_000_000_000,          // DoS: Min 1 gwei gas price
+            max_tx_size: 128 * 1024,               // DoS: Max 128KB per transaction
+            validate_signatures: true,              // PRODUCTION: always validate
             tx_expiration: Duration::from_secs(30 * 60), // 30 minutes
         }
     }
 
-    /// Create mempool for development (no signature validation)
+    /// Create mempool with custom config
+    pub fn with_config(
+        max_size: usize,
+        max_per_sender: usize,
+        min_gas_price: u64,
+        max_tx_size: usize,
+    ) -> Self {
+        Self {
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
+            max_size,
+            max_per_sender,
+            min_gas_price,
+            max_tx_size,
+            validate_signatures: true,
+            tx_expiration: Duration::from_secs(30 * 60),
+        }
+    }
+
+    /// Create mempool for development (no signature validation, relaxed limits)
     /// WARNING: Only use for local development/testing!
     pub fn new_dev_mode(max_size: usize) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
+            sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
             max_size,
+            max_per_sender: 1000,                  // Relaxed for dev
+            min_gas_price: 0,                      // No minimum for dev
+            max_tx_size: 1024 * 1024,              // 1MB for dev
             validate_signatures: false,
             tx_expiration: Duration::from_secs(30 * 60),
         }
@@ -60,13 +95,40 @@ impl Mempool {
         removed
     }
 
-    /// Add a transaction to the mempool
+    /// Add a transaction to the mempool with DoS protection
     pub fn add_transaction(&self, tx: Transaction) -> Result<(), MempoolError> {
+        // DoS Protection 1: Check transaction size
+        let tx_size = bincode::serialized_size(&tx).unwrap_or(u64::MAX) as usize;
+        if tx_size > self.max_tx_size {
+            warn!("🛡️ Rejected transaction: size {} > max {}", tx_size, self.max_tx_size);
+            return Err(MempoolError::TransactionTooLarge { size: tx_size, max: self.max_tx_size });
+        }
+
+        // DoS Protection 2: Check minimum gas price
+        if tx.gas_price < self.min_gas_price {
+            debug!("🛡️ Rejected transaction: gas_price {} < min {}", tx.gas_price, self.min_gas_price);
+            return Err(MempoolError::GasPriceTooLow { price: tx.gas_price, min: self.min_gas_price });
+        }
+
         // SECURITY: Validate signature before accepting into mempool
         if self.validate_signatures {
             if let Err(e) = tx.verify_signature() {
                 warn!("Rejected transaction with invalid signature: {:?}", e);
                 return Err(MempoolError::InvalidSignature);
+            }
+        }
+
+        // Get sender for per-sender limit check
+        let sender = tx.from;
+
+        // DoS Protection 3: Check per-sender transaction limit
+        {
+            let sender_counts = self.sender_tx_count.read();
+            if let Some(&count) = sender_counts.get(&sender) {
+                if count >= self.max_per_sender {
+                    warn!("🛡️ Rejected transaction from {:?}: sender limit {} reached", sender, self.max_per_sender);
+                    return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
+                }
             }
         }
 
@@ -87,7 +149,13 @@ impl Mempool {
             return Err(MempoolError::DuplicateTransaction);
         }
 
-        // Wrap with timestamp
+        // Update sender count
+        {
+            let mut sender_counts = self.sender_tx_count.write();
+            *sender_counts.entry(sender).or_insert(0) += 1;
+        }
+
+        // Wrap with timestamp and sender
         let timed_tx = TimedTransaction {
             tx,
             added_at: Instant::now(),
@@ -108,11 +176,22 @@ impl Mempool {
         txs.values().take(limit).map(|t| t.tx.clone()).collect()
     }
 
-    /// Remove transactions from mempool
+    /// Remove transactions from mempool (also updates sender counts)
     pub fn remove_transactions(&self, tx_hashes: &[Hash]) {
         let mut txs = self.transactions.write();
+        let mut sender_counts = self.sender_tx_count.write();
+
         for hash in tx_hashes {
-            txs.remove(hash);
+            if let Some(timed_tx) = txs.remove(hash) {
+                // Decrement sender count
+                let sender = timed_tx.tx.from;
+                if let Some(count) = sender_counts.get_mut(&sender) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        sender_counts.remove(&sender);
+                    }
+                }
+            }
         }
     }
 
@@ -202,6 +281,15 @@ pub enum MempoolError {
 
     #[error("Invalid transaction signature")]
     InvalidSignature,
+
+    #[error("Transaction too large: {size} bytes (max: {max})")]
+    TransactionTooLarge { size: usize, max: usize },
+
+    #[error("Gas price too low: {price} (min: {min})")]
+    GasPriceTooLow { price: u64, min: u64 },
+
+    #[error("Sender {sender:?} has reached limit of {limit} pending transactions")]
+    SenderLimitReached { sender: Address, limit: usize },
 }
 
 #[cfg(test)]

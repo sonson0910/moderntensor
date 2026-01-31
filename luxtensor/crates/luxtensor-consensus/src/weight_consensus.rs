@@ -275,6 +275,7 @@ impl WeightConsensusManager {
     }
 
     /// Vote on a proposal
+    /// Refactored: Validation logic extracted to helper method for lower complexity
     pub fn vote(
         &self,
         proposal_id: Hash,
@@ -285,34 +286,12 @@ impl WeightConsensusManager {
         let mut proposals = self.proposals.write();
 
         // Find proposal
-        let proposal = proposals
-            .values_mut()
-            .flat_map(|v| v.iter_mut())
-            .find(|p| p.id == proposal_id)
-            .ok_or(ConsensusError::ProposalNotFound)?;
+        let proposal = Self::find_proposal_mut(&mut proposals, proposal_id)?;
 
-        // Check not expired
-        if proposal.is_expired(current_block) {
-            proposal.status = ProposalStatus::Expired;
-            return Err(ConsensusError::ProposalExpired);
-        }
+        // Validate vote eligibility (extracted for lower complexity)
+        Self::validate_vote_eligibility(proposal, &voter, current_block)?;
 
-        // Check status
-        if proposal.status != ProposalStatus::Pending {
-            return Err(ConsensusError::ProposalNotPending);
-        }
-
-        // Check not already voted
-        if proposal.has_voted(&voter) {
-            return Err(ConsensusError::AlreadyVoted);
-        }
-
-        // Check voter is not proposer (can't vote on own proposal)
-        if proposal.proposer == voter {
-            return Err(ConsensusError::CannotVoteOwnProposal);
-        }
-
-        // Add vote
+        // Record vote
         proposal.votes.push(ProposalVote {
             voter,
             approve,
@@ -320,9 +299,8 @@ impl WeightConsensusManager {
             signature: None,
         });
 
-        // Check consensus
+        // Check and update consensus status
         let result = self.check_consensus_internal(proposal);
-
         if result.reached {
             proposal.status = ProposalStatus::Approved;
             info!(
@@ -333,6 +311,49 @@ impl WeightConsensusManager {
 
         Ok(result)
     }
+
+    /// Find proposal by ID across all subnets (mutable)
+    fn find_proposal_mut<'a>(
+        proposals: &'a mut HashMap<u64, Vec<WeightProposal>>,
+        proposal_id: Hash,
+    ) -> Result<&'a mut WeightProposal, ConsensusError> {
+        proposals
+            .values_mut()
+            .flat_map(|v| v.iter_mut())
+            .find(|p| p.id == proposal_id)
+            .ok_or(ConsensusError::ProposalNotFound)
+    }
+
+    /// Validate that a voter is eligible to vote on a proposal
+    fn validate_vote_eligibility(
+        proposal: &mut WeightProposal,
+        voter: &Address,
+        current_block: u64,
+    ) -> Result<(), ConsensusError> {
+        // Check expiration
+        if proposal.is_expired(current_block) {
+            proposal.status = ProposalStatus::Expired;
+            return Err(ConsensusError::ProposalExpired);
+        }
+
+        // Check pending status
+        if proposal.status != ProposalStatus::Pending {
+            return Err(ConsensusError::ProposalNotPending);
+        }
+
+        // Check duplicate vote
+        if proposal.has_voted(voter) {
+            return Err(ConsensusError::AlreadyVoted);
+        }
+
+        // Check self-voting
+        if proposal.proposer == *voter {
+            return Err(ConsensusError::CannotVoteOwnProposal);
+        }
+
+        Ok(())
+    }
+
 
     /// Check if proposal has reached consensus
     pub fn check_consensus(&self, proposal_id: Hash) -> Result<ConsensusResult, ConsensusError> {

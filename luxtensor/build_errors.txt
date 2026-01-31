@@ -1,0 +1,326 @@
+﻿cargo : warning: unused import: `Write`
+At line:1 char:1
++ cargo build --workspace 2>&1 | Out-File 
+-FilePath build_errors.txt -E ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (wa 
+   rning: unused import: `Write`:String) [], R  
+  emoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:27
+   |
+10 | use std::io::{self, Read, Write};
+   |                           ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `Read`
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:21
+   |
+10 | use std::io::{self, Read, Write};
+   |                     ^^^^
+
+warning: unused import: 
+`std::collections::HashMap`
+ --> crates\luxtensor-consensus\src\long_range_p
+rotection.rs:6:5
+  |
+6 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused variable: `current_block`
+   --> crates\luxtensor-consensus\src\weight_con
+sensus.rs:377:9
+    |
+377 |         current_block: u64,
+    |         ^^^^^^^^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_current_block`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: field `dao_address` is never read
+  --> crates\luxtensor-consensus\src\reward_exec
+utor.rs:70:5
+   |
+49 | pub struct RewardExecutor {
+   |            -------------- field in this 
+struct
+...
+70 |     dao_address: [u8; 20],
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `luxtensor-storage` (lib) generated 2 
+warnings (run `cargo fix --lib -p 
+luxtensor-storage` to apply 1 suggestion)
+warning: `luxtensor-consensus` (lib) generated 
+3 warnings (run `cargo fix --lib -p 
+luxtensor-consensus` to apply 2 suggestions)
+warning: field `pending_ops` is never read
+   --> crates\luxtensor-contracts\src\account_ab
+straction.rs:178:5
+    |
+170 | pub struct EntryPoint {
+    |            ---------- field in this struct
+...
+178 |     pending_ops: Arc<RwLock<HashMap<Hash, 
+UserOperation>>>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+   Compiling luxtensor-network v0.4.0 (D:\venera
+\cardano\moderntensor\moderntensor\luxtensor\cra
+tes\luxtensor-network)
+warning: `luxtensor-contracts` (lib) generated 
+1 warning
+   Compiling luxtensor-rpc v0.4.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\
+luxtensor-rpc)
+warning: unused import: `warn`
+ --> 
+crates\luxtensor-network\src\identity.rs:8:21
+  |
+8 | use tracing::{info, warn};
+  |                     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `PeerCapabilities`
+ --> crates\luxtensor-network\src\swarm.rs:6:61
+  |
+6 | use crate::peer_discovery::{PeerDiscovery, 
+DiscoveryConfig, PeerCapabilities};
+  |                                             
+                ^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> 
+crates\luxtensor-network\src\swarm.rs:22:22
+   |
+22 | use tracing::{debug, error, info, warn};
+   |                      ^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\luxtensor-network\src\peer_discover
+y.rs:14:5
+   |
+14 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `sha2`
+  --> 
+crates\luxtensor-rpc\src\admin_auth.rs:12:5
+   |
+12 | use sha2::{Sha256, Digest};
+   |     ^^^^ use of unresolved module or 
+unlinked crate `sha2`
+   |
+help: there is a crate or module with a similar 
+name
+   |
+12 - use sha2::{Sha256, Digest};
+12 + use sha3::{Sha256, Digest};
+   |
+
+warning: unused imports: `Deserialize` and 
+`Serialize`
+ --> crates\luxtensor-rpc\src\error.rs:2:13
+  |
+2 | use serde::{Deserialize, Serialize};
+  |             ^^^^^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `generate_tx_hash`
+   --> crates\luxtensor-rpc\src\server.rs:295:50
+    |
+295 |             use 
+crate::eth_rpc::{hex_to_address, 
+generate_tx_hash};
+    |                                           
+       ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> 
+crates\luxtensor-rpc\src\admin_auth.rs:10:5
+   |
+10 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+  --> 
+crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove 
+the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightl
+y/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+   = note: `#[warn(unexpected_cfgs)]` on by 
+default
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+   --> 
+crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ 
+help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/night
+ly/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+
+warning: variable does not need to be mutable
+   --> 
+crates\luxtensor-network\src\swarm.rs:146:13
+    |
+146 |         let mut kademlia_config = 
+kad::Config::new(
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `config` is never read
+   --> crates\luxtensor-network\src\p2p.rs:113:5
+    |
+111 | pub struct P2PNode {
+    |            ------- field in this struct
+112 |     peer_manager: PeerManager,
+113 |     config: P2PConfig,
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `transactions_topic` is never 
+read
+  --> crates\luxtensor-network\src\swarm.rs:56:5
+   |
+51 | pub struct SwarmP2PNode {
+   |            ------------ field in this 
+struct
+...
+56 |     transactions_topic: IdentTopic,
+   |     ^^^^^^^^^^^^^^^^^^
+
+   Compiling luxtensor-tests v0.4.0 (D:\venera\c
+ardano\moderntensor\moderntensor\luxtensor\crate
+s\luxtensor-tests)
+error[E0615]: attempted to take value of method 
+`hash` on type `Block`
+  --> 
+crates\luxtensor-tests\src\fuzz_targets.rs:41:27
+   |
+41 |             let _ = block.hash.clone();
+   |                           ^^^^ method, not 
+a field
+   |
+help: use parentheses to call the method
+   |
+41 |             let _ = block.hash().clone();
+   |                               ++
+
+error[E0609]: no field `parent_hash` on type 
+`BlockHeader`
+  --> 
+crates\luxtensor-tests\src\fuzz_targets.rs:44:34
+   |
+44 |             let _ = 
+block.header.parent_hash.clone();
+   |                                  
+^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `version`, 
+`height`, `timestamp`, `previous_hash`, 
+`state_root` ... and 7 others
+
+error[E0609]: no field `parent_hash` on type 
+`BlockHeader`
+  --> 
+crates\luxtensor-tests\src\fuzz_targets.rs:59:28
+   |
+59 |             let _ = 
+header.parent_hash.clone();
+   |                            ^^^^^^^^^^^ 
+unknown field
+   |
+   = note: available fields are: `version`, 
+`height`, `timestamp`, `previous_hash`, 
+`state_root` ... and 7 others
+
+error[E0609]: no field `transactions_root` on 
+type `BlockHeader`
+  --> 
+crates\luxtensor-tests\src\fuzz_targets.rs:61:28
+   |
+61 |             let _ = 
+header.transactions_root.clone();
+   |                            
+^^^^^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `version`, 
+`height`, `timestamp`, `previous_hash`, 
+`state_root` ... and 7 others
+
+Some errors have detailed explanations: E0609, 
+E0615.
+For more information about an error, try `rustc 
+--explain E0609`.
+error: could not compile `luxtensor-tests` 
+(lib) due to 4 previous errors
+warning: build failed, waiting for other jobs 
+to finish...
+warning: unused variable: `validators_config`
+   --> crates\luxtensor-rpc\src\handlers\staking
+.rs:313:9
+    |
+313 |     let validators_config = 
+validators.clone();
+    |         ^^^^^^^^^^^^^^^^^ help: if this 
+is intentional, prefix it with an underscore: 
+`_validators_config`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+For more information about this error, try 
+`rustc --explain E0432`.
+warning: `luxtensor-rpc` (lib) generated 6 
+warnings
+error: could not compile `luxtensor-rpc` (lib) 
+due to 1 previous error; 6 warnings emitted
+warning: `luxtensor-network` (lib) generated 7 
+warnings (run `cargo fix --lib -p 
+luxtensor-network` to apply 5 suggestions)

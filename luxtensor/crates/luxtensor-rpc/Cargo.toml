@@ -16,6 +16,7 @@ parking_lot = { workspace = true }
 hex = { workspace = true }
 bincode = { workspace = true }
 sha3 = "0.10"
+sha2 = { workspace = true }
 lazy_static = "1.4"
 
 # WebSocket support

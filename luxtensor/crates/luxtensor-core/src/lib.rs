@@ -7,6 +7,7 @@ pub mod error;
 pub mod performance;
 pub mod subnet;
 pub mod constants;
+pub mod multisig;
 
 pub use block::*;
 pub use transaction::*;

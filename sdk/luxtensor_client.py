@@ -261,11 +261,18 @@ class LuxtensorClient(
         Legacy methods are preserved with deprecation warnings.
     """
 
+    # Default retry settings
+    MAX_RETRIES = 3
+    RETRY_BASE_DELAY = 1.0  # seconds
+    RETRY_MAX_DELAY = 30.0  # seconds
+
     def __init__(
         self,
         url: str = "http://localhost:8545",
         network: str = "testnet",
         timeout: int = 30,
+        api_key: Optional[str] = None,
+        max_retries: int = 3,
     ):
         """
         Initialize Luxtensor client.
@@ -274,11 +281,25 @@ class LuxtensorClient(
             url: Luxtensor RPC endpoint URL
             network: Network name (mainnet, testnet, devnet)
             timeout: Request timeout in seconds
+            api_key: Optional API key for authentication (or set LUXTENSOR_API_KEY env var)
+            max_retries: Maximum retry attempts for transient failures (default: 3)
         """
+        import os
+
         self.url = url
         self.network = network
         self.timeout = timeout
         self._request_id = 0
+        self.max_retries = max_retries
+
+        # API key from parameter or environment variable
+        # SECURITY: Never log the API key
+        self.api_key = api_key or os.getenv("LUXTENSOR_API_KEY")
+        if not self.api_key:
+            logger.warning(
+                "No API key provided. Set LUXTENSOR_API_KEY env var or pass api_key parameter. "
+                "Unauthenticated requests may be rate-limited."
+            )
 
         # Domain-specific clients (Composition pattern - SRP)
         from .clients import BlockClient, StakeClient, NeuronClient, SubnetClient, TransactionClient
@@ -306,10 +327,22 @@ class LuxtensorClient(
             stacklevel=3
         )
 
+    def _build_headers(self) -> Dict[str, str]:
+        """Build request headers including authentication."""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            # Use X-API-Key header for API key authentication
+            headers["X-API-Key"] = self.api_key
+        return headers
 
     def _call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """
-        Make JSON-RPC call to Luxtensor.
+        Make JSON-RPC call to Luxtensor with retry logic and authentication.
+
+        Features:
+        - API key authentication via X-API-Key header
+        - Exponential backoff retry for transient failures
+        - Rate limit handling with Retry-After header support
 
         Args:
             method: RPC method name
@@ -319,8 +352,10 @@ class LuxtensorClient(
             Result from RPC call
 
         Raises:
-            Exception: If RPC call fails
+            Exception: If RPC call fails after all retries
         """
+        import time
+
         request = {
             "jsonrpc": "2.0",
             "method": method,
@@ -328,24 +363,75 @@ class LuxtensorClient(
             "id": self._get_request_id()
         }
 
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(self.url, json=request)
-                response.raise_for_status()
+        last_exception = None
 
-                result = response.json()
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(
+                        self.url,
+                        json=request,
+                        headers=self._build_headers()
+                    )
 
-                if "error" in result:
-                    raise Exception(f"RPC error: {result['error']}")
+                    # Handle rate limiting (429 Too Many Requests)
+                    if response.status_code == 429:
+                        retry_after = response.headers.get("Retry-After", "5")
+                        try:
+                            wait_time = int(retry_after)
+                        except ValueError:
+                            wait_time = 5
+                        logger.warning(f"Rate limited. Waiting {wait_time}s before retry.")
+                        time.sleep(wait_time)
+                        continue
 
-                return result.get("result")
+                    response.raise_for_status()
+                    result = response.json()
 
-        except httpx.RequestError as e:
-            logger.error(f"Request error: {e}")
-            raise Exception(f"Failed to connect to Luxtensor at {self.url}: {e}")
-        except Exception as e:
-            logger.error(f"RPC call failed: {e}")
-            raise
+                    if "error" in result:
+                        raise Exception(f"RPC error: {result['error']}")
+
+                    return result.get("result")
+
+            except httpx.RequestError as e:
+                last_exception = e
+                if attempt < self.max_retries:
+                    wait_time = min(
+                        self.RETRY_BASE_DELAY * (2 ** attempt),
+                        self.RETRY_MAX_DELAY
+                    )
+                    logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {wait_time:.1f}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Request failed after {self.max_retries + 1} attempts: {e}")
+
+            except httpx.HTTPStatusError as e:
+                # Don't retry on 4xx client errors (except 429 handled above)
+                if 400 <= e.response.status_code < 500:
+                    logger.error(f"Client error: {e}")
+                    raise Exception(f"Client error {e.response.status_code}: {e}")
+
+                last_exception = e
+                if attempt < self.max_retries:
+                    wait_time = min(
+                        self.RETRY_BASE_DELAY * (2 ** attempt),
+                        self.RETRY_MAX_DELAY
+                    )
+                    logger.warning(
+                        f"Server error (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {wait_time:.1f}s..."
+                    )
+                    time.sleep(wait_time)
+
+            except Exception as e:
+                logger.error(f"RPC call failed: {e}")
+                raise
+
+        raise Exception(f"Failed to connect to Luxtensor at {self.url} after {self.max_retries + 1} attempts: {last_exception}")
+
 
 
     # ========================================================================

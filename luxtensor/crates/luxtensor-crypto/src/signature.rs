@@ -153,7 +153,7 @@ mod tests {
     fn test_sign() {
         let keypair = KeyPair::generate();
         let message = [0u8; 32];
-        let signature = keypair.sign(&message);
+        let signature = keypair.sign(&message).unwrap();
         assert_eq!(signature.len(), 64);
     }
 }

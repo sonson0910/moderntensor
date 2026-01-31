@@ -1,0 +1,363 @@
+// Transaction-related RPC handlers
+// Extracted from server.rs to reduce complexity and improve maintainability
+
+use std::sync::Arc;
+use std::collections::HashMap;
+use parking_lot::RwLock;
+use jsonrpc_core::{IoHandler, Params, Value};
+use serde_json::json;
+use tracing::{info, warn};
+
+use luxtensor_core::{Transaction, Hash, Address};
+use luxtensor_storage::BlockchainDB;
+use crate::eth_rpc::EvmState;
+use crate::TransactionBroadcaster;
+
+/// Context for transaction RPC handlers
+pub struct TxRpcContext {
+    pub evm_state: Arc<RwLock<EvmState>>,
+    pub pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+    pub state: Arc<RwLock<luxtensor_core::StateDB>>,
+    pub broadcaster: Arc<dyn TransactionBroadcaster>,
+    pub db: Arc<BlockchainDB>,
+}
+
+impl TxRpcContext {
+    pub fn new(
+        evm_state: Arc<RwLock<EvmState>>,
+        pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+        state: Arc<RwLock<luxtensor_core::StateDB>>,
+        broadcaster: Arc<dyn TransactionBroadcaster>,
+        db: Arc<BlockchainDB>,
+    ) -> Self {
+        Self {
+            evm_state,
+            pending_txs,
+            state,
+            broadcaster,
+            db,
+        }
+    }
+}
+
+/// Register transaction-related RPC methods
+pub fn register_tx_methods(ctx: &TxRpcContext, io: &mut IoHandler) {
+    register_send_transaction(ctx, io);
+    register_get_receipt(ctx, io);
+}
+
+/// Register eth_sendTransaction with P2P broadcasting
+fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
+    let evm_state = ctx.evm_state.clone();
+    let pending_txs = ctx.pending_txs.clone();
+    let state = ctx.state.clone();
+    let broadcaster = ctx.broadcaster.clone();
+
+    io.add_sync_method("eth_sendTransaction", move |params: Params| {
+        use crate::eth_rpc::{hex_to_address, generate_tx_hash};
+
+        let p: Vec<serde_json::Value> = params.parse()?;
+        let tx_obj = p.get(0).ok_or_else(||
+            jsonrpc_core::Error::invalid_params("Missing transaction object"))?;
+
+        // Parse 'from' address
+        let from_str = tx_obj.get("from")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing 'from' field"))?;
+
+        let from = hex_to_address(from_str)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid 'from' address"))?;
+
+        // Parse 'to' address (optional)
+        let to = tx_obj.get("to")
+            .and_then(|v| v.as_str())
+            .and_then(hex_to_address);
+
+        // Parse value
+        let value = tx_obj.get("value")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u128::from_str_radix(s, 16).ok()
+            })
+            .unwrap_or(0);
+
+        // Parse data
+        let data = tx_obj.get("data")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                hex::decode(s).unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        // Parse gas
+        let gas = tx_obj.get("gas")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u64::from_str_radix(s, 16).ok()
+            })
+            .unwrap_or(10_000_000);
+
+        // Get nonce from state
+        let nonce = state.read().get_nonce(&Address::from(from));
+
+        // Create luxtensor_core::Transaction for broadcasting
+        let to_addr = to.map(Address::from);
+        let core_tx = Transaction::new(
+            nonce,
+            Address::from(from),
+            to_addr,
+            value,
+            1, // gas_price
+            gas,
+            data.clone(),
+        );
+
+        // Use deterministic hash from Transaction::hash()
+        let tx_hash = core_tx.hash();
+
+        // Add to pending transactions
+        {
+            let mut pending = pending_txs.write();
+            pending.insert(tx_hash, core_tx.clone());
+            info!("📤 Transaction added to mempool: 0x{}", hex::encode(&tx_hash));
+        }
+
+        // Broadcast to P2P network
+        if let Err(e) = broadcaster.broadcast(&core_tx) {
+            warn!("Failed to broadcast transaction to P2P: {}", e);
+        } else {
+            info!("📡 Transaction broadcasted to P2P network: 0x{}", hex::encode(&tx_hash));
+        }
+
+        // Update EVM state for compatibility
+        {
+            let mut state_guard = evm_state.write();
+            state_guard.increment_nonce(&from);
+
+            // Add transaction to tx_queue for block inclusion
+            let ready_tx = crate::eth_rpc::ReadyTransaction {
+                nonce,
+                from,
+                to,
+                value,
+                data: data.clone(),
+                gas,
+                r: [0u8; 32],
+                s: [0u8; 32],
+                v: 0,
+            };
+            state_guard.queue_transaction(ready_tx);
+            info!("📦 Transaction queued for block inclusion: 0x{}", hex::encode(&tx_hash));
+        }
+
+        Ok(json!(format!("0x{}", hex::encode(tx_hash))))
+    });
+}
+
+/// Register eth_getTransactionReceipt handler
+fn register_get_receipt(ctx: &TxRpcContext, io: &mut IoHandler) {
+    let pending_txs = ctx.pending_txs.clone();
+    let db = ctx.db.clone();
+
+    io.add_sync_method("eth_getTransactionReceipt", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
+        }
+
+        let hash_str = parsed[0].trim_start_matches("0x");
+        let hash_bytes = hex::decode(hash_str)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+
+        if hash_bytes.len() != 32 {
+            return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+        }
+
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hash_bytes);
+
+        // 1. Check pending transactions first (in-memory mempool)
+        {
+            let pending = pending_txs.read();
+            if let Some(tx) = pending.get(&hash) {
+                return Ok(build_pending_receipt(&hash, tx));
+            }
+        }
+
+        // 2. Check stored receipts in database (from mined blocks)
+        match db.get_receipt(&hash) {
+            Ok(Some(receipt_bytes)) => {
+                if let Some(receipt_json) = deserialize_receipt(&receipt_bytes) {
+                    return Ok(receipt_json);
+                }
+            }
+            _ => {}
+        }
+
+        // 3. Final fallback: check if TX exists at all
+        match db.get_transaction(&hash) {
+            Ok(Some(tx)) => Ok(build_fallback_receipt(&hash, &tx)),
+            Ok(None) => Ok(serde_json::Value::Null),
+            Err(_) => Err(jsonrpc_core::Error::internal_error()),
+        }
+    });
+}
+
+/// Build receipt JSON for pending transaction
+fn build_pending_receipt(hash: &[u8; 32], tx: &Transaction) -> serde_json::Value {
+    json!({
+        "transactionHash": format!("0x{}", hex::encode(hash)),
+        "transactionIndex": "0x0",
+        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
+        "blockNumber": "0x0",
+        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+        "contractAddress": compute_contract_address(tx),
+        "cumulativeGasUsed": "0x5208",
+        "gasUsed": "0x5208",
+        "status": "0x1",
+        "logs": []
+    })
+}
+
+/// Build fallback receipt when only transaction (not full receipt) exists
+fn build_fallback_receipt(hash: &[u8; 32], tx: &Transaction) -> serde_json::Value {
+    json!({
+        "transactionHash": format!("0x{}", hex::encode(hash)),
+        "transactionIndex": "0x0",
+        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
+        "blockNumber": "0x1",
+        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+        "contractAddress": serde_json::Value::Null,
+        "cumulativeGasUsed": "0x5208",
+        "gasUsed": "0x5208",
+        "status": "0x1",
+        "logs": []
+    })
+}
+
+/// Compute contract address for deployment transactions
+fn compute_contract_address(tx: &Transaction) -> serde_json::Value {
+    if tx.to.is_none() && !tx.data.is_empty() {
+        let nonce = tx.nonce;
+        let from_bytes = tx.from.as_bytes();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash_slice(from_bytes, &mut hasher);
+        std::hash::Hash::hash(&nonce, &mut hasher);
+        let hash_val = std::hash::Hasher::finish(&hasher);
+
+        let mut addr = [0u8; 20];
+        addr[..8].copy_from_slice(&hash_val.to_be_bytes());
+        addr[8..16].copy_from_slice(&hash_val.to_le_bytes());
+        addr[16..20].copy_from_slice(&(nonce as u32).to_be_bytes());
+
+        json!(format!("0x{}", hex::encode(addr)))
+    } else {
+        serde_json::Value::Null
+    }
+}
+
+/// Deserialize stored receipt from database
+fn deserialize_receipt(receipt_bytes: &[u8]) -> Option<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct StoredLog {
+        address: Address,
+        topics: Vec<[u8; 32]>,
+        data: Vec<u8>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[repr(u8)]
+    enum StoredExecutionStatus {
+        Success = 1,
+        Failed = 0,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct StoredReceipt {
+        transaction_hash: [u8; 32],
+        block_height: u64,
+        block_hash: [u8; 32],
+        transaction_index: usize,
+        from: Address,
+        to: Option<Address>,
+        gas_used: u64,
+        status: StoredExecutionStatus,
+        logs: Vec<StoredLog>,
+        contract_address: Option<Address>,
+    }
+
+    tracing::debug!("📥 Got receipt bytes: {} bytes", receipt_bytes.len());
+
+    match bincode::deserialize::<StoredReceipt>(receipt_bytes) {
+        Ok(receipt) => {
+            let contract_addr = receipt.contract_address.map(|addr|
+                format!("0x{}", hex::encode(addr.as_bytes()))
+            );
+
+            Some(json!({
+                "transactionHash": format!("0x{}", hex::encode(receipt.transaction_hash)),
+                "transactionIndex": format!("0x{:x}", receipt.transaction_index),
+                "blockHash": format!("0x{}", hex::encode(receipt.block_hash)),
+                "blockNumber": format!("0x{:x}", receipt.block_height),
+                "from": format!("0x{}", hex::encode(receipt.from.as_bytes())),
+                "to": receipt.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                "contractAddress": contract_addr,
+                "cumulativeGasUsed": format!("0x{:x}", receipt.gas_used),
+                "gasUsed": format!("0x{:x}", receipt.gas_used),
+                "status": match receipt.status {
+                    StoredExecutionStatus::Success => "0x1",
+                    StoredExecutionStatus::Failed => "0x0",
+                },
+                "logs": []
+            }))
+        }
+        Err(e) => {
+            tracing::warn!("❌ Failed to deserialize receipt: {:?}", e);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_contract_address_for_deployment() {
+        let tx = Transaction::new(
+            0,
+            Address::zero(),
+            None, // Contract creation
+            0,
+            1,
+            21000,
+            vec![0x60, 0x80], // Minimal bytecode
+        );
+
+        let result = compute_contract_address(&tx);
+        assert!(result.is_string());
+    }
+
+    #[test]
+    fn test_compute_contract_address_for_transfer() {
+        let tx = Transaction::new(
+            0,
+            Address::zero(),
+            Some(Address::zero()), // Transfer to address
+            1000,
+            1,
+            21000,
+            vec![],
+        );
+
+        let result = compute_contract_address(&tx);
+        assert!(result.is_null());
+    }
+}

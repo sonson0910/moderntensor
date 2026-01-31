@@ -18,6 +18,9 @@ pub mod token_allocation;
 pub mod commit_reveal;
 pub mod weight_consensus;
 pub mod long_range_protection;
+pub mod halving;
+pub mod liveness;
+pub mod circuit_breaker;
 
 
 
@@ -54,4 +57,18 @@ pub use commit_reveal::{
 pub use weight_consensus::{
     WeightConsensusManager, WeightConsensusConfig, WeightProposal,
     ProposalStatus, ConsensusResult, ProposalVote
+};
+pub use halving::{
+    HalvingSchedule, HalvingInfo,
+    INITIAL_BLOCK_REWARD, HALVING_INTERVAL, MINIMUM_REWARD, MAX_HALVINGS
+};
+pub use liveness::{
+    LivenessMonitor, LivenessConfig, LivenessAction, LivenessStats
+};
+pub use long_range_protection::{
+    LongRangeProtection, LongRangeConfig, Checkpoint, CheckpointStatus
+};
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats, CircuitState,
+    CircuitBreakerError, AILayerCircuitBreaker, AILayerStatus
 };

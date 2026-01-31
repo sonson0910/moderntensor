@@ -160,7 +160,12 @@ pub struct SubnetEpochState {
     pub reveal_start_block: u64,
     pub finalize_block: u64,
     pub commits: Vec<WeightCommit>,
+    /// Cached aggregated weights - updated incrementally during reveal phase
+    /// Avoids O(n*m) recomputation on each get_revealed_weights() call
+    #[serde(default)]
+    cached_weights: HashMap<u64, (u64, usize)>, // uid -> (sum, count)
 }
+
 
 impl SubnetEpochState {
     pub fn new(
@@ -177,6 +182,7 @@ impl SubnetEpochState {
             reveal_start_block: start_block + config.commit_window,
             finalize_block: start_block + config.commit_window + config.reveal_window,
             commits: Vec::new(),
+            cached_weights: HashMap::new(),
         }
     }
 
@@ -192,10 +198,21 @@ impl SubnetEpochState {
     }
 
     /// Get revealed weights aggregated
+    /// Optimized: Uses cached weights if available (O(1)), falls back to recompute if needed
     pub fn get_revealed_weights(&self) -> Vec<(u64, u16)> {
-        // Aggregate weights from all revealed commits
-        let mut weight_sums: HashMap<u64, (u64, usize)> = HashMap::new();
+        // Use cached weights if populated (from incremental updates during reveal)
+        if !self.cached_weights.is_empty() {
+            return self.cached_weights
+                .iter()
+                .map(|(uid, (sum, count))| {
+                    let avg = if *count > 0 { (*sum / *count as u64) as u16 } else { 0 };
+                    (*uid, avg)
+                })
+                .collect();
+        }
 
+        // Fallback: recompute from commits (for backward compatibility)
+        let mut weight_sums: HashMap<u64, (u64, usize)> = HashMap::new();
         for commit in &self.commits {
             if commit.revealed {
                 if let Some(weights) = &commit.weights {
@@ -208,7 +225,6 @@ impl SubnetEpochState {
             }
         }
 
-        // Average the weights
         weight_sums
             .iter()
             .map(|(uid, (sum, count))| {
@@ -216,6 +232,16 @@ impl SubnetEpochState {
                 (*uid, avg)
             })
             .collect()
+    }
+
+    /// Update cached weights incrementally when a validator reveals
+    /// Called during reveal phase to avoid O(n*m) recomputation
+    pub fn update_cached_weights(&mut self, weights: &[(u64, u16)]) {
+        for (uid, weight) in weights {
+            let entry = self.cached_weights.entry(*uid).or_insert((0, 0));
+            entry.0 += *weight as u64;
+            entry.1 += 1;
+        }
     }
 }
 
@@ -369,6 +395,9 @@ impl CommitRevealManager {
         commit.weights = Some(weights.clone());
         commit.salt = Some(salt);
 
+        // Update cached weights incrementally (optimized aggregation)
+        state.update_cached_weights(&weights);
+
         info!(
             "Validator {:?} revealed weights for subnet {} ({} entries)",
             validator, subnet_uid, weights.len()
@@ -376,6 +405,7 @@ impl CommitRevealManager {
 
         Ok(())
     }
+
 
     /// Finalize epoch and return aggregated weights
     pub fn finalize_epoch(

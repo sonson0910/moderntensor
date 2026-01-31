@@ -2,7 +2,7 @@
 //!
 //! Tests for validator selection, epoch transitions, slashing, and jail/unjail flows.
 
-use luxtensor_consensus::{ProofOfStake, ConsensusConfig, SlashingReason};
+use luxtensor_consensus::{ProofOfStake, ConsensusConfig, SlashReason, HalvingSchedule};
 use luxtensor_core::Address;
 
 #[cfg(test)]
@@ -15,6 +15,7 @@ mod validator_selection_tests {
             min_stake: 1_000_000_000_000_000_000, // 1 token
             block_reward: 2_000_000_000_000_000_000, // 2 tokens
             epoch_length: 10,
+            ..Default::default()
         };
         ProofOfStake::new(config)
     }
@@ -72,6 +73,7 @@ mod epoch_transition_tests {
             min_stake: 1_000_000_000_000_000_000,
             block_reward: 2_000_000_000_000_000_000,
             epoch_length: 10,
+            ..Default::default()
         };
         ProofOfStake::new(config)
     }
@@ -115,6 +117,7 @@ mod slashing_tests {
             min_stake: 1_000_000_000_000_000_000,
             block_reward: 2_000_000_000_000_000_000,
             epoch_length: 10,
+            ..Default::default()
         };
         ProofOfStake::new(config)
     }
@@ -131,7 +134,7 @@ mod slashing_tests {
         // Slash the validator
         let slash_result = consensus.slash_validator(
             validator_addr,
-            SlashingReason::DoubleSign,
+            SlashReason::DoubleSign,
         );
 
         assert!(slash_result.is_ok(), "Slashing should succeed");
@@ -150,7 +153,7 @@ mod slashing_tests {
 
         consensus.register_validator(validator_addr, initial_stake).unwrap();
 
-        consensus.slash_validator(validator_addr, SlashingReason::DoubleSign).unwrap();
+        consensus.slash_validator(validator_addr, SlashReason::DoubleSign).unwrap();
 
         let remaining = consensus.get_validator_stake(validator_addr);
         // Double sign should slash at least 10% (configurable)
@@ -168,6 +171,7 @@ mod jail_unjail_tests {
             min_stake: 1_000_000_000_000_000_000,
             block_reward: 2_000_000_000_000_000_000,
             epoch_length: 10,
+            ..Default::default()
         };
         ProofOfStake::new(config)
     }

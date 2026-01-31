@@ -3,16 +3,21 @@ use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_core::{StateDB, Transaction, Hash};
 use luxtensor_storage::{BlockchainDB, MetagraphDB};
-use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig};
+use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig, AILayerCircuitBreaker};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use crate::handlers::{
     register_subnet_handlers, register_neuron_handlers,
-    register_staking_handlers, register_weight_handlers
+    register_staking_handlers, register_weight_handlers,
+    register_checkpoint_handlers
 };
+use std::path::PathBuf;
 use crate::helpers::{parse_address, parse_block_number};
+use crate::query_rpc::{QueryRpcContext, register_query_methods as register_query_methods_new};
+use crate::ai_rpc::{AiRpcContext, register_ai_methods as register_ai_methods_new};
+use crate::tx_rpc::{TxRpcContext, register_tx_methods};
 
 /// JSON-RPC server for LuxTensor blockchain
 ///
@@ -25,7 +30,7 @@ use crate::helpers::{parse_address, parse_block_number};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use luxtensor_rpc::{RpcServer, BroadcasterBuilder};
 /// use luxtensor_storage::MetagraphDB;
 ///
@@ -51,6 +56,10 @@ pub struct RpcServer {
     broadcaster: Arc<dyn TransactionBroadcaster>,
     evm_state: Arc<RwLock<EvmState>>,
     commit_reveal: Arc<RwLock<CommitRevealManager>>,
+    /// Circuit breaker for AI layer operations
+    ai_circuit_breaker: Arc<AILayerCircuitBreaker>,
+    /// Data directory for checkpoints and other persistent data
+    data_dir: PathBuf,
 }
 
 impl RpcServer {
@@ -78,6 +87,8 @@ impl RpcServer {
             broadcaster,
             evm_state: Arc::new(RwLock::new(EvmState::new(1337))), // Chain ID 1337
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            data_dir: PathBuf::from("./data"), // Default data directory
         }
     }
 
@@ -93,6 +104,11 @@ impl RpcServer {
     /// Get EVM state reference for block production polling
     pub fn evm_state(&self) -> Arc<RwLock<EvmState>> {
         self.evm_state.clone()
+    }
+
+    /// Get AI layer circuit breaker reference for monitoring
+    pub fn ai_circuit_breaker(&self) -> Arc<AILayerCircuitBreaker> {
+        self.ai_circuit_breaker.clone()
     }
 
     /// Create a new RPC server for testing with external EVM state
@@ -119,6 +135,8 @@ impl RpcServer {
             broadcaster: Arc::new(NoOpBroadcaster),
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            data_dir: temp_dir,
         }
     }
 
@@ -148,6 +166,8 @@ impl RpcServer {
             broadcaster,
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            data_dir: temp_dir,
         }
     }
 
@@ -178,6 +198,8 @@ impl RpcServer {
             broadcaster,
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            data_dir: temp_dir,
         }
     }
 
@@ -205,6 +227,8 @@ impl RpcServer {
             broadcaster,
             evm_state: Arc::new(RwLock::new(EvmState::new(1337))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            data_dir: PathBuf::from("./data"),
         }
     }
 
@@ -275,268 +299,61 @@ impl RpcServer {
         register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone(), self.db.clone());
         register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
 
-        // Register AI-specific methods
-        self.register_ai_methods(&mut io);
+        // Register checkpoint handlers for fast sync
+        register_checkpoint_handlers(&mut io, self.db.clone(), self.data_dir.clone());
 
-        // Register SDK query methods (query_*)
-        self.register_query_methods(&mut io);
+        // Register AI-specific methods (refactored to ai_rpc module)
+        let ai_ctx = AiRpcContext::new(
+            self.ai_tasks.clone(),
+            self.validators.clone(),
+            self.neurons.clone(),
+            self.subnets.clone(),
+        );
+        register_ai_methods_new(&ai_ctx, &mut io);
+
+        // Register SDK query methods (query_*) - refactored to query_rpc module
+        let query_ctx = QueryRpcContext::new(
+            self.neurons.clone(),
+            self.subnets.clone(),
+            self.validators.clone(),
+            self.commit_reveal.clone(),
+        );
+        register_query_methods_new(&query_ctx, &mut io);
+
+        // Register AI layer circuit breaker status endpoint
+        let ai_cb = self.ai_circuit_breaker.clone();
+        io.add_sync_method("system_getAICircuitBreakerStatus", move |_params: Params| {
+            let status = ai_cb.summary();
+            Ok(serde_json::json!({
+                "healthy": status.healthy,
+                "weight_consensus": {
+                    "state": format!("{:?}", status.weight_consensus_state),
+                    "operational": status.weight_consensus_state == luxtensor_consensus::CircuitState::Closed
+                },
+                "commit_reveal": {
+                    "state": format!("{:?}", status.commit_reveal_state),
+                    "operational": status.commit_reveal_state == luxtensor_consensus::CircuitState::Closed
+                },
+                "emission": {
+                    "state": format!("{:?}", status.emission_state),
+                    "operational": status.emission_state == luxtensor_consensus::CircuitState::Closed
+                }
+            }))
+        });
 
         // Register Ethereum-compatible methods (eth_*)
         register_eth_methods(&mut io, self.evm_state.clone());
 
-        // 🔧 Override eth_sendTransaction with P2P broadcasting
-        // This ensures transactions are propagated to peers
-        let evm_state_for_tx = self.evm_state.clone();
-        let broadcaster_for_tx = self.broadcaster.clone();
-        let state_for_tx = self.state.clone();
-        let pending_txs_for_tx = self.pending_txs.clone();
-
-        io.add_sync_method("eth_sendTransaction", move |params: Params| {
-            use crate::eth_rpc::{hex_to_address, generate_tx_hash};
-
-            let p: Vec<serde_json::Value> = params.parse()?;
-            let tx_obj = p.get(0).ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing transaction object"))?;
-
-            let from_str = tx_obj.get("from")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing 'from' field"))?;
-
-            let from = hex_to_address(from_str)
-                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid 'from' address"))?;
-
-            let to = tx_obj.get("to")
-                .and_then(|v| v.as_str())
-                .and_then(hex_to_address);
-
-            let value = tx_obj.get("value")
-                .and_then(|v| v.as_str())
-                .and_then(|s| {
-                    let s = s.strip_prefix("0x").unwrap_or(s);
-                    u128::from_str_radix(s, 16).ok()
-                })
-                .unwrap_or(0);
-
-            let data = tx_obj.get("data")
-                .and_then(|v| v.as_str())
-                .map(|s| {
-                    let s = s.strip_prefix("0x").unwrap_or(s);
-                    hex::decode(s).unwrap_or_default()
-                })
-                .unwrap_or_default();
-
-            let gas = tx_obj.get("gas")
-                .and_then(|v| v.as_str())
-                .and_then(|s| {
-                    let s = s.strip_prefix("0x").unwrap_or(s);
-                    u64::from_str_radix(s, 16).ok()
-                })
-                .unwrap_or(10_000_000);
-
-            // Get nonce from state
-            let nonce = state_for_tx.read().get_nonce(&luxtensor_core::Address::from(from));
-
-            // Create luxtensor_core::Transaction for broadcasting
-            let to_addr = to.map(luxtensor_core::Address::from);
-            let core_tx = luxtensor_core::Transaction::new(
-                nonce,
-                luxtensor_core::Address::from(from),
-                to_addr,
-                value,
-                1, // gas_price
-                gas,
-                data.clone(),
-            );
-
-            // 🔧 FIX: Use deterministic hash from Transaction::hash() for consistency
-            // This ensures the same hash is used across all nodes
-            let tx_hash = core_tx.hash();
-
-            // Add to pending transactions
-            {
-                let mut pending = pending_txs_for_tx.write();
-                pending.insert(tx_hash, core_tx.clone());
-                info!("📤 Transaction added to mempool: 0x{}", hex::encode(&tx_hash));
-            }
-
-            // 🚀 BROADCAST TO P2P NETWORK
-            if let Err(e) = broadcaster_for_tx.broadcast(&core_tx) {
-                warn!("Failed to broadcast transaction to P2P: {}", e);
-            } else {
-                info!("📡 Transaction broadcasted to P2P network: 0x{}", hex::encode(&tx_hash));
-            }
-
-            // Also update EVM state for compatibility
-            {
-                let mut state_guard = evm_state_for_tx.write();
-                state_guard.increment_nonce(&from);
-
-                // 🔧 FIX: Add transaction to tx_queue for block inclusion
-                // This ensures transactions are processed by the block producer
-                let ready_tx = crate::eth_rpc::ReadyTransaction {
-                    nonce,
-                    from,
-                    to,
-                    value,
-                    data: data.clone(),
-                    gas,
-                    r: [0u8; 32],
-                    s: [0u8; 32],
-                    v: 0,
-                };
-                state_guard.queue_transaction(ready_tx);
-                info!("📦 Transaction queued for block inclusion: 0x{}", hex::encode(&tx_hash));
-            }
-
-            Ok(serde_json::json!(format!("0x{}", hex::encode(tx_hash))))
-        });
-
-        // 🔧 Override eth_getTransactionReceipt to read from pending_txs
-        // This ensures receipts are found for transactions submitted via eth_sendTransaction
-        let pending_txs_for_receipt = self.pending_txs.clone();
-        let db_for_receipt = self.db.clone();
-        io.add_sync_method("eth_getTransactionReceipt", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-            }
-
-            let hash_str = parsed[0].trim_start_matches("0x");
-            let hash_bytes = hex::decode(hash_str)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-            if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-            }
-
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&hash_bytes);
-
-            // 1. Check pending transactions first (in-memory mempool)
-            {
-                let pending = pending_txs_for_receipt.read();
-                if let Some(tx) = pending.get(&hash) {
-                    // For pending txs, return a "pending" receipt indicating tx is accepted but not mined
-                    return Ok(serde_json::json!({
-                        "transactionHash": format!("0x{}", hex::encode(hash)),
-                        "transactionIndex": "0x0",
-                        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
-                        "blockNumber": "0x0",
-                        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
-                        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
-                        "contractAddress": if tx.to.is_none() && !tx.data.is_empty() {
-                            // Generate contract address for deployment
-                            let nonce = tx.nonce;
-                            let from_bytes = tx.from.as_bytes();
-                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                            std::hash::Hash::hash_slice(from_bytes, &mut hasher);
-                            std::hash::Hash::hash(&nonce, &mut hasher);
-                            let hash_val = std::hash::Hasher::finish(&hasher);
-                            let mut addr = [0u8; 20];
-                            addr[..8].copy_from_slice(&hash_val.to_be_bytes());
-                            addr[8..16].copy_from_slice(&hash_val.to_le_bytes());
-                            addr[16..20].copy_from_slice(&(nonce as u32).to_be_bytes());
-                            Some(format!("0x{}", hex::encode(addr)))
-                        } else {
-                            None
-                        },
-                        "cumulativeGasUsed": "0x5208",
-                        "gasUsed": "0x5208",
-                        "status": "0x1",
-                        "logs": []
-                    }));
-                }
-            }
-
-            // 2. Check stored receipts in database (from mined blocks)
-            match db_for_receipt.get_receipt(&hash) {
-                Ok(Some(receipt_bytes)) => {
-                    // Deserialize using bincode (same as storage)
-                    // Must match Receipt struct from executor.rs exactly
-                    #[derive(serde::Deserialize)]
-                    #[allow(dead_code)]
-                    struct StoredLog {
-                        address: luxtensor_core::Address,
-                        topics: Vec<[u8; 32]>,
-                        data: Vec<u8>,
-                    }
-
-                    #[derive(serde::Deserialize)]
-                    #[repr(u8)]
-                    enum StoredExecutionStatus {
-                        Success = 1,
-                        Failed = 0,
-                    }
-
-                    #[derive(serde::Deserialize)]
-                    #[allow(dead_code)]
-                    struct StoredReceipt {
-                        transaction_hash: [u8; 32],
-                        block_height: u64,
-                        block_hash: [u8; 32],
-                        transaction_index: usize,
-                        from: luxtensor_core::Address,
-                        to: Option<luxtensor_core::Address>,
-                        gas_used: u64,
-                        status: StoredExecutionStatus,
-                        logs: Vec<StoredLog>,
-                        contract_address: Option<luxtensor_core::Address>,
-                    }
-
-
-                    tracing::debug!("📥 Got receipt bytes: {} bytes", receipt_bytes.len());
-
-                    match bincode::deserialize::<StoredReceipt>(&receipt_bytes) {
-                        Ok(receipt) => {
-                            let contract_addr = receipt.contract_address.map(|addr|
-                                format!("0x{}", hex::encode(addr.as_bytes()))
-                            );
-
-                        return Ok(serde_json::json!({
-                            "transactionHash": format!("0x{}", hex::encode(receipt.transaction_hash)),
-                            "transactionIndex": format!("0x{:x}", receipt.transaction_index),
-                            "blockHash": format!("0x{}", hex::encode(receipt.block_hash)),
-                            "blockNumber": format!("0x{:x}", receipt.block_height),
-                            "from": format!("0x{}", hex::encode(receipt.from.as_bytes())),
-                            "to": receipt.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
-                            "contractAddress": contract_addr,
-                            "cumulativeGasUsed": format!("0x{:x}", receipt.gas_used),
-                            "gasUsed": format!("0x{:x}", receipt.gas_used),
-                            "status": match receipt.status {
-                                StoredExecutionStatus::Success => "0x1",
-                                StoredExecutionStatus::Failed => "0x0",
-                            },
-                            "logs": []
-                        }));
-                        }
-                        Err(e) => {
-                            tracing::warn!("❌ Failed to deserialize receipt: {:?}", e);
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            // 3. Final fallback: check if TX exists at all
-            match db_for_receipt.get_transaction(&hash) {
-                Ok(Some(tx)) => {
-                    Ok(serde_json::json!({
-                        "transactionHash": format!("0x{}", hex::encode(hash)),
-                        "transactionIndex": "0x0",
-                        "blockHash": format!("0x{}", hex::encode([0u8; 32])),
-                        "blockNumber": "0x1",
-                        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
-                        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
-                        "contractAddress": serde_json::Value::Null,
-                        "cumulativeGasUsed": "0x5208",
-                        "gasUsed": "0x5208",
-                        "status": "0x1",
-                        "logs": []
-                    }))
-                }
-                Ok(None) => Ok(serde_json::Value::Null),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
-            }
-        });
+        // Register transaction methods with P2P broadcasting (eth_sendTransaction, eth_getTransactionReceipt)
+        // These override the base eth_rpc implementations with broadcast support
+        let tx_ctx = TxRpcContext::new(
+            self.evm_state.clone(),
+            self.pending_txs.clone(),
+            self.state.clone(),
+            self.broadcaster.clone(),
+            self.db.clone(),
+        );
+        register_tx_methods(&tx_ctx, &mut io);
 
         // Start HTTP server
         let server = ServerBuilder::new(io)
@@ -849,867 +666,7 @@ impl RpcServer {
             }
         });
     }
-
-    /// Register AI-specific methods
-    fn register_ai_methods(&self, io: &mut IoHandler) {
-        let ai_tasks = self.ai_tasks.clone();
-
-        // lux_submitAITask - Submit AI computation task
-        io.add_sync_method("lux_submitAITask", move |params: Params| {
-            let task_request: AITaskRequest = params.parse()?;
-
-            // 1. Validate the task request
-            if task_request.model_hash.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Model hash is required"));
-            }
-            if task_request.requester.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Requester address is required"));
-            }
-
-            // 2. Parse reward amount
-            let reward = u128::from_str_radix(
-                task_request.reward.trim_start_matches("0x"),
-                16
-            ).unwrap_or(0);
-
-            // 3. Generate task ID
-            let task_id_data = format!(
-                "{}:{}:{}:{}",
-                task_request.model_hash,
-                task_request.requester,
-                task_request.input_data,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("System time before UNIX epoch")
-                    .as_nanos()
-            );
-            let task_id = luxtensor_crypto::keccak256(task_id_data.as_bytes());
-
-            // 4. Create and store task
-            let task_info = AITaskInfo {
-                id: task_id,
-                model_hash: task_request.model_hash,
-                input_data: task_request.input_data,
-                requester: task_request.requester,
-                reward,
-                status: AITaskStatus::Pending,
-                result: None,
-                worker: None,
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("System time before UNIX epoch")
-                    .as_secs(),
-                completed_at: None,
-            };
-
-            {
-                let mut tasks = ai_tasks.write();
-                tasks.insert(task_id, task_info);
-                info!("AI task submitted: 0x{}", hex::encode(&task_id));
-            }
-
-            // Return the task ID
-            Ok(serde_json::json!({
-                "success": true,
-                "task_id": format!("0x{}", hex::encode(task_id))
-            }))
-        });
-
-        let ai_tasks = self.ai_tasks.clone();
-
-        // lux_getAIResult - Get AI task result
-        io.add_sync_method("lux_getAIResult", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing task ID"));
-            }
-
-            // Parse task ID
-            let task_id_hex = parsed[0].trim_start_matches("0x");
-            let task_id_bytes = hex::decode(task_id_hex)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid task ID format"))?;
-
-            if task_id_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params("Task ID must be 32 bytes"));
-            }
-
-            let mut task_id = [0u8; 32];
-            task_id.copy_from_slice(&task_id_bytes);
-
-            // Look up the task
-            let tasks = ai_tasks.read();
-            if let Some(task) = tasks.get(&task_id) {
-                let status_str = match task.status {
-                    AITaskStatus::Pending => "pending",
-                    AITaskStatus::Processing => "processing",
-                    AITaskStatus::Completed => "completed",
-                    AITaskStatus::Failed => "failed",
-                };
-
-                Ok(serde_json::json!({
-                    "task_id": format!("0x{}", hex::encode(task_id)),
-                    "status": status_str,
-                    "model_hash": task.model_hash,
-                    "requester": task.requester,
-                    "reward": format!("0x{:x}", task.reward),
-                    "result": task.result,
-                    "worker": task.worker,
-                    "created_at": task.created_at,
-                    "completed_at": task.completed_at,
-                }))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let validators = self.validators.clone();
-
-        // lux_getValidatorStatus - Get validator information
-        io.add_sync_method("lux_getValidatorStatus", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing validator address"));
-            }
-
-            let address = parse_address(&parsed[0])?;
-
-            // Look up validator in consensus module
-            let validator_set = validators.read();
-            if let Some(validator) = validator_set.get_validator(&address) {
-                Ok(serde_json::json!({
-                    "address": format!("0x{}", hex::encode(address.as_bytes())),
-                    "stake": format!("0x{:x}", validator.stake),
-                    "active": validator.active,
-                    "rewards": format!("0x{:x}", validator.rewards),
-                    "public_key": format!("0x{}", hex::encode(validator.public_key)),
-                }))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        // === Additional AI and Network Methods ===
-
-        let neurons = self.neurons.clone();
-        let subnets = self.subnets.clone();
-
-        // ai_getMetagraph - Get metagraph for subnet
-        io.add_sync_method("ai_getMetagraph", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
-            }
-            let subnet_id = parsed[0]
-                .as_u64()
-                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
-
-            let neurons_map = neurons.read();
-            let subnets_map = subnets.read();
-
-            let subnet_info = subnets_map.get(&subnet_id);
-            let neurons_in_subnet: Vec<serde_json::Value> = neurons_map
-                .iter()
-                .filter(|((sid, _), _)| *sid == subnet_id)
-                .map(|(_, n)| serde_json::json!({
-                    "uid": n.uid,
-                    "address": n.address,
-                    "stake": format!("0x{:x}", n.stake),
-                    "trust": n.trust,
-                    "rank": n.rank,
-                    "incentive": n.incentive,
-                    "dividends": n.dividends,
-                    "active": n.active,
-                }))
-                .collect();
-
-            Ok(serde_json::json!({
-                "subnet_id": subnet_id,
-                "neurons": neurons_in_subnet,
-                "neuron_count": neurons_in_subnet.len(),
-                "total_stake": subnet_info.map(|s| format!("0x{:x}", s.total_stake)).unwrap_or_else(|| "0x0".to_string()),
-            }))
-        });
-
-        let neurons = self.neurons.clone();
-
-        // ai_getIncentive - Get incentive info for subnet
-        io.add_sync_method("ai_getIncentive", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
-            }
-            let subnet_id = parsed[0]
-                .as_u64()
-                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
-
-            let neurons_map = neurons.read();
-            let incentives: Vec<serde_json::Value> = neurons_map
-                .iter()
-                .filter(|((sid, _), _)| *sid == subnet_id)
-                .map(|(_, n)| serde_json::json!({
-                    "uid": n.uid,
-                    "incentive": n.incentive,
-                    "dividends": n.dividends,
-                }))
-                .collect();
-
-            Ok(serde_json::json!({
-                "subnet_id": subnet_id,
-                "incentives": incentives,
-            }))
-        });
-
-        // net_version - Get network version
-        io.add_sync_method("net_version", move |_params: Params| {
-            Ok(Value::String("1".to_string()))
-        });
-
-        // net_peerCount - Get peer count
-        io.add_sync_method("net_peerCount", move |_params: Params| {
-            let count = crate::peer_count::get_peer_count();
-            Ok(Value::String(format!("0x{:x}", count)))
-        });
-
-        // web3_clientVersion - Get client version
-        io.add_sync_method("web3_clientVersion", move |_params: Params| {
-            Ok(Value::String(format!("Luxtensor/{}", env!("CARGO_PKG_VERSION"))))
-        });
-    }
-
-    /// Register SDK-compatible query methods (query_*)
-    fn register_query_methods(&self, io: &mut IoHandler) {
-        let neurons = self.neurons.clone();
-        let _subnets = self.subnets.clone();
-
-        // query_neuron - Get specific neuron info
-        io.add_sync_method("query_neuron", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!({
-                    "uid": neuron.uid,
-                    "address": neuron.address,
-                    "subnet_id": neuron.subnet_id,
-                    "stake": format!("0x{:x}", neuron.stake),
-                    "trust": neuron.trust,
-                    "rank": neuron.rank,
-                    "incentive": neuron.incentive,
-                    "dividends": neuron.dividends,
-                    "active": neuron.active,
-                    "endpoint": neuron.endpoint
-                }))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_neuronCount - Get neuron count in subnet
-        io.add_sync_method("query_neuronCount", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnet_id = parsed[0];
-            let neurons_map = neurons.read();
-            let count = neurons_map.keys().filter(|(sid, _)| *sid == subnet_id).count();
-            Ok(Value::Number(count.into()))
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_activeNeurons - Get active neuron UIDs
-        io.add_sync_method("query_activeNeurons", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnet_id = parsed[0];
-            let neurons_map = neurons.read();
-            let active_uids: Vec<u64> = neurons_map
-                .iter()
-                .filter(|((sid, _), n)| *sid == subnet_id && n.active)
-                .map(|((_, uid), _)| *uid)
-                .collect();
-            Ok(serde_json::to_value(active_uids).unwrap_or(Value::Array(vec![])))
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_allSubnets - Get all subnets (alias for subnet_listAll)
-        io.add_sync_method("query_allSubnets", move |_params: Params| {
-            let subnets_map = subnets.read();
-            let list: Vec<Value> = subnets_map.values().map(|s| {
-                serde_json::json!({
-                    "id": s.id,
-                    "name": s.name,
-                    "owner": s.owner,
-                    "emission_rate": s.emission_rate,
-                    "participant_count": s.participant_count,
-                    "total_stake": format!("0x{:x}", s.total_stake)
-                })
-            }).collect();
-            Ok(Value::Array(list))
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_subnetExists - Check if subnet exists
-        io.add_sync_method("query_subnetExists", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            Ok(Value::Bool(subnets_map.contains_key(&parsed[0])))
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_subnetOwner - Get subnet owner
-        io.add_sync_method("query_subnetOwner", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if let Some(subnet) = subnets_map.get(&parsed[0]) {
-                Ok(Value::String(subnet.owner.clone()))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_subnetEmission - Get subnet emission rate
-        io.add_sync_method("query_subnetEmission", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if let Some(subnet) = subnets_map.get(&parsed[0]) {
-                Ok(Value::String(format!("0x{:x}", subnet.emission_rate)))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_subnetHyperparameters - Get subnet hyperparams
-        io.add_sync_method("query_subnetHyperparameters", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if let Some(subnet) = subnets_map.get(&parsed[0]) {
-                Ok(serde_json::json!({
-                    "tempo": 360,
-                    "rho": 10,
-                    "kappa": 10,
-                    "immunity_period": 100,
-                    "max_allowed_validators": 64,
-                    "min_allowed_weights": 1,
-                    "max_weights_limit": 1000,
-                    "emission_rate": subnet.emission_rate
-                }))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_subnetTempo - Get subnet tempo
-        io.add_sync_method("query_subnetTempo", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if subnets_map.contains_key(&parsed[0]) {
-                Ok(Value::Number(360.into())) // Default tempo
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_rank - Get neuron rank
-        io.add_sync_method("query_rank", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.rank as f64 / 65535.0))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_trust - Get neuron trust
-        io.add_sync_method("query_trust", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.trust))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_incentive - Get neuron incentive
-        io.add_sync_method("query_incentive", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.incentive))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_dividends - Get neuron dividends
-        io.add_sync_method("query_dividends", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.dividends))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_consensus - Get neuron consensus (same as trust for now)
-        io.add_sync_method("query_consensus", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.trust))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_isHotkeyRegistered - Check if hotkey is registered
-        io.add_sync_method("query_isHotkeyRegistered", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or hotkey"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let hotkey = parsed[1].as_str().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
-            let neurons_map = neurons.read();
-            let is_registered = neurons_map.iter()
-                .any(|((sid, _), n)| *sid == subnet_id && n.address == hotkey);
-            Ok(Value::Bool(is_registered))
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_uidForHotkey - Get UID for hotkey
-        io.add_sync_method("query_uidForHotkey", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or hotkey"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let hotkey = parsed[1].as_str().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
-            let neurons_map = neurons.read();
-            let uid = neurons_map.iter()
-                .find(|((sid, _), n)| *sid == subnet_id && n.address == hotkey)
-                .map(|((_, uid), _)| *uid);
-            match uid {
-                Some(u) => Ok(Value::Number(u.into())),
-                None => Ok(Value::Null)
-            }
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_hotkeyForUid - Get hotkey for UID
-        io.add_sync_method("query_hotkeyForUid", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(Value::String(neuron.address.clone()))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let validators = self.validators.clone();
-
-        // query_stakeForColdkeyAndHotkey - Get stake for coldkey-hotkey pair
-        io.add_sync_method("query_stakeForColdkeyAndHotkey", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing coldkey or hotkey"));
-            }
-            // For now, just return stake for hotkey (simplified)
-            let hotkey = &parsed[1];
-            let address = parse_address(hotkey)?;
-            let validator_set = validators.read();
-            let stake = validator_set.get_validator(&address).map(|v| v.stake).unwrap_or(0);
-            Ok(Value::String(format!("0x{:x}", stake)))
-        });
-
-        let validators = self.validators.clone();
-
-        // query_totalStakeForColdkey - Get total stake for coldkey
-        io.add_sync_method("query_totalStakeForColdkey", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing coldkey"));
-            }
-            let address = parse_address(&parsed[0])?;
-            let validator_set = validators.read();
-            let stake = validator_set.get_validator(&address).map(|v| v.stake).unwrap_or(0);
-            Ok(Value::String(format!("0x{:x}", stake)))
-        });
-
-        let validators = self.validators.clone();
-
-        // query_totalStakeForHotkey - Get total stake for hotkey
-        io.add_sync_method("query_totalStakeForHotkey", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing hotkey"));
-            }
-            let address = parse_address(&parsed[0])?;
-            let validator_set = validators.read();
-            let stake = validator_set.get_validator(&address).map(|v| v.stake).unwrap_or(0);
-            Ok(Value::String(format!("0x{:x}", stake)))
-        });
-
-        let validators = self.validators.clone();
-
-        // query_allStakeForColdkey - Get all stakes for coldkey
-        io.add_sync_method("query_allStakeForColdkey", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing coldkey"));
-            }
-            let address = parse_address(&parsed[0])?;
-            let validator_set = validators.read();
-            let mut stakes = serde_json::Map::new();
-            if let Some(v) = validator_set.get_validator(&address) {
-                stakes.insert(parsed[0].clone(), serde_json::json!(format!("0x{:x}", v.stake)));
-            }
-            Ok(Value::Object(stakes))
-        });
-
-        let validators = self.validators.clone();
-
-        // query_allStakeForHotkey - Get all stakes for hotkey
-        io.add_sync_method("query_allStakeForHotkey", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing hotkey"));
-            }
-            let address = parse_address(&parsed[0])?;
-            let validator_set = validators.read();
-            let mut stakes = serde_json::Map::new();
-            if let Some(v) = validator_set.get_validator(&address) {
-                stakes.insert(parsed[0].clone(), serde_json::json!(format!("0x{:x}", v.stake)));
-            }
-            Ok(Value::Object(stakes))
-        });
-
-        // query_weightCommits - Get weight commits for a subnet
-        let commit_reveal = self.commit_reveal.clone();
-        io.add_sync_method("query_weightCommits", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnet_id = parsed[0];
-
-            // Get commits from CommitRevealManager
-            let commits = commit_reveal.read().get_pending_commits(subnet_id);
-            let epoch_state = commit_reveal.read().get_epoch_state(subnet_id);
-
-            let mut result = serde_json::Map::new();
-
-            // Add epoch info
-            if let Some(state) = epoch_state {
-                result.insert("epochNumber".into(), serde_json::json!(state.epoch_number));
-                result.insert("phase".into(), serde_json::json!(format!("{:?}", state.phase)));
-                result.insert("commitStartBlock".into(), serde_json::json!(state.commit_start_block));
-                result.insert("revealStartBlock".into(), serde_json::json!(state.reveal_start_block));
-                result.insert("finalizeBlock".into(), serde_json::json!(state.finalize_block));
-            }
-
-            // Add commits
-            let commit_list: Vec<serde_json::Value> = commits.iter().map(|c| {
-                serde_json::json!({
-                    "validator": format!("0x{}", hex::encode(c.validator.as_bytes())),
-                    "commitHash": format!("0x{}", hex::encode(&c.commit_hash)),
-                    "committedAt": c.committed_at,
-                    "revealed": c.revealed
-                })
-            }).collect();
-
-            result.insert("commits".into(), serde_json::json!(commit_list));
-            result.insert("commitCount".into(), serde_json::json!(commits.len()));
-
-            Ok(Value::Object(result))
-        });
-
-        // query_weightsVersion - Get weights version
-        io.add_sync_method("query_weightsVersion", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            Ok(Value::Number(1.into())) // Default version 1
-        });
-
-        // query_weightsRateLimit - Get weights rate limit
-        io.add_sync_method("query_weightsRateLimit", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            Ok(Value::Number(100.into())) // Default rate limit
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_hasValidatorPermit - Check if has validator permit
-        io.add_sync_method("query_hasValidatorPermit", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or hotkey"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let hotkey = parsed[1].as_str().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
-            let neurons_map = neurons.read();
-            // Check if registered and has high stake
-            let has_permit = neurons_map.iter()
-                .any(|((sid, _), n)| *sid == subnet_id && n.address == hotkey && n.stake > 0);
-            Ok(Value::Bool(has_permit))
-        });
-
-        let neurons = self.neurons.clone();
-
-        // query_validatorTrust - Get validator trust
-        io.add_sync_method("query_validatorTrust", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.len() < 2 {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
-            }
-            let subnet_id = parsed[0].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
-            let neuron_uid = parsed[1].as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-            let neurons_map = neurons.read();
-            if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-                Ok(serde_json::json!(neuron.trust))
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_rho - Get rho parameter
-        io.add_sync_method("query_rho", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if subnets_map.contains_key(&parsed[0]) {
-                Ok(serde_json::json!(10.0)) // Default rho
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_kappa - Get kappa parameter
-        io.add_sync_method("query_kappa", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if subnets_map.contains_key(&parsed[0]) {
-                Ok(serde_json::json!(10.0)) // Default kappa
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_adjustmentInterval - Get adjustment interval
-        io.add_sync_method("query_adjustmentInterval", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if subnets_map.contains_key(&parsed[0]) {
-                Ok(Value::Number(100.into())) // Default interval
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let subnets = self.subnets.clone();
-
-        // query_activityCutoff - Get activity cutoff
-        io.add_sync_method("query_activityCutoff", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
-            }
-            let subnets_map = subnets.read();
-            if subnets_map.contains_key(&parsed[0]) {
-                Ok(Value::Number(5000.into())) // Default cutoff
-            } else {
-                Ok(Value::Null)
-            }
-        });
-
-        let validators = self.validators.clone();
-
-        // query_rootNetworkValidators - Get root network validators
-        io.add_sync_method("query_rootNetworkValidators", move |_params: Params| {
-            let validator_set = validators.read();
-            let validators_list: Vec<String> = validator_set
-                .validators()
-                .iter()
-                .filter(|v| v.active)
-                .map(|v| format!("0x{}", hex::encode(v.address.as_bytes())))
-                .collect();
-            Ok(serde_json::to_value(validators_list).unwrap_or(Value::Array(vec![])))
-        });
-
-        // query_senateMembers - Get senate members
-        io.add_sync_method("query_senateMembers", move |_params: Params| {
-            Ok(Value::Array(vec![])) // No senate members by default
-        });
-
-        // system_version - Get system version
-        io.add_sync_method("system_version", move |_params: Params| {
-            Ok(Value::String("1.0.0".to_string()))
-        });
-
-        // system_health - Check node health
-        io.add_sync_method("system_health", move |_params: Params| {
-            Ok(serde_json::json!({
-                "status": "healthy",
-                "version": "1.0.0",
-                "syncing": false,
-                "peers": crate::peer_count::get_peer_count()
-            }))
-        });
-
-        // system_peerCount - Get peer count
-        io.add_sync_method("system_peerCount", move |_params: Params| {
-            let count = crate::peer_count::get_peer_count();
-            Ok(Value::Number(count.into()))
-        });
-
-        let db = self.db.clone();
-
-        // system_syncState - Get sync state
-        io.add_sync_method("system_syncState", move |_params: Params| {
-            let height = db.get_best_height().ok().flatten().unwrap_or(0);
-            Ok(serde_json::json!({
-                "isSyncing": false,
-                "currentBlock": height,
-                "highestBlock": height
-            }))
-        });
-
-        // governance_getProposals - Get governance proposals
-        io.add_sync_method("governance_getProposals", move |_params: Params| {
-            Ok(Value::Array(vec![])) // No proposals by default
-        });
-
-        // governance_getProposal - Get specific proposal
-        io.add_sync_method("governance_getProposal", move |params: Params| {
-            let parsed: Vec<u64> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing proposal_id"));
-            }
-            Ok(Value::Null) // Proposal not found
-        });
-
-        // balances_free - Get free balance
-        io.add_sync_method("balances_free", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
-            }
-            // Return same as eth_getBalance
-            Ok(Value::String("0x0".to_string()))
-        });
-
-        // balances_reserved - Get reserved balance
-        io.add_sync_method("balances_reserved", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
-            }
-            Ok(Value::String("0x0".to_string()))
-        });
-    }
 }
-
 
 #[cfg(test)]
 mod tests {

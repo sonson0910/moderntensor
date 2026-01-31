@@ -64,6 +64,34 @@ from .neuron_checker import (
     NeuronType,
 )
 
+# Utilities (unit conversion, validation)
+from .utils import (
+    to_mdt,
+    from_mdt,
+    format_mdt,
+    validate_address,
+    shorten_address,
+    shorten_hash,
+    MDT_DECIMALS,
+    MDT_WEI_MULTIPLIER,
+)
+
+# Errors (structured RPC errors)
+from .errors import (
+    RpcError,
+    RpcErrorCode,
+    BlockNotFoundError,
+    TransactionNotFoundError,
+    InsufficientFundsError,
+    InvalidSignatureError,
+    NonceTooLowError,
+    GasLimitExceededError,
+    RateLimitedError,
+    MempoolFullError,
+    parse_rpc_error,
+    check_rpc_response,
+)
+
 # Version
 from .version import __version__
 
@@ -110,6 +138,28 @@ __all__ = [
     "NeuronRegistrationInfo",
     "NeuronStatus",
     "NeuronType",
+    # Utilities
+    "to_mdt",
+    "from_mdt",
+    "format_mdt",
+    "validate_address",
+    "shorten_address",
+    "shorten_hash",
+    "MDT_DECIMALS",
+    "MDT_WEI_MULTIPLIER",
+    # Errors
+    "RpcError",
+    "RpcErrorCode",
+    "BlockNotFoundError",
+    "TransactionNotFoundError",
+    "InsufficientFundsError",
+    "InvalidSignatureError",
+    "NonceTooLowError",
+    "GasLimitExceededError",
+    "RateLimitedError",
+    "MempoolFullError",
+    "parse_rpc_error",
+    "check_rpc_response",
     # Version
     "__version__",
 ]

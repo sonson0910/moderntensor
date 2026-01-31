@@ -37,8 +37,15 @@ from sdk import connect, LuxtensorClient
 ```python
 """
 Basic blockchain queries - balances, blocks, validators.
+Demonstrates: Unit conversion, error handling, connection checking.
 """
-from moderntensor.sdk import connect
+from moderntensor.sdk import (
+    connect,
+    to_mdt,           # Convert base units → MDT
+    format_mdt,       # Format for display
+    RpcError,         # Base error class
+    BlockNotFoundError,
+)
 
 # Connect to local node
 client = connect(url="http://localhost:8545", network="testnet")
@@ -56,17 +63,31 @@ print(f"Chain ID: {chain_info.chain_id}")
 print(f"Current Block: {chain_info.block_number}")
 print(f"Network: {chain_info.network}")
 
-# Get account balance
+# Get account balance with proper unit conversion
 address = "0x1234567890abcdef1234567890abcdef12345678"
-balance = client.get_balance(address)
-print(f"Balance: {balance} MDT")
+
+try:
+    balance_wei = client.get_balance(address)  # Returns base units (wei)
+    balance_mdt = to_mdt(balance_wei)          # Convert to MDT
+
+    print(f"Balance (wei): {balance_wei}")
+    print(f"Balance (MDT): {balance_mdt}")
+    print(f"Formatted: {format_mdt(balance_wei)}")  # "1.2345 MDT"
+
+except RpcError as e:
+    print(f"❌ RPC Error: {e.message} (code: {e.code})")
 
 # Get active validators
 validators = client.get_validators()
 print(f"Active validators: {len(validators)}")
 for v in validators[:5]:
-    print(f"  - {v.address}: {v.stake} stake")
+    stake_mdt = to_mdt(v.stake)  # Convert stake to MDT
+    print(f"  - {v.address}: {stake_mdt} MDT stake")
 ```
+
+> **⚠️ Unit Conversion Important!**
+> `get_balance()` returns **base units** (wei, 10^18).
+> Always use `to_mdt()` before displaying to users.
 
 ---
 
@@ -75,12 +96,17 @@ for v in validators[:5]:
 ```python
 """
 Complete flow: Generate wallet → Check balance → Send transfer.
+Demonstrates: Unit conversion with from_mdt(), error handling.
 """
 from moderntensor.sdk import (
     connect,
     create_transfer_transaction,
-    sign_transaction,
     encode_transaction_for_rpc,
+    to_mdt,               # Convert wei → MDT
+    from_mdt,             # Convert MDT → wei
+    InsufficientFundsError,
+    NonceTooLowError,
+    RpcError,
 )
 from moderntensor.sdk.keymanager import KeyManager
 
@@ -95,11 +121,14 @@ print(f"✅ Hotkey created: {hotkey.address}")
 # Step 2: Connect to blockchain
 client = connect("http://localhost:8545")
 
-# Step 3: Check balance (need funds from faucet first!)
-balance = client.get_balance(coldkey.address)
-print(f"Balance: {balance} MDT")
+# Step 3: Check balance with proper unit conversion
+balance_wei = client.get_balance(coldkey.address)
+balance_mdt = to_mdt(balance_wei)
+print(f"Balance: {balance_mdt} MDT")
 
-if balance < 1000:
+# Convert minimum required to wei for comparison
+min_required_wei = from_mdt(1000)  # 1000 MDT in wei
+if balance_wei < min_required_wei:
     print("⚠️ Insufficient balance. Get testnet tokens from faucet:")
     print(f"   https://faucet.luxtensor.io/?address={coldkey.address}")
     exit(1)
@@ -107,27 +136,44 @@ if balance < 1000:
 # Step 4: Create and sign transfer transaction
 nonce = client.get_nonce(coldkey.address)
 
+# IMPORTANT: amount is in wei (base units), use from_mdt() to convert!
+amount_mdt = 100  # We want to send 100 MDT
+amount_wei = from_mdt(amount_mdt)  # Convert to wei
+
 tx = create_transfer_transaction(
     from_address=coldkey.address,
     to_address="0xRecipientAddressHere",
-    amount=100,  # 100 MDT
+    amount=amount_wei,  # Must be in wei!
     nonce=nonce,
-    private_key=coldkey.private_key,
+    private_key=coldkey.private_key,  # Signs the transaction
     gas_price=50,
     gas_limit=21000,
 )
 
-# Step 5: Submit transaction
-tx_hash = client.submit_transaction(encode_transaction_for_rpc(tx))
-print(f"✅ Transaction submitted: {tx_hash}")
+# Step 5: Submit transaction with error handling
+try:
+    tx_hash = client.submit_transaction(encode_transaction_for_rpc(tx))
+    print(f"✅ Transaction submitted: {tx_hash}")
 
-# Step 6: Wait for confirmation
-receipt = client.wait_for_transaction(tx_hash, timeout=60)
-if receipt.success:
-    print(f"✅ Transaction confirmed in block {receipt.block_number}")
-else:
-    print(f"❌ Transaction failed: {receipt.error}")
+    # Step 6: Wait for confirmation
+    receipt = client.wait_for_transaction(tx_hash, timeout=60)
+    if receipt.success:
+        print(f"✅ Transaction confirmed in block {receipt.block_number}")
+    else:
+        print(f"❌ Transaction failed: {receipt.error}")
+
+except InsufficientFundsError as e:
+    print(f"❌ Not enough funds: need {to_mdt(e.data['need'])} MDT")
+except NonceTooLowError as e:
+    print(f"❌ Nonce too low. Expected: {e.data['expected']}, got: {e.data['got']}")
+    # Retry with correct nonce
+except RpcError as e:
+    print(f"❌ RPC Error ({e.code}): {e.message}")
 ```
+
+> **⚠️ Signing Pattern:**
+> All state-changing operations require `private_key` parameter.
+> The `create_transfer_transaction()` function signs internally.
 
 ---
 

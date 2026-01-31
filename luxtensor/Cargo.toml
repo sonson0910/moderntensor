@@ -70,7 +70,7 @@ ed25519-dalek = "2.1"
 rand = "0.8"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify", "tokio", "macros", "kad"] }
+libp2p = { version = "0.56", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify", "tokio", "macros", "kad"] }
 
 # Storage
 rocksdb = "0.21"

@@ -163,13 +163,28 @@ impl ValidatorRotation {
     }
 
     /// Process epoch transition
+    /// Refactored: Split into helper functions for lower complexity
     pub fn process_epoch_transition(&mut self, new_epoch: u64) -> EpochTransitionResult {
         self.current_epoch = new_epoch;
 
-        let mut activated = Vec::new();
-        let mut exited = Vec::new();
+        // Process pending activations (extracted helper)
+        let activated = self.activate_pending_validators(new_epoch);
 
-        // Process pending activations
+        // Process exits (extracted helper)
+        let exited = self.process_validator_exits(new_epoch);
+
+        EpochTransitionResult {
+            activated_validators: activated,
+            exited_validators: exited,
+            new_epoch,
+        }
+    }
+
+    /// Activate validators whose activation epoch has arrived
+    fn activate_pending_validators(&mut self, new_epoch: u64) -> Vec<Address> {
+        let mut activated = Vec::new();
+
+        // Collect ready validators
         let ready_to_activate: Vec<Address> = self
             .pending_validators
             .iter()
@@ -179,7 +194,6 @@ impl ValidatorRotation {
 
         for address in ready_to_activate {
             if let Some(pending) = self.pending_validators.remove(&address) {
-                // Check if we have room for more validators
                 if self.current_validators.len() < self.config.max_validators {
                     self.current_validators.add_validator(pending.validator).ok();
                     activated.push(address);
@@ -193,7 +207,7 @@ impl ValidatorRotation {
                         "Cannot activate validator {}, max validator count reached",
                         hex::encode(&address)
                     );
-                    // Put back in pending with extended activation epoch
+                    // Re-queue for next epoch
                     self.pending_validators.insert(
                         address,
                         PendingValidator {
@@ -205,7 +219,13 @@ impl ValidatorRotation {
             }
         }
 
-        // Process exits
+        activated
+    }
+
+    /// Process validators scheduled for exit
+    fn process_validator_exits(&mut self, new_epoch: u64) -> Vec<Address> {
+        let mut exited = Vec::new();
+
         let ready_to_exit: Vec<Address> = self.exiting_validators.iter().copied().collect();
 
         for address in ready_to_exit {
@@ -219,12 +239,9 @@ impl ValidatorRotation {
             );
         }
 
-        EpochTransitionResult {
-            activated_validators: activated,
-            exited_validators: exited,
-            new_epoch,
-        }
+        exited
     }
+
 
     /// Get pending validator count
     pub fn pending_count(&self) -> usize {

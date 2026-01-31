@@ -1,0 +1,469 @@
+﻿cargo : warning: unused import: `Write`
+At line:1 char:1
++ cargo build --workspace 2>&1 | Out-File 
+-FilePath build_final.txt -En ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (wa 
+   rning: unused import: `Write`:String) [], R  
+  emoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:27
+   |
+10 | use std::io::{self, Read, Write};
+   |                           ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `Read`
+  --> crates\luxtensor-storage\src\maintenance.r
+s:10:21
+   |
+10 | use std::io::{self, Read, Write};
+   |                     ^^^^
+
+warning: `luxtensor-storage` (lib) generated 2 
+warnings (run `cargo fix --lib -p 
+luxtensor-storage` to apply 1 suggestion)
+warning: unused import: 
+`std::collections::HashMap`
+ --> crates\luxtensor-consensus\src\long_range_p
+rotection.rs:6:5
+  |
+6 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused variable: `current_block`
+   --> crates\luxtensor-consensus\src\weight_con
+sensus.rs:377:9
+    |
+377 |         current_block: u64,
+    |         ^^^^^^^^^^^^^ help: if this is 
+intentional, prefix it with an underscore: 
+`_current_block`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: field `dao_address` is never read
+  --> crates\luxtensor-consensus\src\reward_exec
+utor.rs:70:5
+   |
+49 | pub struct RewardExecutor {
+   |            -------------- field in this 
+struct
+...
+70 |     dao_address: [u8; 20],
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `luxtensor-consensus` (lib) generated 
+3 warnings (run `cargo fix --lib -p 
+luxtensor-consensus` to apply 2 suggestions)
+warning: unused import: `warn`
+ --> 
+crates\luxtensor-network\src\identity.rs:8:21
+  |
+8 | use tracing::{info, warn};
+  |                     ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `PeerCapabilities`
+ --> crates\luxtensor-network\src\swarm.rs:6:61
+  |
+6 | use crate::peer_discovery::{PeerDiscovery, 
+DiscoveryConfig, PeerCapabilities};
+  |                                             
+                ^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> 
+crates\luxtensor-network\src\swarm.rs:22:22
+   |
+22 | use tracing::{debug, error, info, warn};
+   |                      ^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\luxtensor-network\src\peer_discover
+y.rs:14:5
+   |
+14 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> 
+crates\luxtensor-network\src\swarm.rs:146:13
+    |
+146 |         let mut kademlia_config = 
+kad::Config::new(
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `config` is never read
+   --> crates\luxtensor-network\src\p2p.rs:113:5
+    |
+111 | pub struct P2PNode {
+    |            ------- field in this struct
+112 |     peer_manager: PeerManager,
+113 |     config: P2PConfig,
+    |     ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: field `transactions_topic` is never 
+read
+  --> crates\luxtensor-network\src\swarm.rs:56:5
+   |
+51 | pub struct SwarmP2PNode {
+   |            ------------ field in this 
+struct
+...
+56 |     transactions_topic: IdentTopic,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: field `pending_ops` is never read
+   --> crates\luxtensor-contracts\src\account_ab
+straction.rs:178:5
+    |
+170 | pub struct EntryPoint {
+    |            ---------- field in this struct
+...
+178 |     pending_ops: Arc<RwLock<HashMap<Hash, 
+UserOperation>>>,
+    |     ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `luxtensor-network` (lib) generated 7 
+warnings (run `cargo fix --lib -p 
+luxtensor-network` to apply 5 suggestions)
+warning: `luxtensor-contracts` (lib) generated 
+1 warning
+warning: unused imports: `Deserialize` and 
+`Serialize`
+ --> crates\luxtensor-rpc\src\error.rs:2:13
+  |
+2 | use serde::{Deserialize, Serialize};
+  |             ^^^^^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `generate_tx_hash`
+   --> crates\luxtensor-rpc\src\server.rs:295:50
+    |
+295 |             use 
+crate::eth_rpc::{hex_to_address, 
+generate_tx_hash};
+    |                                           
+       ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> 
+crates\luxtensor-rpc\src\admin_auth.rs:10:5
+   |
+10 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+  --> 
+crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove 
+the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightl
+y/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+   = note: `#[warn(unexpected_cfgs)]` on by 
+default
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+   --> 
+crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ 
+help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/night
+ly/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+
+warning: unused variable: `validators_config`
+   --> crates\luxtensor-rpc\src\handlers\staking
+.rs:313:9
+    |
+313 |     let validators_config = 
+validators.clone();
+    |         ^^^^^^^^^^^^^^^^^ help: if this 
+is intentional, prefix it with an underscore: 
+`_validators_config`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: `luxtensor-rpc` (lib) generated 6 
+warnings (run `cargo fix --lib -p 
+luxtensor-rpc` to apply 4 suggestions)
+   Compiling luxtensor-node v0.4.0 (D:\venera\ca
+rdano\moderntensor\moderntensor\luxtensor\crates
+\luxtensor-node)
+warning: unused import: `futures::FutureExt`
+ --> crates\luxtensor-node\src\service.rs:5:5
+  |
+5 | use futures::FutureExt;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused variable: `tx_broadcast_tx`
+   --> 
+crates\luxtensor-node\src\service.rs:315:14
+    |
+315 |         let (tx_broadcast_tx, mut 
+tx_broadcast_rx) = 
+mpsc::unbounded_channel::<Transaction>();
+    |              ^^^^^^^^^^^^^^^ help: if 
+this is intentional, prefix it with an 
+underscore: `_tx_broadcast_tx`
+    |
+    = note: `#[warn(unused_variables)]` (part 
+of `#[warn(unused)]`) on by default
+
+warning: fields `token_allocation`, 
+`node_registry`, `validator_keypair`, 
+`db_maintenance`, `eclipse_protection`, and 
+`long_range_protection` are never read
+  --> crates\luxtensor-node\src\service.rs:75:5
+   |
+67 | pub struct NodeService {
+   |            ----------- fields in this 
+struct
+...
+75 |     token_allocation: 
+Arc<RwLock<TokenAllocation>>,
+   |     ^^^^^^^^^^^^^^^^
+76 |     node_registry: 
+Arc<RwLock<NodeRegistry>>,
+   |     ^^^^^^^^^^^^^
+...
+85 |     validator_keypair: Option<KeyPair>,
+   |     ^^^^^^^^^^^^^^^^^
+86 |     /// Database maintenance 
+(backup/restore/pruning)
+87 |     db_maintenance: Arc<DbMaintenance>,
+   |     ^^^^^^^^^^^^^^
+88 |     /// Eclipse attack protection
+89 |     eclipse_protection: 
+Arc<EclipseProtection>,
+   |     ^^^^^^^^^^^^^^^^^^
+90 |     /// Long-range attack protection
+91 |     long_range_protection: 
+Arc<LongRangeProtection>,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: methods `get_stats`, 
+`add_transaction`, and `mempool` are never used
+    --> 
+crates\luxtensor-node\src\service.rs:988:18
+     |
+  94 | impl NodeService {
+     | ---------------- methods in this 
+implementation
+...
+ 988 |     pub async fn get_stats(&self) -> 
+Result<NodeStats> {
+     |                  ^^^^^^^^^
+...
+1006 |     pub fn add_transaction(&self, tx: 
+Transaction) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^
+...
+1012 |     pub fn mempool(&self) -> 
+&Arc<Mempool> {
+     |            ^^^^^^^
+
+warning: struct `NodeStats` is never constructed
+    --> 
+crates\luxtensor-node\src\service.rs:1019:12
+     |
+1019 | pub struct NodeStats {
+     |            ^^^^^^^^^
+
+warning: multiple associated items are never 
+used
+   --> 
+crates\luxtensor-node\src\mempool.rs:37:12
+    |
+ 24 | impl Mempool {
+    | ------------ associated items in this 
+implementation
+...
+ 37 |     pub fn new_dev_mode(max_size: usize) 
+-> Self {
+    |            ^^^^^^^^^^^^
+...
+100 |     pub fn 
+get_pending_transactions(&self) -> 
+Vec<Transaction> {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+120 |     pub fn len(&self) -> usize {
+    |            ^^^
+...
+125 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+...
+130 |     pub fn clear(&self) {
+    |            ^^^^^
+...
+135 |     pub fn get_transaction(&self, hash: 
+&Hash) -> Option<Transaction> {
+    |            ^^^^^^^^^^^^^^^
+...
+141 |     pub fn save_to_file(&self, path: 
+&str) -> std::io::Result<usize> {
+    |            ^^^^^^^^^^^^
+...
+161 |     pub fn load_from_file(&self, path: 
+&str) -> std::io::Result<usize> {
+    |            ^^^^^^^^^^^^^^
+
+warning: associated items `new_dev_mode` and 
+`execute_batch` are never used
+   --> 
+crates\luxtensor-node\src\executor.rs:58:12
+    |
+ 46 | impl TransactionExecutor {
+    | ------------------------ associated items 
+in this implementation
+...
+ 58 |     pub fn new_dev_mode() -> Self {
+    |            ^^^^^^^^^^^^
+...
+224 |     pub fn execute_batch(
+    |            ^^^^^^^^^^^^^
+
+warning: constant `STAKING_CONTRACT_ADDRESS` is 
+never used
+  --> crates\luxtensor-node\src\genesis_config.r
+s:11:11
+   |
+11 | pub const STAKING_CONTRACT_ADDRESS: &str = 
+"0x5FbDB2315678afecb367f032d93F642f64180aa3";
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MDT_TOKEN_ADDRESS` is never 
+used
+  --> crates\luxtensor-node\src\genesis_config.r
+s:15:11
+   |
+15 | pub const MDT_TOKEN_ADDRESS: &str = 
+"0x0000000000000000000000000000000000000001";
+   |           ^^^^^^^^^^^^^^^^^
+
+warning: struct `SyncState` is never constructed
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:15:12
+   |
+15 | pub struct SyncState {
+   |            ^^^^^^^^^
+
+warning: function `p2p_event_loop` is never used
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:35:14
+   |
+35 | pub async fn p2p_event_loop(
+   |              ^^^^^^^^^^^^^^
+
+warning: function `handle_p2p_event` is never 
+used
+  --> 
+crates\luxtensor-node\src\p2p_handler.rs:77:10
+   |
+77 | async fn handle_p2p_event(
+   |          ^^^^^^^^^^^^^^^^
+
+warning: function `handle_new_block` is never 
+used
+   --> 
+crates\luxtensor-node\src\p2p_handler.rs:111:10
+    |
+111 | async fn handle_new_block(
+    |          ^^^^^^^^^^^^^^^^
+
+warning: function `handle_new_transaction` is 
+never used
+   --> 
+crates\luxtensor-node\src\p2p_handler.rs:189:10
+    |
+189 | async fn handle_new_transaction(tx: 
+Transaction, mempool: &Arc<Mempool>) -> 
+Result<()> {
+    |          ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `calculate_slot` is never used
+   --> 
+crates\luxtensor-node\src\p2p_handler.rs:239:8
+    |
+239 | pub fn calculate_slot(timestamp: u64, 
+genesis_timestamp: u64, block_time: u64) -> u64 
+{
+    |        ^^^^^^^^^^^^^^
+
+warning: field `last_weight_update` is never 
+read
+  --> 
+crates\luxtensor-node\src\root_subnet.rs:37:5
+   |
+17 | pub struct RootSubnetState {
+   |            --------------- field in this 
+struct
+...
+37 |     last_weight_update: u64,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: `luxtensor-node` (bin 
+"luxtensor-node") generated 16 warnings (run 
+`cargo fix --bin "luxtensor-node" -p 
+luxtensor-node` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + 
+debuginfo] target(s) in 10.16s
+warning: the following packages contain code 
+that will be rejected by a future version of 
+Rust: net2 v0.2.39
+note: to see what the problems were, use the 
+option `--future-incompat-report`, or run 
+`cargo report future-incompatibilities --id 2`

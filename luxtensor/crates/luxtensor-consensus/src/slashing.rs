@@ -174,7 +174,7 @@ impl SlashingManager {
                     evidence_hash: None,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs(),
                 });
             }
@@ -230,7 +230,7 @@ impl SlashingManager {
                     evidence_hash: Some(blocks[0]), // First conflicting block
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs(),
                 });
             }

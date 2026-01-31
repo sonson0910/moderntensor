@@ -1,5 +1,6 @@
 use crate::error::ConsensusError;
 use crate::validator::ValidatorSet;
+use crate::halving::HalvingSchedule;
 use luxtensor_core::types::{Address, Hash};
 use luxtensor_crypto::keccak256;
 use serde::{Deserialize, Serialize};
@@ -13,10 +14,12 @@ pub struct ConsensusConfig {
     pub slot_duration: u64,
     /// Minimum stake required to become a validator
     pub min_stake: u128,
-    /// Block reward amount
+    /// Base block reward amount (before halving)
     pub block_reward: u128,
     /// Epoch length in slots
     pub epoch_length: u64,
+    /// Halving schedule for block rewards
+    pub halving_schedule: HalvingSchedule,
 }
 
 impl Default for ConsensusConfig {
@@ -24,8 +27,9 @@ impl Default for ConsensusConfig {
         Self {
             slot_duration: 12, // 12 seconds per block
             min_stake: 32_000_000_000_000_000_000u128, // 32 tokens minimum
-            block_reward: 2_000_000_000_000_000_000u128, // 2 tokens per block
+            block_reward: 2_000_000_000_000_000_000u128, // 2 tokens per block (initial)
             epoch_length: 32, // 32 slots per epoch
+            halving_schedule: HalvingSchedule::default(),
         }
     }
 }
@@ -106,13 +110,58 @@ impl ProofOfStake {
         keccak256(&data)
     }
 
-    /// Calculate and distribute block rewards
+    /// Calculate and distribute block rewards (uses base block_reward - legacy method)
     pub fn distribute_reward(&self, producer: &Address) -> Result<(), ConsensusError> {
         let mut validator_set = self.validator_set.write();
 
         validator_set
             .add_reward(producer, self.config.block_reward)
             .map_err(|e| ConsensusError::RewardDistribution(e.to_string()))
+    }
+
+    /// Calculate block reward for a given height using halving schedule
+    pub fn get_reward_for_height(&self, block_height: u64) -> u128 {
+        self.config.halving_schedule.calculate_reward(block_height)
+    }
+
+    /// Calculate and distribute block rewards with halving schedule
+    /// This is the preferred method for production use
+    pub fn distribute_reward_with_height(&self, producer: &Address, block_height: u64) -> Result<u128, ConsensusError> {
+        let reward = self.get_reward_for_height(block_height);
+
+        if reward == 0 {
+            // No reward for this block (after all halvings complete)
+            return Ok(0);
+        }
+
+        let mut validator_set = self.validator_set.write();
+        validator_set
+            .add_reward(producer, reward)
+            .map_err(|e| ConsensusError::RewardDistribution(e.to_string()))?;
+
+        Ok(reward)
+    }
+
+    /// Get halving info for the current block height
+    pub fn get_halving_info(&self, block_height: u64) -> crate::halving::HalvingInfo {
+        let schedule = &self.config.halving_schedule;
+        crate::halving::HalvingInfo {
+            initial_reward_mdt: schedule.initial_reward as f64 / 1e18,
+            halving_interval_blocks: schedule.halving_interval,
+            halving_interval_years: (schedule.halving_interval as f64 * 100.0) / (365.25 * 24.0 * 3600.0),
+            max_halvings: schedule.max_halvings,
+            estimated_total_emission_mdt: schedule.estimate_total_emission() as f64 / 1e18,
+        }
+    }
+
+    /// Get current halving era and blocks until next halving
+    pub fn get_halving_status(&self, block_height: u64) -> (u32, u64, u128) {
+        let schedule = &self.config.halving_schedule;
+        (
+            schedule.get_halving_era(block_height),
+            schedule.blocks_until_next_halving(block_height),
+            schedule.calculate_reward(block_height),
+        )
     }
 
     /// Add a new validator to the set

@@ -6,8 +6,13 @@
 const http = require('http');
 const fs = require('fs');
 
-const RPC_URL = 'http://127.0.0.1:8545';
-const DEPLOYER = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+// Load environment variables if .env exists
+try { require('dotenv').config(); } catch (e) { /* dotenv optional for local dev */ }
+
+const RPC_URL = process.env.RPC_URL_LOCAL || 'http://127.0.0.1:8545';
+// For local dev only - use Hardhat default account
+// In production, NEVER expose private keys in code
+const DEPLOYER = process.env.DEPLOYER_ADDRESS || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
 
 // Load compiled contract bytecode
 const MDTTokenArtifact = require('../artifacts/src/MDTToken.sol/MDTToken.json');
