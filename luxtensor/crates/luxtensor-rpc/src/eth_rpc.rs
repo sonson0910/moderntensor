@@ -72,9 +72,24 @@ pub struct EvmState {
 }
 
 impl EvmState {
+    /// Create a new EVM state for production (no pre-funded accounts)
     pub fn new(chain_id: u64) -> Self {
+        Self {
+            contracts: HashMap::new(),
+            pending_txs: HashMap::new(),
+            nonces: HashMap::new(),
+            balances: HashMap::new(),
+            storage: HashMap::new(),
+            block_number: 1,
+            chain_id,
+            tx_queue: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Create a new EVM state for development/testing (with pre-funded accounts)
+    pub fn new_dev(chain_id: u64) -> Self {
         let mut balances = HashMap::new();
-        // Pre-fund test accounts with 1000 ETH each
+        // Pre-fund test accounts with 1000 ETH each (ONLY for dev/test)
         let test_accounts = [
             // Hardhat default accounts
             hex_to_address("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
@@ -98,6 +113,7 @@ impl EvmState {
         }
     }
 
+
     /// Get and clear pending transactions for block production
     pub fn drain_tx_queue(&self) -> Vec<ReadyTransaction> {
         let mut queue = self.tx_queue.write();
@@ -106,7 +122,10 @@ impl EvmState {
 
     /// Add transaction to queue for block inclusion
     pub fn queue_transaction(&self, tx: ReadyTransaction) {
+        tracing::debug!("📥 queue_transaction: Queueing TX from 0x{} nonce={}",
+                      hex::encode(&tx.from), tx.nonce);
         self.tx_queue.write().push(tx);
+        tracing::debug!("📥 queue_transaction: Queue size now = {}", self.tx_queue.read().len());
     }
 
     pub fn get_nonce(&self, address: &Address) -> u64 {
@@ -279,111 +298,9 @@ pub fn register_eth_methods(
         Ok(json!("0x7a120")) // 500000
     });
 
-    // eth_sendTransaction
-    let state = evm_state.clone();
-    io.add_sync_method("eth_sendTransaction", move |params: Params| {
-        let p: Vec<serde_json::Value> = params.parse()?;
-        let tx_obj = p.get(0).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing transaction object".to_string(),
-            data: None,
-        })?;
-
-        let from_str = tx_obj.get("from")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing 'from' field".to_string(),
-                data: None,
-            })?;
-
-        let from = hex_to_address(from_str).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Invalid 'from' address".to_string(),
-            data: None,
-        })?;
-
-        let to = tx_obj.get("to")
-            .and_then(|v| v.as_str())
-            .and_then(hex_to_address);
-
-        let value = tx_obj.get("value")
-            .and_then(|v| v.as_str())
-            .and_then(|s| {
-                let s = s.strip_prefix("0x").unwrap_or(s);
-                u128::from_str_radix(s, 16).ok()
-            })
-            .unwrap_or(0);
-
-        let data = tx_obj.get("data")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                let s = s.strip_prefix("0x").unwrap_or(s);
-                hex::decode(s).unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        let gas = tx_obj.get("gas")
-            .and_then(|v| v.as_str())
-            .and_then(|s| {
-                let s = s.strip_prefix("0x").unwrap_or(s);
-                u64::from_str_radix(s, 16).ok()
-            })
-            .unwrap_or(10_000_000);
-
-        let mut state_guard = state.write();
-        let nonce = state_guard.get_nonce(&from);
-        let tx_hash = generate_tx_hash(&from, nonce);
-
-        // Execute transaction
-        let (contract_address, status, gas_used) = if to.is_none() && !data.is_empty() {
-            // Contract deployment
-            let contract_addr = state_guard.deploy_contract(from, data.clone());
-            (Some(contract_addr), true, gas / 2)
-        } else if let Some(_to_addr) = to {
-            // Contract call or transfer
-            (None, true, 21000)
-        } else {
-            (None, false, 21000)
-        };
-
-        state_guard.increment_nonce(&from);
-        state_guard.block_number += 1;
-
-        // Store pending transaction
-        let pending_tx = PendingTransaction {
-            hash: tx_hash,
-            from,
-            to,
-            value,
-            data: data.clone(),
-            gas,
-            nonce,
-            executed: true,
-            contract_address,
-            status,
-            gas_used,
-        };
-
-        state_guard.pending_txs.insert(tx_hash, pending_tx);
-
-        // Queue transaction for block production
-        // NOTE: eth_sendTransaction uses empty signature - for production, use eth_sendRawTransaction with pre-signed TX
-        let ready_tx = ReadyTransaction {
-            nonce,
-            from,
-            to,
-            value,
-            data,
-            gas,
-            r: [0u8; 32], // Empty signature - will fail verification if executor requires it
-            s: [0u8; 32],
-            v: 0,
-        };
-        state_guard.queue_transaction(ready_tx);
-
-        Ok(json!(hash_to_hex(&tx_hash)))
-    });
+    // NOTE: eth_sendTransaction is handled by tx_rpc.rs which registers after this
+    // and overrides this handler. The tx_rpc.rs version includes P2P broadcasting.
+    // This duplicate was removed to avoid confusion and dead code.
 
     // eth_getTransactionReceipt
     let state = evm_state.clone();

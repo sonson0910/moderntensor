@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use parking_lot::RwLock;
-use jsonrpc_core::{IoHandler, Params, Value};
+use jsonrpc_core::{IoHandler, Params};
 use serde_json::json;
 use tracing::{info, warn};
 
@@ -54,7 +54,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
     let broadcaster = ctx.broadcaster.clone();
 
     io.add_sync_method("eth_sendTransaction", move |params: Params| {
-        use crate::eth_rpc::{hex_to_address, generate_tx_hash};
+        use crate::eth_rpc::hex_to_address;
 
         let p: Vec<serde_json::Value> = params.parse()?;
         let tx_obj = p.get(0).ok_or_else(||
@@ -110,7 +110,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
             Address::from(from),
             to_addr,
             value,
-            1, // gas_price
+            1_000_000_000, // gas_price: 1 Gwei (mempool minimum)
             gas,
             data.clone(),
         );

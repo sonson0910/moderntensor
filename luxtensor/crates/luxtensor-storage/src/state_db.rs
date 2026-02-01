@@ -37,11 +37,11 @@ impl StateDB {
         match self.db.get(address.as_bytes())? {
             Some(bytes) => {
                 let account: Account = bincode::deserialize(&bytes)?;
-                
+
                 // Update cache
                 let mut cache = self.cache.write();
                 cache.insert(*address, account.clone());
-                
+
                 Ok(account)
             }
             None => {
@@ -55,7 +55,7 @@ impl StateDB {
     pub fn set_account(&self, address: Address, account: Account) {
         let mut cache = self.cache.write();
         cache.insert(address, account);
-        
+
         let mut dirty = self.dirty.write();
         dirty.insert(address);
     }
@@ -127,7 +127,7 @@ impl StateDB {
             if let Some(account) = cache.get(address) {
                 let bytes = bincode::serialize(account)?;
                 batch.put(address.as_bytes(), bytes);
-                
+
                 // Collect for state root calculation
                 let mut data = Vec::new();
                 data.extend_from_slice(address.as_bytes());
@@ -213,7 +213,7 @@ mod tests {
     fn test_get_account_not_exists() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         let account = state_db.get_account(&address).unwrap();
         assert_eq!(account.balance, 0);
         assert_eq!(account.nonce, 0);
@@ -223,16 +223,17 @@ mod tests {
     fn test_set_and_get_account() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         let account = Account {
             nonce: 5,
             balance: 1000,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
-        
+
         state_db.set_account(address, account.clone());
-        
+
         let retrieved = state_db.get_account(&address).unwrap();
         assert_eq!(retrieved.balance, 1000);
         assert_eq!(retrieved.nonce, 5);
@@ -242,7 +243,7 @@ mod tests {
     fn test_balance_operations() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 5000).unwrap();
         let balance = state_db.get_balance(&address).unwrap();
         assert_eq!(balance, 5000);
@@ -252,11 +253,11 @@ mod tests {
     fn test_nonce_operations() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_nonce(&address, 10).unwrap();
         let nonce = state_db.get_nonce(&address).unwrap();
         assert_eq!(nonce, 10);
-        
+
         let new_nonce = state_db.increment_nonce(&address).unwrap();
         assert_eq!(new_nonce, 11);
     }
@@ -266,10 +267,10 @@ mod tests {
         let (_dir, state_db) = create_test_db();
         let from = Address::from_slice(&[1u8; 20]);
         let to = Address::from_slice(&[2u8; 20]);
-        
+
         state_db.set_balance(&from, 1000).unwrap();
         state_db.transfer(&from, &to, 300).unwrap();
-        
+
         assert_eq!(state_db.get_balance(&from).unwrap(), 700);
         assert_eq!(state_db.get_balance(&to).unwrap(), 300);
     }
@@ -279,10 +280,10 @@ mod tests {
         let (_dir, state_db) = create_test_db();
         let from = Address::from_slice(&[1u8; 20]);
         let to = Address::from_slice(&[2u8; 20]);
-        
+
         state_db.set_balance(&from, 100).unwrap();
         let result = state_db.transfer(&from, &to, 200);
-        
+
         assert!(result.is_err());
     }
 
@@ -290,14 +291,14 @@ mod tests {
     fn test_commit() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 1000).unwrap();
         assert_eq!(state_db.dirty_count(), 1);
-        
+
         let state_root = state_db.commit().unwrap();
         assert_ne!(state_root, [0u8; 32]);
         assert_eq!(state_db.dirty_count(), 0);
-        
+
         // Clear cache and reload from db
         state_db.clear_cache();
         let balance = state_db.get_balance(&address).unwrap();
@@ -308,15 +309,15 @@ mod tests {
     fn test_rollback() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 1000).unwrap();
         state_db.commit().unwrap();
-        
+
         state_db.set_balance(&address, 2000).unwrap();
         assert_eq!(state_db.get_balance(&address).unwrap(), 2000);
-        
+
         state_db.rollback();
-        
+
         // Should revert to committed value
         let balance = state_db.get_balance(&address).unwrap();
         assert_eq!(balance, 1000);
@@ -326,10 +327,10 @@ mod tests {
     fn test_cache() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 500).unwrap();
         assert_eq!(state_db.cache_size(), 1);
-        
+
         // Access should hit cache
         let _ = state_db.get_balance(&address).unwrap();
         assert_eq!(state_db.cache_size(), 1);

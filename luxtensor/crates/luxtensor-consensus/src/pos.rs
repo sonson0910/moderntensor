@@ -143,7 +143,7 @@ impl ProofOfStake {
     }
 
     /// Get halving info for the current block height
-    pub fn get_halving_info(&self, block_height: u64) -> crate::halving::HalvingInfo {
+    pub fn get_halving_info(&self, _block_height: u64) -> crate::halving::HalvingInfo {
         let schedule = &self.config.halving_schedule;
         crate::halving::HalvingInfo {
             initial_reward_mdt: schedule.initial_reward as f64 / 1e18,

@@ -47,6 +47,10 @@ pub struct NodeConfig {
     /// DAO treasury address for rewards distribution (hex with 0x prefix)
     #[serde(default = "default_dao_address")]
     pub dao_address: String,
+
+    /// Development mode: enables pre-funded test accounts (NEVER use in production)
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 /// Default DAO treasury address (ModernTensor Foundation)
@@ -176,6 +180,7 @@ impl Default for Config {
                 validator_key_path: None,
                 validator_id: None,
                 dao_address: default_dao_address(),
+                dev_mode: false,  // Production mode by default
             },
             consensus: ConsensusConfig {
                 block_time: 3,

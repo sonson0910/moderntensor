@@ -212,6 +212,7 @@ async fn create_accounts_with_transactions(node: &Node, count: usize) -> Vec<Add
             balance: 1_000_000_000, // 1 token (simplified)
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         node.state_db.set_account(address, account);
@@ -301,6 +302,7 @@ async fn sync_nodes(source: &Node, target: &Node) {
                         balance: tx.value,
                         storage_root: [0u8; 32],
                         code_hash: [0u8; 32],
+                        code: None,
                     };
                     target.state_db.set_account(to, account);
                 }

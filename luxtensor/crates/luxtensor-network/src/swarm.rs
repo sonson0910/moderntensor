@@ -3,7 +3,7 @@
 
 use crate::error::NetworkError;
 use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
-use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig, PeerCapabilities};
+use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
 use futures::StreamExt;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity, ValidationMode},
@@ -19,7 +19,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Event from the P2P swarm
 #[derive(Debug)]
@@ -53,6 +53,7 @@ pub struct SwarmP2PNode {
     event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
     command_rx: mpsc::UnboundedReceiver<SwarmCommand>,
     blocks_topic: IdentTopic,
+    #[allow(dead_code)] // Reserved for future direct TX topic usage
     transactions_topic: IdentTopic,
     sync_topic: IdentTopic,
     /// Track sync requests per peer for flood protection
@@ -143,7 +144,7 @@ impl SwarmP2PNode {
 
         // Create Kademlia DHT for distributed peer discovery
         let store = MemoryStore::new(local_peer_id);
-        let mut kademlia_config = kad::Config::new(
+        let kademlia_config = kad::Config::new(
             libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")
         );
         let mut kademlia = kad::Behaviour::with_config(local_peer_id, store, kademlia_config);

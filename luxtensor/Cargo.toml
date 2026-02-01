@@ -68,6 +68,7 @@ k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
 blake3 = "1.5"
 ed25519-dalek = "2.1"
 rand = "0.8"
+zeroize = { version = "1.7", features = ["derive"] }
 
 # Networking
 libp2p = { version = "0.56", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify", "tokio", "macros", "kad"] }

@@ -34,6 +34,7 @@ pub struct RootSubnetState {
     next_netuid: u16,
 
     /// Last weight calculation block
+    #[allow(dead_code)] // Reserved for rate limiting weight updates
     last_weight_update: u64,
 }
 

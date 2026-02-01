@@ -128,6 +128,7 @@ pub struct DistributionResult {
 pub struct RewardDistributor {
     config: DistributionConfig,
     lock_bonus: LockBonusConfig,
+    #[allow(dead_code)] // Accessed via dao_address() getter
     dao_address: [u8; 20],
 }
 

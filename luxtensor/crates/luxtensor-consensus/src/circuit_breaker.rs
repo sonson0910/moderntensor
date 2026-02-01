@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Circuit breaker states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -17,6 +17,34 @@ pub const CHECKPOINT_INTERVAL: u64 = 10_000;
 /// Maximum number of checkpoints to keep
 pub const MAX_CHECKPOINTS: usize = 5;
 
+/// Checkpoint configuration
+#[derive(Debug, Clone)]
+pub struct CheckpointConfig {
+    /// Interval between checkpoint snapshots (in blocks)
+    pub checkpoint_interval: u64,
+    /// Maximum number of checkpoints to keep
+    pub max_checkpoints: usize,
+}
+
+impl Default for CheckpointConfig {
+    fn default() -> Self {
+        Self {
+            checkpoint_interval: CHECKPOINT_INTERVAL,
+            max_checkpoints: MAX_CHECKPOINTS,
+        }
+    }
+}
+
+impl CheckpointConfig {
+    /// Create a new checkpoint config with custom values
+    pub fn new(checkpoint_interval: u64, max_checkpoints: usize) -> Self {
+        Self {
+            checkpoint_interval,
+            max_checkpoints,
+        }
+    }
+}
+
 /// Checkpoint metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointMetadata {
@@ -42,11 +70,18 @@ pub struct CheckpointManager {
     db: Arc<DB>,
     /// Available checkpoints
     checkpoints: HashMap<u64, CheckpointMetadata>,
+    /// Configuration
+    config: CheckpointConfig,
 }
 
 impl CheckpointManager {
-    /// Create a new checkpoint manager
+    /// Create a new checkpoint manager with default configuration
     pub fn new<P: AsRef<Path>>(checkpoint_dir: P, db: Arc<DB>) -> Self {
+        Self::new_with_config(checkpoint_dir, db, CheckpointConfig::default())
+    }
+
+    /// Create a new checkpoint manager with custom configuration
+    pub fn new_with_config<P: AsRef<Path>>(checkpoint_dir: P, db: Arc<DB>, config: CheckpointConfig) -> Self {
         let checkpoint_dir = checkpoint_dir.as_ref().to_path_buf();
 
         // Ensure checkpoint directory exists
@@ -60,12 +95,18 @@ impl CheckpointManager {
             checkpoint_dir,
             db,
             checkpoints: HashMap::new(),
+            config,
         };
 
         // Load existing checkpoints
         manager.scan_checkpoints();
 
         manager
+    }
+
+    /// Get the checkpoint configuration
+    pub fn config(&self) -> &CheckpointConfig {
+        &self.config
     }
 
     /// Scan for existing checkpoint files

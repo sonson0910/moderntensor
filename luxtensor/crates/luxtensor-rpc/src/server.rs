@@ -69,6 +69,7 @@ impl RpcServer {
         state: Arc<RwLock<StateDB>>,
         metagraph: Arc<MetagraphDB>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
+        chain_id: u64,
     ) -> Self {
         // Load initial data from metagraph into caches
         let subnets = Arc::new(RwLock::new(Self::load_subnets_cache(&metagraph)));
@@ -85,7 +86,7 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state: Arc::new(RwLock::new(EvmState::new(1337))), // Chain ID 1337
+            evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             data_dir: PathBuf::from("./data"), // Default data directory
@@ -98,7 +99,7 @@ impl RpcServer {
         let metagraph = Arc::new(
             MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
         );
-        Self::new(db, state, metagraph, Arc::new(NoOpBroadcaster))
+        Self::new(db, state, metagraph, Arc::new(NoOpBroadcaster), 1337)  // Default test chain_id
     }
 
     /// Get EVM state reference for block production polling
@@ -210,6 +211,7 @@ impl RpcServer {
         metagraph: Arc<MetagraphDB>,
         validators: Arc<RwLock<ValidatorSet>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
+        chain_id: u64,
     ) -> Self {
         let subnets = Arc::new(RwLock::new(Self::load_subnets_cache(&metagraph)));
         let neurons = Arc::new(RwLock::new(Self::load_neurons_cache(&metagraph)));
@@ -225,7 +227,7 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state: Arc::new(RwLock::new(EvmState::new(1337))),
+            evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             data_dir: PathBuf::from("./data"),

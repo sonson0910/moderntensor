@@ -12,11 +12,11 @@ pub struct BlockHeader {
     pub state_root: Hash,
     pub txs_root: Hash,
     pub receipts_root: Hash,
-    
+
     // Consensus
     pub validator: [u8; 32],
     pub signature: Vec<u8>,  // 64 bytes signature
-    
+
     // Metadata
     pub gas_used: u64,
     pub gas_limit: u64,
@@ -53,9 +53,10 @@ impl BlockHeader {
             extra_data,
         }
     }
-    
+
     pub fn hash(&self) -> Hash {
-        let bytes = bincode::serialize(self).unwrap();
+        let bytes = bincode::serialize(self)
+            .expect("BlockHeader serialization should never fail");
         keccak256(&bytes)
     }
 }
@@ -74,27 +75,27 @@ impl Block {
             transactions,
         }
     }
-    
+
     pub fn hash(&self) -> Hash {
         self.header.hash()
     }
-    
+
     pub fn height(&self) -> u64 {
         self.header.height
     }
-    
+
     pub fn timestamp(&self) -> u64 {
         self.header.timestamp
     }
-    
+
     pub fn header(&self) -> &BlockHeader {
         &self.header
     }
-    
+
     pub fn header_mut(&mut self) -> &mut BlockHeader {
         &mut self.header
     }
-    
+
     /// Create genesis block
     pub fn genesis() -> Self {
         let header = BlockHeader {
@@ -111,7 +112,7 @@ impl Block {
             gas_limit: 10_000_000,
             extra_data: b"LuxTensor Genesis Block".to_vec(),
         };
-        
+
         Self::new(header, vec![])
     }
 }
@@ -119,14 +120,14 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_genesis_block() {
         let genesis = Block::genesis();
         assert_eq!(genesis.height(), 0);
         assert_eq!(genesis.transactions.len(), 0);
     }
-    
+
     #[test]
     fn test_block_hash() {
         let genesis = Block::genesis();

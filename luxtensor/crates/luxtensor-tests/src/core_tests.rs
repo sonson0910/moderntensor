@@ -232,6 +232,7 @@ mod account_tests {
             balance: 1_000_000_000_000_000_000, // 1 token
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         assert_eq!(account.nonce, 0);
@@ -245,6 +246,7 @@ mod account_tests {
             balance: 0,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         assert_eq!(account.balance, 0);
@@ -257,6 +259,7 @@ mod account_tests {
             balance: u128::MAX,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         assert_eq!(account.balance, u128::MAX);
@@ -269,6 +272,7 @@ mod account_tests {
             balance: 1000,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         account.nonce += 1;

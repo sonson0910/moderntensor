@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::info;
 
 /// Shutdown state for coordinating graceful shutdown
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

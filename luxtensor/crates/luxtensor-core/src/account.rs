@@ -2,12 +2,16 @@ use serde::{Deserialize, Serialize};
 use crate::Hash;
 
 /// Account state
+/// Represents both EOA (Externally Owned Account) and Contract accounts
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Account {
     pub nonce: u64,
     pub balance: u128,
     pub storage_root: Hash,
     pub code_hash: Hash,
+    /// Contract bytecode (None for EOA, Some for contracts)
+    #[serde(default)]
+    pub code: Option<Vec<u8>>,
 }
 
 /// Error when balance operation fails
@@ -33,22 +37,59 @@ impl std::fmt::Display for BalanceError {
 impl std::error::Error for BalanceError {}
 
 impl Account {
+    /// Create a new empty EOA (Externally Owned Account)
     pub fn new() -> Self {
         Self {
             nonce: 0,
             balance: 0,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         }
     }
 
+    /// Create a new EOA with initial balance
     pub fn with_balance(balance: u128) -> Self {
         Self {
             nonce: 0,
             balance,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         }
+    }
+
+    /// Create a contract account with bytecode
+    ///
+    /// # Arguments
+    /// * `balance` - Initial balance for the contract
+    /// * `code` - Contract bytecode
+    /// * `code_hash` - Pre-computed keccak256 hash of the code
+    pub fn contract(balance: u128, code: Vec<u8>, code_hash: Hash) -> Self {
+        Self {
+            nonce: 1, // Contracts start with nonce 1 per EIP-161
+            balance,
+            storage_root: [0u8; 32],
+            code_hash,
+            code: Some(code),
+        }
+    }
+
+    /// Check if this is a contract account
+    /// Returns true if the account has bytecode
+    pub fn is_contract(&self) -> bool {
+        self.code.is_some() && !self.code.as_ref().map_or(true, |c| c.is_empty())
+    }
+
+    /// Get the contract code if this is a contract account
+    pub fn get_code(&self) -> Option<&[u8]> {
+        self.code.as_deref()
+    }
+
+    /// Set contract code (used during deployment)
+    pub fn set_code(&mut self, code: Vec<u8>, code_hash: Hash) {
+        self.code = Some(code);
+        self.code_hash = code_hash;
     }
 
     /// Add to balance with overflow protection

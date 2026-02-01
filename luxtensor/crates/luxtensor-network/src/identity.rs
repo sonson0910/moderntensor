@@ -5,7 +5,7 @@ use crate::error::NetworkError;
 use libp2p::identity::Keypair;
 use std::fs;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Manages node identity (keypair) for P2P networking
 pub struct NodeIdentity {

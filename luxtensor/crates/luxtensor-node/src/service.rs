@@ -336,8 +336,14 @@ impl NodeService {
         info!("🚀 Starting node services...");
 
         // Create shared EVM state for transaction bridge
+        // Use new_dev() in development mode for pre-funded test accounts
         let evm_state = Arc::new(parking_lot::RwLock::new(
-            luxtensor_rpc::EvmState::new(self.config.node.chain_id as u64)
+            if self.config.node.dev_mode {
+                info!("⚠️ DEV MODE: Using pre-funded test accounts");
+                luxtensor_rpc::EvmState::new_dev(self.config.node.chain_id as u64)
+            } else {
+                luxtensor_rpc::EvmState::new(self.config.node.chain_id as u64)
+            }
         ));
 
         // ============================================================
@@ -353,7 +359,7 @@ impl NodeService {
         let (p2p_event_tx, mut p2p_event_rx) = mpsc::unbounded_channel::<SwarmP2PEvent>();
 
         // Channel for RPC to send transactions to P2P layer
-        let (tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::unbounded_channel::<Transaction>();
+        let (_tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::unbounded_channel::<Transaction>();
 
         // Load or generate persistent node identity (Peer ID)
         let node_key_path = self.config.network.node_key_path
@@ -673,6 +679,7 @@ impl NodeService {
             let validators = self.config.consensus.validators.clone();
             let genesis_timestamp = self.genesis_timestamp;
             let broadcast_tx = self.broadcast_tx.clone();
+            let chain_id = self.config.node.chain_id as u64;
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -689,6 +696,7 @@ impl NodeService {
                     validators,
                     genesis_timestamp,
                     broadcast_tx,
+                    chain_id,  // Pass chain_id from config
                 ).await
             });
 
@@ -790,6 +798,7 @@ impl NodeService {
         validators: Vec<String>,
         genesis_timestamp: u64,
         broadcast_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
+        chain_id: u64,  // Chain ID for transaction creation
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -809,9 +818,13 @@ impl NodeService {
                     };
                     slot_counter = slot + 1;
 
+                    // 🔧 DEBUG: Log every slot to confirm block production is running
+                    debug!("⏰ Slot {} processing (chain_id: {})", slot, chain_id);
+
                     // 🔧 FIX: Drain tx_queue EVERY slot to ensure TXs are not missed
                     // Add to mempool regardless of leader status, produce block only if leader
                     let pending_txs = evm_state.read().drain_tx_queue();
+                    debug!("📤 Drained {} transactions from tx_queue", pending_txs.len());
                     if !pending_txs.is_empty() {
                         info!("📤 Found {} pending transactions to process", pending_txs.len());
                     }
@@ -819,14 +832,15 @@ impl NodeService {
                         let from_addr = luxtensor_core::Address::from(ready_tx.from);
                         let to_addr = ready_tx.to.map(luxtensor_core::Address::from);
 
-                        let mut tx = Transaction::new(
+                        let mut tx = Transaction::with_chain_id(
+                            chain_id,  // Use config chain_id for proper signature
                             ready_tx.nonce,
                             from_addr,
                             to_addr,
                             ready_tx.value,
-                            1,
+                            1_000_000_000,  // gas_price: 1 Gwei (mempool minimum)
                             ready_tx.gas,
-                            ready_tx.data,
+                            ready_tx.data.clone(),
                         );
 
                         if !sign_transaction_with_dev_key(&mut tx, &ready_tx.from) {
@@ -878,6 +892,23 @@ impl NodeService {
                                     warn!("⚠️ Failed to create checkpoint at height {}: {:?}", current_height, e);
                                 } else {
                                     info!("📸 Checkpoint created at height {} (every {} blocks)", current_height, CHECKPOINT_INTERVAL);
+                                }
+                            }
+
+                            // Auto-pruning: clean up old receipts every 1000 blocks
+                            const PRUNING_INTERVAL: u64 = 1000;
+                            const KEEP_RECEIPTS_BLOCKS: u64 = 10000; // Keep last 10K blocks of receipts
+
+                            if current_height > KEEP_RECEIPTS_BLOCKS && current_height % PRUNING_INTERVAL == 0 {
+                                let prune_before = current_height.saturating_sub(KEEP_RECEIPTS_BLOCKS);
+                                match storage.prune_receipts_before_height(prune_before) {
+                                    Ok(pruned) if pruned > 0 => {
+                                        info!("🗑️ Auto-pruned {} old receipts (keeping last {} blocks)", pruned, KEEP_RECEIPTS_BLOCKS);
+                                    }
+                                    Ok(_) => {} // Nothing to prune
+                                    Err(e) => {
+                                        warn!("⚠️ Failed to auto-prune receipts: {:?}", e);
+                                    }
                                 }
                             }
                         }

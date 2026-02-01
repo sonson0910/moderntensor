@@ -236,6 +236,73 @@ Get AI circuit breaker status.
 
 ---
 
+## Checkpoint Methods
+
+### checkpoint_list
+
+List all available checkpoints.
+
+```bash
+{"jsonrpc":"2.0","method":"checkpoint_list","params":[],"id":1}
+```
+
+**Response:**
+
+```json
+{
+  "result": {
+    "checkpoints": [
+      {"height": 10000, "block_hash": "0x...", "timestamp": 1706698000}
+    ]
+  }
+}
+```
+
+### checkpoint_status
+
+Get current checkpoint status.
+
+```bash
+{"jsonrpc":"2.0","method":"checkpoint_status","params":[],"id":1}
+```
+
+**Response:**
+
+```json
+{
+  "result": {
+    "current_height": 15432,
+    "last_checkpoint": 10000,
+    "next_checkpoint": 20000,
+    "interval": 10000
+  }
+}
+```
+
+### checkpoint_get
+
+Get specific checkpoint metadata.
+
+```bash
+{"jsonrpc":"2.0","method":"checkpoint_get","params":[10000],"id":1}
+```
+
+**Response:**
+
+```json
+{
+  "result": {
+    "height": 10000,
+    "block_hash": "0x...",
+    "state_root": "0x...",
+    "size_bytes": 52428800,
+    "checksum": "sha256:..."
+  }
+}
+```
+
+---
+
 ## Error Codes
 
 | Code | Message |

@@ -395,7 +395,7 @@ impl WeightConsensusManager {
     pub fn finalize_proposal(
         &self,
         proposal_id: Hash,
-        current_block: u64,
+        _current_block: u64,
     ) -> Result<Vec<(u64, u16)>, ConsensusError> {
         let mut proposals = self.proposals.write();
 

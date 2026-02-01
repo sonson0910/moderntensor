@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
-use tracing::{info, warn, error};
+use tracing::info;
 
 /// Shutdown signal sender/receiver
 pub type ShutdownSender = broadcast::Sender<()>;

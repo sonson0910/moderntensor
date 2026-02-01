@@ -1,5 +1,4 @@
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
 /// Standard JSON-RPC 2.0 error codes
 pub mod error_codes {

@@ -3,7 +3,6 @@
 //! Implements weak subjectivity checkpoints and finality-based pruning
 //! to prevent long-range attacks in PoS.
 
-use std::collections::HashMap;
 use parking_lot::RwLock;
 use luxtensor_core::types::Hash;
 

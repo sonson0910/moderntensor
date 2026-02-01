@@ -7,7 +7,6 @@
 //! - debug_* methods
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use parking_lot::RwLock;
 use sha2::{Sha256, Digest};
 use tracing::warn;

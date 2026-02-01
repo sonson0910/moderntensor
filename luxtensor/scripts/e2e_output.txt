@@ -1,0 +1,236 @@
+﻿
+========================================================================
+       BLOCKCHAIN SCANNER + VESTING LOCK/UNLOCK TEST
+
+       1. Deploy MDTVesting Contract
+       2. LOCK: createTeamVesting (lock tokens for beneficiary)
+       3. UNLOCK: claim (beneficiary claims vested tokens)
+       4. Detailed Transaction Query (like Etherscan)
+========================================================================
+    
+======================================================================
+  STARTING LOCAL TESTNET
+======================================================================
+[OK] Binary: luxtensor-node.exe
+[START] validator-a @ RPC:9000
+[START] miner-b @ RPC:9001
+[START] miner-c @ RPC:9002
+
+[WAIT] Waiting 15s...
+[OK] validator-a: Block #2
+[OK] miner-b: Block #0
+[OK] miner-c: Block #0
+
+======================================================================
+  PHASE 1: DEPLOY VESTING CONTRACT
+======================================================================
+
+[TX] Deploying MDTVesting...
+  TX Hash: 0xf5f66ec5ce0dbb546a786a32139683bc731a5a6cf429e478d4898b62019e6f25
+  Contract: 0x97b928e5b2703014143070b2e528b99700000000
+
+======================================================================
+  TRANSACTION: DEPLOY MDTVesting
+======================================================================
+
+[BASIC INFO]
+  Transaction Hash   : 0xf5f66ec5ce0dbb546a786a32139683bc731a5a6cf429e478d4898b62019e6f25
+  Status             : SUCCESS
+  Block              : Pending
+  Block Hash         : N/A...N/A
+
+[ADDRESSES]
+  From               : 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  To                 : (Contract Creation)
+  Type               : Contract Deployment
+  Contract Address   : 0x97b928e5b2703014143070b2e528b99700000000
+
+[VALUE]
+  Value              : 0 Wei
+  Value (Wei)        : 0
+
+[GAS]
+  Gas Limit          : 0
+  Gas Price          : 0 Wei
+  Gas Used           : 21,000
+  Transaction Fee    : 0 Wei
+
+[NONCE & INDEX]
+  Nonce              : 0
+  Transaction Index  : 0
+
+[INPUT DATA]
+  Data Size          : 1131 bytes
+  Function Selector  : 0x60a06040
+  Raw Data           : 0x60a060405234801561001057600080fd5b5060405161135a38038061135a83398101604081905261002f9161011b565b33...00000000000000000000000000000000000000000000000002
+
+======================================================================
+  PHASE 2: SET TGE (Token Generation Event)
+======================================================================
+
+[TX] Setting TGE to 1769915950...
+  TX Hash: 0x7867b1980dd49d0ed154a063c38c126ec88db17ff8823a4cd9be7d450d54c1ab
+
+======================================================================
+  TRANSACTION: SET TGE
+======================================================================
+
+[BASIC INFO]
+  Transaction Hash   : 0x7867b1980dd49d0ed154a063c38c126ec88db17ff8823a4cd9be7d450d54c1ab
+  Status             : SUCCESS
+  Block              : Pending
+  Block Hash         : N/A...N/A
+
+[ADDRESSES]
+  From               : 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  To                 : 0x97b928e5b2703014143070b2e528b99700000000
+  Type               : Transfer / Contract Call
+
+[VALUE]
+  Value              : 0 Wei
+  Value (Wei)        : 0
+
+[GAS]
+  Gas Limit          : 0
+  Gas Price          : 0 Wei
+  Gas Used           : 21,000
+  Transaction Fee    : 0 Wei
+
+[NONCE & INDEX]
+  Nonce              : 1
+  Transaction Index  : 0
+
+[INPUT DATA]
+  Data Size          : 36 bytes
+  Function Selector  : 0xff1a318d
+  Function Name      : setTGE(uint256)
+  Raw Data           : 0xff1a318d00000000000000000000000000000000000000000000000000000000697ec62e
+
+======================================================================
+  PHASE 3: LOCK TOKENS (createTeamVesting)
+======================================================================
+
+[TX] Locking 1000 tokens for 0x70997970C51812dc3A...
+  TX Hash: 0x666a55166e079d177df5c750aed41b264c8f6f0c8193d33b206a3d69b44a07cc
+
+======================================================================
+  TRANSACTION: LOCK TOKENS (createTeamVesting)
+======================================================================
+
+[BASIC INFO]
+  Transaction Hash   : 0x666a55166e079d177df5c750aed41b264c8f6f0c8193d33b206a3d69b44a07cc
+  Status             : SUCCESS
+  Block              : Pending
+  Block Hash         : N/A...N/A
+
+[ADDRESSES]
+  From               : 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  To                 : 0x97b928e5b2703014143070b2e528b99700000000
+  Type               : Transfer / Contract Call
+
+[VALUE]
+  Value              : 0 Wei
+  Value (Wei)        : 0
+
+[GAS]
+  Gas Limit          : 0
+  Gas Price          : 0 Wei
+  Gas Used           : 21,000
+  Transaction Fee    : 0 Wei
+
+[NONCE & INDEX]
+  Nonce              : 2
+  Transaction Index  : 0
+
+[INPUT DATA]
+  Data Size          : 68 bytes
+  Function Selector  : 0x88d9e6f4
+  Function Name      : createTeamVesting(address,uint256)
+  Raw Data           : 0x88d9e6f400000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c800000000000000000000000000000000000000000000003635c9adc5dea00000
+
+======================================================================
+  PHASE 4: CHECK VESTING INFO
+======================================================================
+
+[CALL] getVestingInfo(0x70997970C51812dc3A...)...
+  Result: 0x
+
+======================================================================
+  PHASE 5: UNLOCK TOKENS (claim)
+======================================================================
+
+[TX] Beneficiary claiming tokens...
+  TX Hash: 0xec6154154a831f259f44746034cb0388cfbfcd455ad883703608c540b28e0416
+
+======================================================================
+  TRANSACTION: UNLOCK TOKENS (claim)
+======================================================================
+
+[BASIC INFO]
+  Transaction Hash   : 0xec6154154a831f259f44746034cb0388cfbfcd455ad883703608c540b28e0416
+  Status             : SUCCESS
+  Block              : Pending
+  Block Hash         : N/A...N/A
+
+[ADDRESSES]
+  From               : 0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+  To                 : 0x97b928e5b2703014143070b2e528b99700000000
+  Type               : Transfer / Contract Call
+
+[VALUE]
+  Value              : 0 Wei
+  Value (Wei)        : 0
+
+[GAS]
+  Gas Limit          : 0
+  Gas Price          : 0 Wei
+  Gas Used           : 21,000
+  Transaction Fee    : 0 Wei
+
+[NONCE & INDEX]
+  Nonce              : 0
+  Transaction Index  : 0
+
+[INPUT DATA]
+  Data Size          : 4 bytes
+  Function Selector  : 0x4e71d92d
+  Function Name      : claim()
+  Raw Data           : 0x4e71d92d
+
+======================================================================
+  PHASE 6: TRANSACTION SUMMARY
+======================================================================
+
+====================================================================================================
+  TRANSACTION LIST
+====================================================================================================
+#   TX Hash              Type            From            To              Value           Status  
+----------------------------------------------------------------------------------------------------
+1   0xf5f66ec5ce0dbb54.. Deploy Contract 0xf39fd6e51a... Contract        0               OK      
+2   0x7867b1980dd49d0e.. Set TGE         0xf39fd6e51a... 0x97b928e5b2... 0               OK      
+3   0x666a55166e079d17.. Lock Tokens     0xf39fd6e51a... 0x97b928e5b2... 0               OK      
+4   0xec6154154a831f25.. Unlock/Claim    0x70997970c5... 0x97b928e5b2... 0               OK      
+----------------------------------------------------------------------------------------------------
+
+======================================================================
+  PHASE 7: MULTI-NODE VERIFICATION
+======================================================================
+
+[Contract Code Verification]
+  validator-a: 0 bytes
+  miner-b: 0 bytes
+  miner-c: 0 bytes
+
+[Transaction Visibility]
+  Deploy Contract: Visible on 3/3 nodes
+  Set TGE: Visible on 3/3 nodes
+  Lock Tokens: Visible on 3/3 nodes
+  Unlock/Claim: Visible on 3/3 nodes
+
+[Final Block Numbers]
+  validator-a: Block #5
+  miner-b: Block #0
+  miner-c: Block #0
+
+[CLEANUP] Stopping nodes...
+[DONE] Cleanup complete

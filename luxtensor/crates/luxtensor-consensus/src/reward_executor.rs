@@ -67,6 +67,7 @@ pub struct RewardExecutor {
     current_epoch: RwLock<u64>,
 
     // DAO address
+    #[allow(dead_code)] // Reserved for direct DAO treasury interaction
     dao_address: [u8; 20],
 }
 

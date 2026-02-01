@@ -310,7 +310,7 @@ pub fn register_staking_handlers(
         }))
     });
 
-    let validators_config = validators.clone();
+    let _validators_config = validators.clone();
 
     // staking_getConfig - Get staking configuration
     io.add_sync_method("staking_getConfig", move |_params: Params| {

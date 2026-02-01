@@ -31,14 +31,37 @@ pub struct BlockchainDB {
     best_height: Arc<AtomicU64>,
 }
 
+/// Storage compression type configuration
+#[derive(Debug, Clone, Copy, Default)]
+pub enum StorageCompression {
+    /// LZ4 compression - fast with good ratio (default)
+    #[default]
+    Lz4,
+    /// Zstd compression - better ratio, slightly slower
+    Zstd,
+    /// No compression
+    None,
+}
+
 impl BlockchainDB {
-    /// Open a blockchain database at the given path
+    /// Open a blockchain database at the given path with default options (LZ4 compression)
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::open_with_options(path, StorageCompression::default())
+    }
+
+    /// Open a blockchain database with configurable compression
+    pub fn open_with_options<P: AsRef<Path>>(path: P, compression: StorageCompression) -> Result<Self> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         opts.set_max_open_files(10000);
-        opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+        // Apply configured compression type
+        match compression {
+            StorageCompression::Lz4 => opts.set_compression_type(rocksdb::DBCompressionType::Lz4),
+            StorageCompression::Zstd => opts.set_compression_type(rocksdb::DBCompressionType::Zstd),
+            StorageCompression::None => opts.set_compression_type(rocksdb::DBCompressionType::None),
+        }
 
         // Define column families
         let cfs = vec![
@@ -300,6 +323,58 @@ impl BlockchainDB {
                 // Delete height->hash mapping
                 batch.delete_cf(&cf_height, &height_key);
                 pruned_count += 1;
+            }
+        }
+
+        // Write all deletions atomically
+        if pruned_count > 0 {
+            self.db.write(batch)?;
+        }
+
+        Ok(pruned_count)
+    }
+
+    /// Prune old receipts for blocks below the specified height
+    /// This helps save disk space for historical receipts that are rarely accessed
+    /// Returns the number of receipts pruned
+    pub fn prune_receipts_before_height(&self, keep_from_height: u64) -> Result<u64> {
+        if keep_from_height == 0 {
+            return Ok(0);
+        }
+
+        let cf_receipts = self.db.cf_handle(CF_RECEIPTS)
+            .ok_or_else(|| StorageError::DatabaseError("CF_RECEIPTS not found".into()))?;
+        let cf_tx_to_block = self.db.cf_handle(CF_TX_TO_BLOCK)
+            .ok_or_else(|| StorageError::DatabaseError("CF_TX_TO_BLOCK not found".into()))?;
+        let cf_height = self.db.cf_handle(CF_HEIGHT_TO_HASH)
+            .ok_or_else(|| StorageError::DatabaseError("CF_HEIGHT_TO_HASH not found".into()))?;
+
+        let mut pruned_count = 0u64;
+        let mut batch = WriteBatch::default();
+
+        // For each height we want to prune, find the block and its transactions
+        for height in 1..keep_from_height {
+            let height_key = height.to_be_bytes();
+
+            // Get block hash at this height (if it still exists)
+            if let Some(hash_bytes) = self.db.get_cf(&cf_height, &height_key)? {
+                // Try to get the block to find its transaction hashes
+                let mut hash: Hash = [0u8; 32];
+                if hash_bytes.len() == 32 {
+                    hash.copy_from_slice(&hash_bytes);
+
+                    // Get the block to find transactions
+                    if let Some(block) = self.get_block(&hash)? {
+                        for tx in &block.transactions {
+                            let tx_hash = tx.hash();
+                            // Delete receipt for this transaction
+                            batch.delete_cf(&cf_receipts, &tx_hash);
+                            // Delete tx->block mapping
+                            batch.delete_cf(&cf_tx_to_block, &tx_hash);
+                            pruned_count += 1;
+                        }
+                    }
+                }
             }
         }
 

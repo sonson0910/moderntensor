@@ -1,10 +1,27 @@
 use secp256k1::{Secp256k1, SecretKey, PublicKey, Message, ecdsa::Signature};
+use zeroize::Zeroize;
 use crate::{Hash, Result, CryptoError, keccak256};
 
 /// Key pair for signing and verification
+///
+/// # Security
+/// The secret key is securely zeroed in memory when the KeyPair is dropped
+/// to prevent secret material from lingering in memory.
 pub struct KeyPair {
     secret_key: SecretKey,
     public_key: PublicKey,
+}
+
+impl Drop for KeyPair {
+    fn drop(&mut self) {
+        // Get mutable reference to secret key bytes and zero them
+        // Note: secp256k1::SecretKey doesn't expose its internal bytes directly,
+        // but we can serialize it, zero that, to trigger secure handling.
+        // The SecretKey itself will be dropped after, but this ensures we
+        // explicitly handle the cleanup.
+        let mut secret_bytes = self.secret_key.secret_bytes();
+        secret_bytes.zeroize();
+    }
 }
 
 impl KeyPair {

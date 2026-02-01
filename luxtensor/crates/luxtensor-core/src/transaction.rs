@@ -63,7 +63,8 @@ impl Transaction {
 
     /// Calculate transaction hash
     pub fn hash(&self) -> Hash {
-        let bytes = bincode::serialize(self).unwrap();
+        let bytes = bincode::serialize(self)
+            .expect("Transaction serialization should never fail");
         keccak256(&bytes)
     }
 

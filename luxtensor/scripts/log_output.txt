@@ -1,0 +1,43 @@
+﻿[START] Node...
+[TX] Response: {'jsonrpc': '2.0', 'result': '0x638672ca2c581929f1dedf6f50f0860f1a226a592e32113279aaa886f8c3c2e5', 'id': 1}
+
+[LOG FILE] C:\Users\Admin\AppData\Local\Temp\quick_z2xyulqb\node\node.log
+  Exists: False
+
+[STDOUT FILE] C:\Users\Admin\AppData\Local\Temp\quick_z2xyulqb\node\stdout.log
+  Size: 34108 bytes
+
+[SEARCH STDOUT FOR TX FLOW]:
+  L24: [2m2026-02-01T04:07:59.558692Z[0m [32m INFO[0m ├░┼╕ΓÇ£∩┐╜ Initializing transaction mempool...
+  L25: [2m2026-02-01T04:07:59.558698Z[0m [32m INFO[0m   ├ó┼ôΓÇ£ Mempool initialized (max size: 10000)
+  L39: [2m2026-02-01T04:07:59.559277Z[0m [33m WARN[0m Validator mode enabled but no key path configured, blocks will be unsigned
+  L133: [2m2026-02-01T04:07:59.744150Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L136: [2m2026-02-01T04:07:59.744271Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #1 with 0 transactions, 0 gas used, hash [48, 85, 247, 143, 100, 147, 82, 60, 113, 182, 255, 184, 77, 51, 47,
+  L140: [2m2026-02-01T04:08:00.071738Z[0m [33m WARN[0m [1mSwarm::poll[0m[2m:[0m Failed to trigger bootstrap: No known peers.
+  L142: [2m2026-02-01T04:08:01.755567Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L145: [2m2026-02-01T04:08:01.755655Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #2 with 0 transactions, 0 gas used, hash [71, 59, 71, 214, 18, 241, 212, 191, 141, 118, 127, 112, 247, 238, 1
+  L149: [2m2026-02-01T04:08:03.753042Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L152: [2m2026-02-01T04:08:03.753131Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #3 with 0 transactions, 0 gas used, hash [33, 236, 206, 150, 197, 254, 117, 249, 200, 155, 231, 39, 57, 204, 
+  L165: [2m2026-02-01T04:08:05.759926Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L168: [2m2026-02-01T04:08:05.760031Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #4 with 0 transactions, 0 gas used, hash [234, 79, 131, 91, 60, 187, 66, 95, 175, 189, 203, 152, 28, 115, 205
+  L183: [2m2026-02-01T04:08:07.252426Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ñ Transaction added to mempool: 0x638672ca2c581929f1dedf6f50f0860f1a226a592e32113279aaa886f8c3c2e5
+  L186: [2m2026-02-01T04:08:07.252469Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬Ñ queue_transaction: Queueing TX from 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266 nonce=0
+  L187: [2m2026-02-01T04:08:07.252473Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬Ñ queue_transaction: Queue size now = 1
+  L188: [2m2026-02-01T04:08:07.252476Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Transaction queued for block inclusion: 0x638672ca2c581929f1dedf6f50f0860f1a226a592e32113279aaa886f8c3c2e5
+  L204: [2m2026-02-01T04:08:07.750807Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 1 transactions from tx_queue
+  L206: [2m2026-02-01T04:08:07.750969Z[0m [32m INFO[0m ├░┼╕ΓÇ¥ΓÇÿ Signing with keypair address: [243, 159, 214, 229, 26, 173, 136, 246, 244, 206, 106, 184, 130, 114, 121, 207, 255, 185, 34, 
+  L209: [2m2026-02-01T04:08:07.751343Z[0m [32m INFO[0m ├ó┼ôΓÇª Signature verified with v=1
+  L210: [2m2026-02-01T04:08:07.751495Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬Ñ Transaction added to mempool
+  L213: [2m2026-02-01T04:08:07.751855Z[0m [32m INFO[0m ├░┼╕ΓÇ¥∩┐╜ EVM Deploy raw result: Success { reason: Return, gas_used: 53072, gas_refunded: 0, logs: [], output: Create(0x, Some(0x5fbdb
+  L214: [2m2026-02-01T04:08:07.751877Z[0m [34mDEBUG[0m Contract deployed at 5fbdb2315678afecb367f032d93f642f64180aa3 with 53072 gas
+  L215: [2m2026-02-01T04:08:07.751884Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Contract registered at 0x5fbdb2315678afecb367f032d93f642f64180aa3
+  L216: [2m2026-02-01T04:08:07.751889Z[0m [32m INFO[0m ├░┼╕ΓÇ£ΓÇ₧ Contract deployed at 0x5fbdb2315678afecb367f032d93f642f64180aa3 (gas used: 53072)
+  L217: [2m2026-02-01T04:08:07.751970Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #5 with 1 transactions, 21272 gas used, hash [213, 183, 75, 214, 88, 79, 69, 166, 179, 17, 148, 249, 255, 80,
+  L240: [2m2026-02-01T04:08:09.758196Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L243: [2m2026-02-01T04:08:09.758285Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #6 with 0 transactions, 0 gas used, hash [25, 13, 241, 66, 67, 58, 35, 145, 108, 179, 71, 119, 154, 94, 215, 
+  L256: [2m2026-02-01T04:08:11.745904Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L259: [2m2026-02-01T04:08:11.745992Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #7 with 0 transactions, 0 gas used, hash [192, 172, 104, 81, 84, 3, 139, 7, 241, 195, 226, 190, 155, 196, 85,
+  L272: [2m2026-02-01T04:08:13.757362Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L275: [2m2026-02-01T04:08:13.757458Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #8 with 0 transactions, 0 gas used, hash [28, 250, 249, 172, 44, 89, 189, 61, 105, 214, 206, 139, 255, 47, 55
+  L288: [2m2026-02-01T04:08:15.757954Z[0m [34mDEBUG[0m ├░┼╕ΓÇ£┬ñ Drained 0 transactions from tx_queue
+  L291: [2m2026-02-01T04:08:15.758045Z[0m [32m INFO[0m ├░┼╕ΓÇ£┬ª Produced block #9 with 0 transactions, 0 gas used, hash [166, 176, 121, 161, 15, 139, 79, 37, 133, 224, 107, 114, 246, 14, 2

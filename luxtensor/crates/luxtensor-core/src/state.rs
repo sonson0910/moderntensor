@@ -39,9 +39,10 @@ impl StateDB {
 
     /// Calculate state root using Merkle Tree
     /// Each leaf is hash(address || serialized_account)
-    pub fn root_hash(&self) -> Hash {
+    /// Returns Result to handle serialization errors gracefully
+    pub fn root_hash(&self) -> Result<Hash> {
         if self.cache.is_empty() {
-            return [0u8; 32]; // Empty state root
+            return Ok([0u8; 32]); // Empty state root
         }
 
         // Collect all accounts and sort by address for deterministic ordering
@@ -49,26 +50,25 @@ impl StateDB {
         items.sort_by(|a, b| a.0.cmp(b.0));
 
         // Create leaf hashes: hash(address || account_data)
-        let leaf_hashes: Vec<[u8; 32]> = items.iter()
-            .map(|(address, account)| {
-                let mut data = Vec::new();
-                data.extend_from_slice(address.as_bytes());
-                // Serialize account - should never fail for valid Account
-                let account_bytes = bincode::serialize(account)
-                    .expect("Failed to serialize Account");
-                data.extend_from_slice(&account_bytes);
-                luxtensor_crypto::keccak256(&data)
-            })
-            .collect();
+        let mut leaf_hashes: Vec<[u8; 32]> = Vec::with_capacity(items.len());
+        for (address, account) in items.iter() {
+            let mut data = Vec::new();
+            data.extend_from_slice(address.as_bytes());
+            // Serialize account - use ? for proper error handling
+            let account_bytes = bincode::serialize(account)
+                .map_err(|e| crate::CoreError::SerializationError(e.to_string()))?;
+            data.extend_from_slice(&account_bytes);
+            leaf_hashes.push(luxtensor_crypto::keccak256(&data));
+        }
 
         // Build Merkle tree and return root
         let tree = luxtensor_crypto::MerkleTree::new(leaf_hashes);
-        tree.root()
+        Ok(tree.root())
     }
 
     /// Commit changes and return state root
     pub fn commit(&mut self) -> Result<Hash> {
-        Ok(self.root_hash())
+        self.root_hash()
     }
 }
 

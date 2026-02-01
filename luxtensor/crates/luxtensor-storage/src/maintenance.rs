@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use tracing::{info, warn, error};
 
 /// Backup configuration

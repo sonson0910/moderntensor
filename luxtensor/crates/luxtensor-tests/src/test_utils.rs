@@ -15,6 +15,7 @@ pub fn create_test_account(balance: u128, nonce: u64) -> (Address, Account, KeyP
         balance,
         storage_root: [0u8; 32],
         code_hash: [0u8; 32],
+        code: None,
     };
 
     (address, account, keypair)
