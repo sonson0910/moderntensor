@@ -10,6 +10,7 @@ LuxTensor implements native AI opcodes as EVM precompiled contracts, enabling on
 | `0x11` | VERIFY_PROOF | Verify zkML proofs |
 | `0x12` | GET_RESULT | Retrieve inference results |
 | `0x13` | COMPUTE_PAYMENT | Calculate payment for request |
+| `0x14` | TRAIN_REQUEST | Submit federated learning training job |
 
 ## Gas Costs
 

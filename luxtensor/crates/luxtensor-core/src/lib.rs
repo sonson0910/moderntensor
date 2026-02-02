@@ -4,6 +4,7 @@ pub mod state;
 pub mod account;
 pub mod types;
 pub mod error;
+pub mod semantic;
 pub mod performance;
 pub mod subnet;
 pub mod constants;

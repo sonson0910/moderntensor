@@ -1,7 +1,7 @@
 //! AI Precompiled Contract Handlers for LuxTensor
 //!
 //! This module implements custom precompiled contracts for native AI integration.
-//! Precompile addresses range from 0x10 to 0x13.
+//! Precompile addresses range from 0x10 to 0x14.
 //!
 //! # Precompiles
 //!
@@ -9,12 +9,14 @@
 //! - `0x11` VERIFY_PROOF: Verify ZK proof for AI computation
 //! - `0x12` GET_RESULT: Retrieve completed AI result
 //! - `0x13` COMPUTE_PAYMENT: Calculate required payment for request
+//! - `0x14` TRAIN_REQUEST: Submit federated learning training job
 
 use crate::revm_integration::precompiles;
 use luxtensor_crypto::keccak256;
 use revm::primitives::{Bytes, PrecompileOutput, PrecompileResult, PrecompileError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use luxtensor_core::semantic::{SimpleVectorStore, VectorStore}; // Fixed imports
 
 /// Gas costs for AI precompiles
 pub mod gas_costs {
@@ -33,6 +35,23 @@ pub mod gas_costs {
 
     /// Cost for COMPUTE_PAYMENT
     pub const COMPUTE_PAYMENT: u64 = 1_000;
+
+    /// Base cost for TRAIN_REQUEST
+    pub const TRAIN_REQUEST_BASE: u64 = 30_000;
+    /// Per-byte cost for training config
+    pub const TRAIN_REQUEST_PER_BYTE: u64 = 12;
+
+    /// Base cost for VECTOR_STORE
+    pub const VECTOR_STORE_BASE: u64 = 50_000;
+    /// Per-dimension cost for store
+    pub const VECTOR_STORE_PER_DIM: u64 = 100;
+
+    /// Base cost for VECTOR_QUERY
+    pub const VECTOR_QUERY_BASE: u64 = 20_000;
+    /// Per-dimension cost for query
+    pub const VECTOR_QUERY_PER_DIM: u64 = 50;
+    /// Cost per searched item (Scan cost for brute force)
+    pub const VECTOR_QUERY_PER_ITEM: u64 = 10;
 }
 
 /// Stored AI request for precompile state
@@ -56,11 +75,43 @@ pub enum RequestStatus {
     Cancelled,
 }
 
+/// Training job status
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TrainingStatus {
+    Open,           // Accepting participants
+    Training,       // Active training round
+    Aggregating,    // Aggregating gradients
+    Completed,      // All rounds finished
+    Cancelled,
+}
+
+/// Training job entry for federated learning
+#[derive(Clone, Debug)]
+pub struct TrainingJob {
+    pub job_id: [u8; 32],
+    pub model_id: [u8; 32],       // IPFS CID of base model
+    pub dataset_ref: [u8; 32],    // IPFS reference to dataset
+    pub total_rounds: u64,
+    pub current_round: u64,
+    pub min_participants: u64,
+    pub reward_per_round: u128,
+    pub creator: [u8; 20],
+    pub status: TrainingStatus,
+    pub participants: Vec<[u8; 20]>,
+    pub gradient_hashes: Vec<[u8; 32]>,
+}
+
 /// AI Precompile state manager
 #[derive(Clone, Default)]
 pub struct AIPrecompileState {
     requests: Arc<RwLock<HashMap<[u8; 32], AIRequestEntry>>>,
     request_counter: Arc<RwLock<u64>>,
+    /// Training jobs for federated learning
+    training_jobs: Arc<RwLock<HashMap<[u8; 32], TrainingJob>>>,
+    training_job_counter: Arc<RwLock<u64>>,
+
+    /// Native Vector Store for Semantic Layer (0x20, 0x21)
+    vector_store: Arc<RwLock<SimpleVectorStore>>,
 }
 
 impl AIPrecompileState {
@@ -68,6 +119,10 @@ impl AIPrecompileState {
         Self {
             requests: Arc::new(RwLock::new(HashMap::new())),
             request_counter: Arc::new(RwLock::new(0)),
+            training_jobs: Arc::new(RwLock::new(HashMap::new())),
+            training_job_counter: Arc::new(RwLock::new(0)),
+            // Default dimension 768
+            vector_store: Arc::new(RwLock::new(SimpleVectorStore::new(768))),
         }
     }
 
@@ -115,6 +170,40 @@ impl AIPrecompileState {
         }
         false
     }
+
+    /// Generate unique training job ID
+    fn generate_job_id(&self, creator: &[u8; 20], model_id: &[u8; 32]) -> [u8; 32] {
+        let mut counter = self.training_job_counter.write().unwrap();
+        *counter += 1;
+
+        let mut data = Vec::with_capacity(20 + 32 + 8);
+        data.extend_from_slice(creator);
+        data.extend_from_slice(model_id);
+        data.extend_from_slice(&counter.to_be_bytes());
+
+        keccak256(&data)
+    }
+
+    /// Store new training job
+    pub fn store_training_job(&self, job: TrainingJob) {
+        let mut jobs = self.training_jobs.write().unwrap();
+        jobs.insert(job.job_id, job);
+    }
+
+    /// Get training job by ID
+    pub fn get_training_job(&self, job_id: &[u8; 32]) -> Option<TrainingJob> {
+        let jobs = self.training_jobs.read().unwrap();
+        jobs.get(job_id).cloned()
+    }
+
+    /// List active training jobs
+    pub fn list_active_training_jobs(&self) -> Vec<TrainingJob> {
+        let jobs = self.training_jobs.read().unwrap();
+        jobs.values()
+            .filter(|j| j.status == TrainingStatus::Open || j.status == TrainingStatus::Training)
+            .cloned()
+            .collect()
+    }
 }
 
 /// AI_REQUEST precompile handler (0x10)
@@ -152,7 +241,11 @@ pub fn ai_request_precompile(
 
     // Parse reward (big-endian u128 from 32 bytes)
     let reward_bytes = &input[84..116];
-    let max_reward = u128::from_be_bytes(reward_bytes[16..32].try_into().unwrap());
+    let max_reward = u128::from_be_bytes(
+        reward_bytes[16..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid reward bytes"))?
+    );
 
     // Generate request ID
     let request_id = state.generate_request_id(&caller, &model_hash);
@@ -310,7 +403,11 @@ pub fn compute_payment_precompile(
 
     // Parse input_size from second 32-byte word
     let input_size_bytes = &input[32..64];
-    let input_size = u64::from_be_bytes(input_size_bytes[24..32].try_into().unwrap());
+    let input_size = u64::from_be_bytes(
+        input_size_bytes[24..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid input size bytes"))?
+    );
 
     // Simple pricing formula:
     // base_cost + (input_size * per_byte_cost)
@@ -330,6 +427,306 @@ pub fn compute_payment_precompile(
         Bytes::copy_from_slice(&output),
     ))
 }
+
+/// TRAIN_REQUEST precompile handler (0x14)
+///
+/// Input format: abi.encode(model_id, dataset_ref, total_rounds, min_participants, reward_per_round)
+/// Output format: bytes32 job_id
+pub fn train_request_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+    caller: [u8; 20],
+) -> PrecompileResult {
+    // Calculate gas
+    let gas_cost = gas_costs::TRAIN_REQUEST_BASE +
+        (input.len() as u64 * gas_costs::TRAIN_REQUEST_PER_BYTE);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse input (min 128 bytes)
+    // 32 bytes model_id + 32 bytes dataset_ref + 32 bytes total_rounds +
+    // 32 bytes min_participants + 32 bytes reward_per_round = 160 bytes minimum
+    if input.len() < 160 {
+        return Err(PrecompileError::other("Invalid input length for training job").into());
+    }
+
+    let mut model_id = [0u8; 32];
+    model_id.copy_from_slice(&input[0..32]);
+
+    let mut dataset_ref = [0u8; 32];
+    dataset_ref.copy_from_slice(&input[32..64]);
+
+    // Parse total_rounds (uint256 -> u64)
+    let total_rounds = u64::from_be_bytes(
+        input[88..96]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid total_rounds bytes"))?
+    );
+
+    // Parse min_participants (uint256 -> u64)
+    let min_participants = u64::from_be_bytes(
+        input[120..128]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid min_participants bytes"))?
+    );
+
+    // Parse reward_per_round (uint256 -> u128)
+    let reward_per_round = u128::from_be_bytes(
+        input[144..160]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid reward_per_round bytes"))?
+    );
+
+    // Validate parameters
+    if total_rounds == 0 || min_participants == 0 {
+        return Err(PrecompileError::other("Invalid training parameters").into());
+    }
+
+    // Generate job ID
+    let job_id = state.generate_job_id(&caller, &model_id);
+
+    // Create and store training job
+    let job = TrainingJob {
+        job_id,
+        model_id,
+        dataset_ref,
+        total_rounds,
+        current_round: 0,
+        min_participants,
+        reward_per_round,
+        creator: caller,
+        status: TrainingStatus::Open,
+        participants: Vec::new(),
+        gradient_hashes: Vec::new(),
+    };
+    state.store_training_job(job);
+
+    // Return job_id
+    Ok(PrecompileOutput::new(
+        gas_cost,
+        Bytes::copy_from_slice(&job_id),
+    ))
+}
+
+/// VECTOR_STORE precompile handler (0x20)
+///
+/// Input format: abi.encode(vector_id: uint64, vector_data: float32[])
+/// Output format: bool success
+pub fn vector_store_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    // 1. Basic parsing
+    if input.len() < 32 {
+        return Err(PrecompileError::other("Invalid input: missing vector ID").into());
+    }
+
+    // Parse vector ID (uint64 from first 32 bytes)
+    let vector_id = u64::from_be_bytes(
+        input[24..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid vector ID bytes"))?
+    );
+
+    // Parse vector data (offset-based parsing simplified for prototype)
+    // Assume input format: [ID: 32 bytes] [Offset: 32 bytes] [Length: 32 bytes] [Data: 4*N bytes]
+    if input.len() < 96 {
+        return Err(PrecompileError::other("Invalid input structure").into());
+    }
+
+    let length_word = &input[64..96];
+    let vector_len = u32::from_be_bytes(
+        length_word[28..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length bytes"))?
+    ) as usize;
+
+    let float_data_start = 96;
+    let expected_size = float_data_start + (vector_len * 4);
+
+    if input.len() < expected_size {
+        return Err(PrecompileError::other("Input too short for vector data").into());
+    }
+
+    // 2. Calculate Gas
+    let gas_cost = gas_costs::VECTOR_STORE_BASE +
+                   (vector_len as u64 * gas_costs::VECTOR_STORE_PER_DIM);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // 3. Decode floats (IEEE 754)
+    let mut vector = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = float_data_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start+4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        // Use from_be_bytes because EVM is big-endian, but standard floats are typically LE in Rust/x86
+        // We assume ABI encoding puts bytes in standard network order (BE)
+        let val = f32::from_bits(u32::from_be_bytes(bytes));
+        vector.push(val);
+    }
+
+    // 4. Store Vector (with RwLock poisoning handling)
+    {
+        let mut store = state.vector_store.write()
+            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+        store.insert(vector_id, vector)
+            .map_err(|_| PrecompileError::other("Vector store error"))?;
+    }
+
+    // 5. Return true
+    let mut result = [0u8; 32];
+    result[31] = 1;
+
+    Ok(PrecompileOutput::new(
+        gas_cost,
+        Bytes::copy_from_slice(&result),
+    ))
+}
+
+/// VECTOR_QUERY precompile handler (0x21)
+///
+/// Input format: abi.encode(k: uint64, query_vector: float32[])
+/// Output format: (uint64[], float32[]) - IDs and scores
+///
+/// Maximum k is capped at 100 to prevent DoS attacks.
+pub fn vector_query_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    // Maximum k to prevent DoS
+    const MAX_K: usize = 100;
+
+    // 1. Basic parsing
+    if input.len() < 32 {
+        return Err(PrecompileError::other("Invalid input: missing k").into());
+    }
+
+    let raw_k = u64::from_be_bytes(
+        input[24..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid k bytes"))?
+    ) as usize;
+
+    // Cap k to prevent DoS attacks
+    let k = raw_k.min(MAX_K);
+
+    // Parse vector (similar to store)
+    // [K: 32 bytes] [Offset: 32 bytes] [Length: 32 bytes] [Data...]
+    if input.len() < 96 {
+        return Err(PrecompileError::other("Invalid input structure").into());
+    }
+
+    let length_word = &input[64..96];
+    let vector_len = u32::from_be_bytes(
+        length_word[28..32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length bytes"))?
+    ) as usize;
+
+    // 2. Calculate Gas (with RwLock poisoning handling)
+    // Scan cost estimate based on store size (O(N) for brute force)
+    let total_items = {
+        let store = state.vector_store.read()
+            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+        store.vectors.len() as u64
+    };
+
+    let gas_cost = gas_costs::VECTOR_QUERY_BASE +
+                   (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
+                   (total_items * gas_costs::VECTOR_QUERY_PER_ITEM);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // 3. Decode query vector
+    let float_data_start = 96;
+    if input.len() < float_data_start + (vector_len * 4) {
+        return Err(PrecompileError::other("Input too short").into());
+    }
+
+    let mut query = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = float_data_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start+4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        let val = f32::from_bits(u32::from_be_bytes(bytes));
+        query.push(val);
+    }
+
+    // 4. Perform Search (with RwLock poisoning handling)
+    let results = {
+        let store = state.vector_store.read()
+            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+        store.search(&query, k)
+            .map_err(|_| PrecompileError::other("Vector search error"))?
+    };
+
+    // 5. Encode Output with both IDs and Scores
+    // ABI format: (uint64[] ids, uint256[] scores)
+    // Struct of two dynamic arrays:
+    // [Offset to ids: 32] [Offset to scores: 32]
+    // [Len ids: 32] [ids padded to 32 each...]
+    // [Len scores: 32] [scores as uint256 (fixed-point) ...]
+
+    let res_len = results.len() as u64;
+    let mut output = Vec::new();
+
+    // Offset to first array (ids) = 64 (after the two offset words)
+    output.extend_from_slice(&[0u8; 31]);
+    output.push(64);
+
+    // Offset to second array (scores) = 64 + 32 + (res_len * 32)
+    // = 96 + res_len * 32
+    let scores_offset = 64u64 + 32 + (res_len * 32);
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&scores_offset.to_be_bytes());
+
+    // First array: ids
+    // Length
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&res_len.to_be_bytes());
+
+    // IDs (padded to 32 bytes each for uint64)
+    let mut scores_vec = Vec::with_capacity(results.len());
+    for (id, score) in &results {
+        output.extend_from_slice(&[0u8; 24]);
+        output.extend_from_slice(&id.to_be_bytes());
+        scores_vec.push(*score);
+    }
+
+    // Second array: scores
+    // Length
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&res_len.to_be_bytes());
+
+    // Scores as fixed-point uint256 (score * 1e18 for precision)
+    // This converts f32 distance to a scaled integer representation
+    for score in scores_vec {
+        // Convert f32 score to fixed-point (18 decimals)
+        // Score is typically a distance (lower = better), so we keep as-is
+        let scaled_score = (score as f64 * 1e18) as u128;
+        let mut score_bytes = [0u8; 32];
+        score_bytes[16..32].copy_from_slice(&scaled_score.to_be_bytes());
+        output.extend_from_slice(&score_bytes);
+    }
+
+    Ok(PrecompileOutput::new(
+        gas_cost,
+        Bytes::from(output),
+    ))
+}
+
 
 // ========== HELPER FUNCTIONS ==========
 
@@ -360,7 +757,27 @@ pub fn is_ai_precompile(address: &[u8; 20]) -> bool {
     *address == precompiles::AI_REQUEST ||
     *address == precompiles::VERIFY_PROOF ||
     *address == precompiles::GET_RESULT ||
-    *address == precompiles::COMPUTE_PAYMENT
+    *address == precompiles::COMPUTE_PAYMENT ||
+    is_training_precompile(address) ||
+    is_semantic_precompile(address)
+}
+
+/// Check if address is a training precompile
+pub fn is_training_precompile(address: &[u8; 20]) -> bool {
+    // TRAIN_REQUEST at 0x14
+    let train_request_addr = [0u8; 20];
+    let mut expected = train_request_addr;
+    expected[19] = 0x14;
+    *address == expected
+}
+
+/// Check if address is a semantic precompile (0x20 - 0x21)
+pub fn is_semantic_precompile(address: &[u8; 20]) -> bool {
+    let base = [0u8; 20];
+    let mut expected_store = base; expected_store[19] = 0x20;
+    let mut expected_query = base; expected_query[19] = 0x21;
+
+    *address == expected_store || *address == expected_query
 }
 
 #[cfg(test)]

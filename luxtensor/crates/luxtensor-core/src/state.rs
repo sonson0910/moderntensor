@@ -4,12 +4,15 @@ use crate::{Account, Address, Hash, Result};
 /// State database interface
 pub struct StateDB {
     cache: HashMap<Address, Account>,
+    pub vector_store: crate::semantic::SimpleVectorStore,
 }
 
 impl StateDB {
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
+            // Default dimension 768 (common for BERT/LLM embeddings)
+            vector_store: crate::semantic::SimpleVectorStore::new(768),
         }
     }
 
@@ -37,33 +40,38 @@ impl StateDB {
             .unwrap_or(0)
     }
 
-    /// Calculate state root using Merkle Tree
-    /// Each leaf is hash(address || serialized_account)
-    /// Returns Result to handle serialization errors gracefully
+    /// Calculate state root using Merkle Tree (Hybrid: Account Tree + Vector Tree)
+    /// Root = Keccak256(AccountRoot || VectorRoot)
     pub fn root_hash(&self) -> Result<Hash> {
-        if self.cache.is_empty() {
-            return Ok([0u8; 32]); // Empty state root
-        }
+        // 1. Calculate Account Root
+        let account_root = if self.cache.is_empty() {
+            [0u8; 32]
+        } else {
+            let mut items: Vec<_> = self.cache.iter().collect();
+            items.sort_by(|a, b| a.0.cmp(b.0));
 
-        // Collect all accounts and sort by address for deterministic ordering
-        let mut items: Vec<_> = self.cache.iter().collect();
-        items.sort_by(|a, b| a.0.cmp(b.0));
+            let mut leaf_hashes: Vec<[u8; 32]> = Vec::with_capacity(items.len());
+            for (address, account) in items.iter() {
+                let mut data = Vec::new();
+                data.extend_from_slice(address.as_bytes());
+                let account_bytes = bincode::serialize(account)
+                    .map_err(|e| crate::CoreError::SerializationError(e.to_string()))?;
+                data.extend_from_slice(&account_bytes);
+                leaf_hashes.push(luxtensor_crypto::keccak256(&data));
+            }
+            luxtensor_crypto::MerkleTree::new(leaf_hashes).root()
+        };
 
-        // Create leaf hashes: hash(address || account_data)
-        let mut leaf_hashes: Vec<[u8; 32]> = Vec::with_capacity(items.len());
-        for (address, account) in items.iter() {
-            let mut data = Vec::new();
-            data.extend_from_slice(address.as_bytes());
-            // Serialize account - use ? for proper error handling
-            let account_bytes = bincode::serialize(account)
-                .map_err(|e| crate::CoreError::SerializationError(e.to_string()))?;
-            data.extend_from_slice(&account_bytes);
-            leaf_hashes.push(luxtensor_crypto::keccak256(&data));
-        }
+        // 2. Calculate Vector Root
+        use crate::semantic::VectorStore;
+        let vector_root = self.vector_store.root_hash()?;
 
-        // Build Merkle tree and return root
-        let tree = luxtensor_crypto::MerkleTree::new(leaf_hashes);
-        Ok(tree.root())
+        // 3. Combine Roots
+        let mut combined = Vec::new();
+        combined.extend_from_slice(&account_root);
+        combined.extend_from_slice(&vector_root);
+
+        Ok(luxtensor_crypto::keccak256(&combined))
     }
 
     /// Commit changes and return state root

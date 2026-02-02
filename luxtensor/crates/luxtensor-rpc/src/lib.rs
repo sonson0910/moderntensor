@@ -25,6 +25,7 @@ pub mod query_rpc;
 pub mod ai_rpc;
 pub mod tx_rpc;
 pub mod miner_dispatch_rpc;
+pub mod training_rpc;
 
 
 pub use rate_limiter::{RateLimiter, RateLimiterConfig};
@@ -53,6 +54,7 @@ pub use query_rpc::{QueryRpcContext, register_query_methods};
 pub use ai_rpc::{AiRpcContext, register_ai_methods};
 pub use tx_rpc::{TxRpcContext, register_tx_methods};
 pub use miner_dispatch_rpc::{MinerDispatchContext, register_miner_dispatch_methods};
+pub use training_rpc::{TrainingRpcContext, register_training_methods};
 
 pub mod zkml_rpc;
 pub use zkml_rpc::{ZkmlRpcContext, register_zkml_methods};

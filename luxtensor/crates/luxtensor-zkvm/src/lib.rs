@@ -31,6 +31,7 @@ pub mod types;
 pub mod prover;
 pub mod verifier;
 pub mod guest;
+pub mod pot_verifier;
 
 pub use error::{ZkVmError, Result};
 pub use types::{
