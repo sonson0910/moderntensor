@@ -52,6 +52,15 @@ pub enum NetworkMessage {
 
     /// Pong response
     Pong,
+
+    /// AI task dispatch to miners
+    AITaskDispatch {
+        task_id: [u8; 32],
+        model_hash: String,
+        input_hash: [u8; 32],
+        reward: u128,
+        deadline: u64,
+    },
 }
 
 impl NetworkMessage {
@@ -70,6 +79,7 @@ impl NetworkMessage {
             Self::SyncRequest { .. } => "SyncRequest",
             Self::Ping => "Ping",
             Self::Pong => "Pong",
+            Self::AITaskDispatch { .. } => "AITaskDispatch",
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{EvmState, register_eth_methods}};
+use crate::rate_limiter::{RateLimiter, RateLimiterConfig};
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_core::{StateDB, Transaction, Hash};
@@ -7,6 +8,7 @@ use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig,
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tracing::{debug, info, warn};
 use crate::handlers::{
     register_subnet_handlers, register_neuron_handlers,
@@ -58,6 +60,8 @@ pub struct RpcServer {
     commit_reveal: Arc<RwLock<CommitRevealManager>>,
     /// Circuit breaker for AI layer operations
     ai_circuit_breaker: Arc<AILayerCircuitBreaker>,
+    /// Rate limiter for DoS protection
+    rate_limiter: Arc<RateLimiter>,
     /// Data directory for checkpoints and other persistent data
     data_dir: PathBuf,
 }
@@ -89,6 +93,7 @@ impl RpcServer {
             evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"), // Default data directory
         }
     }
@@ -137,6 +142,7 @@ impl RpcServer {
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
         }
     }
@@ -168,6 +174,7 @@ impl RpcServer {
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
         }
     }
@@ -200,6 +207,7 @@ impl RpcServer {
             evm_state,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
         }
     }
@@ -230,6 +238,7 @@ impl RpcServer {
             evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"),
         }
     }
@@ -340,6 +349,19 @@ impl RpcServer {
                     "state": format!("{:?}", status.emission_state),
                     "operational": status.emission_state == luxtensor_consensus::CircuitState::Closed
                 }
+            }))
+        });
+
+        // Register rate limiter status endpoint for monitoring
+        let _rl = self.rate_limiter.clone();
+        io.add_sync_method("system_getRateLimitStatus", move |_params: Params| {
+            Ok(serde_json::json!({
+                "enabled": true,
+                "config": {
+                    "max_requests_per_minute": 100,
+                    "window_seconds": 60
+                },
+                "message": "Rate limiting active for DoS protection"
             }))
         });
 

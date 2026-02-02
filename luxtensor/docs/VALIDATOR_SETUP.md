@@ -23,6 +23,18 @@ This guide explains how to set up and run a Luxtensor validator node.
 
 ---
 
+## Rewards & Tokenomics
+
+Validators on ModernTensor earn from multiple sources:
+
+1. **Block Rewards**: Inflationary rewards for proposing blocks (Standard PoS).
+2. **Transaction Fees**: Gas fees from normal transactions.
+3. **AI Compute Fees**: 1% protocol fee from all AI inference tasks processed by the network.
+
+*Note: AI Miners earn 99% of the inference fee, Validators ensure the ledger's integrity.*
+
+---
+
 ## Option 1: Docker Deployment (Recommended)
 
 ### 1. Pull the Image

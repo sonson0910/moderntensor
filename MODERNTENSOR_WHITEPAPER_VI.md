@@ -1,10 +1,11 @@
 # ModernTensor: Whitepaper
+
 # Blockchain Layer 1 Phi Tập Trung Cho Trí Tuệ Nhân Tạo
 
-**Phiên bản:** 1.0  
-**Ngày phát hành:** 7 Tháng 1, 2026  
-**Website:** https://github.com/sonson0910/moderntensor  
-**Trạng thái:** Production Ready (83% Complete)
+**Phiên bản:** 1.0
+**Ngày phát hành:** 7 Tháng 1, 2026
+**Website:** <https://github.com/sonson0910/moderntensor>
+**Trạng thái:** Production Ready (90% Complete) - **Native AI Integration Completed**
 
 ---
 
@@ -13,6 +14,7 @@
 ModernTensor là blockchain Layer 1 độc lập được thiết kế để phi tập trung hóa trí tuệ nhân tạo (AI) và machine learning (ML). Dự án kết hợp **Proof of Stake consensus**, **smart contracts**, và **cơ chế incentive lấy cảm hứng từ Yuma** để tạo nên một mạng lưới nơi các mô hình AI có thể cạnh tranh, xác thực lẫn nhau, và kiếm phần thưởng dựa trên hiệu suất thực tế.
 
 **Điểm khác biệt chính:**
+
 - ✅ **Blockchain L1 độc lập** với Proof of Stake consensus (1,000-5,000 TPS)
 - ✅ **High-performance implementation** trong Rust (10-100x nhanh hơn Python)
 - ✅ **Smart contract framework** với EVM/WASM compatibility (đang tích hợp)
@@ -21,8 +23,9 @@ ModernTensor là blockchain Layer 1 độc lập được thiết kế để phi
 - ✅ **Fast finality** (30-60 giây) cho real-time AI workloads
 
 **Timeline:**
-- **Hiện tại:** 83% hoàn thành, testnet đang hoạt động
-- **Q1 2026:** Mainnet launch (2 tháng nữa)
+
+- **Hiện tại:** 90% hoàn thành, Native AI Integrated
+- **Q1 2026:** Mainnet launch (Đang chuẩn bị)
 - **Q2-Q3 2026:** Layer 2 scaling solutions
 
 ---
@@ -84,12 +87,14 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 #### A. Tập Trung Hóa AI
 
 **Vấn đề:**
+
 - OpenAI, Google, Meta kiểm soát các model AI mạnh nhất
 - Người dùng không có quyền sở hữu dữ liệu hoặc model
 - Censorship và bias trong AI decisions
 - Chi phí cao để access AI services
 
 **Hậu quả:**
+
 - Innovation bị giới hạn bởi một số ít tổ chức
 - Người dùng phụ thuộc vào big tech
 - Privacy concerns với data centralization
@@ -98,6 +103,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 #### B. Thiếu Cơ Chế Validation AI
 
 **Vấn đề:**
+
 - Không có cách khách quan để đánh giá chất lượng AI model
 - Model claims có thể không chính xác
 - Không có incentive để validators đánh giá trung thực
@@ -106,6 +112,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 #### C. Khó Monetize AI Models
 
 **Vấn đề:**
+
 - Independent AI researchers khó kiếm tiền từ models
 - Phải phụ thuộc vào platforms lớn (Hugging Face, etc.)
 - Không có marketplace phi tập trung cho AI services
@@ -116,6 +123,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 #### A. Blockchain Layer 1 Độc Lập
 
 **Solution:**
+
 ```
 ┌─────────────────────────────────────────┐
 │   ModernTensor Layer 1 Blockchain       │
@@ -133,6 +141,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 ```
 
 **Benefits:**
+
 - ✅ Full control over consensus và performance
 - ✅ Customize transaction format cho AI workloads
 - ✅ Independent tokenomics
@@ -141,6 +150,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 #### B. AI Validation Protocol
 
 **Cơ chế:**
+
 1. **Miners** register models với API endpoints
 2. **Validators** test models với standardized tasks
 3. **Scoring** dựa trên performance metrics
@@ -148,6 +158,7 @@ ModernTensor được lấy cảm hứng từ [Bittensor](https://bittensor.com)
 5. **Slashing** cho bad actors
 
 **Formula:**
+
 ```python
 Reward_i = Base_Reward × (Score_i / Σ(Scores)) × Stake_Weight_i
 ```
@@ -155,11 +166,13 @@ Reward_i = Base_Reward × (Score_i / Σ(Scores)) × Stake_Weight_i
 #### C. Adaptive Tokenomics
 
 **Fixed Emission (Bittensor) Problems:**
+
 - Rewards cao khi network ít dùng (waste)
 - Rewards thấp khi network đông (không đủ incentive)
 - Không adaptive với market conditions
 
 **Adaptive Emission (ModernTensor):**
+
 ```python
 Emission = Base_Reward × Utility_Score × Halving_Multiplier
 
@@ -169,6 +182,7 @@ Where:
 ```
 
 **Benefits:**
+
 - 💚 Emission tăng khi network activity cao
 - 💚 Emission giảm khi ít activity (save supply)
 - 💚 Incentivize utility, not just speculation
@@ -242,6 +256,7 @@ Where:
 ModernTensor được implement trong **Rust** với tên gọi **LuxTensor** để tối ưu performance:
 
 **Workspace Structure:**
+
 ```
 luxtensor/
 ├── luxtensor-core/        (~800 LOC)  - Blocks, Transactions, State
@@ -251,14 +266,17 @@ luxtensor/
 ├── luxtensor-storage/     (~700 LOC)  - RocksDB, State DB
 ├── luxtensor-rpc/         (~900 LOC)  - JSON-RPC, WebSocket
 ├── luxtensor-contracts/   (~750 LOC)  - Smart contract framework
+├── luxtensor-oracle/      (~600 LOC)  - AI Oracle & ZK Prover
+├── luxtensor-zkvm/        (~800 LOC)  - Zero-Knowledge Virtual Machine
 ├── luxtensor-node/        (~600 LOC)  - Full node implementation
 ├── luxtensor-cli/         (~300 LOC)  - CLI tools
 └── luxtensor-tests/       (~700 LOC)  - Integration tests
 
-Total: ~7,550 LOC production Rust code
+Total: ~8,950 LOC production Rust code
 ```
 
 **Test Coverage:**
+
 - 136 unit tests (100% pass)
 - 7 integration tests (100% pass)
 - 8 benchmark suites
@@ -303,6 +321,7 @@ await blockchain.submit_result(result)
 | **State Read** | <200µs | 180µs |
 
 **Performance Improvement vs Python:**
+
 - Block hashing: **100x faster**
 - Signature verification: **67x faster**
 - State operations: **15x faster**
@@ -315,12 +334,14 @@ await blockchain.submit_result(result)
 ### 4.1 Tại Sao Chọn PoS?
 
 **So với Proof of Work (PoW):**
+
 - ✅ Energy efficient (~99% ít hơn)
 - ✅ Faster finality (minutes vs hours)
 - ✅ Lower hardware requirements
 - ✅ More decentralized (không cần ASIC farms)
 
 **So với Yuma Consensus:**
+
 - ✅ Yuma là **incentive mechanism**, không phải consensus protocol
 - ✅ PoS handle block production và finality
 - ✅ Yuma handle AI model scoring
@@ -342,11 +363,11 @@ fn select_validator(
     let total_stake: u64 = validators.iter()
         .map(|v| v.stake)
         .sum();
-    
+
     // VRF ensures fairness & unpredictability
     let vrf_output = vrf_hash(seed, slot);
     let threshold = (vrf_output % total_stake) as u64;
-    
+
     // Select validator by stake weight
     let mut cumulative = 0u64;
     for validator in validators {
@@ -355,12 +376,13 @@ fn select_validator(
             return validator.address;
         }
     }
-    
+
     unreachable!()
 }
 ```
 
 **Properties:**
+
 - 🎲 Unpredictable (cannot predict next validator)
 - ⚖️ Fair (proportional to stake)
 - ✅ Verifiable (anyone can verify selection)
@@ -369,12 +391,14 @@ fn select_validator(
 #### B. Validator Rotation
 
 **Tại sao cần rotation?**
+
 - Prevent centralization
 - Encourage participation
 - Reduce validator fatigue
 - Fair reward distribution
 
 **Mechanism:**
+
 ```
 Epoch Duration: 1000 blocks (~15 minutes)
 
@@ -399,6 +423,7 @@ Every epoch:
 | **Censorship** | 2% stake | Consistently exclude valid txs |
 
 **Slashed funds:**
+
 - 50% burned (deflation)
 - 50% to reporter (incentive to report)
 
@@ -419,6 +444,7 @@ Finality Rule:
 ```
 
 **Benefits:**
+
 - ⚡ Fast finality (30-60 seconds)
 - 🔒 Strong security (2/3+ signatures)
 - 🚫 Prevents long-range attacks
@@ -440,17 +466,18 @@ fn calculate_weight(block: &BlockHeader) -> u64 {
     // Weight = sum of all validator stakes in this chain
     let mut weight = 0u64;
     let mut current = block;
-    
+
     while !current.is_genesis() {
         weight += get_validator_stake(&current.validator);
         current = get_parent(current);
     }
-    
+
     weight
 }
 ```
 
 **Properties:**
+
 - ⛓️ Choose chain with most stake behind it
 - 🔄 Automatic reorg to heavier chain
 - 💪 Resistant to 51% attacks (would need massive stake)
@@ -487,6 +514,7 @@ println!("Gas used: {}", result.gas_used);
 ```
 
 **Features:**
+
 - ✅ Bytecode validation (max 24KB per EIP-170)
 - ✅ Deterministic address generation
 - ✅ Gas metering during deployment
@@ -516,6 +544,7 @@ if result.success {
 ```
 
 **Features:**
+
 - ✅ Gas metering per operation
 - ✅ Revert handling
 - ✅ Event logging
@@ -534,6 +563,7 @@ let retrieved = executor.get_storage(&contract_address, &key)?;
 ```
 
 **Features:**
+
 - ✅ Key-value storage per contract
 - ✅ Storage isolation (contracts can't access each other)
 - ✅ Persistent storage with RocksDB
@@ -554,27 +584,27 @@ contract AIModelRegistry {
         uint256 stake;
         uint256 score;
     }
-    
+
     mapping(uint256 => Model) public models;
     uint256 public modelCount;
-    
+
     function registerModel(
         string memory endpoint,
         uint256 stake
     ) public payable {
         require(msg.value >= stake, "Insufficient stake");
-        
+
         models[modelCount] = Model({
             owner: msg.sender,
             endpoint: endpoint,
             stake: stake,
             score: 0
         });
-        
+
         modelCount++;
         emit ModelRegistered(modelCount - 1, msg.sender);
     }
-    
+
     function updateScore(
         uint256 modelId,
         uint256 newScore
@@ -586,12 +616,14 @@ contract AIModelRegistry {
 ```
 
 **EVM Integration Timeline:**
+
 - Week 1-2: Integrate `revm` (Rust EVM implementation)
 - Week 2-3: Full opcode support & testing
 - Week 3-4: ABI encoding/decoding
 - Week 4+: Contract verification tools
 
 **Compatibility:**
+
 - ✅ Ethereum RPC methods (eth_*)
 - ✅ MetaMask & web3.js support
 - ✅ Existing Solidity contracts work
@@ -613,6 +645,7 @@ contract AIModelRegistry {
 | SHA256 hash | 60 + 12 per word |
 
 **Dynamic gas pricing:**
+
 ```python
 gas_price = base_fee + priority_fee
 
@@ -656,6 +689,7 @@ where:
 **Role:** Provide AI/ML models và services
 
 **Registration:**
+
 ```python
 # Register as miner
 await blockchain.register_miner(
@@ -668,21 +702,23 @@ await blockchain.register_miner(
 ```
 
 **Serving Requests:**
+
 ```python
 class AIMiner:
     async def serve(self):
         while True:
             # Receive task from network
             task = await self.receive_task()
-            
+
             # Run inference
             result = await self.model.inference(task.input)
-            
+
             # Submit result
             await self.submit_result(task.id, result)
 ```
 
 **Requirements:**
+
 - ✅ Stake minimum tokens (anti-spam)
 - ✅ Provide API endpoint (HTTP/gRPC)
 - ✅ Respond within timeout (30s default)
@@ -693,25 +729,26 @@ class AIMiner:
 **Role:** Evaluate miner quality
 
 **Validation Process:**
+
 ```python
 class AIValidator:
     async def validate(self):
         # Get list of registered miners
         miners = await self.blockchain.get_miners()
-        
+
         for miner in miners:
             # Prepare test tasks
             tasks = self.generate_test_tasks()
-            
+
             # Send to miner
             results = []
             for task in tasks:
                 result = await self.call_miner(miner, task)
                 results.append(result)
-            
+
             # Calculate score
             score = self.evaluate_results(results)
-            
+
             # Submit score on-chain
             await self.blockchain.submit_score(
                 miner_uid=miner.uid,
@@ -721,6 +758,7 @@ class AIValidator:
 ```
 
 **Scoring Criteria:**
+
 - **Accuracy**: Correctness of outputs
 - **Latency**: Response time
 - **Consistency**: Similar results for similar inputs
@@ -734,11 +772,11 @@ class AIValidator:
 def calculate_rewards(miners, validator_scores):
     """
     Calculate rewards dựa trên consensus scores.
-    
+
     Args:
         miners: List of miners
         validator_scores: Dict[miner_uid -> List[scores from validators]]
-    
+
     Returns:
         Dict[miner_uid -> reward_amount]
     """
@@ -746,21 +784,21 @@ def calculate_rewards(miners, validator_scores):
     consensus_scores = {}
     for uid, scores in validator_scores.items():
         consensus_scores[uid] = median(scores)
-    
+
     # 2. Calculate reward proportions
     total_score = sum(consensus_scores.values())
     rewards = {}
-    
+
     for uid, score in consensus_scores.items():
         # Base reward proportional to score
         base_reward = (score / total_score) * EPOCH_REWARD
-        
+
         # Stake weight (more stake = more reward)
         stake_multiplier = sqrt(miners[uid].stake / MIN_STAKE)
-        
+
         # Final reward
         rewards[uid] = base_reward * stake_multiplier
-    
+
     return rewards
 ```
 
@@ -797,7 +835,7 @@ fn verify_ml_proof(proof: &MLProof) -> Result<bool> {
     // 2. Given input with input_hash
     // 3. Produces output with output_hash
     // WITHOUT revealing model weights or input data
-    
+
     zkml::verify(
         &proof.model_hash,
         &proof.input_hash,
@@ -808,6 +846,7 @@ fn verify_ml_proof(proof: &MLProof) -> Result<bool> {
 ```
 
 **Benefits:**
+
 - 🔒 Privacy-preserving inference
 - ✅ Verifiable computation
 - 🚀 Efficient verification on-chain
@@ -821,9 +860,9 @@ fn verify_ml_proof(proof: &MLProof) -> Result<bool> {
 
 ### 7.1 Token Overview
 
-**Token Name:** ModernTensor Token (MTT)  
-**Total Supply:** 21,000,000 MTT  
-**Initial Supply:** 0 (all minted through emission)  
+**Token Name:** ModernTensor Token (MTT)
+**Total Supply:** 21,000,000 MTT
+**Initial Supply:** 0 (all minted through emission)
 **Emission Type:** Adaptive (based on network utility)
 
 ### 7.2 Token Utility
@@ -844,24 +883,24 @@ fn verify_ml_proof(proof: &MLProof) -> Result<bool> {
 def calculate_emission(epoch: int) -> int:
     """
     Calculate token emission for current epoch.
-    
+
     Returns:
         Number of tokens to mint this epoch
     """
     # Base reward (starts at 1000, halves every 210k epochs ~ 4 years)
     halvings = epoch // 210_000
     base_reward = 1000 * (0.5 ** halvings)
-    
+
     # Utility score (0.0 to 1.0)
     utility = calculate_utility_score(
         task_volume=get_task_volume(epoch),
         avg_difficulty=get_avg_difficulty(epoch),
         validator_participation=get_participation(epoch)
     )
-    
+
     # Final emission
     emission = base_reward * utility
-    
+
     return int(emission)
 
 def calculate_utility_score(
@@ -871,7 +910,7 @@ def calculate_utility_score(
 ) -> float:
     """
     Calculate network utility score (0.0 to 1.0).
-    
+
     High utility = high emission (incentivize usage)
     Low utility = low emission (conserve supply)
     """
@@ -879,7 +918,7 @@ def calculate_utility_score(
     volume_score = min(1.0, task_volume / TARGET_VOLUME)
     difficulty_score = min(1.0, avg_difficulty / MAX_DIFFICULTY)
     participation_score = validator_participation  # Already 0-1
-    
+
     # Weighted average
     weights = [0.5, 0.3, 0.2]  # Configurable via governance
     utility = (
@@ -887,7 +926,7 @@ def calculate_utility_score(
         weights[1] * difficulty_score +
         weights[2] * participation_score
     )
-    
+
     return utility
 ```
 
@@ -977,10 +1016,10 @@ Year 2: 50%
 # - 50% burned
 
 daily_burn = (
-    1000 tx/s × 
-    86400 s/day × 
-    50000 gas/tx × 
-    10 gwei × 
+    1000 tx/s ×
+    86400 s/day ×
+    50000 gas/tx ×
+    10 gwei ×
     0.5 burn_rate
 ) = ~21,600 MTT/day
 
@@ -1039,18 +1078,20 @@ total_attack_cost = $51M + $2.55M = $53.55M
 
 2025 Q4 - 2026 Q1: Development (Current)
 ├── ✅ Phase 1: State optimization (COMPLETE)
-├── ✅ Phase 2-8: Layer 1 infrastructure (COMPLETE - 83%)
+├── ✅ Phase 2-8: Layer 1 infrastructure (COMPLETE - 90%)
 │   ├── Core blockchain ✅
 │   ├── PoS consensus ✅
 │   ├── P2P network ✅
 │   ├── Storage layer ✅
 │   ├── RPC API ✅
 │   ├── Smart contracts framework ✅
+│   ├── Native AI Opcodes (0x10-0x13) ✅
 │   └── Testnet infrastructure ✅
-└── ⏳ Phase 9: Mainnet (IN PROGRESS - 2 months)
+└── ⏳ Phase 9: Mainnet (IN PROGRESS - Final Preparation)
 ```
 
 **Current Status (Jan 2026):**
+
 - **83% complete**
 - **7,550 LOC** production Rust code
 - **143 tests** passing (100% success)
@@ -1061,29 +1102,33 @@ total_attack_cost = $51M + $2.55M = $53.55M
 
 **Timeline: 2 months (Jan-Mar 2026)**
 
-#### Month 1 (January 2026): EVM Integration & Testing
+#### Month 1 (January 2026): EVM Integration & AI Opcodes (Done)
 
-**Weeks 1-2:**
+ **Weeks 1-2:**
+
 - ✅ Integrate `revm` EVM runtime
 - ✅ Implement all EVM opcodes
 - ✅ Gas metering per opcode
 - ✅ Precompiled contracts (ecrecover, sha256, etc.)
 
-**Weeks 3-4:**
+ **Weeks 3-4:**
+
 - ✅ ABI encoding/decoding
 - ✅ Contract verification tools
 - ✅ Ethereum RPC compatibility tests
-- ✅ MetaMask integration testing
+- ✅ Native AI Opcodes (0x10-0x13) Implementation
 
 #### Month 2 (February 2026): Security & Launch Prep
 
-**Weeks 1-2:**
-- 🔒 External security audit
+ **Weeks 1-2:**
+
+- 🔒 External security audit (In Progress)
 - 🧪 Stress testing (10,000+ TPS)
 - 📊 Performance optimization
 - 🐛 Bug fixes
 
-**Weeks 3-4:**
+ **Weeks 3-4:**
+
 - 📝 Mainnet documentation
 - 💰 Token distribution preparation
 - 🚀 Genesis block setup
@@ -1094,6 +1139,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 #### Q2 2026: Ecosystem Growth
 
 **April-June:**
+
 - 🏗️ Developer tools & SDKs
 - 📚 Tutorials & documentation
 - 💼 Partnerships with AI projects
@@ -1101,6 +1147,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 - 🔧 Wallet & explorer improvements
 
 **Deliverables:**
+
 - Python SDK (enhanced)
 - JavaScript SDK
 - Model marketplace DApp
@@ -1110,6 +1157,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 #### Q3 2026: AI/ML Features
 
 **July-September:**
+
 - 🧠 zkML proof system
 - 🤖 AI model registry DApp
 - 📊 Validator dashboard
@@ -1117,6 +1165,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 - 🔗 Cross-chain bridges
 
 **Features:**
+
 - Zero-knowledge ML inference
 - Proprietary model sharing
 - Multi-model composition
@@ -1125,6 +1174,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 #### Q4 2026: Scaling Solutions
 
 **October-December:**
+
 - ⚡ Layer 2 research & design
 - 🔄 State channels for AI inference
 - 📦 Rollup implementation (Optimistic/ZK)
@@ -1132,6 +1182,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 - 📈 Performance benchmarking
 
 **Goals:**
+
 - 10,000+ TPS (with L2)
 - <100ms latency
 - $0.001 average tx cost
@@ -1182,12 +1233,14 @@ total_attack_cost = $51M + $2.55M = $53.55M
 | **Maturity** | Production | Testnet → Mainnet (Q1 26) |
 
 **Advantages:**
+
 - ✅ **Higher TPS**: 10x-50x faster
 - ✅ **Full smart contracts**: EVM compatibility
 - ✅ **Adaptive economics**: Better token utility
 - ✅ **Independent**: No dependency on Polkadot
 
 **Trade-offs:**
+
 - ⚠️ Less mature ecosystem
 - ⚠️ No Polkadot interoperability
 - ⚠️ Smaller community (for now)
@@ -1207,6 +1260,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 | **Market Cap** | $300B+ | TBD |
 
 **ModernTensor Advantages for AI:**
+
 - 🤖 Native AI validation protocol
 - ⚡ Faster finality for AI workloads
 - 💰 Lower costs (less competition)
@@ -1224,6 +1278,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 | **Validation** | Agent reputation | Yuma-inspired |
 
 **Different Focus:**
+
 - Fetch.ai: Autonomous economic agents
 - ModernTensor: AI model marketplace & validation
 
@@ -1237,6 +1292,7 @@ total_attack_cost = $51M + $2.55M = $53.55M
 | **Revenue** | Data sales | AI inference + rewards |
 
 **Complementary:**
+
 - Ocean: Data for training
 - ModernTensor: Models & inference
 
@@ -1247,12 +1303,14 @@ total_attack_cost = $51M + $2.55M = $53.55M
 ### 10.1 Core Team
 
 **Project Lead / Architecture:**
+
 - Blockchain architecture design
 - Rust implementation (LuxTensor)
 - Smart contract framework
 - Tokenomics design
 
 **Development Team:**
+
 - 3-4 Rust engineers (hiring)
 - 2 Python developers (SDK)
 - 1 Frontend developer (DApps)
@@ -1261,12 +1319,14 @@ total_attack_cost = $51M + $2.55M = $53.55M
 ### 10.2 Advisors (Recruiting)
 
 **Technical Advisors:**
+
 - Blockchain consensus expert
 - AI/ML researcher
 - Security auditor
 - Tokenomics specialist
 
 **Business Advisors:**
+
 - Go-to-market strategy
 - Partnerships
 - Fundraising
@@ -1275,12 +1335,14 @@ total_attack_cost = $51M + $2.55M = $53.55M
 ### 10.3 Community
 
 **Early Community:**
+
 - GitHub contributors: 5+
 - Discord members: 100+
 - Twitter followers: 500+
 - Testnet validators: 20+
 
 **Growth Strategy:**
+
 - Developer grants program
 - Bug bounty program
 - Ambassador program
@@ -1291,19 +1353,21 @@ total_attack_cost = $51M + $2.55M = $53.55M
 **Current Status:** Bootstrapped
 
 **Funding Strategy:**
+
 - **Seed Round** (Q1 2026): $1-2M
   - Use: Team expansion, audit, marketing
   - Target: Crypto VCs, angel investors
-  
+
 - **Private Round** (Q2 2026): $3-5M
   - Use: Ecosystem development, partnerships
   - Target: Strategic investors
-  
+
 - **Public Sale** (Q3 2026): TBD
   - Use: Liquidity, community building
   - Target: Retail investors
 
 **Allocation:**
+
 - 40% Development
 - 30% Marketing & BD
 - 20% Operations
@@ -1317,10 +1381,10 @@ total_attack_cost = $51M + $2.55M = $53.55M
 
 **ModernTensor** là một blockchain Layer 1 độc lập được thiết kế đặc biệt cho **AI/ML workloads**, kết hợp:
 
-✅ **High-performance PoS consensus** (1,000-5,000 TPS)  
-✅ **EVM-compatible smart contracts**  
-✅ **AI-native validation protocol** (Yuma-inspired)  
-✅ **Adaptive tokenomics** (utility-driven emission)  
+✅ **High-performance PoS consensus** (1,000-5,000 TPS)
+✅ **EVM-compatible smart contracts**
+✅ **AI-native validation protocol** (Yuma-inspired)
+✅ **Adaptive tokenomics** (utility-driven emission)
 ✅ **Production-ready implementation** (83% complete, Rust)
 
 ### 11.2 Unique Value Proposition
@@ -1328,12 +1392,14 @@ total_attack_cost = $51M + $2.55M = $53.55M
 **ModernTensor ≠ Bittensor Clone**
 
 Chúng tôi kết hợp ý tưởng tốt nhất từ nhiều project:
+
 - **Bittensor**: AI validation mechanism
 - **Ethereum**: Smart contract platform & ecosystem
 - **Cosmos**: Custom L1 design philosophy
 - **Polkadot**: Substrate architecture lessons
 
 Và tạo ra một platform hoàn toàn mới:
+
 - 🚀 **Faster** (10-50x vs Bittensor)
 - 🔓 **More flexible** (full smart contracts)
 - 💰 **Smarter economics** (adaptive emission)
@@ -1341,11 +1407,12 @@ Và tạo ra một platform hoàn toàn mới:
 
 ### 11.3 Market Opportunity
 
-**AI Market:** $500B+ by 2024, growing 40% YoY  
-**Decentralized AI:** Early stage, massive opportunity  
+**AI Market:** $500B+ by 2024, growing 40% YoY
+**Decentralized AI:** Early stage, massive opportunity
 **Blockchain AI:** Few competitors, high demand
 
 **Target Markets:**
+
 1. **AI Researchers**: Monetize models
 2. **ML Engineers**: Deploy & earn
 3. **Enterprises**: Decentralized AI services
@@ -1354,18 +1421,21 @@ Và tạo ra một platform hoàn toàn mới:
 ### 11.4 Risk Factors
 
 **Technical Risks:**
+
 - ⚠️ Smart contract bugs
 - ⚠️ Consensus failures
 - ⚠️ Performance issues at scale
 - **Mitigation**: Comprehensive testing, audits, gradual rollout
 
 **Market Risks:**
+
 - ⚠️ Crypto market volatility
 - ⚠️ Regulatory uncertainty
 - ⚠️ Competition from larger projects
 - **Mitigation**: Strong fundamentals, compliance focus, differentiation
 
 **Execution Risks:**
+
 - ⚠️ Team growth challenges
 - ⚠️ Development delays
 - ⚠️ Adoption slower than expected
@@ -1376,30 +1446,35 @@ Và tạo ra một platform hoàn toàn mới:
 **Đang trong giai đoạn Pre-Mainnet - Cơ hội tham gia sớm!**
 
 **For Developers:**
+
 - 🛠️ Contribute to GitHub
 - 📝 Write documentation & tutorials
 - 🏆 Participate in bug bounty
 - 💡 Build innovative DApps
 
 **For Validators:**
+
 - 🔧 Run testnet node
 - ✅ Validate transactions
 - 💰 Earn early rewards
 - 🎯 Shape the network
 
 **For Miners:**
+
 - 🤖 Register AI models
 - 📊 Provide quality services
 - 💎 Earn tokens
 - 🌟 Build reputation
 
 **For Investors:**
+
 - 💼 Join seed/private rounds
 - 🤝 Strategic partnerships
 - 📈 Long-term value creation
 - 🌍 Support decentralized AI
 
 **For Users:**
+
 - 🧪 Test the platform
 - 💬 Join community discussions
 - 📣 Spread the word
@@ -1407,18 +1482,20 @@ Và tạo ra một platform hoàn toàn mới:
 
 ### 11.6 Contact & Resources
 
-**Website:** https://github.com/sonson0910/moderntensor  
-**Documentation:** `/docs` in repository  
-**Whitepaper:** This document  
+**Website:** <https://github.com/sonson0910/moderntensor>
+**Documentation:** `/docs` in repository
+**Whitepaper:** This document
 **Technical FAQ:** LUXTENSOR_TECHNICAL_FAQ_VI.md
 
 **Community:**
-- GitHub: https://github.com/sonson0910/moderntensor
+
+- GitHub: <https://github.com/sonson0910/moderntensor>
 - Discord: [Coming soon]
 - Twitter: [Coming soon]
 - Telegram: [Coming soon]
 
 **Technical Resources:**
+
 - Testnet: [Available now]
 - Block Explorer: [In development]
 - Faucet: [Available]
@@ -1431,6 +1508,7 @@ Và tạo ra một platform hoàn toàn mới:
 ### A. Technical Specifications
 
 **Blockchain Parameters:**
+
 ```
 Block Time:            0.5-1.0 seconds
 Block Size:            2 MB
@@ -1442,6 +1520,7 @@ Epoch Duration:        1,000 blocks (~15 minutes)
 ```
 
 **Smart Contract Parameters:**
+
 ```
 Max Contract Size:     24 KB (EIP-170)
 Max Call Stack:        1024
@@ -1451,6 +1530,7 @@ Target Gas:            15,000,000 (50% full blocks)
 ```
 
 **Network Parameters:**
+
 ```
 P2P Protocol:          libp2p
 Message Propagation:   Gossipsub
@@ -1462,12 +1542,14 @@ Block Sync:            Parallel (4 concurrent)
 ### B. Glossary
 
 **AI/ML Terms:**
+
 - **Inference**: Running a trained model on new data
 - **Training**: Learning model parameters from data
 - **Validation**: Evaluating model performance
 - **zkML**: Zero-knowledge machine learning
 
 **Blockchain Terms:**
+
 - **PoS**: Proof of Stake consensus
 - **TPS**: Transactions per second
 - **Finality**: When block cannot be reverted
@@ -1476,6 +1558,7 @@ Block Sync:            Parallel (4 concurrent)
 - **VRF**: Verifiable random function
 
 **ModernTensor Specific:**
+
 - **Miner**: AI model provider
 - **Validator**: Model evaluator
 - **MTT**: ModernTensor Token
@@ -1485,18 +1568,21 @@ Block Sync:            Parallel (4 concurrent)
 ### C. References
 
 **Academic Papers:**
+
 1. Nakamoto, S. (2008). "Bitcoin: A Peer-to-Peer Electronic Cash System"
 2. Buterin, V. (2014). "Ethereum White Paper"
 3. Anca, J. et al. (2021). "Bittensor: A Peer-to-Peer Intelligence Market"
 4. Gilad, Y. et al. (2017). "Algorand: Scaling Byzantine Agreements"
 
 **Technical Documentation:**
+
 - Ethereum Yellow Paper
 - Polkadot White Paper
 - Cosmos SDK Documentation
 - libp2p Specification
 
 **Project Documentation:**
+
 - LuxTensor Implementation Reports (PHASE1-8_SUMMARY_VI.md)
 - Technical FAQ (LUXTENSOR_TECHNICAL_FAQ_VI.md)
 - Smart Contract Guide (SMART_CONTRACT_IMPLEMENTATION.md)
@@ -1504,19 +1590,27 @@ Block Sync:            Parallel (4 concurrent)
 
 ### D. Version History
 
+**v1.1 (February 2, 2026):**
+
+- Updated status to 90% (Native AI Integration Complete)
+- Added Native AI Opcodes details
+- Updated roadmap for Phase 4 completion
+- Refined technical specifications
+
 **v1.0 (January 7, 2026):**
+
 - Initial whitepaper release
 - Based on 83% complete implementation
 - Pre-mainnet specifications
 
 **Future Updates:**
-- v1.1: Post-mainnet actual metrics
-- v2.0: Layer 2 specifications
-- v3.0: AI marketplace design
+
+- v2.0: Post-mainnet actual metrics
+- v3.0: Layer 2 specifications
+- v4.0: AI marketplace design
 
 ---
 
 **© 2026 ModernTensor Project. All rights reserved.**
 
 **Disclaimer:** This whitepaper is for informational purposes only and does not constitute financial advice, investment advice, or a solicitation to invest in tokens or securities. The information contained in this whitepaper is subject to change. Please conduct your own research and consult with financial advisors before making any investment decisions.
-

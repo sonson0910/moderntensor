@@ -92,8 +92,41 @@ from .errors import (
     check_rpc_response,
 )
 
+# Consensus module (slashing, circuit breaker, liveness, fork choice, fast finality)
+from .consensus import (
+    # Slashing
+    SlashReason,
+    SlashingConfig,
+    SlashingEvidence,
+    SlashEvent,
+    JailStatus,
+    SlashingManager,
+    # Circuit Breaker
+    CircuitState,
+    CircuitBreakerConfig,
+    CircuitBreaker,
+    CircuitOpenError,
+    get_circuit_breaker,
+    # Liveness
+    LivenessAction,
+    LivenessConfig,
+    LivenessMonitor,
+    # Fork Choice
+    BlockInfo,
+    ForkChoice,
+    ForkChoiceError,
+    # Fast Finality
+    ValidatorInfo,
+    BlockSignatures,
+    FastFinalityStats,
+    FastFinality,
+    FastFinalityError,
+)
+
+
 # Version
 from .version import __version__
+
 
 __all__ = [
     # Luxtensor client
@@ -160,6 +193,33 @@ __all__ = [
     "MempoolFullError",
     "parse_rpc_error",
     "check_rpc_response",
+    # Consensus - Slashing
+    "SlashReason",
+    "SlashingConfig",
+    "SlashingEvidence",
+    "SlashEvent",
+    "JailStatus",
+    "SlashingManager",
+    # Consensus - Circuit Breaker
+    "CircuitState",
+    "CircuitBreakerConfig",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "get_circuit_breaker",
+    # Consensus - Liveness
+    "LivenessAction",
+    "LivenessConfig",
+    "LivenessMonitor",
+    # Consensus - Fork Choice
+    "BlockInfo",
+    "ForkChoice",
+    "ForkChoiceError",
+    # Consensus - Fast Finality
+    "ValidatorInfo",
+    "BlockSignatures",
+    "FastFinalityStats",
+    "FastFinality",
+    "FastFinalityError",
     # Version
     "__version__",
 ]

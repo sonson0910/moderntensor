@@ -485,21 +485,24 @@ Where:
 - [x] LuxTensor L1 blockchain
 - [x] Core consensus mechanism
 - [x] Python SDK release
-- [x] testnet launch
 
-### Phase 2: Growth (Q2 2026)
+### Phase 2-3: Network & Consensus (Q1 2026) ✅
 
-- [ ] Mainnet launch
-- [ ] Initial validator set
-- [ ] First 3 subnets
-- [ ] Mobile wallet
+- [x] P2P Networking (libp2p)
+- [x] Validator Logic & Slashing
+- [x] Task Dispatch System
 
-### Phase 3: Scale (Q3-Q4 2026)
+### Phase 4: Native AI Integration (Q1 2026) ✅
 
-- [ ] Cross-chain bridges
-- [ ] zkML integration
-- [ ] Enterprise APIs
-- [ ] 100+ validators
+- [x] **Native AI Opcodes (0x10-0x13)**
+- [x] **PaymentEscrow System** (Pay-per-Compute)
+- [x] AI Oracle Integration
+
+### Phase 5: Testnet Launch (Q2 2026)
+
+- [ ] Public Testnet
+- [ ] Initial Validator Set
+- [ ] First Subnet (Text Generation)
 
 ### Phase 4: Maturity (2027+)
 

@@ -15,7 +15,6 @@ pub struct Transaction {
     pub gas_limit: u64,
     pub data: Vec<u8>,
 
-    // Signature components
     pub v: u8,
     pub r: [u8; 32],
     pub s: [u8; 32],

@@ -1,3 +1,7 @@
+// Infrastructure code for future integration - suppress unused warnings during development
+#![allow(dead_code)]
+#![allow(unused)]
+
 mod config;
 mod service;
 mod mempool;
@@ -10,8 +14,11 @@ mod metrics;
 mod shutdown;
 mod graceful_shutdown;
 pub mod root_subnet;
+pub mod task_dispatcher;
 
 pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};
+pub use task_dispatcher::{TaskDispatcher, DispatcherConfig, MinerInfo, TaskAssignment, TaskResult, DispatchService};
+
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

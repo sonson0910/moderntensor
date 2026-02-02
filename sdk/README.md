@@ -21,13 +21,13 @@ ModernTensor consists of two layers:
 
 1. **Luxtensor (Blockchain Layer)** - Rust-based custom Layer 1 blockchain
    - Location: `/luxtensor/` directory
-   - Handles: Consensus, P2P, Storage, RPC APIs
-   - Status: Phase 1 complete, ongoing development
+   - Handles: Consensus, P2P, Storage, RPC APIs, **Native AI Precompiles**
+   - Status: **Phase 4 - Native AI Integration Complete (~90%)**
 
 2. **ModernTensor SDK (Python Layer)** - This package
    - Location: `/sdk/` directory
    - Handles: Python client, AI/ML framework, developer tools
-   - Status: Under active development
+   - Status: **v0.5.0 (AI-Ready)**
 
 ## Quick Start
 
@@ -87,7 +87,7 @@ asyncio.run(main())
 ### Sync vs Async Client
 
 | Feature | `LuxtensorClient` (Sync) | `AsyncLuxtensorClient` |
-|---------|-------------------------|------------------------|
+| :--- | :--- | :--- |
 | **Use Case** | Simple scripts, CLI | High-perf apps, servers |
 | **Batch Calls** | ❌ Not available | ✅ `batch_call()` |
 | **Concurrent Requests** | ❌ Sequential | ✅ `asyncio.gather()` |
@@ -107,14 +107,23 @@ asyncio.run(main())
   - Subnet and neuron queries
   - Batch operations (async)
 
+- **Consensus Module** (New)
+  - Slashing & Penalties (Offline, Double Signing)
+  - Circuit Breaker (Fault tolerance)
+  - Liveness Monitoring (Network health)
+  - Fork Choice (GHOST algorithm)
+  - Fast Finality (BFT-style)
+
+- **AI/ML Framework**
+  - Subnet framework
+  - zkML integration (ezkl) with unified Types
+  - Advanced Scoring & Metrics
+  - Node Tier System (Light/Full/Validator)
+
 - **CLI Tools** (`mtcli`)
   - Wallet management (coldkey/hotkey)
   - Transaction operations
   - Staking operations
-
-- **AI/ML Framework**
-  - Subnet framework
-  - zkML integration (ezkl)
 
 - **Key Management**
   - Coldkey/hotkey generation
@@ -130,14 +139,13 @@ asyncio.run(main())
 
 ### 📋 Planned
 
-- Advanced AI/ML scoring mechanisms
 - Subnet templates and tools
 - Developer documentation
 - Performance optimizations
 
 ## Project Structure
 
-```
+```plaintext
 sdk/
 ├── __init__.py              # SDK exports (backward compatible)
 ├── luxtensor_client.py      # Main client (74KB, 140+ methods)
@@ -147,28 +155,29 @@ sdk/
 │
 ├── client/                  # NEW - Modular client components
 │   ├── base.py             # BaseClient, data classes
-│   ├── blockchain_mixin.py # Block/chain methods
-│   ├── account_mixin.py    # Account methods
-│   ├── transaction_mixin.py# TX methods
-│   ├── staking_mixin.py    # Staking methods
-│   ├── subnet0_mixin.py    # Root Subnet methods
-│   └── neuron_mixin.py     # Neuron/AI methods
+│   └── ...                 # Component mixins
 │
-├── core/                    # Core utilities
+├── core/                    # Core utilities & Types
 │   ├── cache.py            # LRU cache with TTL
-│   └── datatypes.py        # Core data types
+│   ├── datatypes.py        # Core data types
+│   ├── node_tier.py        # Node tier definitions
+│   └── scoring.py          # Scoring metrics & logic
+│
+├── consensus/               # NEW - Consensus Logic
+│   ├── slashing.py         # Validator penalties
+│   ├── circuit_breaker.py  # Fault tolerance
+│   ├── liveness.py         # Network health
+│   ├── fork_choice.py      # GHOST algorithm
+│   └── fast_finality.py    # BFT finality
 │
 ├── models/                  # Pydantic data models
 │   ├── subnet.py           # SubnetInfo, RootConfig
-│   ├── root_subnet.py      # RootSubnet manager
-│   ├── neuron.py           # NeuronInfo
 │   └── ...                 # Other models
 │
 ├── ai_ml/                   # AI/ML framework
 │   ├── core/               # SubnetProtocol
-│   ├── zkml/               # Zero-knowledge ML proofs
-│   ├── agent/              # Miner/Validator AI agents
-│   └── ...
+│   ├── zkml/               # Zero-knowledge ML proofs & types
+│   └── agent/              # Miner/Validator AI agents
 │
 ├── axon/                    # Server for miners/validators
 ├── dendrite/                # Client for AI queries

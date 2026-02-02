@@ -1,0 +1,93 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "IZkMLVerifier",
+  "sourceName": "src/templates/ZkMLVerifier.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "imageId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "isImageTrusted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes",
+          "name": "proofData",
+          "type": "bytes"
+        }
+      ],
+      "name": "verify",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "isValid",
+          "type": "bool"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "journalHash",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "imageId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes",
+          "name": "journal",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "seal",
+          "type": "bytes"
+        },
+        {
+          "internalType": "uint8",
+          "name": "proofType",
+          "type": "uint8"
+        }
+      ],
+      "name": "verifyProof",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "isValid",
+          "type": "bool"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "journalHash",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

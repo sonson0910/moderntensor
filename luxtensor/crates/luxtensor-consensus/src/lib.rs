@@ -22,8 +22,6 @@ pub mod halving;
 pub mod liveness;
 pub mod circuit_breaker;
 
-
-
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};
 pub use pos::{ProofOfStake, ConsensusConfig};
@@ -72,3 +70,10 @@ pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats, CircuitState,
     CircuitBreakerError, AILayerCircuitBreaker, AILayerStatus
 };
+
+pub mod scoring;
+pub use scoring::{
+    ScoringManager, ScoringConfig, ScoringEvent,
+    MinerMetrics, ValidatorMetrics
+};
+

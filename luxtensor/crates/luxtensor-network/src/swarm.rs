@@ -45,6 +45,16 @@ pub enum SwarmCommand {
     RequestSync { from_height: u64, to_height: u64, my_id: String },
     /// Send blocks in response to sync request
     SendBlocks { blocks: Vec<Block> },
+    /// Disconnect a peer (e.g. blocked by eclipse protection)
+    DisconnectPeer { peer_id: String },
+    /// Broadcast AI task to miners for dispatch
+    BroadcastTaskDispatch {
+        task_id: [u8; 32],
+        model_hash: String,
+        input_hash: [u8; 32],
+        reward: u128,
+        deadline: u64,
+    },
 }
 
 /// P2P Swarm Node for actual network connectivity
@@ -332,6 +342,50 @@ impl SwarmP2PNode {
                                     }
                                     Err(e) => warn!("Failed to broadcast sync blocks: {}", e),
                                 }
+                            }
+                        }
+                        SwarmCommand::DisconnectPeer { peer_id } => {
+                            // Disconnect a specific peer (e.g., blocked by eclipse protection)
+                            match peer_id.parse::<PeerId>() {
+                                Ok(pid) => {
+                                    // Remove from gossipsub explicit peers
+                                    self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&pid);
+                                    // Disconnect all connections to this peer
+                                    let _ = self.swarm.disconnect_peer_id(pid);
+                                    info!("🚫 Disconnected peer by command: {}", peer_id);
+                                }
+                                Err(e) => {
+                                    warn!("Invalid peer ID format for disconnect: {}: {}", peer_id, e);
+                                }
+                            }
+                        }
+                        SwarmCommand::BroadcastTaskDispatch { task_id, model_hash, input_hash, reward, deadline } => {
+                            // Broadcast AI task to miners via the sync topic
+                            info!("📡 Broadcasting AI task 0x{} to miners", hex::encode(&task_id[..8]));
+                            let message = NetworkMessage::AITaskDispatch {
+                                task_id,
+                                model_hash,
+                                input_hash,
+                                reward,
+                                deadline,
+                            };
+                            let data = match bincode::serialize(&message) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    warn!("Failed to serialize AI task dispatch: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            match self.swarm.behaviour_mut().gossipsub.publish(
+                                self.sync_topic.clone(),
+                                data
+                            ) {
+                                Ok(_) => info!("📡 AI task dispatch broadcast successful"),
+                                Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+                                    warn!("⚠️ No miners subscribed to task dispatch topic");
+                                }
+                                Err(e) => warn!("Failed to broadcast AI task: {}", e),
                             }
                         }
                     }

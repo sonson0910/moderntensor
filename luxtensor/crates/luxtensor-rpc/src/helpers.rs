@@ -1,7 +1,9 @@
 // RPC helper functions for parsing parameters
 // Extracted from server.rs to reduce file size
+// Security: Added signature verification for RPC authentication
 
 use luxtensor_core::Address;
+use luxtensor_crypto::{keccak256, recover_public_key, address_from_public_key};
 
 /// Parse block number from JSON value
 /// Supports: "latest", "pending", "earliest", hex string, or numeric
@@ -65,6 +67,69 @@ pub fn parse_amount(s: &str) -> std::result::Result<u128, jsonrpc_core::Error> {
     let s = s.trim_start_matches("0x");
     u128::from_str_radix(s, 16)
         .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))
+}
+
+/// Verify that caller owns the address by recovering signer from signature
+///
+/// # Security
+/// This function prevents impersonation attacks by verifying that the caller
+/// actually owns the private key corresponding to the claimed address.
+///
+/// # Arguments
+/// * `claimed_address` - The address the caller claims to own
+/// * `message` - The message that was signed (must include nonce/timestamp for replay protection)
+/// * `signature_hex` - The signature in hex format (65 bytes: r(32) + s(32) + v(1))
+/// * `recovery_id` - The recovery ID (v value, typically 27 or 28, we use 0 or 1)
+///
+/// # Returns
+/// * `Ok(())` if signature is valid and matches claimed address
+/// * `Err` if signature is invalid or doesn't match
+pub fn verify_caller_signature(
+    claimed_address: &Address,
+    message: &str,
+    signature_hex: &str,
+    recovery_id: u8,
+) -> std::result::Result<(), jsonrpc_core::Error> {
+    // Parse signature bytes
+    let sig_hex = signature_hex.trim_start_matches("0x");
+    let sig_bytes = hex::decode(sig_hex)
+        .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid signature hex format"))?;
+
+    if sig_bytes.len() != 64 && sig_bytes.len() != 65 {
+        return Err(jsonrpc_core::Error::invalid_params(
+            "Signature must be 64 or 65 bytes"
+        ));
+    }
+
+    // Get signature portion (64 bytes)
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes[..64]);
+
+    // Hash the message (Ethereum personal_sign format)
+    let prefix = format!("\x19Ethereum Signed Message:\n{}", message.len());
+    let prefixed_msg = [prefix.as_bytes(), message.as_bytes()].concat();
+    let message_hash = keccak256(&prefixed_msg);
+
+    // Recover public key from signature
+    let public_key = recover_public_key(&message_hash, &sig_arr, recovery_id)
+        .map_err(|e| jsonrpc_core::Error::invalid_params(
+            format!("Failed to recover public key: {:?}", e)
+        ))?;
+
+    // Derive address from recovered public key
+    let recovered_address = address_from_public_key(&public_key)
+        .map_err(|e| jsonrpc_core::Error::invalid_params(
+            format!("Failed to derive address: {:?}", e)
+        ))?;
+
+    // Compare addresses
+    if recovered_address != *claimed_address.as_bytes() {
+        return Err(jsonrpc_core::Error::invalid_params(
+            "Signature does not match claimed address"
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

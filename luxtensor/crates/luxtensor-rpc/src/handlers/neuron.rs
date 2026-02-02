@@ -262,4 +262,205 @@ pub fn register_neuron_handlers(
             Ok(Value::Null)
         }
     });
+
+    // =========================================================================
+    // SDK Compatibility Aliases (neuron_mixin.py / neuron_client.py)
+    // =========================================================================
+
+    // neuron_get - Alias for neuron_getInfo (SDK uses this name)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_get", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let neuron_uid = parsed[1]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
+        let neurons_map = neurons_clone.read();
+        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+            Ok(serde_json::json!({
+                "uid": neuron.uid,
+                "address": neuron.address,
+                "subnet_id": neuron.subnet_id,
+                "stake": format!("0x{:x}", neuron.stake),
+                "trust": neuron.trust,
+                "rank": neuron.rank,
+                "incentive": neuron.incentive,
+                "dividends": neuron.dividends,
+                "active": neuron.active,
+                "endpoint": neuron.endpoint,
+            }))
+        } else {
+            Ok(Value::Null)
+        }
+    });
+
+    // neuron_getAll - Alias for neuron_listBySubnet (SDK uses this name)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_getAll", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let neurons_map = neurons_clone.read();
+        let neurons_list: Vec<Value> = neurons_map
+            .iter()
+            .filter(|((sid, _), _)| *sid == subnet_id)
+            .map(|(_, neuron)| {
+                serde_json::json!({
+                    "uid": neuron.uid,
+                    "address": neuron.address,
+                    "stake": format!("0x{:x}", neuron.stake),
+                    "trust": neuron.trust,
+                    "rank": neuron.rank,
+                    "incentive": neuron.incentive,
+                    "dividends": neuron.dividends,
+                    "active": neuron.active,
+                })
+            })
+            .collect();
+        Ok(Value::Array(neurons_list))
+    });
+
+    // neuron_exists - Check if neuron exists (SDK uses this)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_exists", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let neuron_uid = parsed[1]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
+        let neurons_map = neurons_clone.read();
+        let exists = neurons_map.contains_key(&(subnet_id, neuron_uid));
+        Ok(Value::Bool(exists))
+    });
+
+    // neuron_getByHotkey - Get neuron by hotkey address (SDK neuron_client.py)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_getByHotkey", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or hotkey"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let hotkey = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
+
+        let neurons_map = neurons_clone.read();
+        let neuron = neurons_map
+            .iter()
+            .find(|((sid, _), n)| *sid == subnet_id && n.address == hotkey)
+            .map(|(_, n)| n);
+
+        if let Some(neuron) = neuron {
+            Ok(serde_json::json!({
+                "uid": neuron.uid,
+                "address": neuron.address,
+                "subnet_id": neuron.subnet_id,
+                "stake": format!("0x{:x}", neuron.stake),
+                "trust": neuron.trust,
+                "rank": neuron.rank,
+                "incentive": neuron.incentive,
+                "dividends": neuron.dividends,
+                "active": neuron.active,
+            }))
+        } else {
+            Ok(Value::Null)
+        }
+    });
+
+    // neuron_getActive - Get active neuron UIDs (SDK neuron_client.py)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_getActive", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let neurons_map = neurons_clone.read();
+        let active_uids: Vec<u64> = neurons_map
+            .iter()
+            .filter(|((sid, _), n)| *sid == subnet_id && n.active)
+            .map(|((_, uid), _)| *uid)
+            .collect();
+        Ok(serde_json::json!(active_uids))
+    });
+
+    // neuron_count - Get neuron count (SDK neuron_client.py uses this name)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_count", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        let neurons_map = neurons_clone.read();
+
+        if parsed.is_empty() {
+            // No subnet specified - return total count
+            let count = neurons_map.len();
+            return Ok(Value::Number(count.into()));
+        }
+
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let count = neurons_map
+            .keys()
+            .filter(|(sid, _)| *sid == subnet_id)
+            .count();
+        Ok(Value::Number(count.into()))
+    });
+
+    // neuron_batchGet - Batch get neurons by UIDs (SDK neuron_client.py)
+    let neurons_clone = neurons.clone();
+    io.add_sync_method("neuron_batchGet", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or uids"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet_id"))?;
+        let uids: Vec<u64> = parsed[1]
+            .as_array()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid uids array"))?
+            .iter()
+            .filter_map(|v| v.as_u64())
+            .collect();
+
+        let neurons_map = neurons_clone.read();
+        let results: Vec<Value> = uids
+            .iter()
+            .filter_map(|uid| neurons_map.get(&(subnet_id, *uid)))
+            .map(|neuron| {
+                serde_json::json!({
+                    "uid": neuron.uid,
+                    "address": neuron.address,
+                    "subnet_id": neuron.subnet_id,
+                    "stake": format!("0x{:x}", neuron.stake),
+                    "trust": neuron.trust,
+                    "rank": neuron.rank,
+                    "incentive": neuron.incentive,
+                    "dividends": neuron.dividends,
+                    "active": neuron.active,
+                })
+            })
+            .collect();
+        Ok(Value::Array(results))
+    });
 }
+

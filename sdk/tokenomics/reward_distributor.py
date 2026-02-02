@@ -1,13 +1,14 @@
 """
 Reward Distributor for fair token distribution.
 
-Implements the epoch reward distribution scheme (IMPROVED v2):
+Implements the epoch reward distribution scheme (v3.2 - Community Focus):
 - 35% Miners (based on performance scores)
-- 30% Validators (based on stake)
-- 10% Subnet Owners (emission-based)
-- 10% Delegators (passive stakers)
-- 10% DAO Treasury
-- 5% Staking Bonus Pool (long-term lock rewards)
+- 28% Validators (based on stake)
+- 12% Delegators (passive stakers)
+- 10% Community Ecosystem (grants, hackathons) <- NEW
+- 8% Subnet Owners (emission-based)
+- 5% DAO Treasury
+- 2% Infrastructure (full node operators)
 """
 
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ class DistributionResult:
         validator_rewards: Dict mapping validator addresses to reward amounts
         subnet_owner_rewards: Dict mapping subnet owner addresses to rewards
         delegator_rewards: Dict mapping delegator addresses to rewards
-        staking_bonus_rewards: Dict mapping long-term stakers to bonus rewards
+        community_ecosystem_allocation: Amount for developer grants/hackathons (NEW)
         dao_allocation: Amount allocated to DAO treasury
     """
     epoch: int
@@ -41,12 +42,9 @@ class DistributionResult:
     validator_rewards: Dict[str, int]
     subnet_owner_rewards: Dict[str, int]
     delegator_rewards: Dict[str, int]
-    staking_bonus_rewards: Dict[str, int] = None  # NEW: Long-term staking bonus
+    community_ecosystem_allocation: int = 0  # NEW: Developer grants, hackathons
+    infrastructure_allocation: int = 0
     dao_allocation: int = 0
-
-    def __post_init__(self):
-        if self.staking_bonus_rewards is None:
-            self.staking_bonus_rewards = {}
 
 
 @dataclass
@@ -67,16 +65,14 @@ class RewardDistributor:
     """
     Distributes epoch rewards to all network participants.
 
-    Distribution (IMPROVED v2):
+    Distribution v3.2 (Community Focus):
     - 35% to Miners (performance-based)
-    - 30% to Validators (stake-based)
-    - 10% to Subnet Owners (emission-based)
-    - 10% to Delegators (passive stakers)
-    - 10% to DAO Treasury
-    - 5% to Staking Bonus Pool (long-term lock rewards)
-    - 15% to Subnet Owners (emission-based)
-    - 10% to DAO Treasury
-    - 5% to Delegators (stake-based)
+    - 28% to Validators (stake-based)
+    - 12% to Delegators (stake-based + lock bonus)
+    - 10% to Community Ecosystem (grants, hackathons) <- NEW
+    - 8% to Subnet Owners (emission-based)
+    - 5% to DAO Treasury
+    - 2% to Infrastructure (full node operators)
     """
 
     def __init__(self, config: Optional[DistributionConfig] = None):
@@ -116,12 +112,14 @@ class RewardDistributor:
         if recycling_pool:
             from_pool, from_mint = recycling_pool.allocate_rewards(total_emission)
 
-        # Split into pools
+        # Split into pools (v3.2 - Community Focus)
         miner_pool = int(total_emission * self.config.miner_share)
         validator_pool = int(total_emission * self.config.validator_share)
+        delegator_pool = int(total_emission * self.config.delegator_share)
+        community_pool = int(total_emission * self.config.community_ecosystem_share)
         subnet_pool = int(total_emission * self.config.subnet_owner_share)
         dao_pool = int(total_emission * self.config.dao_share)
-        delegator_pool = int(total_emission * self.config.delegator_share)
+        infrastructure_pool = int(total_emission * self.config.infrastructure_share)
 
         # Distribute to each group
         miner_rewards = self._distribute_by_score(
@@ -153,6 +151,8 @@ class RewardDistributor:
             validator_rewards=validator_rewards,
             subnet_owner_rewards=subnet_owner_rewards,
             delegator_rewards=delegator_rewards,
+            community_ecosystem_allocation=community_pool,
+            infrastructure_allocation=infrastructure_pool,
             dao_allocation=dao_pool
         )
 
@@ -303,7 +303,9 @@ class RewardDistributor:
         return {
             "miner_share": f"{self.config.miner_share * 100:.0f}%",
             "validator_share": f"{self.config.validator_share * 100:.0f}%",
+            "delegator_share": f"{self.config.delegator_share * 100:.0f}%",
+            "community_ecosystem_share": f"{self.config.community_ecosystem_share * 100:.0f}%",
             "subnet_owner_share": f"{self.config.subnet_owner_share * 100:.0f}%",
             "dao_share": f"{self.config.dao_share * 100:.0f}%",
-            "delegator_share": f"{self.config.delegator_share * 100:.0f}%",
+            "infrastructure_share": f"{self.config.infrastructure_share * 100:.0f}%",
         }

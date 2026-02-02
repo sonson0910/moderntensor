@@ -194,4 +194,49 @@ pub fn register_weight_handlers(
             .collect();
         Ok(Value::Array(all_weights))
     });
+
+    // =========================================================================
+    // SDK Compatibility Methods (neuron_client.py)
+    // =========================================================================
+
+    // weight_getCommits - Get weight commits for a subnet (SDK neuron_client.py)
+    // Returns list of recent weight submissions with metadata
+    let weights_clone = weights.clone();
+    io.add_sync_method("weight_getCommits", move |params: Params| {
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
+        }
+        let subnet_id = parsed[0]
+            .as_u64()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
+
+        let weights_map = weights_clone.read();
+
+        // Get all neurons that have set weights in this subnet
+        let commits: Vec<Value> = weights_map
+            .iter()
+            .filter(|((sid, _), _)| *sid == subnet_id)
+            .map(|((_, neuron_uid), weights)| {
+                let total_weight: u64 = weights.iter().map(|w| w.weight as u64).sum();
+                serde_json::json!({
+                    "neuron_uid": neuron_uid,
+                    "subnet_id": subnet_id,
+                    "weight_count": weights.len(),
+                    "total_weight": total_weight,
+                    "committed": true,
+                    // Note: In a full implementation, these would come from a commit-reveal store
+                    "commit_hash": format!("0x{:0>64x}", neuron_uid),
+                    "revealed": true
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "subnet_id": subnet_id,
+            "commits": commits,
+            "count": commits.len()
+        }))
+    });
 }
+

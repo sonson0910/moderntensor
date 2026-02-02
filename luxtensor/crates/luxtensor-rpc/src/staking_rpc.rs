@@ -1,8 +1,11 @@
 // Staking RPC API Module
 // Provides JSON-RPC endpoints for staking operations with persistent storage
+// SECURITY: All state-changing operations now require signature verification
 
+use crate::helpers::verify_caller_signature;
 use jsonrpc_core::{IoHandler, Params, Error, ErrorCode};
 use luxtensor_consensus::RewardExecutor;
+use luxtensor_core::Address;
 use luxtensor_storage::{MetagraphDB, StakingData, DelegationData};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -36,15 +39,43 @@ pub fn register_staking_methods(
     _executor: Arc<RwLock<RewardExecutor>>,
 ) {
     // staking_stake - Stake tokens as a validator (PERSISTED)
+    // SECURITY: Now requires signature verification to prevent impersonation
     let db = metagraph_db.clone();
     io.add_sync_method("staking_stake", move |params: Params| {
         let parsed: Vec<String> = params.parse()?;
-        if parsed.len() < 2 {
-            return Err(Error::invalid_params("Missing address or amount"));
+        if parsed.len() < 4 {
+            return Err(Error::invalid_params(
+                "Missing parameters. Required: address, amount, timestamp, signature"
+            ));
         }
 
         let address = parse_address(&parsed[0])?;
         let amount = parse_amount(&parsed[1])?;
+        let timestamp: u64 = parsed[2].parse()
+            .map_err(|_| Error::invalid_params("Invalid timestamp"))?;
+        let signature = &parsed[3];
+
+        // Security: Verify timestamp is recent (within 5 minutes)
+        let now = get_current_timestamp();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(Error::invalid_params("Signature expired or future timestamp"));
+        }
+
+        // Security: Construct message and verify signature
+        let message = format!("stake:{}:{}", hex::encode(address), amount);
+
+        // Convert [u8; 20] to Address for signature verification
+        let addr = Address::from(address);
+
+        // Try recovery IDs 0 and 1 (common values)
+        let sig_valid = verify_caller_signature(&addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, signature, 1));
+
+        if sig_valid.is_err() {
+            return Err(Error::invalid_params(
+                "Signature verification failed - caller does not own address"
+            ));
+        }
 
         if amount < MIN_VALIDATOR_STAKE {
             return Err(Error::invalid_params(format!(
@@ -78,7 +109,7 @@ pub fn register_staking_methods(
             "address": format!("0x{}", hex::encode(address)),
             "staked": format!("0x{:x}", new_stake.stake),
             "stakedDecimal": new_stake.stake.to_string(),
-            "message": "Stake successful (persisted)"
+            "message": "Stake successful (persisted, signature verified)"
         }))
     });
 
@@ -329,6 +360,124 @@ pub fn register_staking_methods(
             "totalStake": format!("0x{:x}", total),
             "totalStakeDecimal": total.to_string(),
             "validatorCount": stakes.iter().filter(|s| s.stake >= MIN_VALIDATOR_STAKE).count()
+        }))
+    });
+
+    // =========================================================================
+    // SDK Compatibility Methods (Added for SDK integration)
+    // =========================================================================
+
+    // staking_getStakeForPair - Get stake for coldkey-hotkey pair
+    // SDK: staking_mixin.py calls this for coldkey/hotkey stake lookup
+    let db = metagraph_db.clone();
+    io.add_sync_method("staking_getStakeForPair", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.len() < 2 {
+            return Err(Error::invalid_params("Missing coldkey or hotkey address"));
+        }
+
+        let coldkey = parse_address(&parsed[0])?;
+        let hotkey = parse_address(&parsed[1])?;
+
+        // In our model, stake is per-address. For coldkey-hotkey pairs,
+        // we lookup the hotkey's stake (which would be delegated from coldkey)
+        // First check if there's a delegation from coldkey to hotkey
+        if let Ok(Some(delegation)) = db.get_delegation(&coldkey) {
+            if delegation.validator == hotkey {
+                return Ok(serde_json::json!({
+                    "coldkey": format!("0x{}", hex::encode(coldkey)),
+                    "hotkey": format!("0x{}", hex::encode(hotkey)),
+                    "stake": format!("0x{:x}", delegation.amount),
+                    "stakeDecimal": delegation.amount.to_string()
+                }));
+            }
+        }
+
+        // Also check direct stake on hotkey
+        if let Ok(Some(stake_data)) = db.get_stake(&hotkey) {
+            return Ok(serde_json::json!({
+                "coldkey": format!("0x{}", hex::encode(coldkey)),
+                "hotkey": format!("0x{}", hex::encode(hotkey)),
+                "stake": format!("0x{:x}", stake_data.stake),
+                "stakeDecimal": stake_data.stake.to_string()
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "coldkey": format!("0x{}", hex::encode(coldkey)),
+            "hotkey": format!("0x{}", hex::encode(hotkey)),
+            "stake": "0x0",
+            "stakeDecimal": "0"
+        }))
+    });
+
+    // staking_getAllStakesForColdkey - Get all stakes for a coldkey
+    // SDK: staking_mixin.py calls this to get all hotkey stakes for a coldkey
+    let db = metagraph_db.clone();
+    io.add_sync_method("staking_getAllStakesForColdkey", move |params: Params| {
+        let parsed: Vec<String> = params.parse()?;
+        if parsed.is_empty() {
+            return Err(Error::invalid_params("Missing coldkey address"));
+        }
+
+        let coldkey = parse_address(&parsed[0])?;
+
+        // Get all delegations and filter by this coldkey
+        let all_delegations = db.get_all_delegations()
+            .map_err(|e| internal_error(&e.to_string()))?;
+
+        let stakes: serde_json::Map<String, serde_json::Value> = all_delegations
+            .iter()
+            .filter(|d| d.delegator == coldkey)
+            .map(|d| (
+                format!("0x{}", hex::encode(d.validator)),
+                serde_json::json!(format!("0x{:x}", d.amount))
+            ))
+            .collect();
+
+        Ok(serde_json::json!({
+            "coldkey": format!("0x{}", hex::encode(coldkey)),
+            "stakes": stakes,
+            "count": stakes.len()
+        }))
+    });
+
+    // staking_getDelegates - Get all validators accepting delegation
+    // SDK: staking_mixin.py calls this to list all delegates
+    let db = metagraph_db.clone();
+    io.add_sync_method("staking_getDelegates", move |_params: Params| {
+        let stakes = db.get_all_stakes()
+            .map_err(|e| internal_error(&e.to_string()))?;
+
+        let all_delegations = db.get_all_delegations()
+            .map_err(|e| internal_error(&e.to_string()))?;
+
+        // Calculate total delegated to each validator
+        let mut delegation_totals: std::collections::HashMap<[u8; 20], u128> = std::collections::HashMap::new();
+        for d in &all_delegations {
+            *delegation_totals.entry(d.validator).or_insert(0) += d.amount;
+        }
+
+        // All validators with stake >= minimum are potential delegates
+        let delegates: Vec<serde_json::Value> = stakes.iter()
+            .filter(|s| s.stake >= MIN_VALIDATOR_STAKE)
+            .map(|s| {
+                let total_delegated = delegation_totals.get(&s.address).copied().unwrap_or(0);
+                serde_json::json!({
+                    "address": format!("0x{}", hex::encode(s.address)),
+                    "stake": format!("0x{:x}", s.stake),
+                    "stakeDecimal": s.stake.to_string(),
+                    "totalDelegated": format!("0x{:x}", total_delegated),
+                    "totalDelegatedDecimal": total_delegated.to_string(),
+                    "delegatorCount": all_delegations.iter().filter(|d| d.validator == s.address).count(),
+                    "isAcceptingDelegation": true
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "delegates": delegates,
+            "count": delegates.len()
         }))
     });
 }

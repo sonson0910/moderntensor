@@ -14,29 +14,30 @@
 
 ### 🎯 Current Focus: Building Layer 1 Blockchain
 
-**Status:** 83% complete - **AHEAD OF SCHEDULE!**  
-**Target:** Mainnet Q1 2026 (2 months)  
-**Priority:** Phase 9 Mainnet Launch
+**Status:** ~90% complete - **Native AI Integration Done!**
+**Target:** Mainnet Q1 2026 (2 months)
+**Priority:** Phase 5 Testnet Launch
 
 In the ModernTensor ecosystem:
 
-*   **Miners:** Provide AI/ML services/models via API endpoints. They register their hotkey (representing the miner's identifier - UID) onto the network.
-*   **Validators:** Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
-*   **Custom L1 Blockchain:** Independent blockchain with PoS consensus, optimized for AI validation and incentive distribution.
+* **Miners:** Provide AI/ML services/models via API endpoints. They register their hotkey (representing the miner's identifier - UID) onto the network.
+* **Validators:** Evaluate the quality and performance of Miners, contributing to the consensus mechanism and reward distribution.
+* **Custom L1 Blockchain:** Independent blockchain with PoS consensus, optimized for AI validation and incentive distribution.
 
 ### Layer 1 Development Status
 
-- ✅ **Phase 1:** On-Chain State Optimization (Complete)
-- ✅ **Phase 2:** Core Blockchain - Block, Transaction, State (Complete)
-- ✅ **Phase 3:** Consensus Layer - PoS (Complete)
-- ✅ **Phase 4:** Network Layer - P2P (Complete)
-- ✅ **Phase 5:** Storage Layer - LevelDB (Complete)
-- ✅ **Phase 6:** RPC & API - JSON-RPC, GraphQL (Complete)
-- ✅ **Phase 7:** Testing & DevOps (Complete - 71 tests passing)
-- ✅ **Phase 8:** Testnet Infrastructure (Complete)
-- ⏸️ **Phase 9:** Mainnet Launch (Q1 2026 Target - 2 months)
+* ✅ **Phase 1:** On-Chain State Optimization (Complete)
+* ✅ **Phase 2:** Core Blockchain - Block, Transaction, State (Complete)
+* ✅ **Phase 3:** Consensus Layer - PoS (Complete)
+* ✅ **Phase 4:** Network Layer - P2P (Complete)
+* ✅ **Phase 5:** Storage Layer - LevelDB (Complete)
+* ✅ **Phase 6:** RPC & API - JSON-RPC, GraphQL (Complete)
+* ✅ **Phase 7:** Testing & DevOps (Complete - 71 tests passing)
+* ✅ **Phase 8:** Native AI Integration (Complete - AI Precompiles + PaymentEscrow)
+* ⏸️ **Phase 9:** Testnet Launch (Q1 2026 Target)
+* ⏸️ **Phase 10:** Mainnet Launch (Q1 2026 Target)
 
-**Progress: 83% complete** (~9,715 lines production code)
+**Progress: ~90% complete** (~12,000+ lines production code)
 
 **See [docs/implementation/LAYER1_IMPLEMENTATION_SUMMARY.md](docs/implementation/LAYER1_IMPLEMENTATION_SUMMARY.md) for complete implementation details and [LAYER1_FOCUS.md](LAYER1_FOCUS.md) for current priorities.**
 
@@ -45,37 +46,39 @@ This project includes an SDK toolkit and a command-line interface (CLI) for inte
 ## 📋 Current Features
 
 ### Layer 1 Blockchain (Luxtensor)
-*   **Custom PoS Blockchain:** Independent Layer 1 with account-based model (Ethereum-style)
-*   **High Performance:** ~12 second block time, scalable architecture
-*   **Native Integration:** Optimized for AI/ML workloads
-*   **Phase 1 Complete:** 83% complete, production-ready foundation
+
+* **Custom PoS Blockchain:** Independent Layer 1 with account-based model (Ethereum-style)
+* **High Performance:** ~12 second block time, scalable architecture
+* **Native AI Opcodes:** AI precompiles at 0x10-0x13 for on-chain inference
+* **Pay-per-Compute:** PaymentEscrow system with MDT token economics
+* **zkML Integration:** Zero-knowledge proof verification for AI outputs
+* **EVM Compatible:** Full Hardhat/Foundry tooling support
 
 ### Python SDK & Tools
-*   **LuxtensorClient:** Comprehensive RPC client for blockchain interaction (sync + async)
-*   **Axon Server:** Production-ready API server with DDoS protection, rate limiting
-*   **Dendrite Client:** Advanced query client with circuit breaker, caching
-*   **AI/ML Framework:** Subnet system, agent framework, zkML integration
-*   **Security Module:** Authentication, rate limiting, IP filtering
-*   **Tokenomics:** Reward calculation, emission schedules, staking
+
+* **LuxtensorClient:** Comprehensive RPC client for blockchain interaction (sync + async)
+* **Consensus Module:** Full parity with Rust core (Slashing, Fork Choice, Fast Finality)
+* **Core Systems:** Node Tiers, Advanced Scoring, ZKML Integration
+* **Axon Server:** Production-ready API server with DDoS protection, rate limiting
+* **Dendrite Client:** Advanced query client with circuit breaker, caching
+* **AI/ML Framework:** Subnet system, agent framework, zkML integration
+* **Security Module:** Authentication, rate limiting, IP filtering
+* **Tokenomics:** Reward calculation, emission schedules, staking
 
 ### CLI Tool (mtcli) - NEW! 🚀
-*   **Modern CLI:** Click-based command interface with Rich output
-*   **Wallet Management:**
-    *   Create Coldkey (`create-coldkey`): Generates BIP39 mnemonic with password encryption
-    *   Restore Coldkey (`restore-coldkey`): Restore from existing mnemonic
-    *   Generate Hotkey (`generate-hotkey`): BIP44 HD derivation for hotkeys
-    *   List Wallets (`list`): Display all coldkeys
-    *   More commands coming in Phase 2
-*   **Ethereum-Compatible Keys:** Standard BIP39/BIP44 key derivation
-*   **Secure Storage:** PBKDF2 + Fernet encryption (100k iterations)
-*   **Beautiful Output:** Rich tables, colors, progress indicators
-*   **Status:** Phase 1 Complete (30%), see [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md)
+
+* More commands coming in Phase 2
+* **Ethereum-Compatible Keys:** Standard BIP39/BIP44 key derivation
+* **Secure Storage:** PBKDF2 + Fernet encryption (100k iterations)
+* **Beautiful Output:** Rich tables, colors, progress indicators
+* **Status:** Phase 1 Complete (30%), see [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md)
 
 ## 💡 Using the CLI (`mtcli`)
 
 **NEW!** mtcli has been rebuilt from the ground up with modern architecture and security.
 
 **Installation:**
+
 ```bash
 # Install in development mode
 pip install -e .
@@ -85,6 +88,7 @@ python -m sdk.cli.main
 ```
 
 **Quick Start:**
+
 ```bash
 # Check version
 mtcli --version
@@ -107,12 +111,14 @@ mtcli utils convert --from-mdt 1.5
 ```
 
 **Documentation:**
-- [MTCLI_IMPLEMENTATION_GUIDE.md](MTCLI_IMPLEMENTATION_GUIDE.md) - Technical guide
-- [MTCLI_ROADMAP_VI.md](MTCLI_ROADMAP_VI.md) - Vietnamese roadmap
-- [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md) - Phase 1 summary
+
+* [MTCLI_IMPLEMENTATION_GUIDE.md](MTCLI_IMPLEMENTATION_GUIDE.md) - Technical guide
+* [MTCLI_ROADMAP_VI.md](MTCLI_ROADMAP_VI.md) - Vietnamese roadmap
+* [MTCLI_FINAL_SUMMARY.md](MTCLI_FINAL_SUMMARY.md) - Phase 1 summary
 
 **Command Groups:**
 **Command Groups:**
+
 ```bash
 mtcli wallet      # Wallet management (create, restore, generate hotkeys)
 mtcli stake       # Staking operations (Phase 4 - planned)
@@ -132,16 +138,19 @@ The following commands are from the previous implementation. They will be migrat
 #### Subnet & Simulation Commands (Legacy)
 
 **Run a Validator:**
+
 ```bash
 mtcli run_validator --subnet sdk.subnets.text_gen.TextGenerationSubnet --coldkey my_coldkey --hotkey my_hotkey --network testnet
 ```
 
 **Run a Miner:**
+
 ```bash
 mtcli run_miner --subnet sdk.subnets.text_gen.TextGenerationSubnet --coldkey my_coldkey --uid <UID> --network testnet
 ```
 
 **Simulate a Subnet Locally:**
+
 ```bash
 mtcli simulate --subnet sdk.subnets.text_gen.TextGenerationSubnet --miners 3 --steps 5
 ```
@@ -336,55 +345,59 @@ mtcli l1-stake info \
     --address <validator_address_hex>
 ```
 
-
 ## 🏗️ Architecture
 
-*   `sdk/`: Core toolkit (Python SDK)
-    *   `blockchain/`: Core blockchain primitives (Block, Transaction, State, Validation)
-    *   `consensus/`: Proof of Stake consensus mechanism, validator management
-    *   `network/`: P2P networking, synchronization
-    *   `storage/`: Blockchain database and indexing
-    *   `api/`: JSON-RPC and GraphQL APIs
-    *   `keymanager/`: Coldkey/hotkey management, encryption, derivation
-    *   `cli/`: Command-line interface (`mtcli`)
-    *   `testnet/`: Testnet infrastructure (Genesis, Faucet, Bootstrap)
-    *   `tokenomics/`: Token emission, rewards, burning
-    *   `security/`: Security auditing and validation
-    *   `optimization/`: Performance optimizations
-    *   `monitoring/`: Metrics collection
-*   `docs/`: Comprehensive documentation
-    *   `implementation/`: Implementation details and phase summaries
-    *   `architecture/`: System design and diagrams
-    *   `reports/`: Audit reports and verification results
-*   `tests/`: Test suite
-*   `examples/`: Example scripts and demos
+* `sdk/`: Core toolkit (Python SDK)
+  * `blockchain/`: Core blockchain primitives (Block, Transaction, State, Validation)
+  * `consensus/`: Proof of Stake consensus mechanism, validator management
+  * `network/`: P2P networking, synchronization
+  * `storage/`: Blockchain database and indexing
+  * `api/`: JSON-RPC and GraphQL APIs
+  * `keymanager/`: Coldkey/hotkey management, encryption, derivation
+  * `cli/`: Command-line interface (`mtcli`)
+  * `testnet/`: Testnet infrastructure (Genesis, Faucet, Bootstrap)
+  * `tokenomics/`: Token emission, rewards, burning
+  * `security/`: Security auditing and validation
+  * `optimization/`: Performance optimizations
+  * `monitoring/`: Metrics collection
+* `docs/`: Comprehensive documentation
+  * `implementation/`: Implementation details and phase summaries
+  * `architecture/`: System design and diagrams
+  * `reports/`: Audit reports and verification results
+* `tests/`: Test suite
+* `examples/`: Example scripts and demos
 
 ## ⚙️ Installation
 
-1.  **Requirements:**
-    *   Python 3.9+
-    *   pip
+1. **Requirements:**
+    * Python 3.9+
+    * pip
 
-2.  **Clone Repository:**
+2. **Clone Repository:**
+
     ```bash
     git clone <your_repository_url>
     cd moderntensor
     ```
 
-3.  **Create Virtual Environment (Recommended):**
+3. **Create Virtual Environment (Recommended):**
+
     ```bash
     python -m venv venv
     source venv/bin/activate  # On Linux/macOS
     # venv\Scripts\activate   # On Windows
     ```
 
-4.  **Install Dependencies:**
+4. **Install Dependencies:**
+
     ```bash
     pip install -r requirements.txt
     ```
+
     *(Note: Ensure you have all dependencies installed, including `click`, `rich`, `bip_utils`, `cryptography`, `ecdsa`, `httpx`, etc...)*
 
-5.  **(Optional) Install in Editable Mode:** If you want the `mtcli` CLI to be runnable from anywhere and reflect code changes immediately. Requires a suitable `setup.py` or `pyproject.toml` file.
+5. **(Optional) Install in Editable Mode:** If you want the `mtcli` CLI to be runnable from anywhere and reflect code changes immediately. Requires a suitable `setup.py` or `pyproject.toml` file.
+
     ```bash
     pip install -e .
     ```
@@ -393,41 +406,44 @@ mtcli l1-stake info \
 
 We welcome contributions from the community! Please refer to `CONTRIBUTING.md` (if available) or follow standard procedures:
 
-1.  Fork the repository.
-2.  Create a new branch (`git checkout -b feature/AmazingFeature`).
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4.  Push to the branch (`git push origin feature/AmazingFeature`).
-5.  Open a Pull Request.
+1. Fork the repository.
+2. Create a new branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4. Push to the branch (`git push origin feature/AmazingFeature`).
+5. Open a Pull Request.
 
 ## 📚 Documentation
 
 Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
-- **[Implementation Docs](docs/implementation/)** - Phase summaries, implementation details
-- **[Architecture Docs](docs/architecture/)** - System design, diagrams, technical specifications
-- **[Reports](docs/reports/)** - Audit reports, verification results (Vietnamese)
+* **[Implementation Docs](docs/implementation/)** - Phase summaries, implementation details
+* **[Architecture Docs](docs/architecture/)** - System design, diagrams, technical specifications
+* **[Reports](docs/reports/)** - Audit reports, verification results (Vietnamese)
 
 Key documents:
-- **[ModernTensor Whitepaper (Vietnamese)](MODERNTENSOR_WHITEPAPER_VI.md)** - Complete project whitepaper
-- **[LuxTensor Technical FAQ (Vietnamese)](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Smart contracts, PoS vs Yuma, AI/ML integration
-- [Layer 1 Roadmap](LAYER1_ROADMAP.md) - Development roadmap and milestones
-- [Layer 1 Focus](LAYER1_FOCUS.md) - Current development priorities
-- [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
-- [Changelog](CHANGELOG.md) - Version history
+
+* **[ModernTensor Whitepaper (Vietnamese)](MODERNTENSOR_WHITEPAPER_VI.md)** - Complete project whitepaper
+* **[LuxTensor Technical FAQ (Vietnamese)](LUXTENSOR_TECHNICAL_FAQ_VI.md)** - Smart contracts, PoS vs Yuma, AI/ML integration
+* [Layer 1 Roadmap](LAYER1_ROADMAP.md) - Development roadmap and milestones
+* [Layer 1 Focus](LAYER1_FOCUS.md) - Current development priorities
+* [Migration Guide](MIGRATION.md) - Transitioning to Layer 1
+* [Changelog](CHANGELOG.md) - Version history
 
 SDK Redesign Documentation:
-- **[SDK Redesign Executive Summary](SDK_REDESIGN_EXECUTIVE_SUMMARY.md)** - Executive overview and project approval document
-- **[SDK Redesign Roadmap](SDK_REDESIGN_ROADMAP.md)** - Complete 8-month roadmap for SDK redesign
-- **[SDK Redesign Roadmap (Vietnamese)](SDK_REDESIGN_ROADMAP_VI.md)** - Lộ trình thiết kế lại SDK (Tiếng Việt)
-- **[Bittensor vs ModernTensor Comparison](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Detailed feature comparison and gap analysis
+
+* **[SDK Redesign Executive Summary](SDK_REDESIGN_EXECUTIVE_SUMMARY.md)** - Executive overview and project approval document
+* **[SDK Redesign Roadmap](SDK_REDESIGN_ROADMAP.md)** - Complete 8-month roadmap for SDK redesign
+* **[SDK Redesign Roadmap (Vietnamese)](SDK_REDESIGN_ROADMAP_VI.md)** - Lộ trình thiết kế lại SDK (Tiếng Việt)
+* **[Bittensor vs ModernTensor Comparison](BITTENSOR_VS_MODERNTENSOR_COMPARISON.md)** - Detailed feature comparison and gap analysis
 
 SDK Finalization Documentation (2026-01-07):
-- **[SDK Finalization Index](SDK_FINALIZATION_INDEX.md)** - 📚 **START HERE** - Document navigation guide
-- **[SDK Finalization Executive Summary](SDK_FINALIZATION_EXECUTIVE_SUMMARY.md)** - 1-page summary for leadership decision
-- **[SDK Finalization Roadmap](SDK_FINALIZATION_ROADMAP.md)** - Comprehensive 8-month implementation plan with code examples
-- **[SDK Finalization Summary (Vietnamese)](SDK_FINALIZATION_SUMMARY_VI.md)** - Tóm tắt hoàn thiện SDK (Tiếng Việt)
-- **[SDK Current Status Summary](SDK_CURRENT_STATUS_SUMMARY.md)** - Current state assessment (28% complete)
-- **[SDK Implementation Checklist](SDK_IMPLEMENTATION_CHECKLIST.md)** - Detailed task checklist for all 7 phases
+
+* **[SDK Finalization Index](SDK_FINALIZATION_INDEX.md)** - 📚 **START HERE** - Document navigation guide
+* **[SDK Finalization Executive Summary](SDK_FINALIZATION_EXECUTIVE_SUMMARY.md)** - 1-page summary for leadership decision
+* **[SDK Finalization Roadmap](SDK_FINALIZATION_ROADMAP.md)** - Comprehensive 8-month implementation plan with code examples
+* **[SDK Finalization Summary (Vietnamese)](SDK_FINALIZATION_SUMMARY_VI.md)** - Tóm tắt hoàn thiện SDK (Tiếng Việt)
+* **[SDK Current Status Summary](SDK_CURRENT_STATUS_SUMMARY.md)** - Current state assessment (28% complete)
+* **[SDK Implementation Checklist](SDK_IMPLEMENTATION_CHECKLIST.md)** - Detailed task checklist for all 7 phases
 
 ## 📄 License
 

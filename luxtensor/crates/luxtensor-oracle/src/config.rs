@@ -1,0 +1,26 @@
+use ethers::types::Address;
+use serde::Deserialize;
+use std::env;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OracleConfig {
+    pub node_ws_url: String,
+    pub oracle_contract_address: Address,
+    pub private_key: String,
+    pub database_url: Option<String>,
+}
+
+impl OracleConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            node_ws_url: env::var("NODE_WS_URL")
+                .unwrap_or_else(|_| "ws://127.0.0.1:8546".to_string()),
+            oracle_contract_address: env::var("ORACLE_CONTRACT_ADDRESS")
+                .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string())
+                .parse()?,
+            private_key: env::var("ORACLE_PRIVATE_KEY")
+                .expect("ORACLE_PRIVATE_KEY must be set"),
+            database_url: env::var("DATABASE_URL").ok(),
+        })
+    }
+}

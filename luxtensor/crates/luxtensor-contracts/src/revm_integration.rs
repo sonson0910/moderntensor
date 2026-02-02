@@ -51,7 +51,7 @@ impl Default for EvmConfig {
 
 /// Standard Ethereum precompile addresses
 pub mod precompiles {
-    
+
 
     /// ECRECOVER precompile address (0x01)
     pub const ECRECOVER: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -79,6 +79,33 @@ pub mod precompiles {
 
     /// BLAKE2F precompile address (0x09)
     pub const BLAKE2F: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9];
+
+    // ========== LuxTensor AI Precompiles ==========
+    // Custom precompiles for native AI integration (Phase 2)
+
+    /// AI_REQUEST precompile address (0x10)
+    /// Submit AI inference request to the network
+    /// Input: abi.encode(model_hash, input_data, callback_address, max_reward)
+    /// Output: bytes32 request_id
+    pub const AI_REQUEST: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10];
+
+    /// VERIFY_PROOF precompile address (0x11)
+    /// Verify ZK proof for AI computation
+    /// Input: abi.encode(proof_type, proof_data, public_inputs)
+    /// Output: bool is_valid
+    pub const VERIFY_PROOF: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11];
+
+    /// GET_RESULT precompile address (0x12)
+    /// Retrieve completed AI inference result
+    /// Input: bytes32 request_id
+    /// Output: abi.encode(status, result_data, fulfiller_address)
+    pub const GET_RESULT: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x12];
+
+    /// COMPUTE_PAYMENT precompile address (0x13)
+    /// Calculate required payment for AI request based on model complexity
+    /// Input: bytes32 model_hash, uint256 input_size
+    /// Output: uint256 required_payment
+    pub const COMPUTE_PAYMENT: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x13];
 }
 
 /// Parse REVM logs into LuxTensor Log format

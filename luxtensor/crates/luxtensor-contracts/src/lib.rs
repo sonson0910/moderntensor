@@ -8,6 +8,8 @@ pub mod types;
 pub mod evm_executor;
 pub mod revm_integration;
 pub mod account_abstraction;
+pub mod ai_precompiles;
+
 
 pub use error::*;
 pub use executor::{

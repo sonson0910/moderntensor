@@ -6,28 +6,37 @@ LuxTensor is a Rust implementation of the ModernTensor blockchain, optimized for
 
 ## Status
 
-🚧 **Phase 1: Foundation** - Core primitives and cryptography implemented
+✅ **Phase 4: Native AI Integration** - ~90% Complete
+
+AI as a first-class primitive with native opcodes and pay-per-compute economics.
 
 ## Features
 
 - ⚡ **High Performance**: 10-100x faster than Python implementation
 - 🔒 **Memory Safe**: Rust's ownership system prevents memory leaks
 - 🚀 **True Parallelism**: No GIL, efficient concurrency with tokio
-- 🤖 **AI-First**: Built for AI/ML validation workloads
-- 🔐 **Secure**: Type-safe, compile-time error checking
+- 🤖 **AI-First**: Native AI opcodes (0x10-0x13) for on-chain inference
+- 💰 **Pay-per-Compute**: PaymentEscrow system with MDT tokens
+- 🔐 **Secure**: Type-safe with zkML proof verification
+- 🌐 **EVM Compatible**: Full Ethereum tooling support
 
 ## Architecture
 
-LuxTensor is organized as a Cargo workspace with 8 specialized crates:
+LuxTensor is organized as a Cargo workspace with 11 specialized crates:
 
-- **luxtensor-core** - Core blockchain primitives (Block, Transaction, State, Account)
-- **luxtensor-crypto** - Cryptography (Keccak256, Blake3, secp256k1, Merkle trees)
-- **luxtensor-consensus** - PoS consensus mechanism (Phase 2)
-- **luxtensor-network** - P2P networking with libp2p (Phase 3)
-- **luxtensor-storage** - RocksDB database with Merkle Patricia Trie (Phase 4)
-- **luxtensor-rpc** - JSON-RPC API server (Phase 5)
-- **luxtensor-node** - Full node binary
-- **luxtensor-cli** - Command-line interface
+| Crate | Description |
+|-------|-------------|
+| **luxtensor-core** | Block, Transaction, State, Account primitives |
+| **luxtensor-crypto** | Keccak256, Blake3, secp256k1, Merkle trees |
+| **luxtensor-consensus** | PoS mechanism, validator selection |
+| **luxtensor-network** | P2P with libp2p, task dispatch |
+| **luxtensor-storage** | LevelDB persistence |
+| **luxtensor-rpc** | JSON-RPC API server |
+| **luxtensor-contracts** | EVM integration, AI precompiles |
+| **luxtensor-oracle** | Off-chain AI oracle node |
+| **luxtensor-zkvm** | zkML proof generation |
+| **luxtensor-node** | Full node binary |
+| **luxtensor-cli** | Command-line interface |
 
 ## Quick Start
 
@@ -115,17 +124,15 @@ cargo doc --open
 
 ## Roadmap
 
-- ✅ **Phase 1**: Foundation (4 weeks) - Core primitives, crypto
-- ⏳ **Phase 2**: Consensus (6 weeks) - PoS, validator selection, fork choice
-- ⏳ **Phase 3**: Network (6 weeks) - P2P with libp2p, sync protocol
-- ⏳ **Phase 4**: Storage (4 weeks) - RocksDB, Merkle Patricia Trie
-- ⏳ **Phase 5**: RPC (4 weeks) - JSON-RPC API server
-- ⏳ **Phase 6**: Node (4 weeks) - Full node implementation
-- ⏳ **Phase 7**: Testing (6 weeks) - Comprehensive testing
-- ⏳ **Phase 8**: Security Audit (4 weeks) - External audit
-- ⏳ **Phase 9**: Deployment (4 weeks) - Testnet, mainnet
+- ✅ **Phase 1**: Foundation - Core primitives, crypto
+- ✅ **Phase 2**: Consensus - PoS, validator selection, fork choice
+- ✅ **Phase 3**: Network - P2P with libp2p, task dispatch
+- ✅ **Phase 4**: Native AI - AI precompiles, PaymentEscrow
+- ⏳ **Phase 5**: Testnet - Public testnet launch
+- ⏳ **Phase 6**: Security Audit - External audit
+- ⏳ **Phase 7**: Mainnet - Production deployment
 
-**Total Timeline**: 42 weeks (10.5 months)
+**Target**: Q1 2026 Mainnet Launch
 
 ## Contributing
 
@@ -149,13 +156,14 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## Links
 
-- **ModernTensor (Python)**: https://github.com/sonson0910/moderntensor
+- **ModernTensor (Python)**: <https://github.com/sonson0910/moderntensor>
 - **Documentation**: See `/docs` directory
 - **Roadmap**: See `RUST_MIGRATION_ROADMAP.md` in parent directory
 
 ## Acknowledgments
 
 Built with 🦀 Rust, inspired by:
+
 - Ethereum (EVM, state model)
 - Polkadot (Substrate framework)
 - Solana (High performance)
@@ -163,6 +171,7 @@ Built with 🦀 Rust, inspired by:
 
 ---
 
-**Status**: Phase 1 Complete - Foundation  
-**Next**: Phase 2 - Consensus Implementation  
+**Status**: Phase 4 Complete - Native AI Integration
+**Next**: Phase 5 - Public Testnet
+**Target**: Q1 2026 Mainnet Launch
 **Timeline**: 10.5 months to production mainnet

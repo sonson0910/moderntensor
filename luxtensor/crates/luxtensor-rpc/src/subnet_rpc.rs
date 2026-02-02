@@ -213,5 +213,64 @@ pub fn register_subnet_methods(io: &mut IoHandler, root_subnet: RootSubnet) {
         }))
     });
 
+    // =========================================================================
+    // SDK Compatibility Methods (subnet_mixin.py)
+    // =========================================================================
+
+    // subnet_exists - Check if subnet exists (SDK uses this)
+    let subnet_state = root_subnet.clone();
+    io.add_sync_method("subnet_exists", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+        let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing netuid".to_string(),
+            data: None,
+        })? as u16;
+        let state = subnet_state.read();
+        let exists = state.subnets.contains_key(&netuid);
+        Ok(Value::Bool(exists))
+    });
+
+    // subnet_getHyperparameters - Get subnet hyperparameters (SDK uses this)
+    let subnet_state = root_subnet.clone();
+    io.add_sync_method("subnet_getHyperparameters", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+        let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing netuid".to_string(),
+            data: None,
+        })? as u16;
+        let state = subnet_state.read();
+        match state.get_subnet(netuid) {
+            Some(s) => Ok(json!({
+                "netuid": s.netuid,
+                "name": s.name,
+                "tempo": 360,  // Default tempo
+                "rho": 10,
+                "kappa": 32767,
+                "immunity_period": 100,
+                "min_allowed_weights": 1,
+                "max_weights_limit": 1024,
+                "emissionValue": s.emission_share(),
+                "registeredAt": s.registered_at,
+                "owner": format!("0x{}", hex::encode(s.owner))
+            })),
+            None => Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: format!("Subnet {} not found", netuid),
+                data: None,
+            })
+        }
+    });
+
+    // subnet_getCount - Get total subnet count (SDK uses this)
+    let subnet_state = root_subnet.clone();
+    io.add_sync_method("subnet_getCount", move |_params: Params| {
+        let state = subnet_state.read();
+        let count = state.subnets.len();
+        Ok(Value::Number(count.into()))
+    });
+
     info!("📡 Registered subnet RPC methods");
 }
+

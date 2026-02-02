@@ -1,0 +1,160 @@
+﻿cargo :     Checking luxtensor-oracle v0.1.0 (D:
+\venera\cardano\moderntensor\moderntensor\luxten
+sor\crates\luxtensor-oracle)
+At line:1 char:1
++ cargo check 2>&1 | Out-File -FilePath 
+errors.txt -Encoding utf8; Get- ...
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   
+     Checking lu...xtensor-oracle):String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+error[E0432]: unresolved import `futures`
+  --> crates\luxtensor-oracle\src\lib.rs:17:5
+   |
+17 | use futures::StreamExt;
+   |     ^^^^^^^ use of unresolved module or 
+unlinked crate `futures`
+   |
+   = help: if you wanted to use a crate named 
+`futures`, use `cargo add futures` to add it to 
+your `Cargo.toml`
+
+error[E0405]: cannot find trait `Stream` in 
+this scope
+  --> 
+crates\luxtensor-oracle\src\listener.rs:37:54
+   |
+37 |     pub async fn stream_events(&self) -> 
+Result<impl Stream<Item = 
+Result<AIRequestCreatedFilter>> + '_> {
+   |                                            
+          ^^^^^^ not found in this scope
+
+error[E0412]: cannot find type 
+`AIRequestCreatedFilter` in this scope
+  --> 
+crates\luxtensor-oracle\src\listener.rs:37:75
+   |
+ 9 | / abigen!(
+10 | |     AIOracle,
+11 | |     r#"[
+12 | |         event AIRequestCreated(bytes32 
+indexed requestId, address indexed requester, 
+bytes32 modelHash, uint256 reward)
+13 | |         function requests(bytes32 
+requestId) external view returns (address 
+requester, bytes32 modelHash, bytes inpu...
+14 | |     ]"#
+15 | | );
+   | |_- similarly named struct 
+`AirequestCreatedFilter` defined here
+...
+37 |       pub async fn stream_events(&self) -> 
+Result<impl Stream<Item = 
+Result<AIRequestCreatedFilter>> + '_> {
+   |                                            
+                                 
+^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: a struct with a similar name exists
+   |
+37 -     pub async fn stream_events(&self) -> 
+Result<impl Stream<Item = 
+Result<AIRequestCreatedFilter>> + '_> {
+37 +     pub async fn stream_events(&self) -> 
+Result<impl Stream<Item = 
+Result<AirequestCreatedFilter>> + '_> {
+   |
+help: you might be missing a type parameter
+   |
+22 | impl<AIRequestCreatedFilter> EventWatcher {
+   |     ++++++++++++++++++++++++
+
+error[E0412]: cannot find type 
+`AIRequestCreatedFilter` in this scope
+  --> 
+crates\luxtensor-oracle\src\listener.rs:39:22
+   |
+ 9 | / abigen!(
+10 | |     AIOracle,
+11 | |     r#"[
+12 | |         event AIRequestCreated(bytes32 
+indexed requestId, address indexed requester, 
+bytes32 modelHash, uint256 reward)
+13 | |         function requests(bytes32 
+requestId) external view returns (address 
+requester, bytes32 modelHash, bytes inpu...
+14 | |     ]"#
+15 | | );
+   | |_- similarly named struct 
+`AirequestCreatedFilter` defined here
+...
+39 |               
+.event::<AIRequestCreatedFilter>()
+   |                        
+^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: a struct with a similar name exists
+   |
+39 -             
+.event::<AIRequestCreatedFilter>()
+39 +             
+.event::<AirequestCreatedFilter>()
+   |
+help: you might be missing a type parameter
+   |
+22 | impl<AIRequestCreatedFilter> EventWatcher {
+   |     ++++++++++++++++++++++++
+
+warning: unused import: `error`
+ --> 
+crates\luxtensor-oracle\src\listener.rs:5:21
+  |
+5 | use tracing::{info, error};
+  |                     ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: unused import: `error`
+ --> 
+crates\luxtensor-oracle\src\submitter.rs:6:21
+  |
+6 | use tracing::{info, error};
+  |                     ^^^^^
+
+error[E0277]: the trait bound 
+`ethers::types::Bytes: From<&str>` is not 
+satisfied
+  --> 
+crates\luxtensor-oracle\src\processor.rs:32:22
+   |
+32 |         let result = Bytes::from("AI 
+Computation Result");
+   |                      ^^^^^ the trait 
+`From<&str>` is not implemented for 
+`ethers::types::Bytes`
+   |
+   = help: the following other types implement 
+trait `From<T>`:
+             `ethers::types::Bytes` implements 
+`From<&[u8; N]>`
+             `ethers::types::Bytes` implements 
+`From<Vec<u8>>`
+             `ethers::types::Bytes` implements 
+`From<[u8; N]>`
+             `ethers::types::Bytes` implements 
+`From<bytes::bytes::Bytes>`
+
+Some errors have detailed explanations: E0277, 
+E0405, E0412, E0432.
+For more information about an error, try `rustc 
+--explain E0277`.
+warning: `luxtensor-oracle` (lib) generated 2 
+warnings
+error: could not compile `luxtensor-oracle` 
+(lib) due to 5 previous errors; 2 warnings 
+emitted

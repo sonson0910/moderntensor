@@ -10,8 +10,11 @@ members = [
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
+    "crates/luxtensor-zkvm",
+    "crates/luxtensor-indexer", "crates/luxtensor-oracle",
 ]
 resolver = "2"
+
 
 # Root package for examples
 [package]
@@ -100,6 +103,9 @@ parking_lot = "0.12"
 criterion = "0.5"
 proptest = "1.4"
 tempfile = "3.8"
+
+# Utils for zkVM
+num_cpus = "1.16"
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,47 @@
+[package]
+name = "luxtensor-indexer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Blockchain indexer for Luxtensor network"
+
+[[bin]]
+name = "luxtensor-indexer"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+
+# Web server
+axum = "0.7"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+hex = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = "0.15"
+reqwest = { version = "0.11", features = ["json"] }
+
+[dev-dependencies]
+tokio-test = "0.4"

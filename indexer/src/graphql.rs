@@ -1,17 +1,26 @@
 //! HTTP REST API server for querying indexed data
-
 use crate::error::Result;
 use crate::storage::Storage;
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tracing::info;
 
 /// HTTP API server
 pub struct GraphQLServer {
     storage: Arc<Storage>,
     bind_address: String,
+}
+
+#[derive(Clone)]
+struct AppState {
+    storage: Arc<Storage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,10 +46,27 @@ struct QueryRequest {
 }
 
 #[derive(Debug, Serialize)]
-struct ApiResponse<T: Serialize> {
+struct ApiResponse<T> {
     success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+impl<T> ApiResponse<T> {
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(message.into()),
+        }
+    }
+}
+
+// Helper to sanitize limit
+fn sanitize_limit(limit: Option<i32>) -> i32 {
+    limit.unwrap_or(50).clamp(1, 100)
 }
 
 impl GraphQLServer {
@@ -56,363 +82,249 @@ impl GraphQLServer {
     pub async fn run(self) -> Result<()> {
         info!("HTTP API server starting on {}", self.bind_address);
 
-        let listener = TcpListener::bind(&self.bind_address).await
-            .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
+        let state = AppState {
+            storage: self.storage,
+        };
+
+        let app = Router::new()
+            .route("/", get(api_info))
+            .route("/health", get(health_check))
+            .route("/blocks", get(get_latest_block))
+            .route("/blocks/:number", get(get_block_by_number))
+            .route("/tx/:hash", get(get_transaction))
+            .route("/address/:addr/txs", get(get_transactions_by_address))
+            .route("/address/:addr/transfers", get(get_transfers_by_address))
+            .route("/stakes/:hotkey", get(get_stake_history))
+            .route("/query", post(handle_query))
+            .route("/stats", get(get_stats))
+            .with_state(state);
 
         info!("Indexer API listening on http://{}", self.bind_address);
-        info!("Available endpoints:");
-        info!("  GET  /health              - Health check");
-        info!("  GET  /blocks              - Latest block");
-        info!("  GET  /blocks/:number      - Block by number");
-        info!("  GET  /tx/:hash            - Transaction by hash");
-        info!("  GET  /address/:addr/txs   - Transactions by address");
-        info!("  GET  /address/:addr/transfers - Transfers by address");
-        info!("  GET  /stakes/:hotkey      - Stake history");
-        info!("  POST /query               - Query indexed data");
+        let listener = tokio::net::TcpListener::bind(&self.bind_address).await
+            .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
 
-        loop {
-            let (socket, addr) = listener.accept().await
-                .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
+        axum::serve(listener, app).await
+            .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
 
-            let storage = self.storage.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, storage).await {
-                    tracing::error!("Connection error from {}: {}", addr, e);
-                }
-            });
-        }
+        Ok(())
     }
 }
 
-async fn handle_connection(
-    mut socket: tokio::net::TcpStream,
-    storage: Arc<Storage>,
-) -> Result<()> {
-    let mut buffer = [0; 8192];
-    let n = socket.read(&mut buffer).await
-        .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
+// Wraps JSON response with CORS headers
+fn json_response<T: Serialize>(status: StatusCode, body: T) -> Response {
+    (
+        status,
+        [("Access-Control-Allow-Origin", "*")],
+        Json(body),
+    ).into_response()
+}
 
-    let request = String::from_utf8_lossy(&buffer[..n]);
-    let lines: Vec<&str> = request.lines().collect();
-    let first_line = lines.first().unwrap_or(&"");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
+// Handlers
 
-    let method = parts.first().unwrap_or(&"GET");
-    let path = parts.get(1).unwrap_or(&"/");
-
-    let response = match (*method, *path) {
-        // Health check
-        ("GET", "/health") => {
-            let status = storage.get_sync_status().await?;
-            json_response(200, &serde_json::json!({
-                "status": "ok",
-                "last_block": status.last_indexed_block,
-                "syncing": status.is_syncing
-            }))
+async fn api_info() -> Response {
+    json_response(StatusCode::OK, serde_json::json!({
+        "name": "Luxtensor Indexer API",
+        "version": "0.1.0",
+        "endpoints": {
+            "health": "GET /health",
+            "blocks": "GET /blocks, GET /blocks/:number",
+            "transactions": "GET /tx/:hash, GET /address/:addr/txs",
+            "transfers": "GET /address/:addr/transfers",
+            "stakes": "GET /stakes/:hotkey",
+            "stats": "GET /stats",
+            "query": "POST /query"
         }
+    }))
+}
 
-        // Latest block
-        ("GET", "/blocks") => {
-            match storage.get_latest_block().await? {
-                Some(block) => json_response(200, &serde_json::json!({
-                    "number": block.number,
-                    "hash": block.hash,
-                    "parent_hash": block.parent_hash,
-                    "timestamp": block.timestamp,
-                    "tx_count": block.tx_count
-                })),
-                None => json_response(404, &serde_json::json!({
-                    "error": "No blocks indexed yet"
-                })),
-            }
-        }
+async fn health_check(State(state): State<AppState>) -> Response {
+    match state.storage.get_sync_status().await {
+        Ok(status) => json_response(StatusCode::OK, serde_json::json!({
+            "status": "ok",
+            "last_block": status.last_indexed_block,
+            "syncing": status.is_syncing
+        })),
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // Block by number
-        (_, p) if p.starts_with("/blocks/") => {
-            let num_str = p.trim_start_matches("/blocks/");
-            match num_str.parse::<i64>() {
-                Ok(num) => {
-                    match storage.get_block(num).await? {
-                        Some(block) => json_response(200, &serde_json::json!({
-                            "number": block.number,
-                            "hash": block.hash,
-                            "parent_hash": block.parent_hash,
-                            "timestamp": block.timestamp,
-                            "tx_count": block.tx_count
-                        })),
-                        None => json_response(404, &serde_json::json!({
-                            "error": format!("Block {} not found", num)
-                        })),
-                    }
-                }
-                Err(_) => json_response(400, &serde_json::json!({
-                    "error": "Invalid block number"
-                })),
-            }
-        }
+async fn get_latest_block(State(state): State<AppState>) -> Response {
+    match state.storage.get_latest_block().await {
+        Ok(Some(block)) => json_response(StatusCode::OK, block),
+        Ok(None) => json_response(StatusCode::NOT_FOUND, ApiResponse::<()>::error("No blocks indexed yet")),
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // Transaction by hash
-        (_, p) if p.starts_with("/tx/") => {
-            let hash = p.trim_start_matches("/tx/");
-            match storage.get_transaction_by_hash(hash).await? {
-                Some(tx) => json_response(200, &serde_json::json!({
-                    "hash": tx.hash,
-                    "block_number": tx.block_number,
-                    "from": tx.from_address,
-                    "to": tx.to_address,
-                    "value": tx.value,
-                    "gas_used": tx.gas_used,
-                    "status": tx.status,
-                    "type": tx.tx_type
-                })),
-                None => json_response(404, &serde_json::json!({
-                    "error": format!("Transaction {} not found", hash)
-                })),
-            }
-        }
+async fn get_block_by_number(
+    State(state): State<AppState>,
+    Path(number): Path<i64>,
+) -> Response {
+    match state.storage.get_block(number).await {
+        Ok(Some(block)) => json_response(StatusCode::OK, block),
+        Ok(None) => json_response(StatusCode::NOT_FOUND, ApiResponse::<()>::error(format!("Block {} not found", number))),
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // Transactions by address
-        (_, p) if p.contains("/txs") => {
-            let addr = p.split('/').nth(2).unwrap_or("");
-            let txs = storage.get_transactions_by_address(addr, 50, 0).await?;
-            let tx_list: Vec<_> = txs.iter().map(|tx| serde_json::json!({
-                "hash": tx.hash,
-                "block_number": tx.block_number,
-                "from": tx.from_address,
-                "to": tx.to_address,
-                "value": tx.value,
-                "type": tx.tx_type
-            })).collect();
-            json_response(200, &serde_json::json!({
+async fn get_transaction(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Response {
+    match state.storage.get_transaction_by_hash(&hash).await {
+        Ok(Some(tx)) => json_response(StatusCode::OK, tx),
+        Ok(None) => json_response(StatusCode::NOT_FOUND, ApiResponse::<()>::error(format!("Transaction {} not found", hash))),
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
+
+async fn get_transactions_by_address(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+) -> Response {
+    match state.storage.get_transactions_by_address(&addr, 50, 0).await {
+        Ok(txs) => {
+             json_response(StatusCode::OK, serde_json::json!({
                 "address": addr,
-                "count": tx_list.len(),
-                "transactions": tx_list
+                "count": txs.len(),
+                "transactions": txs
             }))
-        }
+        },
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // Transfers by address
-        (_, p) if p.contains("/transfers") => {
-            let addr = p.split('/').nth(2).unwrap_or("");
-            let transfers = storage.get_transfers_by_address(addr, 50, 0).await?;
-            let transfer_list: Vec<_> = transfers.iter().map(|t| serde_json::json!({
-                "tx_hash": t.tx_hash,
-                "block_number": t.block_number,
-                "from": t.from_address,
-                "to": t.to_address,
-                "amount": t.amount,
-                "timestamp": t.timestamp
-            })).collect();
-            json_response(200, &serde_json::json!({
+async fn get_transfers_by_address(
+    State(state): State<AppState>,
+    Path(addr): Path<String>,
+) -> Response {
+    match state.storage.get_transfers_by_address(&addr, 50, 0).await {
+        Ok(transfers) => {
+            json_response(StatusCode::OK, serde_json::json!({
                 "address": addr,
-                "count": transfer_list.len(),
-                "transfers": transfer_list
+                "count": transfers.len(),
+                "transfers": transfers
             }))
-        }
+        },
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // Stake history
-        (_, p) if p.starts_with("/stakes/") => {
-            let hotkey = p.trim_start_matches("/stakes/");
-            let stakes = storage.get_stake_history(hotkey, 100).await?;
-            let stake_list: Vec<_> = stakes.iter().map(|s| serde_json::json!({
-                "block_number": s.block_number,
-                "coldkey": s.coldkey,
-                "hotkey": s.hotkey,
-                "amount": s.amount,
-                "action": s.action,
-                "timestamp": s.timestamp
-            })).collect();
-            json_response(200, &serde_json::json!({
+async fn get_stake_history(
+    State(state): State<AppState>,
+    Path(hotkey): Path<String>,
+) -> Response {
+    match state.storage.get_stake_history(&hotkey, 100).await {
+        Ok(stakes) => {
+            json_response(StatusCode::OK, serde_json::json!({
                 "hotkey": hotkey,
-                "count": stake_list.len(),
-                "stakes": stake_list
+                "count": stakes.len(),
+                "stakes": stakes
             }))
-        }
+        },
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
+}
 
-        // POST /query - Generic query endpoint
-        ("POST", "/query") => {
-            // Find body after empty line
-            let body_start = request.find("\r\n\r\n")
-                .or_else(|| request.find("\n\n"))
-                .map(|i| i + 4)
-                .unwrap_or(0);
-            let body = &request[body_start..];
-
-            match serde_json::from_str::<QueryRequest>(body) {
-                Ok(query) => handle_query(&storage, query).await?,
-                Err(e) => json_response(400, &serde_json::json!({
-                    "error": format!("Invalid JSON: {}", e)
-                })),
-            }
-        }
-
-        // Stats
-        ("GET", "/stats") => {
-            let status = storage.get_sync_status().await?;
-            let latest = storage.get_latest_block().await?;
-            json_response(200, &serde_json::json!({
+async fn get_stats(State(state): State<AppState>) -> Response {
+     match tokio::try_join!(
+        state.storage.get_sync_status(),
+        state.storage.get_latest_block()
+    ) {
+        Ok((status, latest)) => {
+             json_response(StatusCode::OK, serde_json::json!({
                 "last_indexed_block": status.last_indexed_block,
                 "is_syncing": status.is_syncing,
                 "latest_block_hash": latest.map(|b| b.hash)
             }))
-        }
-
-        // Default - API info
-        _ => {
-            json_response(200, &serde_json::json!({
-                "name": "Luxtensor Indexer API",
-                "version": "0.1.0",
-                "endpoints": {
-                    "health": "GET /health",
-                    "blocks": "GET /blocks, GET /blocks/:number",
-                    "transactions": "GET /tx/:hash, GET /address/:addr/txs",
-                    "transfers": "GET /address/:addr/transfers",
-                    "stakes": "GET /stakes/:hotkey",
-                    "stats": "GET /stats",
-                    "query": "POST /query"
-                }
-            }))
-        }
-    };
-
-    socket.write_all(response.as_bytes()).await
-        .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
-
-    Ok(())
+        },
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+    }
 }
 
-async fn handle_query(storage: &Storage, query: QueryRequest) -> Result<String> {
+async fn handle_query(
+    State(state): State<AppState>,
+    Json(query): Json<QueryRequest>,
+) -> Response {
     match query.query_type.as_str() {
         "transaction" => {
             if let Some(hash) = query.hash {
-                match storage.get_transaction_by_hash(&hash).await? {
-                    Some(tx) => Ok(json_response(200, &serde_json::json!({
-                        "hash": tx.hash,
-                        "block_number": tx.block_number,
-                        "from": tx.from_address,
-                        "to": tx.to_address,
-                        "value": tx.value
-                    }))),
-                    None => Ok(json_response(404, &serde_json::json!({
-                        "error": "Transaction not found"
-                    }))),
+                match state.storage.get_transaction_by_hash(&hash).await {
+                    Ok(Some(tx)) => json_response(StatusCode::OK, tx),
+                    Ok(None) => json_response(StatusCode::NOT_FOUND, ApiResponse::<()>::error("Transaction not found")),
+                    Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
                 }
             } else {
-                Ok(json_response(400, &serde_json::json!({
-                    "error": "Missing 'hash' parameter"
-                })))
+                json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error("Missing 'hash' parameter"))
             }
         }
         "transactions" => {
             if let Some(addr) = query.address {
-                let limit = query.limit.unwrap_or(50);
+                let limit = sanitize_limit(query.limit);
                 let offset = query.offset.unwrap_or(0);
-                let txs = storage.get_transactions_by_address(&addr, limit, offset).await?;
-                Ok(json_response(200, &serde_json::json!({
-                    "count": txs.len(),
-                    "transactions": txs.iter().map(|tx| serde_json::json!({
-                        "hash": tx.hash,
-                        "block_number": tx.block_number,
-                        "from": tx.from_address,
-                        "to": tx.to_address,
-                        "value": tx.value
-                    })).collect::<Vec<_>>()
-                })))
+                match state.storage.get_transactions_by_address(&addr, limit, offset).await {
+                    Ok(txs) => json_response(StatusCode::OK, serde_json::json!({
+                        "count": txs.len(),
+                        "transactions": txs
+                    })),
+                    Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+                }
             } else {
-                Ok(json_response(400, &serde_json::json!({
-                    "error": "Missing 'address' parameter"
-                })))
+                json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error("Missing 'address' parameter"))
             }
         }
         "block" => {
             if let Some(num) = query.number {
-                match storage.get_block(num).await? {
-                    Some(block) => Ok(json_response(200, &serde_json::json!({
-                        "number": block.number,
-                        "hash": block.hash,
-                        "tx_count": block.tx_count
-                    }))),
-                    None => Ok(json_response(404, &serde_json::json!({
-                        "error": "Block not found"
-                    }))),
+                match state.storage.get_block(num).await {
+                    Ok(Some(block)) => json_response(StatusCode::OK, block),
+                    Ok(None) => json_response(StatusCode::NOT_FOUND, ApiResponse::<()>::error("Block not found")),
+                    Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
                 }
             } else {
-                Ok(json_response(400, &serde_json::json!({
-                    "error": "Missing 'number' parameter"
-                })))
+                json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error("Missing 'number' parameter"))
             }
         }
         "blocks" => {
             let from = query.from.unwrap_or(0);
             let to = query.to.unwrap_or(from + 10);
-            let blocks = storage.get_blocks(from, to).await?;
-            Ok(json_response(200, &serde_json::json!({
-                "count": blocks.len(),
-                "blocks": blocks.iter().map(|b| serde_json::json!({
-                    "number": b.number,
-                    "hash": b.hash,
-                    "tx_count": b.tx_count
-                })).collect::<Vec<_>>()
-            })))
+            match state.storage.get_blocks(from, to).await {
+                 Ok(blocks) => json_response(StatusCode::OK, serde_json::json!({
+                    "count": blocks.len(),
+                    "blocks": blocks
+                })),
+                Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+            }
         }
         "transfers" => {
-            if let Some(addr) = query.address {
-                let limit = query.limit.unwrap_or(50);
+             if let Some(addr) = query.address {
+                let limit = sanitize_limit(query.limit);
                 let offset = query.offset.unwrap_or(0);
-                let transfers = storage.get_transfers_by_address(&addr, limit, offset).await?;
-                Ok(json_response(200, &serde_json::json!({
-                    "count": transfers.len(),
-                    "transfers": transfers
-                })))
+                match state.storage.get_transfers_by_address(&addr, limit, offset).await {
+                     Ok(transfers) => json_response(StatusCode::OK, serde_json::json!({
+                        "count": transfers.len(),
+                        "transfers": transfers
+                    })),
+                    Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+                }
             } else {
-                Ok(json_response(400, &serde_json::json!({
-                    "error": "Missing 'address' parameter"
-                })))
+                json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error("Missing 'address' parameter"))
             }
         }
         "stakes" => {
-            if let Some(hotkey) = query.hotkey {
-                let limit = query.limit.unwrap_or(100);
-                let stakes = storage.get_stake_history(&hotkey, limit).await?;
-                Ok(json_response(200, &serde_json::json!({
-                    "count": stakes.len(),
-                    "stakes": stakes
-                })))
+             if let Some(hotkey) = query.hotkey {
+                let limit = sanitize_limit(query.limit);
+                match state.storage.get_stake_history(&hotkey, limit).await {
+                     Ok(stakes) => json_response(StatusCode::OK, serde_json::json!({
+                        "count": stakes.len(),
+                        "stakes": stakes
+                    })),
+                    Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<()>::error(e.to_string())),
+                }
             } else {
-                Ok(json_response(400, &serde_json::json!({
-                    "error": "Missing 'hotkey' parameter"
-                })))
+               json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error("Missing 'hotkey' parameter"))
             }
         }
-        "stats" => {
-            let status = storage.get_sync_status().await?;
-            Ok(json_response(200, &serde_json::json!({
-                "last_indexed_block": status.last_indexed_block,
-                "is_syncing": status.is_syncing
-            })))
-        }
-        _ => {
-            Ok(json_response(400, &serde_json::json!({
-                "error": format!("Unknown query type: {}", query.query_type),
-                "supported": ["transaction", "transactions", "block", "blocks", "transfers", "stakes", "stats"]
-            })))
-        }
+        "stats" => get_stats(State(state)).await,
+        _ => json_response(StatusCode::BAD_REQUEST, ApiResponse::<()>::error(format!("Unknown query type: {}", query.query_type))),
     }
-}
-
-fn json_response(status: u16, data: &serde_json::Value) -> String {
-    let status_text = match status {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        500 => "Internal Server Error",
-        _ => "Unknown",
-    };
-
-    let body = serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string());
-
-    format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
-        status, status_text, body.len(), body
-    )
 }

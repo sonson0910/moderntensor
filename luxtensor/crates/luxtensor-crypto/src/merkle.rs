@@ -118,6 +118,57 @@ impl MerkleTree {
         proof
     }
 
+    /// Generate Merkle proof with explicit position information (recommended)
+    pub fn get_proof_with_positions(&self, index: usize) -> Vec<ProofElement> {
+        if self._leaves.is_empty() || index >= self._leaves.len() {
+            return vec![];
+        }
+
+        let mut proof = Vec::new();
+        let mut current_index = index;
+        let mut current_level = self._leaves.clone();
+
+        while current_level.len() > 1 {
+            let mut next_level = Vec::new();
+
+            // Get sibling node
+            let sibling_index = if current_index % 2 == 0 {
+                current_index + 1
+            } else {
+                current_index - 1
+            };
+
+            // Add sibling to proof with position info
+            if sibling_index < current_level.len() {
+                proof.push(ProofElement {
+                    hash: current_level[sibling_index],
+                    is_left: current_index % 2 == 1, // sibling is left if current is at odd position
+                });
+            } else {
+                // If no sibling (odd count), duplicate the current node
+                proof.push(ProofElement {
+                    hash: current_level[current_index],
+                    is_left: false,
+                });
+            }
+
+            // Build next level
+            for chunk in current_level.chunks(2) {
+                let hash = if chunk.len() == 2 {
+                    Self::hash_pair(&chunk[0], &chunk[1])
+                } else {
+                    Self::hash_pair(&chunk[0], &chunk[0])
+                };
+                next_level.push(hash);
+            }
+
+            current_level = next_level;
+            current_index /= 2;
+        }
+
+        proof
+    }
+
     /// Verify Merkle proof
     pub fn verify_proof(leaf: &Hash, proof: &[Hash], root: &Hash) -> bool {
         if proof.is_empty() {

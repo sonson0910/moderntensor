@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-/// Distribution configuration for reward allocation (Model C)
+/// Distribution configuration for reward allocation (Model C v2 - Community Focus)
 #[derive(Debug, Clone)]
 pub struct DistributionConfig {
     /// Miner share (35%) - AI compute providers
@@ -14,21 +14,24 @@ pub struct DistributionConfig {
     pub infrastructure_share: f64,
     /// Delegator share (12%) - Passive stakers
     pub delegator_share: f64,
-    /// Subnet owner share (10%) - Subnet creators
+    /// Subnet owner share (8%) - Subnet creators (reduced from 10%)
     pub subnet_owner_share: f64,
-    /// DAO treasury share (13%) - Protocol development
+    /// DAO treasury share (5%) - Protocol development (reduced from 13%)
     pub dao_share: f64,
+    /// Community ecosystem share (10%) - Developer grants, hackathons, dApp incentives
+    pub community_ecosystem_share: f64,
 }
 
 impl Default for DistributionConfig {
     fn default() -> Self {
         Self {
             miner_share: 0.35,
-            validator_share: 0.28,        // Reduced from 30%
-            infrastructure_share: 0.02,    // NEW: For full node operators
+            validator_share: 0.28,
+            infrastructure_share: 0.02,
             delegator_share: 0.12,
-            subnet_owner_share: 0.10,
-            dao_share: 0.13,
+            subnet_owner_share: 0.08,       // Reduced from 10% to fund community
+            dao_share: 0.05,                 // Reduced from 13% to fund community
+            community_ecosystem_share: 0.10, // NEW: Developer grants, hackathons
         }
     }
 }
@@ -37,7 +40,8 @@ impl DistributionConfig {
     /// Validate that shares sum to 1.0
     pub fn validate(&self) -> Result<(), &'static str> {
         let total = self.miner_share + self.validator_share + self.infrastructure_share +
-                    self.delegator_share + self.subnet_owner_share + self.dao_share;
+                    self.delegator_share + self.subnet_owner_share + self.dao_share +
+                    self.community_ecosystem_share;
         if (total - 1.0).abs() > 0.001 {
             return Err("Distribution shares must sum to 1.0");
         }
@@ -122,6 +126,7 @@ pub struct DistributionResult {
     pub delegator_rewards: HashMap<[u8; 20], u128>,
     pub subnet_owner_rewards: HashMap<[u8; 20], u128>,
     pub dao_allocation: u128,
+    pub community_ecosystem_allocation: u128,
 }
 
 /// Reward Distributor - implements tokenomics v3
@@ -163,6 +168,7 @@ impl RewardDistributor {
         let delegator_pool = (total_emission as f64 * self.config.delegator_share) as u128;
         let subnet_pool = (total_emission as f64 * self.config.subnet_owner_share) as u128;
         let dao_allocation = (total_emission as f64 * self.config.dao_share) as u128;
+        let community_ecosystem_allocation = (total_emission as f64 * self.config.community_ecosystem_share) as u128;
 
         // Distribute to each group
         let miner_rewards = self.distribute_by_score(miner_pool, miners);
@@ -172,12 +178,13 @@ impl RewardDistributor {
 
         DistributionResult {
             epoch,
-            total_distributed: miner_pool + validator_pool + delegator_pool + subnet_pool + dao_allocation,
+            total_distributed: miner_pool + validator_pool + delegator_pool + subnet_pool + dao_allocation + community_ecosystem_allocation,
             miner_rewards,
             validator_rewards,
             delegator_rewards,
             subnet_owner_rewards,
             dao_allocation,
+            community_ecosystem_allocation,
         }
     }
 
@@ -296,10 +303,11 @@ mod tests {
         let config = DistributionConfig::default();
         assert!(config.validate().is_ok());
         assert_eq!(config.miner_share, 0.35);
-        assert_eq!(config.validator_share, 0.28);  // Updated from 0.30
+        assert_eq!(config.validator_share, 0.28);
         assert_eq!(config.delegator_share, 0.12);
-        assert_eq!(config.subnet_owner_share, 0.10);
-        assert_eq!(config.dao_share, 0.13);
+        assert_eq!(config.subnet_owner_share, 0.08);  // Reduced from 10%
+        assert_eq!(config.dao_share, 0.05);            // Reduced from 13%
+        assert_eq!(config.community_ecosystem_share, 0.10); // NEW
     }
 
     #[test]
@@ -348,15 +356,20 @@ mod tests {
             result.validator_rewards.values().sum::<u128>() +
             result.delegator_rewards.values().sum::<u128>() +
             result.subnet_owner_rewards.values().sum::<u128>() +
-            result.dao_allocation;
+            result.dao_allocation +
+            result.community_ecosystem_allocation;
 
         // Should be close to total_emission (may have rounding)
         assert!(total_rewards > 0);
         assert!(total_rewards <= total_emission);
 
-        // Check DAO got 13%
-        let expected_dao = (total_emission as f64 * 0.13) as u128;
+        // Check DAO got 5% (reduced from 13%)
+        let expected_dao = (total_emission as f64 * 0.05) as u128;
         assert_eq!(result.dao_allocation, expected_dao);
+
+        // Check community ecosystem got 10%
+        let expected_community = (total_emission as f64 * 0.10) as u128;
+        assert_eq!(result.community_ecosystem_allocation, expected_community);
 
         // Check delegator with lock gets more than one without
         let d20_reward = *result.delegator_rewards.get(&test_address(20)).unwrap_or(&0);

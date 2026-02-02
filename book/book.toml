@@ -1,0 +1,10 @@
+[book]
+authors = ["The ModernTensor Team"]
+language = "en"
+multilingual = false
+src = "src"
+title = "The ModernTensor Book"
+
+[output.html]
+additional-css = ["custom.css"]
+git-repository-url = "https://github.com/sonson0910/moderntensor"

@@ -13,11 +13,9 @@ pub struct BlockHeader {
     pub txs_root: Hash,
     pub receipts_root: Hash,
 
-    // Consensus
     pub validator: [u8; 32],
     pub signature: Vec<u8>,  // 64 bytes signature
 
-    // Metadata
     pub gas_used: u64,
     pub gas_limit: u64,
     pub extra_data: Vec<u8>,

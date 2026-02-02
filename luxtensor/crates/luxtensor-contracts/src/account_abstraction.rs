@@ -175,6 +175,7 @@ pub struct EntryPoint {
     /// Paymaster stakes
     paymasters: Arc<RwLock<HashMap<Address, PaymasterInfo>>>,
     /// Pending user operations (by hash)
+    #[allow(dead_code)] // Reserved for operation bundling
     pending_ops: Arc<RwLock<HashMap<Hash, UserOperation>>>,
     /// Executed receipts (by hash)
     receipts: Arc<RwLock<HashMap<Hash, UserOperationReceipt>>>,

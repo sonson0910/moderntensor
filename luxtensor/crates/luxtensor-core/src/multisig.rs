@@ -225,8 +225,6 @@ impl MultisigManager {
         let mut wallets = self.wallets.write();
         wallets.insert(wallet_id.clone(), wallet.clone());
 
-        // Created wallet: {} ({}-of-{})
-
         Ok(wallet)
     }
 
@@ -266,8 +264,6 @@ impl MultisigManager {
         let tx_id = tx.id.clone();
         self.pending_txs.write().insert(tx_id.clone(), tx.clone());
 
-        // Proposed multisig tx
-
         Ok(tx)
     }
 
@@ -303,10 +299,7 @@ impl MultisigManager {
             return Err(MultisigError::AlreadySigned);
         }
 
-        // Add approval
         tx.approvals.push(*signer);
-
-        // Approved multisig tx
 
         Ok(tx.clone())
     }
@@ -356,8 +349,6 @@ impl MultisigManager {
         );
         tx.tx_hash = Some(tx_hash);
 
-        // Executed multisig tx
-
         Ok(())
     }
 
@@ -386,7 +377,6 @@ impl MultisigManager {
 
         for id in expired {
             pending.remove(&id);
-            // Cleaned up expired tx
         }
     }
 }

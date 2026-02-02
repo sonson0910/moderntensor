@@ -110,7 +110,16 @@ async fn handle_p2p_event(
                     peer_id, eclipse_protection.calculate_diversity_score());
             } else {
                 warn!("🛡️ Peer connection blocked by eclipse protection: {}", peer_id);
-                // TODO: Send disconnect command back to swarm
+                // Send disconnect command back to swarm
+                if let Some(tx) = sync_command_tx {
+                    if let Err(e) = tx.send(SwarmCommand::DisconnectPeer {
+                        peer_id: peer_id.to_string(),
+                    }) {
+                        warn!("Failed to send disconnect command: {}", e);
+                    } else {
+                        info!("🚫 Disconnect command sent for blocked peer: {}", peer_id);
+                    }
+                }
             }
         }
         P2PEvent::PeerDisconnected(peer_id) => {

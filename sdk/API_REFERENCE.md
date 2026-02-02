@@ -6,7 +6,7 @@
 ## Version Compatibility
 
 | SDK Version | Luxtensor RPC | Status |
-|-------------|---------------|--------|
+| :--- | :--- | :--- |
 | 0.4.0 | 0.4.0 | ✅ Current |
 | 0.3.x | 0.3.x | ⚠️ Legacy |
 | < 0.3 | N/A | ❌ Deprecated |
@@ -18,7 +18,7 @@
 ### Blockchain Methods (`eth_*`)
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `eth_blockNumber` | Get current block height | None | `hex string` |
 | `eth_getBlockByNumber` | Get block by number | `block_number`, `full_txs` | Block object |
 | `eth_getBlockByHash` | Get block by hash | `hash`, `full_txs` | Block object |
@@ -30,30 +30,36 @@
 ### Transaction Methods
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `tx_getReceipt` | Get transaction receipt | `tx_hash` | Receipt object |
 
 ### Staking Methods (`staking_*`)
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `staking_getTotalStake` | Total network stake | None | `hex string` |
 | `staking_getStake` | Get stake for address | `address` | `hex string` |
 | `staking_getValidators` | List all validators | None | Validator[] |
-| `staking_addStake` | Add stake | `address`, `amount` | `bool` |
-| `staking_removeStake` | Remove stake | `address`, `amount` | `bool` |
-| `staking_claimRewards` | Claim rewards | `address` | Receipt |
+| `staking_stake` | Add stake | `address`, `amount` | Receipt |
+| `staking_unstake` | Remove stake | `address`, `amount` | Receipt |
+| `staking_delegate` | Delegate to validator | `delegator`, `validator`, `amount` | Receipt |
+| `staking_undelegate` | Remove delegation | `delegator` | Receipt |
+| `staking_getDelegation` | Get delegation info | `delegator` | Delegation |
+| `staking_getMinimums` | Min stake requirements | None | Object |
+| `staking_getStakeForPair` | 🆕 Stake for coldkey-hotkey | `coldkey`, `hotkey` | Object |
+| `staking_getAllStakesForColdkey` | 🆕 All coldkey stakes | `coldkey` | Stakes[] |
+| `staking_getDelegates` | 🆕 List delegates | None | Delegate[] |
 
 ### Subnet Methods (`subnet_*`)
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `subnet_getInfo` | Get subnet details | `subnet_id` | SubnetInfo |
-| `subnet_listAll` | List all subnets | None | SubnetInfo[] |
-| `subnet_create` | Create subnet | `name`, `owner`, `emission` | Receipt |
-| `subnet_getCount` | Total subnet count | None | `number` |
 | `subnet_getAll` | Get all subnets | None | Subnet[] |
-| `subnet_register` | Register on subnet | Params | Receipt |
+| `subnet_register` | Register subnet | `name`, `owner` | Receipt |
+| `subnet_getCount` | 🆕 Total subnet count | None | `number` |
+| `subnet_exists` | 🆕 Check subnet exists | `subnet_id` | `bool` |
+| `subnet_getHyperparameters` | 🆕 Hyperparameters | `subnet_id` | Object |
 | `subnet_getRootValidators` | Root validators | None | Validator[] |
 | `subnet_getEmissions` | Subnet emissions | `subnet_id` | Emissions |
 | `subnet_getConfig` | Root config | None | Config |
@@ -61,70 +67,32 @@
 ### Neuron Methods (`neuron_*`)
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `neuron_getInfo` | Get neuron details | `subnet_id`, `uid` | NeuronInfo |
 | `neuron_listBySubnet` | List neurons | `subnet_id` | NeuronInfo[] |
 | `neuron_register` | Register neuron | `subnet_id`, `address`, `stake` | Receipt |
 | `neuron_getCount` | Neuron count | `subnet_id` | `number` |
+| `neuron_get` | 🆕 Alias for getInfo | `subnet_id`, `uid` | NeuronInfo |
+| `neuron_getAll` | 🆕 Alias for listBySubnet | `subnet_id` | NeuronInfo[] |
+| `neuron_exists` | 🆕 Check neuron exists | `subnet_id`, `uid` | `bool` |
+| `neuron_getByHotkey` | 🆕 Get by hotkey | `subnet_id`, `hotkey` | NeuronInfo |
+| `neuron_getActive` | 🆕 Active neuron UIDs | `subnet_id` | uid[] |
+| `neuron_count` | 🆕 Alias for getCount | `subnet_id` | `number` |
+| `neuron_batchGet` | 🆕 Batch get neurons | `subnet_id`, `uids[]` | NeuronInfo[] |
 
 ### Weight Methods (`weight_*`)
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `weight_getWeights` | Get neuron weights | `subnet_id`, `uid` | WeightInfo[] |
 | `weight_setWeights` | Set weights | `subnet_id`, `uid`, `uids[]`, `weights[]` | Receipt |
 | `weight_getAll` | All weights | `subnet_id` | Weights |
-
-### Query Methods (`query_*`)
-
-| Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
-| `query_neuron` | Get neuron | `subnet_id`, `uid` | Neuron |
-| `query_neuronCount` | Neuron count | `subnet_id` | `number` |
-| `query_activeNeurons` | Active neurons | `subnet_id` | Neuron[] |
-| `query_allSubnets` | All subnets | None | Subnet[] |
-| `query_subnetExists` | Check exists | `subnet_id` | `bool` |
-| `query_subnetOwner` | Owner address | `subnet_id` | `string` |
-| `query_subnetEmission` | Emission rate | `subnet_id` | `number` |
-| `query_subnetHyperparameters` | Hyperparams | `subnet_id` | Object |
-| `query_subnetTempo` | Tempo | `subnet_id` | `number` |
-| `query_rank` | Neuron rank | `subnet_id`, `uid` | `number` |
-| `query_trust` | Neuron trust | `subnet_id`, `uid` | `float` |
-| `query_incentive` | Neuron incentive | `subnet_id`, `uid` | `float` |
-| `query_dividends` | Neuron dividends | `subnet_id`, `uid` | `float` |
-| `query_consensus` | Neuron consensus | `subnet_id`, `uid` | `number` |
-| `query_isHotkeyRegistered` | Check hotkey | `subnet_id`, `hotkey` | `bool` |
-| `query_uidForHotkey` | UID for hotkey | `subnet_id`, `hotkey` | `number` |
-| `query_hotkeyForUid` | Hotkey for UID | `subnet_id`, `uid` | `string` |
-| `query_stakeForColdkeyAndHotkey` | Stake amount | `coldkey`, `hotkey` | `hex string` |
-| `query_totalStakeForColdkey` | Total for coldkey | `coldkey` | `hex string` |
-| `query_totalStakeForHotkey` | Total for hotkey | `hotkey` | `hex string` |
-| `query_allStakeForColdkey` | All stakes | `coldkey` | Stakes[] |
-| `query_allStakeForHotkey` | All stakes | `hotkey` | Stakes[] |
-| `query_weightCommits` | Weight commits | `subnet_id` | Commits[] |
-| `query_weightsVersion` | Weights version | `subnet_id` | `number` |
-| `query_weightsRateLimit` | Rate limit | `subnet_id` | `number` |
-| `query_hasValidatorPermit` | Has permit | `subnet_id`, `hotkey` | `bool` |
-| `query_validatorTrust` | Validator trust | `subnet_id`, `uid` | `float` |
-| `query_rho` | Rho param | `subnet_id` | `float` |
-| `query_kappa` | Kappa param | `subnet_id` | `float` |
-| `query_adjustmentInterval` | Interval | `subnet_id` | `number` |
-| `query_activityCutoff` | Cutoff blocks | `subnet_id` | `number` |
-| `query_rootNetworkValidators` | Root validators | None | Validator[] |
-| `query_senateMembers` | Senate members | None | Member[] |
-
-### AI Methods (`lux_*`)
-
-| Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
-| `lux_submitAITask` | Submit AI task | Task params | `task_id` |
-| `lux_getAIResult` | Get task result | `task_id` | Result |
-| `lux_getValidatorStatus` | Validator status | `address` | Status |
+| `weight_getCommits` | 🆕 Weight commits | `subnet_id` | Commits[] |
 
 ### System Methods
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `system_health` | Node health | None | Health |
 | `system_version` | Node version | None | Version |
 | `system_peerCount` | Peer count | None | `number` |
@@ -133,77 +101,80 @@
 ### Governance Methods
 
 | Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
+| :--- | :--- | :--- | :--- |
 | `governance_getProposals` | All proposals | None | Proposal[] |
 | `governance_getProposal` | Get proposal | `proposal_id` | Proposal |
 
-### Balance Methods
-
-| Method | Description | Parameters | Returns |
-|--------|-------------|------------|---------|
-| `balances_free` | Free balance | `address` | `hex string` |
-| `balances_reserved` | Reserved | `address` | `hex string` |
-
 ---
 
-## Python SDK Usage
+## SDK Module Reference
 
-### Import Guide
+### Core Types (`sdk.core`)
 
-```python
-# ✅ After pip install
-from moderntensor.sdk import LuxtensorClient
+#### NodeTier
 
-# ✅ Development mode
-import sys; sys.path.insert(0, 'moderntensor')
-from sdk import LuxtensorClient
-```
+| Enum Member | ID | Description |
+| :--- | :--- | :--- |
+| `LIGHT_NODE` | 0 | Light client, tx relay |
+| `FULL_NODE` | 1 | Full node, infrastructure |
+| `VALIDATOR` | 2 | Validator, AI quality check |
+| `SUPER_VALIDATOR` | 3 | Block production priority |
 
-### Basic Usage
+#### ScoringManager
 
-```python
-from moderntensor.sdk import LuxtensorClient
+| Method | Description |
+| :--- | :--- |
+| `calculate_miner_score(metrics)` | Calc score based on latency/quality |
+| `calculate_validator_score(metrics)` | Calc score based on blocks/uptime |
+| `apply_decay(score)` | Apply time-based decay |
 
-client = LuxtensorClient(\"http://localhost:8545\")
+### Consensus Module (`sdk.consensus`)
 
-# Blockchain
-block = client.get_block_number()
+#### Fork Choice (GHOST)
 
-# Staking
-stake = client.get_stake("0x...")
-validators = client.get_validators()
+| Method | Description |
+| :--- | :--- |
+| `add_block(block)` | Add new block to fork choice |
+| `get_head()` | Get canonical chain head |
+| `get_canonical_chain()` | Get main chain blocks |
 
-# Subnets
-subnets = client.get_all_subnets()
-info = client.get_subnet_info(1)
+#### Fast Finality (BFT)
 
-# Neurons
-neurons = client.get_neurons(subnet_id=1)
-registered = client.is_hotkey_registered(1, "0x...")
-```
+| Method | Description |
+| :--- | :--- |
+| `add_signature(block, validator)` | Add vote for block |
+| `is_finalized(block)` | Check if >67% stake voted |
+| `get_finality_progress(block)` | Get current vote % |
 
-### Advanced Features
+#### Slashing
 
-```python
-from sdk.commit_reveal import CommitRevealClient
-from sdk.neuron_checker import NeuronChecker
+| Method | Description |
+| :--- | :--- |
+| `check_offline(validator)` | Check for missed blocks |
+| `check_double_signing(height)` | Check for conflicting sigs |
+| `slash(evidence)` | Execute penalty & jail |
 
-# Commit-Reveal
-cr_client = CommitRevealClient("http://localhost:8545")
-salt = cr_client.generate_salt()
-commit_hash = cr_client.compute_hash(weights, salt)
+#### Circuit Breaker
 
-# Neuron Checker
-checker = NeuronChecker("http://localhost:8545")
-status = checker.check_registration(subnet_uid=1, hotkey="0x...")
-```
+| Method | Description |
+| :--- | :--- |
+| `allow_request()` | Check if op is allowed |
+| `record_failure()` | Track error count |
+| `execute(func)` | Run with protection |
+
+#### Liveness
+
+| Method | Description |
+| :--- | :--- |
+| `check_liveness()` | Check network health |
+| `record_block(height)` | Track block production |
 
 ---
 
 ## Error Codes
 
 | Code | Description |
-|------|-------------|
+| :--- | :--- |
 | -32700 | Parse error |
 | -32600 | Invalid request |
 | -32601 | Method not found |
@@ -213,4 +184,4 @@ status = checker.check_registration(subnet_uid=1, hotkey="0x...")
 
 ---
 
-*Last updated: 2026-01-16*
+*Last updated: 2026-02-02*

@@ -164,31 +164,33 @@ class TokenomicsConfig:
 @dataclass
 class DistributionConfig:
     """
-    Configuration for epoch reward distribution (v3.1 - Model C Progressive Staking).
+    Configuration for epoch reward distribution (v3.2 - Model C Community Focus).
 
     IMPORTANT: This config distributes the EMISSION REWARDS portion (45%)
     among network participants on each epoch.
 
-    Model C Distribution (Progressive Staking):
+    Model C v3.2 Distribution (Community Focus):
         45% Emission Rewards (from Allocations)
             ├── 35% → Miners (performance-based)
             ├── 28% → Validators (stake-based, Tier 2-3)
             ├── 2%  → Infrastructure (Full node operators, Tier 1+)
             ├── 12% → Delegators (stake-based + lock bonus)
-            ├── 10% → Subnet Owners (emission-based)
-            └── 13% → DAO Treasury
+            ├── 10% → Community Ecosystem (grants, hackathons) ← NEW
+            ├── 8%  → Subnet Owners (reduced from 10%)
+            └── 5%  → DAO Treasury (reduced from 13%)
 
-    v3.1 CHANGES (Model C):
-        - Validators reduced from 30% → 28%
-        - Infrastructure added: 2% (NEW - for node operators)
-        - 4-tier progressive system: Light → Full → Validator → Super Validator
+    v3.2 CHANGES (Community Focus):
+        - Community Ecosystem added: 10% (NEW - developer grants, hackathons)
+        - DAO Treasury reduced: 13% → 5%
+        - Subnet Owner reduced: 10% → 8%
     """
     miner_share: float = 0.35               # 35% - Core compute providers
-    validator_share: float = 0.28           # 28% - Quality assurance (was 30%)
-    infrastructure_share: float = 0.02      # 2% - Full node operators (NEW!)
+    validator_share: float = 0.28           # 28% - Quality assurance
+    infrastructure_share: float = 0.02      # 2% - Full node operators
     delegator_share: float = 0.12           # 12% - Passive stakers (with lock bonus)
-    subnet_owner_share: float = 0.10        # 10% - Subnet creators
-    dao_share: float = 0.13                 # 13% - Protocol treasury
+    community_ecosystem_share: float = 0.10 # 10% - Developer grants, hackathons (NEW!)
+    subnet_owner_share: float = 0.08        # 8% - Subnet creators (was 10%)
+    dao_share: float = 0.05                 # 5% - Protocol treasury (was 13%)
 
     # Delegator lock bonus (replaces separate staking bonus pool)
     lock_bonus_30d: float = 0.10       # +10% for 30-day lock
@@ -203,6 +205,7 @@ class DistributionConfig:
             self.validator_share +
             self.infrastructure_share +
             self.delegator_share +
+            self.community_ecosystem_share +
             self.subnet_owner_share +
             self.dao_share
         )

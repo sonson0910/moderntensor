@@ -3,7 +3,7 @@
 //! Tests to verify ECDSA and Keccak256 implementations match Ethereum standards.
 //! These tests use known test vectors from Ethereum to ensure compatibility.
 
-use luxtensor_crypto::{keccak256, KeyPair};
+use luxtensor_crypto::{keccak256, KeyPair, verify_signature};
 
 #[cfg(test)]
 mod ecdsa_tests {
@@ -48,15 +48,15 @@ mod ecdsa_tests {
         // Sign
         let signature = keypair.sign(&message_hash).expect("Signing should work");
 
-        // Verify
-        let public_key = keypair.public_key();
-        let is_valid = keypair.verify(&message_hash, &signature);
-        assert!(is_valid, "Signature should be valid");
+        // Verify using standalone function
+        let public_key = keypair.public_key_bytes();
+        let is_valid = verify_signature(&message_hash, &signature, &public_key);
+        assert!(is_valid.is_ok() && is_valid.unwrap(), "Signature should be valid");
 
         // Verify with wrong message should fail
         let wrong_hash = keccak256(b"wrong message");
-        let is_invalid = keypair.verify(&wrong_hash, &signature);
-        assert!(!is_invalid, "Signature should be invalid for wrong message");
+        let is_invalid = verify_signature(&wrong_hash, &signature, &public_key);
+        assert!(is_invalid.is_ok() && !is_invalid.unwrap(), "Signature should be invalid for wrong message");
     }
 
     /// Test address derivation from public key matches Ethereum
@@ -69,7 +69,7 @@ mod ecdsa_tests {
         assert_eq!(address.len(), 20, "Address should be 20 bytes");
 
         // Address should be derived from last 20 bytes of keccak256(public_key)
-        let public_key = keypair.public_key();
+        let public_key = keypair.public_key_bytes();
         let hash = &keccak256(&public_key[1..])[12..]; // Skip first byte (0x04) and take last 20 bytes
         assert_eq!(address, hash, "Address derivation should match Ethereum");
     }
@@ -78,21 +78,24 @@ mod ecdsa_tests {
     #[test]
     fn test_known_key_signature() {
         // Using a well-known test private key (DO NOT USE IN PRODUCTION)
-        let test_private_key = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let test_private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-        // Parse private key
-        let key_bytes = hex::decode(&test_private_key[2..]).expect("Valid hex");
-        let keypair = KeyPair::from_secret_key(&key_bytes).expect("Valid key");
+        // Parse private key (must be exactly 32 bytes)
+        let key_bytes = hex::decode(test_private_key).expect("Valid hex");
+        let key_array: [u8; 32] = key_bytes.try_into().expect("Should be 32 bytes");
+        let keypair = KeyPair::from_secret(&key_array).expect("Valid key");
 
         // Sign a known message
         let message = keccak256(b"test");
         let signature = keypair.sign(&message).expect("Sign should work");
 
-        // Signature should be 65 bytes (r: 32, s: 32, v: 1)
-        assert_eq!(signature.len(), 65, "Signature should be 65 bytes");
+        // Signature should be 64 bytes (r: 32, s: 32)
+        assert_eq!(signature.len(), 64, "Signature should be 64 bytes");
 
         // Verify the signature
-        assert!(keypair.verify(&message, &signature), "Signature should verify");
+        let public_key = keypair.public_key_bytes();
+        let is_valid = verify_signature(&message, &signature, &public_key);
+        assert!(is_valid.is_ok() && is_valid.unwrap(), "Signature should verify");
     }
 
     /// Test signature recovery
@@ -102,15 +105,15 @@ mod ecdsa_tests {
         let message_hash = keccak256(b"recovery test");
 
         let signature = keypair.sign(&message_hash).expect("Sign should work");
-        let original_address = keypair.address();
+        let _original_address = keypair.address();
 
-        // Try to recover the address from signature
-        // The v value (recovery id) is the last byte of the signature
-        let v = signature[64];
-        assert!(v == 0 || v == 1 || v == 27 || v == 28, "Recovery id should be valid");
+        // Signature is 64 bytes (r + s), no recovery id included
+        assert_eq!(signature.len(), 64);
 
-        // Verify original signer can verify
-        assert!(keypair.verify(&message_hash, &signature));
+        // Verify original signer's signature
+        let public_key = keypair.public_key_bytes();
+        let is_valid = verify_signature(&message_hash, &signature, &public_key);
+        assert!(is_valid.is_ok() && is_valid.unwrap());
     }
 }
 
@@ -161,9 +164,10 @@ mod merkle_tests {
 
         let tree = MerkleTree::new(leaves.clone());
 
-        // Get proof for first leaf
-        if let Some(proof) = tree.get_proof(0) {
-            let is_valid = tree.verify_proof(&leaves[0], &proof);
+        // Get proof with positions for first leaf
+        let proof = tree.get_proof_with_positions(0);
+        if !proof.is_empty() {
+            let is_valid = MerkleTree::verify_proof_with_positions(&leaves[0], &proof, &tree.root());
             assert!(is_valid, "Merkle proof should be valid");
         }
     }
@@ -171,13 +175,11 @@ mod merkle_tests {
 
 #[cfg(test)]
 mod nonce_tests {
-    use super::*;
+    use std::collections::HashSet;
 
     /// Test that nonce prevents replay within same chain
     #[test]
     fn test_nonce_replay_protection() {
-        use std::collections::HashSet;
-
         // Simulate nonce tracking
         let mut used_nonces: HashSet<(String, u64)> = HashSet::new();
         let sender = "0x1234567890123456789012345678901234567890";

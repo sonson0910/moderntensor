@@ -10,6 +10,7 @@ Blockchain indexer service for the Luxtensor network. Indexes blocks, transactio
 - 📊 Transaction history by address
 - 💸 Token transfer tracking
 - ⚡ Stake event history
+- 🤖 **AI Task Indexing**: Track requests, proofs, and results (0x10-0x13)
 
 ## Quick Start
 

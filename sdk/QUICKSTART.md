@@ -462,10 +462,44 @@ asyncio.run(main())
 
 ---
 
+## Example 7: Check Block Finality (New)
+
+```python
+"""
+Using the consensus module to check block finality status.
+"""
+from moderntensor.sdk import connect, FastFinality, ValidatorInfo
+
+client = connect("http://localhost:8545")
+
+# 1. Get active validators and stake
+validators_list = client.get_validators()
+validator_map = {
+    v.address: ValidatorInfo(address=v.address, stake=v.stake)
+    for v in validators_list
+}
+
+# 2. Initialize Fast Finality tracker
+ff = FastFinality(finality_threshold_percent=67, validators=validator_map)
+
+# 3. Simulate receiving signatures (in production, these come from P2P/RPC)
+block_hash = "0xabc..."
+# ... add signatures ...
+
+# 4. Check status
+if ff.is_finalized(block_hash):
+    print(f"✅ Block {block_hash} is finalized!")
+else:
+    progress = ff.get_finality_progress(block_hash)
+    print(f"⏳ Finality progress: {progress}%")
+```
+
+---
+
 ## Sync vs Async Client Comparison
 
 | Feature | `LuxtensorClient` (Sync) | `AsyncLuxtensorClient` |
-|---------|-------------------------|------------------------|
+| :--- | :--- | :--- |
 | **Use Case** | Simple scripts, CLI tools | High-perf apps, servers |
 | **Batch Calls** | ❌ Not available | ✅ `batch_call()` |
 | **Concurrent Requests** | ❌ Sequential | ✅ `asyncio.gather()` |
@@ -539,4 +573,4 @@ print(f"Need: {gas_cost}, Have: {balance}")
 
 ---
 
-*Last updated: January 28, 2026*
+Last updated: January 28, 2026

@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./ZkMLVerifier.sol";
 
 /**
  * @title AIOracle - Decentralized AI Inference Oracle for LuxTensor
@@ -199,10 +200,17 @@ contract AIOracle is Ownable, ReentrancyGuard {
         require(block.number <= req.deadline, "Request expired");
         require(result.length > 0, "Empty result");
 
-        // TODO: Verify zkML proof if verifier is set
-        // if (zkmlVerifier != address(0) && proofHash != bytes32(0)) {
-        //     require(IZkMLVerifier(zkmlVerifier).verify(proofHash), "Invalid proof");
-        // }
+        // Verify zkML proof if verifier is set
+        if (zkmlVerifier != address(0) && proofHash != bytes32(0)) {
+            // Call ZkMLVerifier to check proof validity
+            (bool isValid, ) = IZkMLVerifier(zkmlVerifier).verifyProof(
+                req.modelHash, // imageId
+                result, // journal (public output)
+                abi.encodePacked(proofHash), // seal
+                2 // proofType: Dev mode
+            );
+            require(isValid, "Invalid zkML proof");
+        }
 
         req.status = RequestStatus.Fulfilled;
         req.result = result;
