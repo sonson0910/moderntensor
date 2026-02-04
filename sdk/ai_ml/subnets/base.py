@@ -13,14 +13,11 @@ import hashlib
 import logging
 import time
 from typing import Any, Dict, Optional
-from abc import abstractmethod
 
 from ..core.protocol import (
     SubnetProtocol,
     Task,
-    TaskContext,
     Result,
-    Score,
 )
 
 logger = logging.getLogger(__name__)

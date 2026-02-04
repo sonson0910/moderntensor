@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 class ProofVerifier:
     """
     Verify zero-knowledge proofs.
-    
+
     Example:
         verifier = ProofVerifier(verification_key_path="vk.bin")
         is_valid = verifier.verify(proof)
     """
-    
+
     def __init__(
         self,
         verification_key: Optional[bytes] = None,
@@ -30,50 +30,50 @@ class ProofVerifier:
     ):
         """
         Initialize verifier.
-        
+
         Args:
             verification_key: Verification key bytes
             verification_key_path: Path to verification key
             config: Proof configuration
         """
         self.config = config or ProofConfig()
-        
+
         if verification_key is not None:
             self.verification_key = verification_key
         elif verification_key_path is not None:
             self.verification_key = verification_key_path.read_bytes()
         else:
             self.verification_key = None
-        
+
         logger.info("ProofVerifier initialized")
-    
+
     def verify(self, proof: Proof) -> bool:
         """
         Verify a proof.
-        
+
         Args:
             proof: Proof to verify
-        
+
         Returns:
             True if valid
         """
         if self.verification_key is None:
             logger.warning("No verification key, cannot verify")
             return False
-        
+
         # Basic validation
         if not proof.proof_data or len(proof.proof_data) == 0:
             return False
-        
+
         if not proof.public_inputs or not proof.public_outputs:
             return False
-        
+
         # Backend-specific verification
         if self.config.backend == "ezkl":
             return self._verify_ezkl(proof)
         else:
             return self._verify_mock(proof)
-    
+
     def _verify_ezkl(self, proof: Proof) -> bool:
         """Verify using EZKL"""
         try:
@@ -82,12 +82,12 @@ class ProofVerifier:
             return True
         except ImportError:
             return self._verify_mock(proof)
-    
+
     def _verify_mock(self, proof: Proof) -> bool:
         """Mock verification"""
         import json
         try:
             data = json.loads(proof.proof_data.decode())
             return "witness" in data
-        except:
+        except Exception:
             return False

@@ -5,7 +5,7 @@ Provides functionality for generating and deriving cryptographic keys.
 Uses native Python cryptography matching Luxtensor implementation.
 """
 
-from typing import Dict, Any
+from typing import Dict
 from bip_utils import (
     Bip39MnemonicGenerator, Bip39SeedGenerator, Bip39WordsNum,
     Bip44, Bip44Coins, Bip44Changes
@@ -25,7 +25,6 @@ def _derive_address_from_private_key(private_key_hex: str) -> tuple[str, str]:
         Tuple of (address, public_key_hex)
     """
     from sdk.transactions import derive_address_from_private_key
-    from Crypto.Hash import keccak
     
     # Get address using Luxtensor's method
     address = derive_address_from_private_key(private_key_hex)

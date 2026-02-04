@@ -10,9 +10,9 @@ Implements the Circuit Breaker pattern with three states:
 - HalfOpen: Testing if service recovered
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Generic, Optional, TypeVar, Union
+from typing import Callable, Optional, TypeVar
 import time
 import threading
 
@@ -214,7 +214,7 @@ class CircuitBreaker:
             result = operation()
             self.record_success()
             return result
-        except Exception as e:
+        except Exception:
             self.record_failure()
             raise
 
@@ -266,7 +266,7 @@ class CircuitBreaker:
         if self._state == new_state:
             return
 
-        old_state = self._state
+        _ = self._state  # Capture current state before transition
         self._state = new_state
         self._stats.state_changes += 1
         self._stats.last_state_change_time = time.time()

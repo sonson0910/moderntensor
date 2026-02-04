@@ -5,9 +5,8 @@ The main Axon server class that brings together all components
 to create a production-ready server for miners and validators.
 """
 
-from typing import Optional, Callable, Dict, Any, List
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from typing import Optional, Callable, Dict, List
+from fastapi import FastAPI
 import uvicorn
 import asyncio
 import time

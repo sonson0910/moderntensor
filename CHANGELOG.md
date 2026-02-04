@@ -1,3 +1,34 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+---
+
+## [0.5.1] - 2026-02-04
+
+### Security
+
+- **Timing Attack Prevention**: Added `subtle::ConstantTimeEq` for API key comparison in `admin_auth.rs`
+- **Duplicate Vesting Prevention**: Added check in `MDTVesting.sol::_createVesting()`
+- **Gas DoS Protection**: Added caps to prevent unbounded array attacks:
+  - `MAX_PARTICIPANTS = 1000` in `GradientAggregator.sol`
+  - `MAX_ATTESTATIONS = 100` in `TrustGraph.sol`
+- **HNSW Constants**: Replaced magic numbers with `DEFAULT_M`, `DEFAULT_MAX_LAYER` in `hnsw.rs`
+
+### Added
+
+- **SECURITY.md**: Comprehensive security policy with nginx rate limiting guide
+- **Rate Limiting Docs**: Production deployment guide for RPC protection
+
+### Changed
+
+- Updated development status to ~95% complete
+- All 8 security findings from code review now resolved
+
+---
+
 ## [0.5.0] - 2026-02-02
 
 ### Added

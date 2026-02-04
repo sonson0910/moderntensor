@@ -1,16 +1,13 @@
 """
 ModernTensor SDK - Consensus Module
 
-Consensus-related types and managers matching luxtensor-consensus crate.
+Full-parity Python implementation of LuxTensor core consensus
+algorithms, ported from luxtensor-consensus crate.
 
-Modules:
-- slashing: Validator penalty system
-- circuit_breaker: Fault tolerance for AI/ML operations
-- liveness: Network health monitoring
-- fork_choice: GHOST fork selection algorithm
-- fast_finality: BFT-style fast finality
+All implementations are thread-safe using RLock.
 """
 
+# Core safety modules (P0)
 from .slashing import (
     SlashReason,
     SlashingConfig,
@@ -20,18 +17,6 @@ from .slashing import (
     SlashingManager,
 )
 
-from .circuit_breaker import (
-    CircuitState,
-    CircuitBreakerConfig,
-    CircuitBreakerStats,
-    CircuitBreakerError,
-    CircuitOpenError,
-    OperationTimeoutError,
-    CircuitBreaker,
-    CircuitBreakerRegistry,
-    get_circuit_breaker,
-)
-
 from .liveness import (
     LivenessAction,
     LivenessConfig,
@@ -39,6 +24,15 @@ from .liveness import (
     LivenessMonitor,
 )
 
+from .circuit_breaker import (
+    CircuitState,
+    CircuitBreakerConfig,
+    CircuitBreakerStats,
+    CircuitBreaker,
+    CircuitBreakerRegistry,
+)
+
+# Fork handling modules (P1)
 from .fork_choice import (
     BlockInfo,
     ForkChoice,
@@ -46,11 +40,57 @@ from .fork_choice import (
 )
 
 from .fast_finality import (
-    ValidatorInfo,
+    ValidatorInfo as FinalityValidatorInfo,
     BlockSignatures,
     FastFinalityStats,
     FastFinality,
     FastFinalityError,
+)
+
+from .fork_resolution import (
+    BlockInfo as ResolutionBlockInfo,
+    ReorgInfo,
+    FinalityStatus,
+    FinalityStats,
+    ForkResolver,
+    ForkResolutionError,
+)
+
+# PoS and validator modules (P2)
+from .long_range_protection import (
+    Checkpoint,
+    LongRangeConfig,
+    CheckpointStatus,
+    LongRangeProtection,
+    LongRangeProtectionError,
+)
+
+from .rotation import (
+    ValidatorInfo as RotationValidatorInfo,
+    RotationConfig,
+    PendingValidator,
+    EpochTransitionResult,
+    RotationStats,
+    ValidatorRotation,
+    ValidatorRotationError,
+)
+
+from .pos import (
+    ValidatorInfo as PosValidatorInfo,
+    HalvingSchedule as PosHalvingSchedule,
+    ConsensusConfig,
+    HalvingInfo as PosHalvingInfo,
+    ProofOfStake,
+    ProofOfStakeError,
+)
+
+from .halving import (
+    INITIAL_BLOCK_REWARD,
+    HALVING_INTERVAL,
+    MINIMUM_REWARD,
+    MAX_HALVINGS,
+    HalvingInfo,
+    HalvingSchedule,
 )
 
 __all__ = [
@@ -61,30 +101,60 @@ __all__ = [
     "SlashEvent",
     "JailStatus",
     "SlashingManager",
-    # Circuit Breaker
-    "CircuitState",
-    "CircuitBreakerConfig",
-    "CircuitBreakerStats",
-    "CircuitBreakerError",
-    "CircuitOpenError",
-    "OperationTimeoutError",
-    "CircuitBreaker",
-    "CircuitBreakerRegistry",
-    "get_circuit_breaker",
     # Liveness
     "LivenessAction",
     "LivenessConfig",
     "LivenessStats",
     "LivenessMonitor",
+    # Circuit Breaker
+    "CircuitState",
+    "CircuitBreakerConfig",
+    "CircuitBreakerStats",
+    "CircuitBreaker",
+    "CircuitBreakerRegistry",
     # Fork Choice
     "BlockInfo",
     "ForkChoice",
     "ForkChoiceError",
     # Fast Finality
-    "ValidatorInfo",
+    "FinalityValidatorInfo",
     "BlockSignatures",
     "FastFinalityStats",
     "FastFinality",
     "FastFinalityError",
+    # Fork Resolution
+    "ResolutionBlockInfo",
+    "ReorgInfo",
+    "FinalityStatus",
+    "FinalityStats",
+    "ForkResolver",
+    "ForkResolutionError",
+    # Long Range Protection
+    "Checkpoint",
+    "LongRangeConfig",
+    "CheckpointStatus",
+    "LongRangeProtection",
+    "LongRangeProtectionError",
+    # Rotation
+    "RotationValidatorInfo",
+    "RotationConfig",
+    "PendingValidator",
+    "EpochTransitionResult",
+    "RotationStats",
+    "ValidatorRotation",
+    "ValidatorRotationError",
+    # PoS
+    "PosValidatorInfo",
+    "PosHalvingSchedule",
+    "ConsensusConfig",
+    "PosHalvingInfo",
+    "ProofOfStake",
+    "ProofOfStakeError",
+    # Halving
+    "INITIAL_BLOCK_REWARD",
+    "HALVING_INTERVAL",
+    "MINIMUM_REWARD",
+    "MAX_HALVINGS",
+    "HalvingInfo",
+    "HalvingSchedule",
 ]
-

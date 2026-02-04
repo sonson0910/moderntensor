@@ -7,7 +7,6 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libleveldb-dev \
     git \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -18,7 +17,7 @@ COPY requirements.txt pyproject.toml ./
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir plyvel pytest pytest-asyncio
+    pip install --no-cache-dir pytest pytest-asyncio
 
 # Copy application code
 COPY sdk/ ./sdk/

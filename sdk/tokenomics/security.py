@@ -172,7 +172,7 @@ class InputValidator:
             raise ValueError(f"Amount must be >= {min_val}")
         
         if amount > cls.MAX_SAFE_INT:
-            raise ValueError(f"Amount exceeds maximum safe integer")
+            raise ValueError("Amount exceeds maximum safe integer")
         
         return True
     
@@ -412,7 +412,7 @@ class SecurityMonitor:
         if ratio > threshold:
             alert = SecurityAlert(
                 level=SecurityLevel.WARNING,
-                message=f"Unusually high reward detected",
+                message="Unusually high reward detected",
                 timestamp=time.time(),
                 details={
                     'address': address,
@@ -447,7 +447,7 @@ class SecurityMonitor:
         if claim_count > 10 and time_window < 3600:  # 10 claims in 1 hour
             alert = SecurityAlert(
                 level=SecurityLevel.WARNING,
-                message=f"Suspicious claim pattern detected",
+                message="Suspicious claim pattern detected",
                 timestamp=time.time(),
                 details={
                     'address': address,
@@ -485,7 +485,7 @@ class SecurityMonitor:
         if actual_change != expected_change:
             alert = SecurityAlert(
                 level=SecurityLevel.CRITICAL,
-                message=f"Balance manipulation detected",
+                message="Balance manipulation detected",
                 timestamp=time.time(),
                 details={
                     'address': address,

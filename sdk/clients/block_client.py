@@ -4,7 +4,7 @@ Handles block and chain information queries.
 """
 
 import logging
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List
 from .base import BaseRpcClient
 
 logger = logging.getLogger(__name__)

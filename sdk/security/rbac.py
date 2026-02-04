@@ -10,7 +10,6 @@ from typing import Set, Dict, Optional, List
 from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-import json
 
 logger = logging.getLogger(__name__)
 

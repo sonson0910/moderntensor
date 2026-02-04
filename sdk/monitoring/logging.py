@@ -8,10 +8,8 @@ compatible with ELK stack (Elasticsearch, Logstash, Kibana) and Loki.
 import logging
 import json
 import sys
-import traceback
 from datetime import datetime
 from typing import Optional, Dict, Any
-from pathlib import Path
 import socket
 
 

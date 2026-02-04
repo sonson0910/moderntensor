@@ -4,8 +4,8 @@ Scoring Types matching luxtensor-consensus/src/scoring.rs
 Provides performance tracking types for miners and validators.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Callable
+from dataclasses import dataclass
+from typing import Dict, Optional
 from enum import Enum
 import time
 

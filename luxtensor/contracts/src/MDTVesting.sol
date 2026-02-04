@@ -26,30 +26,42 @@ contract MDTVesting is Ownable, ReentrancyGuard {
 
     /// @notice Vesting schedule structure
     struct VestingSchedule {
-        uint256 totalAmount;       // Total tokens allocated
-        uint256 claimedAmount;     // Already claimed
-        uint256 startTime;         // Usually TGE
-        uint256 cliffDuration;     // Days before any unlock
-        uint256 vestingDuration;   // Days for linear vesting
-        uint8 tgePercent;          // Percentage unlocked at TGE (0-100)
-        bool revocable;            // Can be revoked by owner
-        bool revoked;              // Has been revoked
+        uint256 totalAmount; // Total tokens allocated
+        uint256 claimedAmount; // Already claimed
+        uint256 startTime; // Usually TGE
+        uint256 cliffDuration; // Days before any unlock
+        uint256 vestingDuration; // Days for linear vesting
+        uint8 tgePercent; // Percentage unlocked at TGE (0-100)
+        bool revocable; // Can be revoked by owner
+        bool revoked; // Has been revoked
     }
 
     /// @notice Beneficiary address => Vesting schedules
     mapping(address => VestingSchedule[]) public vestingSchedules;
 
     /// @notice Category types for event tracking
-    enum Category { TeamCoreDev, PrivateSale, IDO }
+    enum Category {
+        TeamCoreDev,
+        PrivateSale,
+        IDO
+    }
 
     /// @notice Track total allocated vs claimed
     uint256 public totalAllocated;
     uint256 public totalClaimed;
 
     /// @notice Events
-    event VestingCreated(address indexed beneficiary, uint256 amount, Category category);
+    event VestingCreated(
+        address indexed beneficiary,
+        uint256 amount,
+        Category category
+    );
     event TokensClaimed(address indexed beneficiary, uint256 amount);
-    event VestingRevoked(address indexed beneficiary, uint256 index, uint256 remaining);
+    event VestingRevoked(
+        address indexed beneficiary,
+        uint256 index,
+        uint256 remaining
+    );
     event TGESet(uint256 timestamp);
 
     constructor(address _token) Ownable(msg.sender) {
@@ -70,14 +82,17 @@ contract MDTVesting is Ownable, ReentrancyGuard {
     /**
      * @notice Create vesting for Team/Core Dev (1yr cliff + 4yr linear)
      */
-    function createTeamVesting(address beneficiary, uint256 amount) external onlyOwner {
+    function createTeamVesting(
+        address beneficiary,
+        uint256 amount
+    ) external onlyOwner {
         _createVesting(
             beneficiary,
             amount,
-            365 days,   // 1 year cliff
-            1460 days,  // 4 years linear
-            0,          // 0% TGE
-            true,       // Revocable
+            365 days, // 1 year cliff
+            1460 days, // 4 years linear
+            0, // 0% TGE
+            true, // Revocable
             Category.TeamCoreDev
         );
     }
@@ -85,14 +100,17 @@ contract MDTVesting is Ownable, ReentrancyGuard {
     /**
      * @notice Create vesting for Private Sale (1yr cliff + 2yr linear)
      */
-    function createPrivateSaleVesting(address beneficiary, uint256 amount) external onlyOwner {
+    function createPrivateSaleVesting(
+        address beneficiary,
+        uint256 amount
+    ) external onlyOwner {
         _createVesting(
             beneficiary,
             amount,
-            365 days,   // 1 year cliff
-            730 days,   // 2 years linear
-            0,          // 0% TGE
-            false,      // Not revocable
+            365 days, // 1 year cliff
+            730 days, // 2 years linear
+            0, // 0% TGE
+            false, // Not revocable
             Category.PrivateSale
         );
     }
@@ -100,20 +118,26 @@ contract MDTVesting is Ownable, ReentrancyGuard {
     /**
      * @notice Create vesting for IDO (25% TGE + 6mo linear)
      */
-    function createIDOVesting(address beneficiary, uint256 amount) external onlyOwner {
+    function createIDOVesting(
+        address beneficiary,
+        uint256 amount
+    ) external onlyOwner {
         _createVesting(
             beneficiary,
             amount,
-            0,          // No cliff
-            180 days,   // 6 months linear
-            25,         // 25% TGE
-            false,      // Not revocable
+            0, // No cliff
+            180 days, // 6 months linear
+            25, // 25% TGE
+            false, // Not revocable
             Category.IDO
         );
     }
 
     /**
-     * @dev Internal vesting creation
+     * @dev Internal vesting creation with duplicate prevention
+     *
+     * SECURITY: Checks for existing schedules with same cliff/duration/tgePercent
+     * to prevent accidental duplicate allocations.
      */
     function _createVesting(
         address beneficiary,
@@ -128,16 +152,31 @@ contract MDTVesting is Ownable, ReentrancyGuard {
         require(amount > 0, "Amount must be > 0");
         require(tgeTimestamp > 0, "TGE not set");
 
-        vestingSchedules[beneficiary].push(VestingSchedule({
-            totalAmount: amount,
-            claimedAmount: 0,
-            startTime: tgeTimestamp,
-            cliffDuration: cliffDuration,
-            vestingDuration: vestingDuration,
-            tgePercent: tgePercent,
-            revocable: revocable,
-            revoked: false
-        }));
+        // VT-01: Check for duplicate schedule with same parameters
+        VestingSchedule[] storage existing = vestingSchedules[beneficiary];
+        for (uint256 i = 0; i < existing.length; i++) {
+            if (
+                !existing[i].revoked &&
+                existing[i].cliffDuration == cliffDuration &&
+                existing[i].vestingDuration == vestingDuration &&
+                existing[i].tgePercent == tgePercent
+            ) {
+                revert("Duplicate vesting schedule exists");
+            }
+        }
+
+        vestingSchedules[beneficiary].push(
+            VestingSchedule({
+                totalAmount: amount,
+                claimedAmount: 0,
+                startTime: tgeTimestamp,
+                cliffDuration: cliffDuration,
+                vestingDuration: vestingDuration,
+                tgePercent: tgePercent,
+                revocable: revocable,
+                revoked: false
+            })
+        );
 
         totalAllocated += amount;
 
@@ -147,7 +186,10 @@ contract MDTVesting is Ownable, ReentrancyGuard {
     /**
      * @notice Calculate vested amount for a specific schedule
      */
-    function vestedAmount(address beneficiary, uint256 index) public view returns (uint256) {
+    function vestedAmount(
+        address beneficiary,
+        uint256 index
+    ) public view returns (uint256) {
         VestingSchedule storage schedule = vestingSchedules[beneficiary][index];
 
         if (schedule.revoked) {
@@ -159,7 +201,7 @@ contract MDTVesting is Ownable, ReentrancyGuard {
         }
 
         uint256 elapsed = block.timestamp - schedule.startTime;
-        uint256 tgeAmount = schedule.totalAmount * schedule.tgePercent / 100;
+        uint256 tgeAmount = (schedule.totalAmount * schedule.tgePercent) / 100;
         uint256 vestingAmount = schedule.totalAmount - tgeAmount;
 
         // During cliff, only TGE amount is vested
@@ -179,7 +221,8 @@ contract MDTVesting is Ownable, ReentrancyGuard {
             return schedule.totalAmount; // Fully vested
         }
 
-        uint256 linearVested = vestingAmount * vestingElapsed / schedule.vestingDuration;
+        uint256 linearVested = (vestingAmount * vestingElapsed) /
+            schedule.vestingDuration;
         return tgeAmount + linearVested;
     }
 
@@ -252,12 +295,18 @@ contract MDTVesting is Ownable, ReentrancyGuard {
     /**
      * @notice Get vesting info for a beneficiary
      */
-    function getVestingInfo(address beneficiary) external view returns (
-        uint256 scheduleCount,
-        uint256 totalVested,
-        uint256 totalClaimable,
-        uint256 totalClaimed_
-    ) {
+    function getVestingInfo(
+        address beneficiary
+    )
+        external
+        view
+        returns (
+            uint256 scheduleCount,
+            uint256 totalVested,
+            uint256 totalClaimable,
+            uint256 totalClaimed_
+        )
+    {
         scheduleCount = vestingSchedules[beneficiary].length;
 
         for (uint256 i = 0; i < scheduleCount; i++) {

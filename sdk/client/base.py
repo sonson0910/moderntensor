@@ -6,8 +6,9 @@ All mixins inherit from this base.
 """
 
 import logging
-from typing import Optional, List, Any
 from dataclasses import dataclass
+from typing import Any, List, Optional
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ChainInfo:
     """Blockchain information"""
+
     chain_id: str
     network: str
     block_height: int
@@ -25,6 +27,7 @@ class ChainInfo:
 @dataclass
 class Account:
     """Account information from Luxtensor"""
+
     address: str
     balance: int
     nonce: int
@@ -34,6 +37,7 @@ class Account:
 @dataclass
 class TransactionResult:
     """Transaction submission result"""
+
     tx_hash: str
     status: str
     block_number: Optional[int] = None
@@ -74,7 +78,7 @@ class BaseClient:
             "jsonrpc": "2.0",
             "method": method,
             "params": params or [],
-            "id": self._get_request_id()
+            "id": self._get_request_id(),
         }
 
         try:

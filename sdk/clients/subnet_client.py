@@ -4,7 +4,7 @@ Handles subnet queries and management.
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 from .base import BaseRpcClient
 
 logger = logging.getLogger(__name__)

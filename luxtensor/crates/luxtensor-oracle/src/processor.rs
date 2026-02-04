@@ -1,6 +1,6 @@
 use crate::error::Result;
 use ethers::types::{Bytes, H256};
-use luxtensor_zkvm::{ZkProver, GuestInput, ImageId, ProverConfig, Proof, ProofReceipt};
+use luxtensor_zkvm::{ZkProver, GuestInput, ImageId, ProverConfig};
 use tracing::{info, warn, debug};
 use std::sync::Arc;
 use tokio::sync::RwLock;

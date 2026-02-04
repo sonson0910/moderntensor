@@ -1049,8 +1049,8 @@
       ]
     },
     "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\MDTVesting.sol": {
-      "lastModificationDate": 1768286107856,
-      "contentHash": "d21010ec0a6a48a5b3f44d11903565ab",
+      "lastModificationDate": 1770157051054,
+      "contentHash": "c1173df6d978d83289eb8ad27071c721",
       "sourceName": "src/MDTVesting.sol",
       "solcConfig": {
         "version": "0.8.20",
@@ -1923,6 +1923,415 @@
       ],
       "artifacts": [
         "PaymentEscrow"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\examples\\AnomalyGuard.sol": {
+      "lastModificationDate": 1770153654688,
+      "contentHash": "15f17cb88bb24c486f53655099e03593",
+      "sourceName": "src/examples/AnomalyGuard.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "@openzeppelin/contracts/utils/Pausable.sol",
+        "../libraries/LuxTensorAI.sol",
+        "../interfaces/ILuxTensorAI.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "AnomalyGuard"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\libraries\\LuxTensorAI.sol": {
+      "lastModificationDate": 1770153250847,
+      "contentHash": "0f65aee5f5aebfddd1902b5157969a6c",
+      "sourceName": "src/libraries/LuxTensorAI.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "../interfaces/ILuxTensorAI.sol",
+        "../interfaces/ISemanticRegistry.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "LuxTensorAI"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\interfaces\\ILuxTensorAI.sol": {
+      "lastModificationDate": 1770153212332,
+      "contentHash": "20cc8ae9d94583ada4fd4d1e538b9bb4",
+      "sourceName": "src/interfaces/ILuxTensorAI.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ILuxTensorAI"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\node_modules\\@openzeppelin\\contracts\\utils\\Pausable.sol": {
+      "lastModificationDate": 1770153542594,
+      "contentHash": "0d47b53e10b1985efbb396f937626279",
+      "sourceName": "@openzeppelin/contracts/utils/Pausable.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "../utils/Context.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Pausable"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\interfaces\\ISemanticRegistry.sol": {
+      "lastModificationDate": 1770153213064,
+      "contentHash": "3712de25e187ef39c2e4df336f167ccc",
+      "sourceName": "src/interfaces/ISemanticRegistry.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ISemanticRegistry"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\TrainingEscrow.sol": {
+      "lastModificationDate": 1770014092996,
+      "contentHash": "d43e73f9b5e1e38c290d6bc8f9ae0cb9",
+      "sourceName": "src/TrainingEscrow.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "TrainingEscrow"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\GradientAggregator.sol": {
+      "lastModificationDate": 1770157361484,
+      "contentHash": "68b2eb5efae5beb19ecf13c3d2e900ca",
+      "sourceName": "src/GradientAggregator.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+        "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "GradientAggregator"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\examples\\TrustGraph.sol": {
+      "lastModificationDate": 1770157406910,
+      "contentHash": "e93b4b9c2325ea7b7ac3b566ad042896",
+      "sourceName": "src/examples/TrustGraph.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "../libraries/LuxTensorAI.sol",
+        "../interfaces/ISemanticRegistry.sol",
+        "../interfaces/ILuxTensorAI.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "TrustGraph"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\examples\\SemanticMatchmaker.sol": {
+      "lastModificationDate": 1770153424386,
+      "contentHash": "07366ab928db1cbf1c4a69364c92e926",
+      "sourceName": "src/examples/SemanticMatchmaker.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "../libraries/LuxTensorAI.sol",
+        "../interfaces/ISemanticRegistry.sol",
+        "../interfaces/ILuxTensorAI.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "SemanticMatchmaker"
+      ]
+    },
+    "D:\\venera\\cardano\\moderntensor\\moderntensor\\luxtensor\\contracts\\src\\examples\\ContentAuthenticator.sol": {
+      "lastModificationDate": 1770153325098,
+      "contentHash": "2f17c5a239696875885fe583c88a380c",
+      "sourceName": "src/examples/ContentAuthenticator.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "viaIR": true,
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/access/Ownable.sol",
+        "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+        "@openzeppelin/contracts/token/ERC721/ERC721.sol",
+        "../libraries/LuxTensorAI.sol",
+        "../interfaces/ISemanticRegistry.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ContentAuthenticator"
       ]
     }
   }

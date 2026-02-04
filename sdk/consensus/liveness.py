@@ -10,7 +10,7 @@ Helps prevent network hangs by:
 - Triggering recovery actions when network is stuck
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 import time

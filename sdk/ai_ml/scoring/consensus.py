@@ -7,7 +7,7 @@ multiple validators.
 
 import logging
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass
 
 # Try to import numpy, fallback to stdlib if not available

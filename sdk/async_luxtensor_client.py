@@ -7,8 +7,7 @@ Provides non-blocking operations for all blockchain interactions.
 
 import asyncio
 import logging
-from typing import Optional, List, Dict, Any, Union
-from contextlib import asynccontextmanager
+from typing import Optional, List, Dict, Any
 
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout
@@ -17,8 +16,6 @@ from sdk.models import (
     NeuronInfo,
     SubnetInfo,
     StakeInfo,
-    ValidatorInfo,
-    MinerInfo,
     BlockInfo,
     TransactionInfo,
 )

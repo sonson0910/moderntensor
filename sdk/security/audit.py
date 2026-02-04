@@ -4,7 +4,7 @@ Main security auditor coordinating all security checks.
 from typing import List
 import time
 
-from .types import SecurityIssue, Severity, AuditReport
+from .types import SecurityIssue, AuditReport
 from .crypto_audit import CryptoAuditor
 from .consensus_audit import ConsensusAuditor
 from .network_audit import NetworkAuditor

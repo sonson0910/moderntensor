@@ -14,7 +14,7 @@ Implements Option A1 token distribution:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Dict
 from enum import Enum
 
 

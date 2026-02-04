@@ -4,12 +4,12 @@ Core Synapse protocol implementation.
 Defines the base Synapse class for protocol messages.
 """
 
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, Optional, TypeVar
 from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid
 
-from .version import CURRENT_VERSION, ProtocolVersion
+from .version import CURRENT_VERSION
 
 
 T = TypeVar('T', bound=BaseModel)

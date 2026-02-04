@@ -12,11 +12,12 @@
 //! - `0x14` TRAIN_REQUEST: Submit federated learning training job
 
 use crate::revm_integration::precompiles;
+use luxtensor_core::hnsw::HnswVectorStore;
+use luxtensor_core::semantic_registry::{SemanticRegistry, SemanticDomain, RegistryError};
 use luxtensor_crypto::keccak256;
 use revm::primitives::{Bytes, PrecompileOutput, PrecompileResult, PrecompileError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use luxtensor_core::semantic::{SimpleVectorStore, VectorStore}; // Fixed imports
 
 /// Gas costs for AI precompiles
 pub mod gas_costs {
@@ -41,17 +42,52 @@ pub mod gas_costs {
     /// Per-byte cost for training config
     pub const TRAIN_REQUEST_PER_BYTE: u64 = 12;
 
-    /// Base cost for VECTOR_STORE
-    pub const VECTOR_STORE_BASE: u64 = 50_000;
+    /// Base cost for VECTOR_STORE (HNSW insert with graph updates)
+    pub const VECTOR_STORE_BASE: u64 = 80_000;
     /// Per-dimension cost for store
-    pub const VECTOR_STORE_PER_DIM: u64 = 100;
+    pub const VECTOR_STORE_PER_DIM: u64 = 80;
+    /// Graph update cost (HNSW neighbor connections)
+    pub const VECTOR_STORE_GRAPH_UPDATE: u64 = 5_000;
 
-    /// Base cost for VECTOR_QUERY
-    pub const VECTOR_QUERY_BASE: u64 = 20_000;
+    /// Base cost for VECTOR_QUERY (HNSW O(log N) search)
+    pub const VECTOR_QUERY_BASE: u64 = 15_000;
     /// Per-dimension cost for query
-    pub const VECTOR_QUERY_PER_DIM: u64 = 50;
-    /// Cost per searched item (Scan cost for brute force)
-    pub const VECTOR_QUERY_PER_ITEM: u64 = 10;
+    pub const VECTOR_QUERY_PER_DIM: u64 = 30;
+    /// Cost per layer traversed (log N factor)
+    pub const VECTOR_QUERY_PER_LAYER: u64 = 500;
+
+    // ==================== AI Primitives (0x22-0x26) ====================
+
+    /// CLASSIFY: Base cost (search + label lookup)
+    pub const CLASSIFY_BASE: u64 = 25_000;
+    /// Per-label cost (for label matching)
+    pub const CLASSIFY_PER_LABEL: u64 = 100;
+
+    /// ANOMALY_SCORE: Base cost (k-NN search + score calculation)
+    pub const ANOMALY_SCORE_BASE: u64 = 30_000;
+
+    /// SIMILARITY_GATE: Base cost (distance calculation)
+    pub const SIMILARITY_GATE_BASE: u64 = 10_000;
+
+    /// SEMANTIC_RELATE: Base cost (cross-contract vector lookup)
+    pub const SEMANTIC_RELATE_BASE: u64 = 20_000;
+
+    /// CLUSTER_ASSIGN: Base cost (find cluster centroid)
+    pub const CLUSTER_ASSIGN_BASE: u64 = 28_000;
+
+    // ==================== World Semantic Index (0x27-0x28) ====================
+
+    /// REGISTER_VECTOR: Base cost for global registry registration
+    pub const REGISTER_VECTOR_BASE: u64 = 35_000;
+    /// Per-dimension cost for registration
+    pub const REGISTER_VECTOR_PER_DIM: u64 = 50;
+    /// Per-tag cost
+    pub const REGISTER_VECTOR_PER_TAG: u64 = 200;
+
+    /// GLOBAL_SEARCH: Base cost for cross-domain search
+    pub const GLOBAL_SEARCH_BASE: u64 = 40_000;
+    /// Per-domain cost (searches multiple shards)
+    pub const GLOBAL_SEARCH_PER_DOMAIN: u64 = 5_000;
 }
 
 /// Stored AI request for precompile state
@@ -111,7 +147,12 @@ pub struct AIPrecompileState {
     training_job_counter: Arc<RwLock<u64>>,
 
     /// Native Vector Store for Semantic Layer (0x20, 0x21)
-    vector_store: Arc<RwLock<SimpleVectorStore>>,
+    /// Uses HNSW index for O(log N) approximate nearest neighbor search
+    vector_store: Arc<RwLock<HnswVectorStore>>,
+
+    /// World Semantic Index - Global shared registry (0x27, 0x28)
+    /// Supports domain sharding, quota management, and cross-contract composability
+    pub semantic_registry: Arc<RwLock<SemanticRegistry>>,
 }
 
 impl AIPrecompileState {
@@ -121,8 +162,10 @@ impl AIPrecompileState {
             request_counter: Arc::new(RwLock::new(0)),
             training_jobs: Arc::new(RwLock::new(HashMap::new())),
             training_job_counter: Arc::new(RwLock::new(0)),
-            // Default dimension 768
-            vector_store: Arc::new(RwLock::new(SimpleVectorStore::new(768))),
+            // Default dimension 768 with HNSW index for O(log N) search
+            vector_store: Arc::new(RwLock::new(HnswVectorStore::new(768))),
+            // World Semantic Index with domain sharding
+            semantic_registry: Arc::new(RwLock::new(SemanticRegistry::new(768))),
         }
     }
 
@@ -552,9 +595,10 @@ pub fn vector_store_precompile(
         return Err(PrecompileError::other("Input too short for vector data").into());
     }
 
-    // 2. Calculate Gas
+    // 2. Calculate Gas (HNSW insert with graph structure updates)
     let gas_cost = gas_costs::VECTOR_STORE_BASE +
-                   (vector_len as u64 * gas_costs::VECTOR_STORE_PER_DIM);
+                   (vector_len as u64 * gas_costs::VECTOR_STORE_PER_DIM) +
+                   gas_costs::VECTOR_STORE_GRAPH_UPDATE;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -632,17 +676,18 @@ pub fn vector_query_precompile(
             .map_err(|_| PrecompileError::other("Invalid length bytes"))?
     ) as usize;
 
-    // 2. Calculate Gas (with RwLock poisoning handling)
-    // Scan cost estimate based on store size (O(N) for brute force)
-    let total_items = {
+    // 2. Calculate Gas (HNSW O(log N) search cost)
+    // Cost = base + per_dim * dimensions + per_layer * estimated_layers
+    let estimated_layers = {
         let store = state.vector_store.read()
             .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
-        store.vectors.len() as u64
+        let n = store.len();
+        if n <= 1 { 1 } else { ((n as f64).ln() / 16_f64.ln()).ceil() as u64 }
     };
 
     let gas_cost = gas_costs::VECTOR_QUERY_BASE +
                    (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
-                   (total_items * gas_costs::VECTOR_QUERY_PER_ITEM);
+                   (estimated_layers * gas_costs::VECTOR_QUERY_PER_LAYER);
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -728,7 +773,686 @@ pub fn vector_query_precompile(
 }
 
 
+// ==================== AI PRIMITIVES (0x22 - 0x26) ====================
+
+/// CLASSIFY precompile handler (0x22)
+///
+/// Classifies a vector against labeled reference vectors using k-NN.
+/// Input format: abi.encode(query_vector: float32[], labels: (uint64, uint32)[])
+/// Output format: (uint32 label, uint256 confidence)
+///
+/// # Use Cases
+/// - Sentiment classification for content moderation
+/// - Category assignment for marketplace items
+/// - Risk level classification for DeFi positions
+pub fn classify_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    // Parse input structure:
+    // [vector_offset: 32] [labels_offset: 32]
+    // [vector_len: 32] [vector_data...]
+    // [labels_len: 32] [labels_data...] where each label is (uint64 id, uint32 label_id)
+
+    if input.len() < 64 {
+        return Err(PrecompileError::other("Invalid classify input").into());
+    }
+
+    // Parse vector offset and length
+    let vector_offset = u32::from_be_bytes(
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    if input.len() < vector_offset + 32 {
+        return Err(PrecompileError::other("Invalid vector offset").into());
+    }
+
+    let vector_len = u32::from_be_bytes(
+        input[vector_offset + 28..vector_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Parse labels offset and count
+    let labels_offset = u32::from_be_bytes(
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    if input.len() < labels_offset + 32 {
+        return Err(PrecompileError::other("Invalid labels offset").into());
+    }
+
+    let labels_len = u32::from_be_bytes(
+        input[labels_offset + 28..labels_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid labels length"))?
+    ) as usize;
+
+    // Calculate gas
+    let gas_cost = gas_costs::CLASSIFY_BASE +
+        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
+        (labels_len as u64 * gas_costs::CLASSIFY_PER_LABEL);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse query vector
+    let vector_data_start = vector_offset + 32;
+    if input.len() < vector_data_start + (vector_len * 4) {
+        return Err(PrecompileError::other("Input too short for vector").into());
+    }
+
+    let mut query = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = vector_data_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        query.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Parse labels (each is 12 bytes: 8-byte id + 4-byte label)
+    let labels_data_start = labels_offset + 32;
+    let mut labels = Vec::with_capacity(labels_len);
+    for i in 0..labels_len {
+        let start = labels_data_start + (i * 32); // ABI-encoded as 32-byte chunks
+        if input.len() < start + 32 {
+            break;
+        }
+        let id = u64::from_be_bytes(
+            input[start + 24..start + 32].try_into()
+                .map_err(|_| PrecompileError::other("Invalid label id"))?
+        );
+        // Label is in next 32-byte word
+        let label_start = labels_data_start + ((labels_len + i) * 32);
+        if input.len() < label_start + 32 {
+            continue;
+        }
+        let label = u32::from_be_bytes(
+            input[label_start + 28..label_start + 32].try_into()
+                .map_err(|_| PrecompileError::other("Invalid label value"))?
+        );
+        labels.push((id, label));
+    }
+
+    // Perform classification
+    let store = state.vector_store.read()
+        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+
+    let (label, confidence) = store.classify(&query, &labels)
+        .map_err(|_| PrecompileError::other("Classification failed"))?;
+
+    // Encode output: (uint32 label, uint256 confidence)
+    let mut output = vec![0u8; 64];
+    output[28..32].copy_from_slice(&label.to_be_bytes());
+
+    // Confidence as fixed-point (18 decimals)
+    let scaled_confidence = (confidence as f64 * 1e18) as u128;
+    output[48..64].copy_from_slice(&scaled_confidence.to_be_bytes());
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+/// CLUSTER_ASSIGN precompile handler (0x23)
+///
+/// Assigns a vector to the nearest cluster centroid.
+/// Input format: abi.encode(query_vector: float32[], centroid_ids: uint64[])
+/// Output format: (uint64 cluster_id, uint256 distance)
+///
+/// # Use Cases
+/// - User segmentation for targeted rewards
+/// - Geographic grouping for logistics
+/// - Content categorization
+pub fn cluster_assign_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    if input.len() < 64 {
+        return Err(PrecompileError::other("Invalid cluster input").into());
+    }
+
+    // Parse query vector (simplified - assume vector starts at offset 64)
+    let vector_len = u32::from_be_bytes(
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Calculate gas
+    let gas_cost = gas_costs::CLUSTER_ASSIGN_BASE +
+        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse vector
+    let vector_start = 64;
+    if input.len() < vector_start + (vector_len * 4) {
+        return Err(PrecompileError::other("Input too short").into());
+    }
+
+    let mut query = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = vector_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        query.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Find nearest centroid using HNSW search
+    let store = state.vector_store.read()
+        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+
+    let results = store.search(&query, 1)
+        .map_err(|_| PrecompileError::other("Search failed"))?;
+
+    let (cluster_id, distance) = results.first()
+        .map(|(id, dist)| (*id, *dist))
+        .unwrap_or((0, f32::MAX));
+
+    // Encode output: (uint64 cluster_id, uint256 distance)
+    let mut output = vec![0u8; 64];
+    output[24..32].copy_from_slice(&cluster_id.to_be_bytes());
+
+    let scaled_distance = (distance as f64 * 1e18) as u128;
+    output[48..64].copy_from_slice(&scaled_distance.to_be_bytes());
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+/// ANOMALY_SCORE precompile handler (0x24)
+///
+/// Calculates anomaly score for a vector (how different from stored vectors).
+/// Input format: abi.encode(query_vector: float32[])
+/// Output format: uint256 anomaly_score (0 = normal, 1e18 = highly anomalous)
+///
+/// # Use Cases
+/// - Fraud detection in transactions
+/// - Bot detection for governance
+/// - Unusual activity monitoring
+pub fn anomaly_score_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    // Parse vector length and data
+    if input.len() < 64 {
+        return Err(PrecompileError::other("Invalid anomaly input").into());
+    }
+
+    let vector_len = u32::from_be_bytes(
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Calculate gas
+    let gas_cost = gas_costs::ANOMALY_SCORE_BASE +
+        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse vector
+    let vector_start = 64;
+    if input.len() < vector_start + (vector_len * 4) {
+        return Err(PrecompileError::other("Input too short").into());
+    }
+
+    let mut query = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = vector_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        query.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Calculate anomaly score
+    let store = state.vector_store.read()
+        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+
+    let score = store.anomaly_score(&query)
+        .map_err(|_| PrecompileError::other("Anomaly calculation failed"))?;
+
+    // Encode output: uint256 anomaly_score
+    let mut output = vec![0u8; 32];
+    let scaled_score = (score as f64 * 1e18) as u128;
+    output[16..32].copy_from_slice(&scaled_score.to_be_bytes());
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+/// SIMILARITY_GATE precompile handler (0x25)
+///
+/// Checks if two vectors are similar above a threshold (gating mechanism).
+/// Input format: abi.encode(vector_a: float32[], vector_b: float32[], threshold: uint256)
+/// Output format: (bool is_similar, uint256 similarity)
+///
+/// # Use Cases
+/// - Access control based on semantic similarity
+/// - Content matching for duplicate detection
+/// - Identity verification
+pub fn similarity_gate_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    // Minimum input: 3 offsets (96 bytes) + 2 vectors + threshold
+    if input.len() < 96 {
+        return Err(PrecompileError::other("Invalid similarity input").into());
+    }
+
+    // Parse offsets
+    let vec_a_offset = u32::from_be_bytes(
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    let vec_b_offset = u32::from_be_bytes(
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    // Threshold is at offset 64-96 (direct value, not offset)
+    let threshold_bytes = &input[80..96];
+    let threshold_scaled = u128::from_be_bytes(
+        threshold_bytes.try_into().map_err(|_| PrecompileError::other("Invalid threshold"))?
+    );
+    let threshold = (threshold_scaled as f64 / 1e18) as f32;
+
+    // Parse vector lengths
+    if input.len() < vec_a_offset + 32 || input.len() < vec_b_offset + 32 {
+        return Err(PrecompileError::other("Invalid vector offsets").into());
+    }
+
+    let vec_a_len = u32::from_be_bytes(
+        input[vec_a_offset + 28..vec_a_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    let vec_b_len = u32::from_be_bytes(
+        input[vec_b_offset + 28..vec_b_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Calculate gas
+    let gas_cost = gas_costs::SIMILARITY_GATE_BASE +
+        ((vec_a_len + vec_b_len) as u64 * gas_costs::VECTOR_QUERY_PER_DIM / 2);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse vectors
+    let mut vec_a = Vec::with_capacity(vec_a_len);
+    let vec_a_data_start = vec_a_offset + 32;
+    for i in 0..vec_a_len {
+        let start = vec_a_data_start + (i * 4);
+        if start + 4 > input.len() { break; }
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        vec_a.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    let mut vec_b = Vec::with_capacity(vec_b_len);
+    let vec_b_data_start = vec_b_offset + 32;
+    for i in 0..vec_b_len {
+        let start = vec_b_data_start + (i * 4);
+        if start + 4 > input.len() { break; }
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        vec_b.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Check similarity
+    let store = state.vector_store.read()
+        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+
+    let (is_similar, similarity) = store.similarity_check(&vec_a, &vec_b, threshold)
+        .map_err(|_| PrecompileError::other("Similarity check failed"))?;
+
+    // Encode output: (bool is_similar, uint256 similarity)
+    let mut output = vec![0u8; 64];
+    output[31] = if is_similar { 1 } else { 0 };
+
+    let scaled_similarity = (similarity as f64 * 1e18) as u128;
+    output[48..64].copy_from_slice(&scaled_similarity.to_be_bytes());
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+/// SEMANTIC_RELATE precompile handler (0x26)
+///
+/// Retrieves a stored vector for cross-contract composability.
+/// Input format: abi.encode(vector_id: uint64)
+/// Output format: (bool exists, float32[] vector)
+///
+/// # Use Cases
+/// - Share embeddings between contracts
+/// - Build composable AI applications
+/// - Create semantic graphs across contracts
+pub fn semantic_relate_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    if input.len() < 32 {
+        return Err(PrecompileError::other("Invalid relate input").into());
+    }
+
+    // Parse vector ID
+    let vector_id = u64::from_be_bytes(
+        input[24..32].try_into().map_err(|_| PrecompileError::other("Invalid id"))?
+    );
+
+    // Calculate gas
+    let gas_cost = gas_costs::SEMANTIC_RELATE_BASE;
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Lookup vector
+    let store = state.vector_store.read()
+        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+
+    let vector = store.get_vector(vector_id);
+
+    // Encode output
+    match vector {
+        Some(vec) => {
+            // (bool exists = true, dynamic array offset, array)
+            let mut output = Vec::new();
+
+            // exists = true (32 bytes)
+            output.extend_from_slice(&[0u8; 31]);
+            output.push(1);
+
+            // Offset to array = 64
+            output.extend_from_slice(&[0u8; 31]);
+            output.push(64);
+
+            // Array length
+            output.extend_from_slice(&[0u8; 24]);
+            output.extend_from_slice(&(vec.len() as u64).to_be_bytes());
+
+            // Array data
+            for val in vec {
+                output.extend_from_slice(&u32::to_be_bytes(val.to_bits()));
+            }
+
+            Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+        }
+        None => {
+            // exists = false
+            let mut output = vec![0u8; 64];
+            output[31] = 0; // exists = false
+            output[63] = 64; // offset (empty array)
+            Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+        }
+    }
+}
+
+// ==================== World Semantic Index Precompiles (0x27-0x28) ====================
+
+/// REGISTER_VECTOR precompile handler (0x27)
+///
+/// Registers a vector in the global semantic registry with domain sharding.
+/// Input format: abi.encode(domain: uint8, vector: float32[], tags: bytes32[], ttl: uint64)
+/// Output format: (uint64 global_id, uint256 remaining_quota)
+///
+/// # Use Cases
+/// - Register DeFi risk profiles for cross-protocol sharing
+/// - Publish identity embeddings for universal access control
+/// - Store gaming assets with semantic properties
+pub fn register_vector_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+    caller: &[u8; 20],
+    block_number: u64,
+) -> PrecompileResult {
+    if input.len() < 128 {
+        return Err(PrecompileError::other("Invalid register input").into());
+    }
+
+    // Parse domain (first 32 bytes, only last byte matters)
+    let domain_byte = input[31];
+    let domain = SemanticDomain::from(domain_byte);
+
+    // Parse vector offset
+    let vector_offset = u32::from_be_bytes(
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    if input.len() < vector_offset + 32 {
+        return Err(PrecompileError::other("Invalid vector offset").into());
+    }
+
+    let vector_len = u32::from_be_bytes(
+        input[vector_offset + 28..vector_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Limit vector dimension for DoS protection
+    if vector_len > 2048 {
+        return Err(PrecompileError::other("Vector dimension too large").into());
+    }
+
+    // Parse tags offset and count
+    let tags_offset = u32::from_be_bytes(
+        input[92..96].try_into().map_err(|_| PrecompileError::other("Invalid tags offset"))?
+    ) as usize;
+
+    let tags_len = if input.len() >= tags_offset + 32 {
+        u32::from_be_bytes(
+            input[tags_offset + 28..tags_offset + 32].try_into().unwrap_or([0; 4])
+        ) as usize
+    } else {
+        0
+    };
+
+    // Limit tags for DoS protection
+    let tags_len = tags_len.min(10);
+
+    // Parse TTL (at byte 96-128)
+    let ttl = if input.len() >= 128 {
+        u64::from_be_bytes(
+            input[120..128].try_into().unwrap_or([0; 8])
+        )
+    } else {
+        0 // Permanent
+    };
+
+    // Calculate gas
+    let gas_cost = gas_costs::REGISTER_VECTOR_BASE +
+        (vector_len as u64 * gas_costs::REGISTER_VECTOR_PER_DIM) +
+        (tags_len as u64 * gas_costs::REGISTER_VECTOR_PER_TAG);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse vector data
+    let vector_data_start = vector_offset + 32;
+    if input.len() < vector_data_start + (vector_len * 4) {
+        return Err(PrecompileError::other("Input too short for vector").into());
+    }
+
+    let mut vector = Vec::with_capacity(vector_len);
+    for i in 0..vector_len {
+        let start = vector_data_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        vector.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Parse tags
+    let mut tags = Vec::with_capacity(tags_len);
+    let tags_data_start = tags_offset + 32;
+    for i in 0..tags_len {
+        let start = tags_data_start + (i * 32);
+        if input.len() < start + 32 {
+            break;
+        }
+        let mut tag = [0u8; 32];
+        tag.copy_from_slice(&input[start..start + 32]);
+        tags.push(tag);
+    }
+
+    // Register in global registry
+    let mut registry = state.semantic_registry.write()
+        .map_err(|_| PrecompileError::other("Registry lock poisoned"))?;
+
+    let global_id = registry.register(
+        *caller,
+        domain,
+        vector,
+        tags,
+        block_number,
+        ttl,
+    ).map_err(|e| match e {
+        RegistryError::QuotaExceeded => PrecompileError::other("Storage quota exceeded"),
+        RegistryError::DimensionMismatch { .. } => PrecompileError::other("Dimension mismatch"),
+        _ => PrecompileError::other("Registration failed"),
+    })?;
+
+    // Get remaining quota
+    let remaining = registry.get_remaining_quota(caller)
+        .unwrap_or(0);
+
+    // Encode output: (uint64 global_id, uint256 remaining_quota)
+    let mut output = vec![0u8; 64];
+    output[24..32].copy_from_slice(&global_id.to_be_bytes());
+    output[48..64].copy_from_slice(&(remaining as u128).to_be_bytes());
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+/// GLOBAL_SEARCH precompile handler (0x28)
+///
+/// Searches across all domains in the World Semantic Index.
+/// Input format: abi.encode(query: float32[], k: uint64, domains: uint8[])
+/// Output format: (uint64[] ids, uint256[] scores, uint8[] domains)
+///
+/// # Use Cases
+/// - Cross-domain semantic discovery
+/// - Universal similarity matching
+/// - Multi-protocol aggregation
+pub fn global_search_precompile(
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+) -> PrecompileResult {
+    if input.len() < 64 {
+        return Err(PrecompileError::other("Invalid search input").into());
+    }
+
+    // Parse query vector offset
+    let query_offset = u32::from_be_bytes(
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+    ) as usize;
+
+    if input.len() < query_offset + 32 {
+        return Err(PrecompileError::other("Invalid query offset").into());
+    }
+
+    let query_len = u32::from_be_bytes(
+        input[query_offset + 28..query_offset + 32].try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?
+    ) as usize;
+
+    // Parse k
+    let k = u64::from_be_bytes(
+        input[56..64].try_into().map_err(|_| PrecompileError::other("Invalid k"))?
+    ) as usize;
+
+    // Limit k for DoS protection
+    let k = k.min(100);
+
+    // Count domains to search (0 = all domains)
+    let num_domains = 4; // Default: search 4 common domains
+
+    // Calculate gas
+    let gas_cost = gas_costs::GLOBAL_SEARCH_BASE +
+        (query_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
+        (num_domains as u64 * gas_costs::GLOBAL_SEARCH_PER_DOMAIN);
+
+    if gas_cost > gas_limit {
+        return Err(PrecompileError::OutOfGas.into());
+    }
+
+    // Parse query vector
+    let query_data_start = query_offset + 32;
+    if input.len() < query_data_start + (query_len * 4) {
+        return Err(PrecompileError::other("Input too short for query").into());
+    }
+
+    let mut query = Vec::with_capacity(query_len);
+    for i in 0..query_len {
+        let start = query_data_start + (i * 4);
+        let bytes: [u8; 4] = input[start..start + 4]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
+        query.push(f32::from_bits(u32::from_be_bytes(bytes)));
+    }
+
+    // Perform global search
+    let registry = state.semantic_registry.read()
+        .map_err(|_| PrecompileError::other("Registry lock poisoned"))?;
+
+    let results = registry.search_global(&query, k)
+        .map_err(|_| PrecompileError::other("Global search failed"))?;
+
+    // Encode output: (uint64[] ids, uint256[] scores, uint8[] domains)
+    // Dynamic array encoding
+    let mut output = Vec::new();
+
+    // Offsets for three dynamic arrays
+    // ids offset = 96 (3 * 32)
+    output.extend_from_slice(&[0u8; 31]); output.push(96);
+    // scores offset = 96 + 32 + (results.len() * 32)
+    let scores_offset = 96 + 32 + (results.len() * 32);
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&(scores_offset as u64).to_be_bytes());
+    // domains offset
+    let domains_offset = scores_offset + 32 + (results.len() * 32);
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&(domains_offset as u64).to_be_bytes());
+
+    // ids array
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&(results.len() as u64).to_be_bytes());
+    for (id, _, _) in &results {
+        output.extend_from_slice(&[0u8; 24]);
+        output.extend_from_slice(&id.to_be_bytes());
+    }
+
+    // scores array
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&(results.len() as u64).to_be_bytes());
+    for (_, score, _) in &results {
+        let scaled = (*score as f64 * 1e18) as u128;
+        output.extend_from_slice(&[0u8; 16]);
+        output.extend_from_slice(&scaled.to_be_bytes());
+    }
+
+    // domains array
+    output.extend_from_slice(&[0u8; 24]);
+    output.extend_from_slice(&(results.len() as u64).to_be_bytes());
+    for (_, _, domain) in &results {
+        output.extend_from_slice(&[0u8; 31]);
+        output.push(*domain as u8);
+    }
+
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
+}
+
+
 // ========== HELPER FUNCTIONS ==========
+
 
 /// Placeholder for RISC Zero proof verification
 fn verify_risc_zero_proof(_input: &Bytes) -> bool {
@@ -759,7 +1483,9 @@ pub fn is_ai_precompile(address: &[u8; 20]) -> bool {
     *address == precompiles::GET_RESULT ||
     *address == precompiles::COMPUTE_PAYMENT ||
     is_training_precompile(address) ||
-    is_semantic_precompile(address)
+    is_semantic_precompile(address) ||
+    is_ai_primitives_precompile(address) ||
+    is_registry_precompile(address)
 }
 
 /// Check if address is a training precompile
@@ -779,6 +1505,25 @@ pub fn is_semantic_precompile(address: &[u8; 20]) -> bool {
 
     *address == expected_store || *address == expected_query
 }
+
+/// Check if address is an AI Primitives precompile (0x22 - 0x26)
+pub fn is_ai_primitives_precompile(address: &[u8; 20]) -> bool {
+    if address[0..19] != [0u8; 19] {
+        return false;
+    }
+    let last_byte = address[19];
+    (0x22..=0x26).contains(&last_byte)
+}
+
+/// Check if address is a World Semantic Registry precompile (0x27 - 0x28)
+pub fn is_registry_precompile(address: &[u8; 20]) -> bool {
+    if address[0..19] != [0u8; 19] {
+        return false;
+    }
+    let last_byte = address[19];
+    (0x27..=0x28).contains(&last_byte)
+}
+
 
 #[cfg(test)]
 mod tests {

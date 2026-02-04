@@ -4,8 +4,8 @@ Middleware components for Axon server.
 Provides authentication, rate limiting, and blacklist/whitelist functionality.
 """
 
-from typing import Callable, Optional
-from fastapi import Request, Response, HTTPException, status
+from typing import Callable
+from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import time

@@ -133,7 +133,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         print_info("Submitting transaction to network...")
         result = client.submit_transaction(signed_tx)
 
-        print_success(f"Stake added successfully!")
+        print_success("Stake added successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
         print_info(f"Block: {result.block_number}")
 
@@ -256,7 +256,7 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         print_info("Submitting transaction to network...")
         result = client.submit_transaction(signed_tx)
 
-        print_success(f"Unstake initiated successfully!")
+        print_success("Unstake initiated successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
         print_info(f"Block: {result.block_number}")
         print_warning("Tokens will be available after unbonding period")
@@ -357,7 +357,7 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         print_info("Submitting transaction to network...")
         result = client.submit_transaction(signed_tx)
 
-        print_success(f"Rewards claimed successfully!")
+        print_success("Rewards claimed successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
         print_info(f"Block: {result.block_number}")
 

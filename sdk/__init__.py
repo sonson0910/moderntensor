@@ -105,8 +105,6 @@ from .consensus import (
     CircuitState,
     CircuitBreakerConfig,
     CircuitBreaker,
-    CircuitOpenError,
-    get_circuit_breaker,
     # Liveness
     LivenessAction,
     LivenessConfig,
@@ -116,7 +114,6 @@ from .consensus import (
     ForkChoice,
     ForkChoiceError,
     # Fast Finality
-    ValidatorInfo,
     BlockSignatures,
     FastFinalityStats,
     FastFinality,
@@ -204,8 +201,6 @@ __all__ = [
     "CircuitState",
     "CircuitBreakerConfig",
     "CircuitBreaker",
-    "CircuitOpenError",
-    "get_circuit_breaker",
     # Consensus - Liveness
     "LivenessAction",
     "LivenessConfig",
@@ -215,7 +210,6 @@ __all__ = [
     "ForkChoice",
     "ForkChoiceError",
     # Consensus - Fast Finality
-    "ValidatorInfo",
     "BlockSignatures",
     "FastFinalityStats",
     "FastFinality",

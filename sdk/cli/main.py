@@ -8,12 +8,13 @@ Inspired by Bittensor's btcli but adapted for ModernTensor's architecture.
 
 import sys
 import click
-from pathlib import Path
 from typing import Optional
 
 from sdk.cli import __version__
 from sdk.cli.commands import wallet, stake, query, tx, subnet, validator, utils
 
+
+from sdk.cli import ui
 
 @click.group(invoke_without_command=True)
 @click.option('--version', '-v', is_flag=True, help='Show version information')
@@ -22,23 +23,22 @@ from sdk.cli.commands import wallet, stake, query, tx, subnet, validator, utils
 def cli(ctx, version: bool, config: Optional[str]):
     """
     ModernTensor CLI (mtcli)
-    
+
     Command-line interface for the ModernTensor/Luxtensor network.
-    
-    Use 'mtcli COMMAND --help' for more information on a specific command.
     """
+    # Initialize UI - Always print header on startup (consistent with Rust CLI)
+    ui.print_header(version=__version__)
+
     # Ensure context object exists
     ctx.ensure_object(dict)
-    
+
     if version:
-        click.echo(f"mtcli version {__version__}")
-        click.echo("ModernTensor CLI - Luxtensor blockchain interface")
         sys.exit(0)
-    
+
     # Load configuration if provided
     if config:
         ctx.obj['config_path'] = config
-    
+
     # Show help if no command provided
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
@@ -59,11 +59,9 @@ def main():
     try:
         cli(obj={})
     except KeyboardInterrupt:
-        click.echo("\n\nInterrupted by user")
-        sys.exit(130)
+        ui.print_error("Interrupted by user", exit_code=130)
     except Exception as e:
-        click.echo(f"\n❌ Error: {str(e)}", err=True)
-        sys.exit(1)
+        ui.print_error(f"Error: {str(e)}", exit_code=1)
 
 
 if __name__ == '__main__':

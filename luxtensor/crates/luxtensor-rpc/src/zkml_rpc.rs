@@ -12,14 +12,14 @@ use crate::helpers::{parse_address, verify_caller_signature};
 use jsonrpc_core::{IoHandler, Params, Value};
 use luxtensor_core::Hash;
 use luxtensor_zkvm::{
-    ZkProver, ZkVerifier, VerifierConfig, ProverConfig,
+    ZkProver, ZkVerifier,
     ProofReceipt, ImageId, GuestInput, VerificationResult,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use tracing::info;
 
 // ============================================================
 // Types

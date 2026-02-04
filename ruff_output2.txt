@@ -1,0 +1,52 @@
+﻿sdk\ai_ml\zkml\circuit.py:68:20: F401 `ezkl` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\ai_ml\zkml\proof_generator.py:117:28: F821 Undefined name `Circuit`
+sdk\ai_ml\zkml\proof_generator.py:146:54: F821 Undefined name `Circuit`
+sdk\ai_ml\zkml\proof_generator.py:153:56: F821 Undefined name `Circuit`
+sdk\ai_ml\zkml\proof_generator.py:515:9: E722 Do not use bare `except`
+sdk\ai_ml\zkml\verifier.py:80:20: F401 `ezkl` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\ai_ml\zkml\verifier.py:92:9: E722 Do not use bare `except`
+sdk\cli\commands\query.py:62:13: E722 Do not use bare `except`
+sdk\cli\commands\query.py:198:13: E722 Do not use bare `except`
+sdk\cli\commands\query.py:204:13: E722 Do not use bare `except`
+sdk\cli\commands\query.py:276:17: E722 Do not use bare `except`
+sdk\cli\commands\query.py:283:17: E722 Do not use bare `except`
+sdk\cli\commands\query.py:332:13: E722 Do not use bare `except`
+sdk\cli\commands\query.py:383:13: E722 Do not use bare `except`
+sdk\cli\commands\subnet.py:260:13: E722 Do not use bare `except`
+sdk\cli\commands\tx.py:13:26: F401 [*] `rich.console.Console` imported but unused
+sdk\cli\commands\validator.py:144:13: E722 Do not use bare `except`
+sdk\cli\commands\validator.py:265:9: E722 Do not use bare `except`
+sdk\cli\commands\validator.py:710:9: F841 Local variable `from_address` is assigned to but never used
+sdk\cli\commands\wallet.py:798:13: E722 Do not use bare `except`
+sdk\cli\commands\wallet.py:902:9: E722 Do not use bare `except`
+sdk\commit_reveal.py:289:18: F821 Undefined name `TransactionSigner`
+sdk\commit_reveal.py:353:18: F821 Undefined name `TransactionSigner`
+sdk\commit_reveal.py:492:18: F821 Undefined name `TransactionSigner`
+sdk\consensus\circuit_breaker.py:269:9: F841 Local variable `old_state` is assigned to but never used
+sdk\core\__init__.py:7:1: F403 `from .datatypes import *` used; unable to detect undefined names
+sdk\core\node_tier.py:187:9: F841 Local variable `old_tier` is assigned to but never used
+sdk\dendrite\dendrite.py:284:17: F841 Local variable `last_error` is assigned to but never used
+sdk\luxtensor_client.py:856:9: E722 Do not use bare `except`
+sdk\luxtensor_client.py:1168:9: F811 Redefinition of unused `get_all_subnets` from line 873: `get_all_subnets` redefined here
+sdk\luxtensor_client.py:2553:9: E722 Do not use bare `except`
+sdk\security\consensus_audit.py:57:43: F401 `sdk.consensus.pos.ProofOfStake` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\consensus_audit.py:91:51: F401 `sdk.consensus.fork_choice.ForkChoice` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\consensus_audit.py:118:43: F401 `sdk.consensus.pos.ProofOfStake` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\consensus_audit.py:157:43: F401 `sdk.consensus.pos.ProofOfStake` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\contract_audit.py:66:13: E722 Do not use bare `except`
+sdk\security\network_audit.py:57:41: F401 `sdk.network.p2p.P2PNode` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\network_audit.py:93:41: F401 `sdk.network.p2p.P2PNode` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\network_audit.py:136:41: F401 `sdk.network.p2p.P2PNode` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\security\network_audit.py:164:46: F401 `sdk.network.messages.MessageCodec` imported but unused; consider using `importlib.util.find_spec` to test for availability
+sdk\tokenomics\emission_controller.py:220:9: F841 Local variable `supply` is assigned to but never used
+sdk\tokenomics\security.py:601:13: F402 Import `field` from line 13 shadowed by loop variable
+sdk\tokenomics\security.py:749:13: F841 Local variable `prev_hash` is assigned to but never used
+sdk\transactions.py:314:5: F841 Local variable `message_hash` is assigned to but never used
+sdk\weight_consensus.py:281:18: F821 Undefined name `TransactionSigner`
+sdk\weight_consensus.py:329:18: F821 Undefined name `TransactionSigner`
+sdk\weight_consensus.py:378:9: F841 Local variable `result` is assigned to but never used
+sdk\weight_consensus.py:415:18: F821 Undefined name `TransactionSigner`
+sdk\weight_consensus.py:560:18: F821 Undefined name `TransactionSigner`
+sdk\zkml_scoring.py:488:11: F821 Undefined name `Proof`
+Found 50 errors.
+[*] 1 fixable with the `--fix` option (8 hidden fixes can be enabled with the `--unsafe-fixes` option).

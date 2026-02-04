@@ -39,9 +39,12 @@ Version: 1.0.0
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
+
+if TYPE_CHECKING:
+    from .ai_ml.zkml.proof_generator import Proof
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,6 @@ import asyncio
 from typing import Optional, Dict, Any, Callable
 from contextlib import contextmanager
 from functools import wraps
-import traceback
 
 try:
     from opentelemetry import trace

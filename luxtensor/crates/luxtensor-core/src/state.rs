@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use crate::{Account, Address, Hash, Result};
+use crate::hnsw::HnswVectorStore;
 
 /// State database interface
 pub struct StateDB {
     cache: HashMap<Address, Account>,
-    pub vector_store: crate::semantic::SimpleVectorStore,
+    /// HNSW-backed vector store for Semantic Layer
+    /// Provides O(log N) approximate nearest neighbor search
+    pub vector_store: HnswVectorStore,
 }
 
 impl StateDB {
@@ -12,7 +15,7 @@ impl StateDB {
         Self {
             cache: HashMap::new(),
             // Default dimension 768 (common for BERT/LLM embeddings)
-            vector_store: crate::semantic::SimpleVectorStore::new(768),
+            vector_store: HnswVectorStore::new(768),
         }
     }
 
@@ -62,9 +65,8 @@ impl StateDB {
             luxtensor_crypto::MerkleTree::new(leaf_hashes).root()
         };
 
-        // 2. Calculate Vector Root
-        use crate::semantic::VectorStore;
-        let vector_root = self.vector_store.root_hash()?;
+        // 2. Calculate Vector Root (using HNSW's deterministic hash)
+        let vector_root = self.vector_store.root_hash();
 
         // 3. Combine Roots
         let mut combined = Vec::new();

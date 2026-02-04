@@ -4,7 +4,7 @@ Security manager for Axon server.
 Handles authentication, IP filtering, and security features.
 """
 
-from typing import Set, Dict, Optional, Tuple, NamedTuple
+from typing import Set, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import hashlib
 import hmac

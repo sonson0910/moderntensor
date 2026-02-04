@@ -6,7 +6,6 @@ Handles encoding and decoding of Synapse messages.
 
 from typing import Any, Dict, Type, TypeVar, Union
 import json
-from datetime import datetime
 from pydantic import BaseModel
 
 from .synapse import SynapseRequest, SynapseResponse

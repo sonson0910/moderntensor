@@ -7,8 +7,7 @@ Performs security checks on:
 - Hash functions
 - Random number generation
 """
-from typing import List, Optional, Any
-import hashlib
+from typing import List
 import secrets
 
 from .types import SecurityIssue, Severity

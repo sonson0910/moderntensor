@@ -10,7 +10,6 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 import hashlib
 import json
-import time
 
 
 class ProofType(str, Enum):

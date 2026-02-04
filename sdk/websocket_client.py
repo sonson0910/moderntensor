@@ -12,7 +12,7 @@ Provides real-time subscriptions for blockchain events:
 import asyncio
 import json
 import logging
-from typing import Optional, Callable, Dict, Any, List, Set
+from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
 import websockets

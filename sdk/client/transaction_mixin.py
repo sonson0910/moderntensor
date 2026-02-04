@@ -4,8 +4,11 @@ Transaction Mixin for LuxtensorClient
 Provides transaction submission and query methods.
 """
 
-from typing import Dict, Any, Optional
 import logging
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
+
+if TYPE_CHECKING:
+    from .protocols import RPCProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,18 @@ class TransactionMixin:
         - wait_for_transaction()
     """
 
+    if TYPE_CHECKING:
+
+        def _rpc(self) -> "RPCProvider":
+            """Helper to cast self to RPCProvider protocol for type checking."""
+            return cast("RPCProvider", self)
+
+    else:
+
+        def _rpc(self):
+            """At runtime, return self (duck typing)."""
+            return self
+
     def submit_transaction(self, signed_tx: str):
         """
         Submit signed transaction to Luxtensor.
@@ -33,15 +48,10 @@ class TransactionMixin:
         """
         from .base import TransactionResult
 
-        tx_hash = self._call_rpc("eth_sendRawTransaction", [signed_tx])
-        return TransactionResult(
-            tx_hash=tx_hash,
-            status="pending",
-            block_number=None,
-            error=None
-        )
+        tx_hash = self._rpc()._call_rpc("eth_sendRawTransaction", [signed_tx])
+        return TransactionResult(tx_hash=tx_hash, status="pending", block_number=None, error=None)
 
-    def get_transaction(self, tx_hash: str) -> Dict[str, Any]:
+    def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         """
         Get transaction by hash.
 
@@ -49,9 +59,9 @@ class TransactionMixin:
             tx_hash: Transaction hash (with 0x prefix)
 
         Returns:
-            Transaction data
+            Transaction data or None if not found
         """
-        return self._call_rpc("eth_getTransactionByHash", [tx_hash])
+        return self._rpc()._call_rpc("eth_getTransactionByHash", [tx_hash])
 
     def get_transaction_receipt(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         """
@@ -63,13 +73,10 @@ class TransactionMixin:
         Returns:
             Transaction receipt or None if not mined
         """
-        return self._call_rpc("eth_getTransactionReceipt", [tx_hash])
+        return self._rpc()._call_rpc("eth_getTransactionReceipt", [tx_hash])
 
     def wait_for_transaction(
-        self,
-        tx_hash: str,
-        timeout: int = 60,
-        poll_interval: float = 1.0
+        self, tx_hash: str, timeout: int = 60, poll_interval: float = 1.0
     ) -> Optional[Dict[str, Any]]:
         """
         Wait for transaction to be mined.

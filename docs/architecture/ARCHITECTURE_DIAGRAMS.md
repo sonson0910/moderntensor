@@ -392,4 +392,209 @@ graph TB
 
 ---
 
-*Last updated: January 2026*
+## 9. Native AI Integration (Phase 8-9)
+
+### AI Primitives (Precompiles 0x22-0x28)
+
+```mermaid
+graph TB
+    subgraph "Smart Contract Layer"
+        SC[Solidity Contract]
+        SDK[AIPrecompiles.sol]
+    end
+
+    subgraph "AI Precompiles (0x22-0x28)"
+        P22[0x22: VectorSimilarity]
+        P23[0x23: MatrixMultiply]
+        P24[0x24: Sigmoid/Softmax]
+        P25[0x25: SemanticSearch]
+        P26[0x26: HashEmbedding]
+        P27[0x27: SemanticStore]
+        P28[0x28: SemanticQuery]
+    end
+
+    subgraph "Rust Native Layer"
+        HNSW[HNSW Index]
+        BLAS[BLAS Operations]
+        SDB[(StateDB)]
+    end
+
+    SC --> SDK
+    SDK -->|staticcall| P22 & P23 & P24 & P25 & P26 & P27 & P28
+    P22 & P23 & P24 --> BLAS
+    P25 & P26 --> HNSW
+    P27 & P28 --> HNSW
+    HNSW --> SDB
+```
+
+### HNSW Semantic Layer
+
+```mermaid
+graph TB
+    subgraph "Query Flow"
+        Q[Query Vector]
+        EP[Entry Point: Top Layer]
+    end
+
+    subgraph "HNSW Layers"
+        L3[Layer 3: Sparse]
+        L2[Layer 2: Medium]
+        L1[Layer 1: Dense]
+        L0[Layer 0: All Nodes]
+    end
+
+    subgraph "Search Result"
+        KNN[K Nearest Neighbors]
+    end
+
+    Q --> EP --> L3
+    L3 -->|Greedy Search| L2
+    L2 -->|Greedy Search| L1
+    L1 -->|Greedy Search| L0
+    L0 --> KNN
+```
+
+### World Semantic Index
+
+```mermaid
+graph TB
+    subgraph "Domain Sharding"
+        REG[SemanticRegistry]
+        D1[Domain: DeFi]
+        D2[Domain: NFT]
+        D3[Domain: Gaming]
+        D4[Domain: Social]
+    end
+
+    subgraph "Per-Domain Storage"
+        S1[HNSW Index 1]
+        S2[HNSW Index 2]
+        S3[HNSW Index 3]
+        S4[HNSW Index 4]
+    end
+
+    subgraph "Global State"
+        HR[Hybrid Merkle Root]
+        TTL[Semantic TTL]
+    end
+
+    REG --> D1 & D2 & D3 & D4
+    D1 --> S1
+    D2 --> S2
+    D3 --> S3
+    D4 --> S4
+    S1 & S2 & S3 & S4 --> HR
+    HR --> TTL
+```
+
+---
+
+## 10. Security Hardening (Phase 8b)
+
+### Production Rate Limiting
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant NG as Nginx
+    participant RPC as L1Node RPC
+    participant SDB as StateDB
+
+    C->>NG: RPC Request
+
+    alt Rate < 100 req/15s
+        NG->>RPC: Forward Request
+        RPC->>SDB: Query/Execute
+        SDB->>RPC: Response
+        RPC->>NG: JSON-RPC Response
+        NG->>C: 200 OK
+    else Rate Exceeded
+        NG->>C: 429 Too Many Requests
+    end
+```
+
+### Security Layers (Feb 2026)
+
+```mermaid
+graph TB
+    subgraph "Layer 1: Timing Attack Prevention"
+        TA[ConstantTimeEq in admin_auth.rs]
+    end
+
+    subgraph "Layer 2: Duplicate Prevention"
+        DP[Vesting duplication check]
+    end
+
+    subgraph "Layer 3: DoS Protection"
+        DOS1[MAX_PARTICIPANTS: 1000]
+        DOS2[MAX_ATTESTATIONS: 100]
+    end
+
+    subgraph "Layer 4: Configuration"
+        CFG1[DEFAULT_M constant]
+        CFG2[DEFAULT_MAX_LAYER constant]
+    end
+
+    subgraph "Layer 5: Infrastructure"
+        INF[Nginx Rate Limiting: 100 req/15s]
+    end
+
+    TA & DP & DOS1 & DOS2 & CFG1 & CFG2 & INF --> SEC[Hardened System]
+```
+
+---
+
+## 11. Complete System Overview (Feb 2026)
+
+```mermaid
+graph TB
+    subgraph "External"
+        U[Users/DApps]
+        SDK[Python SDK]
+    end
+
+    subgraph "Rate Limiting"
+        NG[Nginx: 100 req/15s]
+    end
+
+    subgraph "Luxtensor Node"
+        RPC[RPC Server :8545]
+
+        subgraph "Core Layer"
+            BC[Blockchain Core]
+            CS[Consensus Engine]
+            TX[Transaction Pool]
+        end
+
+        subgraph "AI Layer"
+            AIP[AI Precompiles 0x22-0x28]
+            HNSW[HNSW Semantic Layer]
+            WSI[World Semantic Index]
+        end
+
+        subgraph "Storage Layer"
+            SDB[(StateDB + HNSW)]
+            BDB[(Block DB)]
+            MDB[(Metagraph DB)]
+        end
+
+        subgraph "Network Layer"
+            P2P[libp2p Network]
+            SYNC[Block Sync]
+        end
+    end
+
+    U --> SDK --> NG --> RPC
+    RPC --> BC & CS & TX & AIP
+    AIP --> HNSW --> WSI
+    BC --> SDB & BDB
+    HNSW --> SDB
+    CS --> MDB
+    P2P <--> N1 & N2 & Nn
+```
+
+---
+
+**Current Status: ~95% Complete - Security Hardening Complete!**
+
+*Last updated: February 2026*

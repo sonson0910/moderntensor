@@ -6,14 +6,12 @@ This module implements the Luxtensor transaction format compatible with the Rust
 Uses native Python cryptography matching Luxtensor's Rust crypto implementation.
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import struct
 import hashlib
 from Crypto.Hash import keccak
-from ecdsa import SigningKey, VerifyingKey, SECP256k1, util
-from ecdsa.keys import BadSignatureError
-import secrets
+from ecdsa import SigningKey, SECP256k1, util
 
 
 def keccak256(data: bytes) -> bytes:
@@ -272,8 +270,6 @@ def _calculate_recovery_id(message_hash: bytes, r: bytes, s: bytes, verifying_ke
 
     This allows recovering the public key from the signature.
     """
-    from ecdsa import VerifyingKey
-    from ecdsa.util import sigdecode_string
 
     # Get the original public key bytes
     original_pubkey = verifying_key.to_string()
@@ -285,7 +281,7 @@ def _calculate_recovery_id(message_hash: bytes, r: bytes, s: bytes, verifying_ke
             recovered_pubkey = _recover_public_key(message_hash, r + s, recovery_id)
             if recovered_pubkey and recovered_pubkey == original_pubkey:
                 return recovery_id + 27  # Add 27 for Ethereum-style v
-        except:
+        except Exception:
             continue
 
     # Default to 27 if recovery fails
@@ -313,9 +309,7 @@ def verify_transaction_signature(tx: LuxtensorTransaction) -> bool:
     Returns:
         True if signature is valid, False otherwise
     """
-    # Get signing message and hash
-    message = tx.get_signing_message()
-    message_hash = keccak256(message)
+    # Get signing message and hash\n    message = tx.get_signing_message()\n    _ = keccak256(message)  # Compute hash for validation
 
     try:
         # Combine r and s into signature
@@ -325,8 +319,8 @@ def verify_transaction_signature(tx: LuxtensorTransaction) -> bool:
         # In a full implementation, would recover public key from signature using recovery id
         # For now, we verify by checking if signature is valid for the claimed address
 
-        # Convert address to bytes
-        address_bytes = bytes.fromhex(tx.from_address[2:] if tx.from_address.startswith('0x') else tx.from_address)
+        # Convert address to bytes for validation
+        _ = bytes.fromhex(tx.from_address[2:] if tx.from_address.startswith('0x') else tx.from_address)
 
         # This is a basic check - full implementation would recover public key
         # and verify it matches the address

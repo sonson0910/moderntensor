@@ -9,9 +9,12 @@ import logging
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from pathlib import Path
 import time
+
+if TYPE_CHECKING:
+    from .circuit import Circuit
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +515,7 @@ class ProofGenerator:
         try:
             proof_data = json.loads(proof.proof_data.decode())
             return "witness" in proof_data and "timestamp" in proof_data
-        except:
+        except Exception:
             return False
 
     def save_keys(self, directory: Path) -> None:

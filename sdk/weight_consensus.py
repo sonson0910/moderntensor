@@ -35,9 +35,12 @@ Version: 1.0.0
 
 import hashlib
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
+
+if TYPE_CHECKING:
+    from sdk.keymanager.transaction_signer import TransactionSigner
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +377,7 @@ class WeightConsensusClient:
             chain_id=self.client.chain_id,
         )
 
-        # Submit
-        result = self.client.submit_transaction(tx)
+        # Submit\n        _ = self.client.submit_transaction(tx)  # Store result for logging/debugging
 
         logger.info(
             f"Voted {'approve' if approve else 'reject'} on proposal {proposal_id}"

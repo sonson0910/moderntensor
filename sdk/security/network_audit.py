@@ -7,7 +7,7 @@ Performs security checks on:
 - Sybil resistance
 - Message validation
 """
-from typing import List, Optional, Any
+from typing import List
 
 from .types import SecurityIssue, Severity
 

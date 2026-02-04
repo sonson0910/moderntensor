@@ -10,11 +10,10 @@ Matches luxtensor-consensus/src/node_tier.rs for SDK compatibility.
     Tier 3: Super Validator - 1000 MDT, priority fees + delegation
 """
 
-from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
-import time
 
 
 # Minimum stake requirements (in base units - 18 decimals)
@@ -185,8 +184,7 @@ class NodeRegistry:
         if address not in self._nodes:
             return None
 
-        old_tier = self._nodes[address].tier
-        new_tier = self._nodes[address].update_stake(new_stake)
+        _ = self._nodes[address].tier  # Capture previous tier\n        new_tier = self._nodes[address].update_stake(new_stake)
         return new_tier
 
     def unregister(self, address: str) -> Optional[NodeInfo]:

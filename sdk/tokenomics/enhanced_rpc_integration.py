@@ -16,8 +16,8 @@ Implementation Date: January 2026 (Month 1 Roadmap)
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
 from enum import Enum
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
@@ -317,7 +317,7 @@ class EnhancedRPCIntegration:
 
                     return data.get("result")
 
-            except asyncio.TimeoutError as e:
+            except asyncio.TimeoutError:
                 last_error = f"Timeout after {timeout or self.config.timeout}s"
                 logger.warning(f"Request timeout (attempt {attempt + 1}): {method}")
 

@@ -7,7 +7,7 @@ Separates AI/ML concerns from blockchain logic.
 import logging
 from typing import Optional, Dict, Any
 
-from ..core.protocol import Task, Result, TaskContext
+from ..core.protocol import Task, Result
 from ..subnets.base import BaseSubnet
 
 logger = logging.getLogger(__name__)

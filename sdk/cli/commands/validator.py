@@ -6,13 +6,12 @@ Commands for validator operations.
 
 import click
 from typing import Optional
-from pathlib import Path
 import json
 
 from sdk.cli.utils import (
     print_warning, print_error, print_success, print_info,
     confirm_action, console, create_table, format_balance,
-    format_address, get_default_wallet_path
+    format_address
 )
 from sdk.cli.config import get_network_config
 
@@ -142,7 +141,7 @@ def validator_status(ctx, coldkey: str, hotkey: str, subnet_uid: Optional[int],
         if subnet_uid is not None:
             try:
                 is_registered = client.is_hotkey_registered(subnet_uid, hotkey_address)
-            except:
+            except Exception:
                 pass
 
         # Display status
@@ -263,7 +262,7 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
             if not is_registered:
                 print_error(f"Hotkey not registered on subnet {subnet_uid}")
                 return
-        except:
+        except Exception:
             print_warning("Could not verify registration status")
 
         # Get nonce
@@ -349,7 +348,7 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         print_info("Submitting transaction to network...")
         result = client.submit_transaction(signed_tx)
 
-        print_success(f"Weights set successfully!")
+        print_success("Weights set successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
         print_info(f"Block: {result.block_number}")
 
@@ -394,7 +393,7 @@ def commit_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
         - Must reveal before reveal window closes
     """
     try:
-        from sdk.commit_reveal import CommitRevealClient, compute_commit_hash, generate_salt
+        from sdk.commit_reveal import compute_commit_hash, generate_salt
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
         from rich.table import Table
@@ -473,8 +472,8 @@ def commit_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
 
         print_success("Weights committed successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
-        print_info(f"")
-        print_info(f"To reveal weights, run:")
+        print_info("")
+        print_info("To reveal weights, run:")
         print_info(f"  mtcli validator reveal-weights --coldkey {coldkey} --hotkey {hotkey} \\")
         print_info(f"    --subnet-uid {subnet_uid} --weights-file {weights_file} --salt {salt_hex}")
 
@@ -510,7 +509,7 @@ def reveal_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
         - If hash mismatch, transaction will fail
     """
     try:
-        from sdk.commit_reveal import compute_commit_hash, verify_commit
+        from sdk.commit_reveal import compute_commit_hash
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
         from sdk.client import LuxtensorClient
@@ -585,7 +584,7 @@ def reveal_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
 
         print_success("Weights revealed successfully!")
         print_info(f"Transaction hash: {result.tx_hash}")
-        print_info(f"Weights will be applied after finalization")
+        print_info("Weights will be applied after finalization")
 
     except Exception as e:
         print_error(f"Failed to reveal weights: {str(e)}")
@@ -708,7 +707,7 @@ def propose_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_fil
 
         # Get wallet
         hotkey_data = derive_hotkey_from_coldkey(coldkey, hotkey, base_dir)
-        from_address = hotkey_data['address']
+        _ = hotkey_data['address']  # Validate address exists
         private_key = hotkey_data['private_key']
 
         # Display summary

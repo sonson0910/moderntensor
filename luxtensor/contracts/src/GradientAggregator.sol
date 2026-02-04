@@ -127,6 +127,13 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     error AlreadySubmitted();
     error InsufficientSubmissions();
     error NotJobCreator();
+    error MaxParticipantsReached();
+
+    // ==================== CONSTANTS ====================
+
+    /// @notice Maximum participants per job to prevent Gas DoS
+    /// @dev CR-10 security fix
+    uint256 public constant MAX_PARTICIPANTS = 1000;
 
     // ==================== CONSTRUCTOR ====================
 
@@ -189,11 +196,15 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     /**
      * @notice Register as a trainer for a job
      * @param jobId Job to register for
+     * @dev CR-10: Added MAX_PARTICIPANTS check to prevent Gas DoS
      */
     function registerAsTrainer(uint256 jobId) external {
         TrainingJob storage job = jobs[jobId];
         if (job.status != JobStatus.Open) revert JobNotOpen();
         if (isTrainer[jobId][msg.sender]) revert AlreadyRegistered();
+        // CR-10: Prevent unbounded participant arrays
+        if (jobTrainers[jobId].length >= MAX_PARTICIPANTS)
+            revert MaxParticipantsReached();
 
         isTrainer[jobId][msg.sender] = true;
         jobTrainers[jobId].push(msg.sender);

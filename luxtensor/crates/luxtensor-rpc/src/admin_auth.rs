@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use parking_lot::RwLock;
 use sha2::{Sha256, Digest};
+use subtle::ConstantTimeEq;
 use tracing::warn;
 
 /// Admin authentication configuration
@@ -59,11 +60,15 @@ impl AdminAuthConfig {
         hasher.finalize().into()
     }
 
-    /// Verify API key
+    /// Verify API key using constant-time comparison
+    ///
+    /// SECURITY: Uses constant-time comparison to prevent timing attacks.
+    /// Timing attacks could allow attackers to guess the API key one byte at a time.
     pub fn verify_api_key(&self, provided_key: &str) -> bool {
         if let Some(expected_hash) = &self.api_key_hash {
             let provided_hash = Self::hash_key(provided_key);
-            return &provided_hash == expected_hash;
+            // SECURITY: Use constant-time comparison to prevent timing attacks
+            return provided_hash.ct_eq(expected_hash).into();
         }
         false
     }

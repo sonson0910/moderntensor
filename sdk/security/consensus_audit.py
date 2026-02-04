@@ -7,7 +7,7 @@ Performs security checks on:
 - Validator selection fairness
 - Slashing conditions
 """
-from typing import List, Optional, Any
+from typing import List
 
 from .types import SecurityIssue, Severity
 

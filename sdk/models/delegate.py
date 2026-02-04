@@ -4,7 +4,7 @@ Delegate Information Model
 Represents delegation information.
 """
 
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 
 

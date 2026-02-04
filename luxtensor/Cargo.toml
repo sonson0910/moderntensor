@@ -10,16 +10,13 @@ members = [
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
-    "crates/luxtensor-zkvm",
-    "crates/luxtensor-indexer", "crates/luxtensor-oracle",
 ]
 resolver = "2"
-
 
 # Root package for examples
 [package]
 name = "luxtensor"
-version = "0.4.0"
+version = "0.1.0"
 edition = "2021"
 publish = false
 
@@ -45,7 +42,7 @@ name = "data_sync_demo"
 path = "examples/data_sync_demo.rs"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sonson0910/luxtensor"
@@ -71,10 +68,9 @@ k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
 blake3 = "1.5"
 ed25519-dalek = "2.1"
 rand = "0.8"
-zeroize = { version = "1.7", features = ["derive"] }
 
 # Networking
-libp2p = { version = "0.56", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify", "tokio", "macros", "kad"] }
+libp2p = { version = "0.53", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify"] }
 
 # Storage
 rocksdb = "0.21"
@@ -103,9 +99,6 @@ parking_lot = "0.12"
 criterion = "0.5"
 proptest = "1.4"
 tempfile = "3.8"
-
-# Utils for zkVM
-num_cpus = "1.16"
 
 [profile.release]
 opt-level = 3

@@ -12,7 +12,7 @@ Key concepts:
 - Head = block with highest score among tips
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 from collections import deque
 import threading

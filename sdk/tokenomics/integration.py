@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 from sdk.tokenomics.emission_controller import EmissionController
 from sdk.tokenomics.recycling_pool import RecyclingPool
-from sdk.tokenomics.reward_distributor import RewardDistributor, DistributionResult
+from sdk.tokenomics.reward_distributor import RewardDistributor
 from sdk.tokenomics.burn_manager import BurnManager
 from sdk.tokenomics.claim_manager import ClaimManager
 from sdk.tokenomics.metrics_collector import NetworkMetrics

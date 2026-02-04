@@ -30,7 +30,7 @@ LuxTensor is organized as a Cargo workspace with 11 specialized crates:
 | **luxtensor-crypto** | Keccak256, Blake3, secp256k1, Merkle trees |
 | **luxtensor-consensus** | PoS mechanism, validator selection |
 | **luxtensor-network** | P2P with libp2p, task dispatch |
-| **luxtensor-storage** | LevelDB persistence |
+| **luxtensor-storage** | RocksDB persistence |
 | **luxtensor-rpc** | JSON-RPC API server |
 | **luxtensor-contracts** | EVM integration, AI precompiles |
 | **luxtensor-oracle** | Off-chain AI oracle node |

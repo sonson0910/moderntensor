@@ -4,7 +4,7 @@ Dendrite configuration module.
 Defines configuration settings for the Dendrite client.
 """
 
-from typing import Optional, List
+from typing import List
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 

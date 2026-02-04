@@ -7,7 +7,7 @@ performance, and network status.
 
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 try:
     from prometheus_client import (

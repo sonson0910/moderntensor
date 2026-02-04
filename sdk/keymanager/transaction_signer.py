@@ -4,7 +4,7 @@ Transaction Signing Module
 Provides functionality for building and signing transactions for Luxtensor blockchain.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 from eth_typing import HexStr

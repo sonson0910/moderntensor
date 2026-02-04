@@ -2,8 +2,6 @@
 Common utilities and helpers for ModernTensor CLI
 """
 
-import sys
-from typing import Optional, Any
 from pathlib import Path
 import click
 from rich.console import Console

@@ -12,7 +12,7 @@ Implements the epoch reward distribution scheme (v3.2 - Community Focus):
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 from sdk.tokenomics.config import DistributionConfig, DEFAULT_DISTRIBUTION_CONFIG
 from sdk.tokenomics.recycling_pool import RecyclingPool
 

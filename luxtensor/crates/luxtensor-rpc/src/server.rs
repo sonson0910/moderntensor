@@ -1,5 +1,5 @@
 use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{EvmState, register_eth_methods}};
-use crate::rate_limiter::{RateLimiter, RateLimiterConfig};
+use crate::rate_limiter::RateLimiter;
 use jsonrpc_core::{IoHandler, Params, Value};
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_core::{StateDB, Transaction, Hash};
@@ -8,7 +8,7 @@ use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig,
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::collections::HashMap;
-use std::net::IpAddr;
+
 use tracing::{debug, info, warn};
 use crate::handlers::{
     register_subnet_handlers, register_neuron_handlers,

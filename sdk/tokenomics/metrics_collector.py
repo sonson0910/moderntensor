@@ -4,8 +4,7 @@ Network Metrics Collector for tokenomics utility score calculation.
 This module collects network metrics used to determine adaptive emission rates.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass

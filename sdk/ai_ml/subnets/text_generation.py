@@ -12,8 +12,7 @@ This implementation surpasses Bittensor with:
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional
-import hashlib
+from typing import Any, Dict, Optional
 
 from ..core.protocol import TaskContext, Task, Result, Score
 from .base import BaseSubnet
@@ -105,7 +104,7 @@ class TextGenerationSubnet(BaseSubnet):
             self.model_manager.register_model(
                 model_id=self.model_name,
                 name=f"Text Generation: {self.model_name}",
-                description=f"Causal LM for text generation",
+                description="Causal LM for text generation",
                 framework="transformers",
                 task_type="text_generation",
             )

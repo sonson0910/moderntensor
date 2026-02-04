@@ -4,7 +4,6 @@ Axon Information Model
 Represents Axon server endpoint information.
 """
 
-from typing import Optional
 from pydantic import BaseModel, Field
 
 

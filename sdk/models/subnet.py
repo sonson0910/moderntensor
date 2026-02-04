@@ -5,7 +5,7 @@ Represents subnet metadata and configuration.
 Aligned with SubnetData struct in luxtensor-storage/src/metagraph_store.rs
 """
 
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel, Field
 
 

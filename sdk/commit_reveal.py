@@ -32,11 +32,13 @@ Version: 1.0.0
 
 import hashlib
 import secrets
-import time
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
+
+if TYPE_CHECKING:
+    from sdk.keymanager.transaction_signer import TransactionSigner
 
 logger = logging.getLogger(__name__)
 

@@ -597,7 +597,7 @@ def encode_finalize_proposal(proposal_id: str) -> EncodedCall:
     return EncodedCall(
         data=data,
         gas_estimate=150000,
-        description=f"Finalize proposal and apply weights",
+        description="Finalize proposal and apply weights",
         contract_address=WEIGHT_CONSENSUS_CONTRACT,
     )
 

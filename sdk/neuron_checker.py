@@ -30,7 +30,7 @@ import time
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 import httpx
 

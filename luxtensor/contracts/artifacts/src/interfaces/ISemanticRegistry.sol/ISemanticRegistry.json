@@ -1,0 +1,354 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "ISemanticRegistry",
+  "sourceName": "src/interfaces/ISemanticRegistry.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "expected",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "got",
+          "type": "uint256"
+        }
+      ],
+      "name": "DimensionMismatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuotaExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes",
+          "name": "reason",
+          "type": "bytes"
+        }
+      ],
+      "name": "RegistryCallFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "globalId",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expiredAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "VectorExpired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "globalId",
+          "type": "uint64"
+        }
+      ],
+      "name": "VectorNotFound",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "searcher",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "resultsCount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum ISemanticRegistry.SemanticDomain[]",
+          "name": "domains",
+          "type": "uint8[]"
+        }
+      ],
+      "name": "GlobalSearchPerformed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint64",
+          "name": "globalId",
+          "type": "uint64"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum ISemanticRegistry.SemanticDomain",
+          "name": "domain",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32[]",
+          "name": "tags",
+          "type": "bytes32[]"
+        }
+      ],
+      "name": "VectorRegistered",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum ISemanticRegistry.SemanticDomain",
+          "name": "domain",
+          "type": "uint8"
+        },
+        {
+          "internalType": "int256[]",
+          "name": "query",
+          "type": "int256[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "k",
+          "type": "uint256"
+        }
+      ],
+      "name": "domainSearch",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint64",
+              "name": "globalId",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "score",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ISemanticRegistry.SemanticDomain",
+              "name": "domain",
+              "type": "uint8"
+            }
+          ],
+          "internalType": "struct ISemanticRegistry.SearchResult[]",
+          "name": "results",
+          "type": "tuple[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "globalId",
+          "type": "uint64"
+        }
+      ],
+      "name": "getMetadata",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "internalType": "enum ISemanticRegistry.SemanticDomain",
+              "name": "domain",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "registeredAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiresAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bytes32[]",
+              "name": "tags",
+              "type": "bytes32[]"
+            }
+          ],
+          "internalType": "struct ISemanticRegistry.VectorMetadata",
+          "name": "metadata",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "name": "getRemainingQuota",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "remaining",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "int256[]",
+          "name": "query",
+          "type": "int256[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "k",
+          "type": "uint256"
+        }
+      ],
+      "name": "globalSearch",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint64",
+              "name": "globalId",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "score",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ISemanticRegistry.SemanticDomain",
+              "name": "domain",
+              "type": "uint8"
+            }
+          ],
+          "internalType": "struct ISemanticRegistry.SearchResult[]",
+          "name": "results",
+          "type": "tuple[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "globalId",
+          "type": "uint64"
+        }
+      ],
+      "name": "isExpired",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "expired",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum ISemanticRegistry.SemanticDomain",
+          "name": "domain",
+          "type": "uint8"
+        },
+        {
+          "internalType": "int256[]",
+          "name": "vector",
+          "type": "int256[]"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "tags",
+          "type": "bytes32[]"
+        },
+        {
+          "internalType": "uint64",
+          "name": "ttlBlocks",
+          "type": "uint64"
+        }
+      ],
+      "name": "registerVector",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint64",
+              "name": "globalId",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "remainingQuota",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct ISemanticRegistry.RegisterResult",
+          "name": "result",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from typing import Optional, Dict, Any, Callable, TypeVar, Generic
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections import OrderedDict
 from functools import wraps
 from abc import ABC, abstractmethod

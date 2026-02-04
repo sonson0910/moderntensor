@@ -209,10 +209,8 @@ See Also:
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List, Union
-from dataclasses import dataclass
+from typing import Optional, Dict, Any, List
 import httpx
-import json
 
 # Import from modular client structure
 from .client.base import ChainInfo, Account, TransactionResult
@@ -855,7 +853,7 @@ class LuxtensorClient(
         try:
             self.get_block_number()
             return True
-        except:
+        except Exception:
             return False
 
     def health_check(self) -> Dict[str, Any]:
@@ -1163,23 +1161,10 @@ class LuxtensorClient(
             logger.error(f"Error getting neuron count for subnet {subnet_id}: {e}")
             raise
 
-    # =============================================================================
     # Subnet Management Queries
     # =============================================================================
 
-    def get_all_subnets(self) -> List[Dict[str, Any]]:
-        """
-        Get information about all subnets.
-
-        Returns:
-            List of subnet information dictionaries
-        """
-        try:
-            result = self._call_rpc("query_allSubnets")
-            return result
-        except Exception as e:
-            logger.error(f"Error getting all subnets: {e}")
-            raise
+    # Note: get_all_subnets() defined above in Subnet 0 section (line ~873)
 
     def get_subnet_hyperparameters(self, subnet_id: int) -> Dict[str, Any]:
         """
@@ -2390,7 +2375,7 @@ class LuxtensorClient(
         try:
             sync_state = self._call_rpc("system_syncState")
             return sync_state.get("isSyncing", False)
-        except Exception as e:
+        except Exception:
             return False
 
     def get_free_balance(self, address: str) -> int:
@@ -2552,7 +2537,7 @@ class AsyncLuxtensorClient:
         try:
             await self.get_block_number()
             return True
-        except:
+        except Exception:
             return False
 
 

@@ -10,7 +10,7 @@ Provides sophisticated scoring mechanisms beyond simple consensus:
 
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Callable
 from dataclasses import dataclass
 
 # Try to import numpy, fallback to stdlib if not available

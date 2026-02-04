@@ -10,7 +10,6 @@ Surpasses Bittensor with:
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
 from collections import deque
 import heapq
 import itertools

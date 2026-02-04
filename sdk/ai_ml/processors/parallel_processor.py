@@ -9,7 +9,7 @@ Surpasses Bittensor with:
 
 import asyncio
 import logging
-from typing import Any, Callable, List
+from typing import Callable, List
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from ..core.protocol import Task, Result

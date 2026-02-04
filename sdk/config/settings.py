@@ -8,7 +8,6 @@ Loads from environment variables or .env file.
 
 import logging
 import math
-import os
 from typing import Optional
 import re
 

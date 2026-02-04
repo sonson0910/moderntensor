@@ -11,8 +11,8 @@ This surpasses Bittensor's capabilities with:
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Callable
+from dataclasses import dataclass
+from typing import Any, Dict, List, Callable
 from collections import deque
 
 from ..core.protocol import Task, Result
