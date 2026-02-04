@@ -154,9 +154,10 @@ impl SwarmP2PNode {
 
         // Create Kademlia DHT for distributed peer discovery
         let store = MemoryStore::new(local_peer_id);
-        let kademlia_config = kad::Config::new(
+        let mut kademlia_config = kad::Config::default();
+        kademlia_config.set_protocol_names(vec![
             libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")
-        );
+        ]);
         let mut kademlia = kad::Behaviour::with_config(local_peer_id, store, kademlia_config);
 
         // Set Kademlia mode to Server (full DHT participant)
@@ -337,7 +338,7 @@ impl SwarmP2PNode {
                                     data
                                 ) {
                                     Ok(_) => info!("📡 Sync blocks broadcast successful"),
-                                    Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+                                    Err(gossipsub::PublishError::InsufficientPeers) => {
                                         warn!("⚠️ No peers subscribed to topic for sync blocks broadcast");
                                     }
                                     Err(e) => warn!("Failed to broadcast sync blocks: {}", e),
@@ -382,7 +383,7 @@ impl SwarmP2PNode {
                                 data
                             ) {
                                 Ok(_) => info!("📡 AI task dispatch broadcast successful"),
-                                Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+                                Err(gossipsub::PublishError::InsufficientPeers) => {
                                     warn!("⚠️ No miners subscribed to task dispatch topic");
                                 }
                                 Err(e) => warn!("Failed to broadcast AI task: {}", e),
@@ -500,7 +501,7 @@ impl SwarmP2PNode {
                 info!("📡 Broadcast block #{}", block.header.height);
                 Ok(())
             }
-            Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+            Err(gossipsub::PublishError::InsufficientPeers) => {
                 debug!("No peers subscribed to blocks topic (will sync later)");
                 Ok(()) // Not an error - just no peers yet
             }
@@ -524,7 +525,7 @@ impl SwarmP2PNode {
                 info!("📡 SWARM: TX broadcast successful via blocks topic");
                 Ok(())
             }
-            Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+            Err(gossipsub::PublishError::InsufficientPeers) => {
                 warn!("⚠️ SWARM: No peers subscribed to blocks topic - TX NOT propagated!");
                 Ok(())
             }
@@ -574,7 +575,7 @@ impl SwarmP2PNode {
                 info!("🔄 Sent sync request for blocks {}-{}", from_height, to_height);
                 Ok(())
             }
-            Err(gossipsub::PublishError::NoPeersSubscribedToTopic) => {
+            Err(gossipsub::PublishError::InsufficientPeers) => {
                 debug!("No peers subscribed to sync topic");
                 Ok(())
             }

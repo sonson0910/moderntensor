@@ -2,15 +2,25 @@ use crate::{Result, StorageError};
 use luxtensor_core::{Account, Address};
 use luxtensor_crypto::{keccak256, Hash};
 use parking_lot::RwLock;
-use rocksdb::DB;
+use rocksdb::{DB, WriteOptions};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// Key prefix for contract code storage
+const CONTRACT_CODE_PREFIX: &[u8] = b"code:";
+
+/// Key prefix for HNSW vector index storage
+const HNSW_INDEX_PREFIX: &[u8] = b"hnsw:";
 
 /// State database with RocksDB backend and LRU cache
 pub struct StateDB {
     db: Arc<DB>,
     cache: RwLock<HashMap<Address, Account>>,
     dirty: RwLock<HashSet<Address>>,
+    /// Contract bytecode storage: code_hash -> bytecode
+    contract_code: RwLock<HashMap<Hash, Vec<u8>>>,
+    /// Dirty contract codes awaiting commit
+    dirty_codes: RwLock<HashSet<Hash>>,
 }
 
 impl StateDB {
@@ -20,6 +30,8 @@ impl StateDB {
             db,
             cache: RwLock::new(HashMap::new()),
             dirty: RwLock::new(HashSet::new()),
+            contract_code: RwLock::new(HashMap::new()),
+            dirty_codes: RwLock::new(HashSet::new()),
         }
     }
 
@@ -37,11 +49,11 @@ impl StateDB {
         match self.db.get(address.as_bytes())? {
             Some(bytes) => {
                 let account: Account = bincode::deserialize(&bytes)?;
-                
+
                 // Update cache
                 let mut cache = self.cache.write();
                 cache.insert(*address, account.clone());
-                
+
                 Ok(account)
             }
             None => {
@@ -55,7 +67,7 @@ impl StateDB {
     pub fn set_account(&self, address: Address, account: Account) {
         let mut cache = self.cache.write();
         cache.insert(address, account);
-        
+
         let mut dirty = self.dirty.write();
         dirty.insert(address);
     }
@@ -115,6 +127,133 @@ impl StateDB {
         Ok(())
     }
 
+    // ============ CONTRACT CODE STORAGE (Ethereum-style) ============
+
+    /// Store contract bytecode and update account code_hash
+    /// Returns the code_hash (keccak256 of code)
+    pub fn set_contract_code(&self, address: &Address, code: Vec<u8>) -> Result<Hash> {
+        // Calculate code_hash
+        let code_hash = keccak256(&code);
+
+        // Store code in cache
+        {
+            let mut codes = self.contract_code.write();
+            codes.insert(code_hash, code.clone());
+        }
+
+        // Mark as dirty for commit
+        {
+            let mut dirty = self.dirty_codes.write();
+            dirty.insert(code_hash);
+        }
+
+        // Update account's code_hash
+        let mut account = self.get_account(address)?;
+        account.code_hash = code_hash;
+        self.set_account(*address, account);
+
+        tracing::info!("📦 Contract code stored at 0x{} (code_hash: 0x{})",
+            hex::encode(address.as_bytes()), hex::encode(&code_hash[..8]));
+
+        Ok(code_hash)
+    }
+
+    /// Get contract bytecode by address
+    /// Returns None if account has no code (not a contract)
+    pub fn get_contract_code(&self, address: &Address) -> Result<Option<Vec<u8>>> {
+        let account = self.get_account(address)?;
+
+        // Check if account has code
+        if account.code_hash == [0u8; 32] {
+            return Ok(None);
+        }
+
+        // Check cache first
+        {
+            let codes = self.contract_code.read();
+            if let Some(code) = codes.get(&account.code_hash) {
+                return Ok(Some(code.clone()));
+            }
+        }
+
+        // Load from database
+        let mut key = CONTRACT_CODE_PREFIX.to_vec();
+        key.extend_from_slice(&account.code_hash);
+
+        match self.db.get(&key)? {
+            Some(code) => {
+                // Cache it
+                let mut codes = self.contract_code.write();
+                codes.insert(account.code_hash, code.clone());
+                Ok(Some(code))
+            }
+            None => {
+                tracing::warn!("⚠️ Contract code not found for hash 0x{}",
+                    hex::encode(&account.code_hash[..8]));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Check if address is a contract (has code)
+    pub fn is_contract(&self, address: &Address) -> Result<bool> {
+        let account = self.get_account(address)?;
+        Ok(account.code_hash != [0u8; 32])
+    }
+
+    // ============ HNSW VECTOR INDEX STORAGE ============
+
+    /// Store a serialized HNSW index by name
+    ///
+    /// The index name should be unique within the system (e.g., "embeddings_768")
+    /// The data is the bincode-serialized HnswGraph.
+    pub fn set_hnsw_index(&self, name: &str, data: Vec<u8>) -> Result<()> {
+        let mut key = HNSW_INDEX_PREFIX.to_vec();
+        key.extend_from_slice(name.as_bytes());
+
+        let opts = WriteOptions::default();
+        self.db.put_opt(&key, &data, &opts)?;
+
+        tracing::info!(
+            "📊 HNSW index '{}' stored ({} bytes)",
+            name,
+            data.len()
+        );
+
+        Ok(())
+    }
+
+    /// Get a serialized HNSW index by name
+    ///
+    /// Returns None if the index doesn't exist.
+    pub fn get_hnsw_index(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        let mut key = HNSW_INDEX_PREFIX.to_vec();
+        key.extend_from_slice(name.as_bytes());
+
+        match self.db.get(&key)? {
+            Some(data) => {
+                tracing::debug!("📊 HNSW index '{}' loaded ({} bytes)", name, data.len());
+                Ok(Some(data))
+            }
+            None => {
+                tracing::debug!("📊 HNSW index '{}' not found", name);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Delete an HNSW index by name
+    pub fn delete_hnsw_index(&self, name: &str) -> Result<()> {
+        let mut key = HNSW_INDEX_PREFIX.to_vec();
+        key.extend_from_slice(name.as_bytes());
+
+        self.db.delete(&key)?;
+
+        tracing::info!("📊 HNSW index '{}' deleted", name);
+
+        Ok(())
+    }
+
     /// Commit all dirty accounts to database
     pub fn commit(&self) -> Result<Hash> {
         let dirty = self.dirty.read();
@@ -127,7 +266,7 @@ impl StateDB {
             if let Some(account) = cache.get(address) {
                 let bytes = bincode::serialize(account)?;
                 batch.put(address.as_bytes(), bytes);
-                
+
                 // Collect for state root calculation
                 let mut data = Vec::new();
                 data.extend_from_slice(address.as_bytes());
@@ -213,7 +352,7 @@ mod tests {
     fn test_get_account_not_exists() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         let account = state_db.get_account(&address).unwrap();
         assert_eq!(account.balance, 0);
         assert_eq!(account.nonce, 0);
@@ -223,16 +362,16 @@ mod tests {
     fn test_set_and_get_account() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         let account = Account {
             nonce: 5,
             balance: 1000,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
         };
-        
+
         state_db.set_account(address, account.clone());
-        
+
         let retrieved = state_db.get_account(&address).unwrap();
         assert_eq!(retrieved.balance, 1000);
         assert_eq!(retrieved.nonce, 5);
@@ -242,7 +381,7 @@ mod tests {
     fn test_balance_operations() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 5000).unwrap();
         let balance = state_db.get_balance(&address).unwrap();
         assert_eq!(balance, 5000);
@@ -252,11 +391,11 @@ mod tests {
     fn test_nonce_operations() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_nonce(&address, 10).unwrap();
         let nonce = state_db.get_nonce(&address).unwrap();
         assert_eq!(nonce, 10);
-        
+
         let new_nonce = state_db.increment_nonce(&address).unwrap();
         assert_eq!(new_nonce, 11);
     }
@@ -266,10 +405,10 @@ mod tests {
         let (_dir, state_db) = create_test_db();
         let from = Address::from_slice(&[1u8; 20]);
         let to = Address::from_slice(&[2u8; 20]);
-        
+
         state_db.set_balance(&from, 1000).unwrap();
         state_db.transfer(&from, &to, 300).unwrap();
-        
+
         assert_eq!(state_db.get_balance(&from).unwrap(), 700);
         assert_eq!(state_db.get_balance(&to).unwrap(), 300);
     }
@@ -279,10 +418,10 @@ mod tests {
         let (_dir, state_db) = create_test_db();
         let from = Address::from_slice(&[1u8; 20]);
         let to = Address::from_slice(&[2u8; 20]);
-        
+
         state_db.set_balance(&from, 100).unwrap();
         let result = state_db.transfer(&from, &to, 200);
-        
+
         assert!(result.is_err());
     }
 
@@ -290,14 +429,14 @@ mod tests {
     fn test_commit() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 1000).unwrap();
         assert_eq!(state_db.dirty_count(), 1);
-        
+
         let state_root = state_db.commit().unwrap();
         assert_ne!(state_root, [0u8; 32]);
         assert_eq!(state_db.dirty_count(), 0);
-        
+
         // Clear cache and reload from db
         state_db.clear_cache();
         let balance = state_db.get_balance(&address).unwrap();
@@ -308,15 +447,15 @@ mod tests {
     fn test_rollback() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 1000).unwrap();
         state_db.commit().unwrap();
-        
+
         state_db.set_balance(&address, 2000).unwrap();
         assert_eq!(state_db.get_balance(&address).unwrap(), 2000);
-        
+
         state_db.rollback();
-        
+
         // Should revert to committed value
         let balance = state_db.get_balance(&address).unwrap();
         assert_eq!(balance, 1000);
@@ -326,10 +465,10 @@ mod tests {
     fn test_cache() {
         let (_dir, state_db) = create_test_db();
         let address = Address::zero();
-        
+
         state_db.set_balance(&address, 500).unwrap();
         assert_eq!(state_db.cache_size(), 1);
-        
+
         // Access should hit cache
         let _ = state_db.get_balance(&address).unwrap();
         assert_eq!(state_db.cache_size(), 1);

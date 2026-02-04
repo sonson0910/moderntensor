@@ -11,6 +11,8 @@ serde = { workspace = true }
 bincode = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }

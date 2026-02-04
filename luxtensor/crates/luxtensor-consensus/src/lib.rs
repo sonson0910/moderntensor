@@ -21,6 +21,7 @@ pub mod long_range_protection;
 pub mod halving;
 pub mod liveness;
 pub mod circuit_breaker;
+pub mod randao;
 
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};

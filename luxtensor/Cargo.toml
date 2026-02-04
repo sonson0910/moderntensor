@@ -10,6 +10,7 @@ members = [
     "crates/luxtensor-node",
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
+    "crates/luxtensor-hnsw",
 ]
 resolver = "2"
 
@@ -68,9 +69,10 @@ k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
 blake3 = "1.5"
 ed25519-dalek = "2.1"
 rand = "0.8"
+zeroize = "1.7"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify"] }
+libp2p = { version = "0.53", features = ["tcp", "noise", "gossipsub", "mdns", "yamux", "identify", "kad", "tokio", "macros"] }
 
 # Storage
 rocksdb = "0.21"
@@ -94,6 +96,8 @@ anyhow = "1.0"
 hex = "0.4"
 bytes = "1.5"
 parking_lot = "0.12"
+rayon = "1.10"
+fixed = { version = "1.28", features = ["serde"] }
 
 # Testing
 criterion = "0.5"

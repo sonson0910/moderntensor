@@ -107,8 +107,9 @@ impl LongRangeProtection {
         Ok(())
     }
 
-    /// Update finalized block
-    pub fn update_finalized(&self, hash: Hash, height: u64) {
+
+    /// Update finalized block with state root for checkpoint security
+    pub fn update_finalized(&self, hash: Hash, height: u64, state_root: Hash) {
         *self.finalized_hash.write() = hash;
         *self.finalized_height.write() = height;
 
@@ -118,7 +119,7 @@ impl LongRangeProtection {
                 block_hash: hash,
                 height,
                 epoch: height / 100, // Assuming 100 blocks per epoch
-                state_root: [0u8; 32], // Would be actual state root
+                state_root, // SECURITY: Use actual state root for checkpoint validation
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -127,6 +128,30 @@ impl LongRangeProtection {
             let _ = self.add_checkpoint(checkpoint);
         }
     }
+
+    /// Validate checkpoint state root matches expected value
+    /// Returns true if:
+    /// - Height is not at a checkpoint, OR
+    /// - Height is at checkpoint AND state_root matches
+    pub fn validate_checkpoint_state_root(
+        &self,
+        height: u64,
+        block_hash: Hash,
+        state_root: Hash,
+    ) -> bool {
+        let checkpoints = self.checkpoints.read();
+
+        for cp in checkpoints.iter() {
+            if cp.height == height && cp.block_hash == block_hash {
+                // At checkpoint - state root MUST match
+                return cp.state_root == state_root;
+            }
+        }
+
+        // Not at checkpoint height - allow
+        true
+    }
+
 
     /// Get the most recent checkpoint
     pub fn get_latest_checkpoint(&self) -> Option<Checkpoint> {
@@ -269,7 +294,7 @@ mod tests {
         let protection = LongRangeProtection::new(LongRangeConfig::default(), genesis_hash);
 
         // Update finalized to block 1000
-        protection.update_finalized([2u8; 32], 1000);
+        protection.update_finalized([2u8; 32], 1000, [0u8; 32]);
 
         // Block 500 should be within weak subjectivity (0 is still recent)
         assert!(protection.is_within_weak_subjectivity(500));

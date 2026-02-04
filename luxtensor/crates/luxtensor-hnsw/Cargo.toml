@@ -1,0 +1,37 @@
+[package]
+name = "luxtensor-hnsw"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Deterministic HNSW vector index for consensus-safe semantic search"
+license.workspace = true
+
+[dependencies]
+# Fixed-point arithmetic for hardware-deterministic distance calculations
+fixed = { workspace = true }
+
+# Core LuxTensor dependencies
+luxtensor-crypto = { path = "../luxtensor-crypto" }
+
+# Serialization
+serde = { workspace = true }
+bincode = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Testing
+rand = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = []
+# Enable SIMD acceleration (requires nightly: #![feature(portable_simd)])
+# Provides ~30% latency reduction for distance calculations
+simd = []
+# Enable additional debug assertions for development
+debug-assertions = []

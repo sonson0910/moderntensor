@@ -1,16 +1,20 @@
 use crate::error::ConsensusError;
 use luxtensor_core::block::Block;
-use luxtensor_core::types::Hash;
+use luxtensor_core::types::{Hash, Address};
 use std::collections::{HashMap, HashSet, VecDeque};
 use parking_lot::RwLock;
 
 /// Fork choice rule implementation (GHOST algorithm)
-/// Greedy Heaviest-Observed Sub-Tree
+/// Greedy Heaviest-Observed Sub-Tree with attestation weights
 pub struct ForkChoice {
     /// All known blocks indexed by hash
     blocks: RwLock<HashMap<Hash, Block>>,
     /// Block scores (higher is better)
     scores: RwLock<HashMap<Hash, u64>>,
+    /// Attestation stake per block (validator stake that voted for this block)
+    attestation_stake: RwLock<HashMap<Hash, u128>>,
+    /// Validators who have attested to each block (prevent double-counting)
+    attesters: RwLock<HashMap<Hash, HashSet<Address>>>,
     /// Current head of the chain
     head: RwLock<Hash>,
     /// Genesis block hash
@@ -30,6 +34,8 @@ impl ForkChoice {
         Self {
             blocks: RwLock::new(blocks),
             scores: RwLock::new(scores),
+            attestation_stake: RwLock::new(HashMap::new()),
+            attesters: RwLock::new(HashMap::new()),
             head: RwLock::new(genesis_hash),
             genesis_hash,
         }
@@ -147,14 +153,75 @@ impl ForkChoice {
         blocks.len()
     }
 
-    /// Update the head to the block with the highest score (GHOST algorithm)
-    fn update_head(&self) {
-        let scores = self.scores.read();
+    /// Add attestation from a validator for a block
+    /// Attestations are weighted by validator stake for fork choice
+    pub fn add_attestation(
+        &self,
+        block_hash: Hash,
+        validator: Address,
+        stake: u128,
+    ) -> Result<(), ConsensusError> {
+        // Check block exists
+        {
+            let blocks = self.blocks.read();
+            if !blocks.contains_key(&block_hash) {
+                return Err(ConsensusError::BlockNotFound(block_hash));
+            }
+        }
 
-        // Find the block with the highest score
-        if let Some((&new_head, _)) = scores.iter().max_by_key(|(_, &score)| score) {
-            let mut head = self.head.write();
-            *head = new_head;
+        // Check if validator already attested
+        {
+            let mut attesters = self.attesters.write();
+            let block_attesters = attesters.entry(block_hash).or_insert_with(HashSet::new);
+            if block_attesters.contains(&validator) {
+                // Already attested, skip
+                return Ok(());
+            }
+            block_attesters.insert(validator);
+        }
+
+        // Add stake to attestation weight
+        {
+            let mut attestation_stake = self.attestation_stake.write();
+            *attestation_stake.entry(block_hash).or_insert(0) += stake;
+        }
+
+        // Update head with new attestation weights
+        self.update_head_with_attestations();
+        Ok(())
+    }
+
+    /// Get attestation stake for a block
+    pub fn get_attestation_stake(&self, block_hash: &Hash) -> u128 {
+        self.attestation_stake.read().get(block_hash).copied().unwrap_or(0)
+    }
+
+    /// Update the head using combined block depth + attestation weights (GHOST algorithm)
+    fn update_head(&self) {
+        self.update_head_with_attestations();
+    }
+
+    /// Update head considering both block depth score and attestation stake
+    /// Combined score = depth * DEPTH_WEIGHT + attestation_stake / STAKE_DIVISOR
+    fn update_head_with_attestations(&self) {
+        const DEPTH_WEIGHT: u128 = 1_000_000_000_000; // 1e12 - prioritize depth heavily
+        const STAKE_DIVISOR: u128 = 1_000_000_000;    // Convert stake to reasonable range
+
+        let scores = self.scores.read();
+        let attestation_stake = self.attestation_stake.read();
+
+        // Find block with highest combined score
+        let best = scores.iter()
+            .map(|(hash, &depth)| {
+                let attn_weight = attestation_stake.get(hash).copied().unwrap_or(0);
+                // Combined: depth dominates, but attestations break ties
+                let combined = (depth as u128 * DEPTH_WEIGHT) + (attn_weight / STAKE_DIVISOR);
+                (*hash, combined)
+            })
+            .max_by_key(|(_, score)| *score);
+
+        if let Some((new_head, _)) = best {
+            *self.head.write() = new_head;
         }
     }
 
