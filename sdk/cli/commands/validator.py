@@ -115,7 +115,7 @@ def validator_status(ctx, coldkey: str, hotkey: str, subnet_uid: Optional[int],
         mtcli validator status --coldkey my_coldkey --hotkey validator_hk --subnet-uid 1
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.cli.wallet_utils import get_hotkey_address
 
         # Get network config
@@ -222,7 +222,7 @@ def set_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file: s
         - Transaction encoding not yet implemented
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
         from rich.table import Table
@@ -449,7 +449,7 @@ def commit_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
             return
 
         # Submit
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.luxtensor_pallets import encode_commit_weights
 
         client = LuxtensorClient(network_config.rpc_url)
@@ -513,7 +513,7 @@ def reveal_weights(ctx, coldkey: str, hotkey: str, subnet_uid: int, weights_file
         from sdk.commit_reveal import compute_commit_hash, verify_commit
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.luxtensor_pallets import encode_reveal_weights
         from rich.table import Table
 

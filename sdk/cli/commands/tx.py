@@ -20,7 +20,7 @@ from sdk.cli.utils import (
     create_table, console, get_default_wallet_path
 )
 from sdk.cli.config import get_network_config
-from sdk.luxtensor_client import LuxtensorClient
+from sdk.client import LuxtensorClient
 from sdk.keymanager import decrypt_data
 from sdk.transactions import create_transfer_transaction, encode_transaction_for_rpc
 

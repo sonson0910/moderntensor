@@ -57,7 +57,7 @@ def create_subnet(ctx, coldkey: str, name: str, registration_cost: float,
         - Subnet creation transaction encoding not yet implemented
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
         from rich.table import Table
@@ -244,7 +244,7 @@ def subnet_participants(ctx, subnet_uid: int, network: str, limit: int):
         mtcli subnet participants --subnet-uid 1 --network testnet --limit 100
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         # Get network config
         network_config = get_network_config(network)

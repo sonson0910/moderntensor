@@ -59,7 +59,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         - Transaction will require gas fees
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
 
         print_info(f"Adding stake: {amount} MDT to hotkey '{hotkey}'")
@@ -170,7 +170,7 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         - Transaction will require gas fees
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
 
         print_info(f"Removing stake: {amount} MDT from hotkey '{hotkey}'")
@@ -291,7 +291,7 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         - Claimed rewards are sent to the hotkey address
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
 
         print_info(f"Claiming rewards for hotkey '{hotkey}'")
@@ -389,7 +389,7 @@ def stake_info(coldkey: str, hotkey: str, base_dir: Optional[str], network: str)
         mtcli stake info --coldkey my_coldkey --hotkey validator_hk --network mainnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
 
         print_info(f"Fetching stake information for hotkey '{hotkey}'")
 
@@ -458,7 +458,7 @@ def list_stakes(network: str, limit: int):
         - Use --limit to control number of results
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
 
         print_info(f"Fetching validators from {network}...")
 

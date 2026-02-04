@@ -283,8 +283,27 @@ class LuxtensorClient(
             timeout: Request timeout in seconds
             api_key: Optional API key for authentication (or set LUXTENSOR_API_KEY env var)
             max_retries: Maximum retry attempts for transient failures (default: 3)
+
+        .. deprecated::
+            This monolithic client (sdk.luxtensor_client) is deprecated.
+            Please use the mixin-based client instead:
+
+                from sdk.client import LuxtensorClient
+
+            The new client provides the same API with better modularity and maintainability.
+            This monolithic version will be removed in a future release.
         """
         import os
+        import warnings
+
+        # Emit deprecation warning
+        warnings.warn(
+            "LuxtensorClient from sdk.luxtensor_client is deprecated. "
+            "Use 'from sdk.client import LuxtensorClient' instead. "
+            "This version will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
         self.url = url
         self.network = network

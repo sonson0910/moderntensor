@@ -40,7 +40,7 @@ def query_address(address: str, network: str):
         mtcli query address 0x1234567890abcdef... --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from rich.panel import Panel
         
         # Get network config
@@ -105,7 +105,7 @@ def query_balance(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
         mtcli query balance --coldkey my_coldkey --hotkey miner_hk1 --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
         coldkey_path = wallet_path / coldkey
@@ -175,7 +175,7 @@ def query_subnet(subnet_uid: int, network: str):
         mtcli query subnet --subnet-uid 1 --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from rich.panel import Panel
         
         # Get network config
@@ -244,7 +244,7 @@ def list_subnets(network: str):
         mtcli query list-subnets --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         # Get network config
         network_config = get_network_config(network)
@@ -309,7 +309,7 @@ def query_validator(address: str, network: str):
         mtcli query validator 0x1234567890abcdef... --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         # Get network config
         network_config = get_network_config(network)
@@ -367,7 +367,7 @@ def query_miner(address: str, network: str):
         mtcli query miner 0x1234567890abcdef... --network testnet
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         # Get network config
         network_config = get_network_config(network)

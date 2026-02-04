@@ -57,7 +57,7 @@ def test_latency(network: str, count: int):
         mtcli utils latency --network testnet --count 10
     """
     from sdk.cli.config import get_network_config
-    from sdk.luxtensor_client import LuxtensorClient
+    from sdk.client import LuxtensorClient
     from rich.table import Table
     import time
     import statistics

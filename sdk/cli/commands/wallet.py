@@ -731,7 +731,7 @@ def query_address(ctx, coldkey: str, hotkey: Optional[str], base_dir: Optional[s
     try:
         import json
         from rich.panel import Panel
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         
         wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
         coldkey_path = wallet_path / coldkey
@@ -866,7 +866,7 @@ def register_hotkey(ctx, coldkey: str, hotkey: str, subnet_uid: int, initial_sta
         - API endpoint is optional (required for validators)
     """
     try:
-        from sdk.luxtensor_client import LuxtensorClient
+        from sdk.client import LuxtensorClient
         from sdk.keymanager.transaction_signer import TransactionSigner
         from sdk.cli.wallet_utils import derive_hotkey_from_coldkey
         from rich.table import Table
