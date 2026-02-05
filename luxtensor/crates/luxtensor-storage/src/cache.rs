@@ -16,10 +16,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tracing::debug;
 
-/// Default cache sizes
-const DEFAULT_BLOCK_CACHE_SIZE: usize = 128;     // ~128 blocks * ~10KB = ~1.28MB
-const DEFAULT_HEADER_CACHE_SIZE: usize = 1024;   // ~1024 headers * ~200B = ~200KB
-const DEFAULT_TX_CACHE_SIZE: usize = 4096;       // ~4096 txs * ~500B = ~2MB
+/// Default cache sizes (optimized for 16GB RAM)
+const DEFAULT_BLOCK_CACHE_SIZE: usize = 1024;     // ~1024 blocks * ~10KB = ~10MB
+const DEFAULT_HEADER_CACHE_SIZE: usize = 8192;    // ~8192 headers * ~200B = ~1.6MB
+const DEFAULT_TX_CACHE_SIZE: usize = 16384;       // ~16384 txs * ~500B = ~8MB
 
 /// Storage cache configuration
 #[derive(Debug, Clone)]

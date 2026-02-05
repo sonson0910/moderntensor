@@ -43,6 +43,12 @@ impl StateDB {
             .unwrap_or(0)
     }
 
+    /// Get contract bytecode from account
+    pub fn get_code(&self, address: &Address) -> Option<Vec<u8>> {
+        self.get_account(address)
+            .and_then(|acc| acc.code.clone())
+    }
+
     /// Calculate state root using Merkle Tree (Hybrid: Account Tree + Vector Tree)
     /// Root = Keccak256(AccountRoot || VectorRoot)
     pub fn root_hash(&self) -> Result<Hash> {

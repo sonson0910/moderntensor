@@ -1,6 +1,21 @@
-// Staking RPC API Module
-// Provides JSON-RPC endpoints for staking operations with persistent storage
-// SECURITY: All state-changing operations now require signature verification
+//! # Staking RPC API Module
+//!
+//! Provides JSON-RPC endpoints for staking operations with persistent storage.
+//!
+//! ## Available Methods
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | `staking_registerValidator` | Register as a validator |
+//! | `staking_getActiveValidators` | List active validators |
+//! | `staking_stake` | Stake tokens to a validator |
+//! | `staking_unstake` | Unstake tokens |
+//! | `staking_delegate` | Delegate stake |
+//! | `staking_getConfig` | Get staking configuration |
+//!
+//! ## Security
+//!
+//! All state-changing operations require signature verification.
 
 use crate::helpers::verify_caller_signature;
 use jsonrpc_core::{IoHandler, Params, Error, ErrorCode};
@@ -19,7 +34,7 @@ const MIN_DELEGATION: u128 = 100_000_000_000_000_000;
 fn get_current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs()
 }
 

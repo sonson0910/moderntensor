@@ -335,15 +335,9 @@ impl NodeService {
     pub async fn start(&mut self) -> Result<()> {
         info!("🚀 Starting node services...");
 
-        // Create shared EVM state for transaction bridge
-        // Use new_dev() in development mode for pre-funded test accounts
-        let evm_state = Arc::new(parking_lot::RwLock::new(
-            if self.config.node.dev_mode {
-                info!("⚠️ DEV MODE: Using pre-funded test accounts");
-                luxtensor_rpc::EvmState::new_dev(self.config.node.chain_id as u64)
-            } else {
-                luxtensor_rpc::EvmState::new(self.config.node.chain_id as u64)
-            }
+        // Create shared Mempool for transaction bridge
+        let rpc_mempool = Arc::new(parking_lot::RwLock::new(
+            luxtensor_rpc::Mempool::new()
         ));
 
         // ============================================================
@@ -494,7 +488,11 @@ impl NodeService {
                                     if height > finality_depth {
                                         let finalized_height = height - finality_depth;
                                         if let Ok(Some(finalized_block)) = storage_for_p2p.get_block_by_height(finalized_height) {
-                                            long_range_protection_for_p2p.update_finalized(finalized_block.hash(), finalized_height);
+                                            long_range_protection_for_p2p.update_finalized(
+                                                finalized_block.hash(),
+                                                finalized_height,
+                                                finalized_block.header.state_root,
+                                            );
                                         }
                                     }
                                 }
@@ -634,8 +632,7 @@ impl NodeService {
             // Use shared pending_txs for unified TX storage between RPC and P2P
             let rpc_server = RpcServer::new_with_shared_pending_txs(
                 self.storage.clone(),
-                self.state_db.clone(),
-                evm_state.clone(),
+                rpc_mempool.clone(),
                 broadcaster,
                 shared_pending_txs.clone(),
             );
@@ -671,7 +668,7 @@ impl NodeService {
             let block_time = self.config.consensus.block_time;
             let epoch_length = self.epoch_length;
             let shutdown_rx = self.shutdown_tx.subscribe();
-            let evm_state_for_block = evm_state.clone();
+            let rpc_mempool_for_block = rpc_mempool.clone();
 
             // Leader election params
             let validator_id = self.config.node.validator_id.clone()
@@ -691,7 +688,7 @@ impl NodeService {
                     block_time,
                     epoch_length,
                     shutdown_rx,
-                    evm_state_for_block,
+                    rpc_mempool_for_block,
                     validator_id,
                     validators,
                     genesis_timestamp,
@@ -793,7 +790,7 @@ impl NodeService {
         block_time: u64,
         epoch_length: u64,
         mut shutdown: broadcast::Receiver<()>,
-        evm_state: Arc<parking_lot::RwLock<luxtensor_rpc::EvmState>>,
+        rpc_mempool: Arc<parking_lot::RwLock<luxtensor_rpc::Mempool>>,
         validator_id: String,
         validators: Vec<String>,
         genesis_timestamp: u64,
@@ -823,7 +820,7 @@ impl NodeService {
 
                     // 🔧 FIX: Drain tx_queue EVERY slot to ensure TXs are not missed
                     // Add to mempool regardless of leader status, produce block only if leader
-                    let pending_txs = evm_state.read().drain_tx_queue();
+                    let pending_txs = rpc_mempool.read().drain_tx_queue();
                     debug!("📤 Drained {} transactions from tx_queue", pending_txs.len());
                     if !pending_txs.is_empty() {
                         info!("📤 Found {} pending transactions to process", pending_txs.len());
@@ -1070,7 +1067,8 @@ impl NodeService {
 
             // Also store contract code if this was a deployment
             if let Some(ref contract_addr) = receipt.contract_address {
-                if let Some(code) = luxtensor_rpc::contract_registry::get_contract_code(contract_addr.as_bytes()) {
+                // Get code from StateDB (bytecode is now stored in Account.code)
+                if let Some(code) = state_db.read().get_code(contract_addr) {
                     if let Err(e) = storage.store_contract(contract_addr.as_bytes(), &code) {
                         warn!("Failed to store contract: {}", e);
                     }
@@ -1107,7 +1105,7 @@ impl NodeService {
             // Use block producer address for reward distribution
             let miner_addr = [0u8; 20]; // Block producer - will be set from validator key in production
             let miners = vec![
-                MinerInfo { address: miner_addr, score: 1.0 },
+                MinerInfo { address: miner_addr, score: 1.0, has_gpu: false },
             ];
             let validators = vec![
                 ValidatorInfo { address: miner_addr, stake: 1000 },

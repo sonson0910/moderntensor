@@ -1,5 +1,18 @@
-// Transaction-related RPC handlers
-// Extracted from server.rs to reduce complexity and improve maintainability
+//! # Transaction RPC Module
+//!
+//! Transaction-related RPC handlers for blockchain operations.
+//!
+//! ## Available Methods
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | `tx_getTransaction` | Get transaction by hash |
+//! | `tx_getReceipt` | Get transaction receipt |
+//! | `tx_getPending` | List pending transactions |
+//! | `tx_estimateGas` | Estimate gas for transaction |
+//! | `tx_sendRaw` | Send raw transaction bytes |
+//!
+//! Extracted from server.rs to reduce complexity and improve maintainability.
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -8,32 +21,33 @@ use jsonrpc_core::{IoHandler, Params};
 use serde_json::json;
 use tracing::{info, warn};
 
-use luxtensor_core::{Transaction, Hash, Address};
+use luxtensor_core::{Transaction, Hash, Address, UnifiedStateDB};
 use luxtensor_storage::BlockchainDB;
-use crate::eth_rpc::EvmState;
+use crate::eth_rpc::Mempool;
 use crate::TransactionBroadcaster;
 
 /// Context for transaction RPC handlers
 pub struct TxRpcContext {
-    pub evm_state: Arc<RwLock<EvmState>>,
+    pub mempool: Arc<RwLock<Mempool>>,
     pub pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
-    pub state: Arc<RwLock<luxtensor_core::StateDB>>,
+    /// [C1 FIX] Unified state for consistent nonce/balance reads
+    pub unified_state: Arc<RwLock<UnifiedStateDB>>,
     pub broadcaster: Arc<dyn TransactionBroadcaster>,
     pub db: Arc<BlockchainDB>,
 }
 
 impl TxRpcContext {
     pub fn new(
-        evm_state: Arc<RwLock<EvmState>>,
+        mempool: Arc<RwLock<Mempool>>,
         pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
-        state: Arc<RwLock<luxtensor_core::StateDB>>,
+        unified_state: Arc<RwLock<UnifiedStateDB>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         db: Arc<BlockchainDB>,
     ) -> Self {
         Self {
-            evm_state,
+            mempool,
             pending_txs,
-            state,
+            unified_state,
             broadcaster,
             db,
         }
@@ -48,9 +62,9 @@ pub fn register_tx_methods(ctx: &TxRpcContext, io: &mut IoHandler) {
 
 /// Register eth_sendTransaction with P2P broadcasting
 fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
-    let evm_state = ctx.evm_state.clone();
+    let mempool = ctx.mempool.clone();
     let pending_txs = ctx.pending_txs.clone();
-    let state = ctx.state.clone();
+    let unified_state = ctx.unified_state.clone();
     let broadcaster = ctx.broadcaster.clone();
 
     io.add_sync_method("eth_sendTransaction", move |params: Params| {
@@ -100,8 +114,51 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
             })
             .unwrap_or(10_000_000);
 
-        // Get nonce from state
-        let nonce = state.read().get_nonce(&Address::from(from));
+        // Get nonce from UnifiedStateDB (C1 FIX: consistent state source)
+        let current_nonce = unified_state.read().get_nonce(&Address::from(from));
+
+        // DOUBLE-SPEND PROTECTION: Check if nonce was explicitly provided
+        let provided_nonce = tx_obj.get("nonce")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u64::from_str_radix(s, 16).ok()
+            });
+
+        let nonce = if let Some(explicit_nonce) = provided_nonce {
+            // If nonce is explicitly provided, validate it
+            if explicit_nonce < current_nonce {
+                return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::ServerError(-32000),
+                    message: format!("nonce too low: expected {} got {}", current_nonce, explicit_nonce),
+                    data: None,
+                });
+            }
+            if explicit_nonce > current_nonce + 100 {
+                return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::ServerError(-32000),
+                    message: format!("nonce too high: expected {} got {}", current_nonce, explicit_nonce),
+                    data: None,
+                });
+            }
+            explicit_nonce
+        } else {
+            current_nonce
+        };
+
+        // Check for duplicate nonce in pending transactions
+        {
+            let pending = pending_txs.read();
+            for (_, tx) in pending.iter() {
+                if tx.from == Address::from(from) && tx.nonce == nonce {
+                    return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::ServerError(-32000),
+                        message: format!("known transaction: nonce {} already pending", nonce),
+                        data: None,
+                    });
+                }
+            }
+        }
 
         // Create luxtensor_core::Transaction for broadcasting
         let to_addr = to.map(Address::from);
@@ -132,10 +189,10 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
             info!("📡 Transaction broadcasted to P2P network: 0x{}", hex::encode(&tx_hash));
         }
 
-        // Update EVM state for compatibility
+        // Add to mempool queue for block production
+        // Note: Nonce is managed by persistent StateDB, not mempool
         {
-            let mut state_guard = evm_state.write();
-            state_guard.increment_nonce(&from);
+            let mempool_guard = mempool.read();
 
             // Add transaction to tx_queue for block inclusion
             let ready_tx = crate::eth_rpc::ReadyTransaction {
@@ -149,7 +206,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
                 s: [0u8; 32],
                 v: 0,
             };
-            state_guard.queue_transaction(ready_tx);
+            mempool_guard.queue_transaction(ready_tx);
             info!("📦 Transaction queued for block inclusion: 0x{}", hex::encode(&tx_hash));
         }
 

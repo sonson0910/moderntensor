@@ -1,0 +1,104 @@
+﻿python : 2026-02-05 09:46:11 [INFO] ====================
+========================================
+At line:1 char:34
++ ... HONIOENCODING = "utf-8"; python 
+scripts/e2e_full_test.py 2>&1 | Out-F ...
++                              
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-02-05 
+    09:4...===============:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+2026-02-05 09:46:11 [INFO] ≡ƒÜÇ Starting Local Testnet 
+(3 nodes)
+2026-02-05 09:46:11 [INFO] =============================
+===============================
+2026-02-05 09:46:11 [INFO] Γ£à Binary found: D:\venera\c
+ardano\moderntensor\moderntensor\luxtensor\target\releas
+e\luxtensor-node.exe
+2026-02-05 09:46:11 [INFO] ≡ƒôª Starting validator-a 
+(P2P:30300, RPC:9000)
+2026-02-05 09:46:12 [INFO] ≡ƒôª Starting miner-b 
+(P2P:30301, RPC:9001)
+2026-02-05 09:46:13 [INFO] ≡ƒôª Starting miner-c 
+(P2P:30302, RPC:9002)
+2026-02-05 09:46:14 [INFO] ΓÅ│ Waiting 10s for nodes to 
+initialize...
+2026-02-05 09:46:24 [INFO] Γ£à validator-a: Block #311, 
+Health: {'is_syncing': False, 'block': 311, 'healthy': 
+True}
+2026-02-05 09:46:24 [INFO] Γ£à miner-b: Block #0, 
+Health: {'is_syncing': False, 'block': 0, 'healthy': 
+True}
+2026-02-05 09:46:24 [INFO] Γ£à miner-c: Block #0, 
+Health: {'is_syncing': False, 'block': 0, 'healthy': 
+True}
+2026-02-05 09:46:24 [INFO] 
+Γ£à Testnet is running!
+
+2026-02-05 09:46:24 [INFO] 
+========================================================
+====
+2026-02-05 09:46:24 [INFO] ≡ƒº¬ RUNNING E2E TEST SUITE
+2026-02-05 09:46:24 [INFO] =============================
+===============================
+
+2026-02-05 09:46:24 [INFO] ≡ƒôï Test Group: Connectivity
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: 
+validator-a_responds
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: 
+validator-a_peer_discovery
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: miner-b_responds
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: 
+miner-b_peer_discovery
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: miner-c_responds
+2026-02-05 09:46:24 [INFO]   Γ£à PASS: 
+miner-c_peer_discovery
+2026-02-05 09:46:24 [INFO] 
+≡ƒôï Test Group: Block Production
+2026-02-05 09:46:24 [INFO] ΓÅ│ Waiting for block #313 
+(current: #311)
+2026-02-05 09:46:29 [INFO] Γ£à Reached block #313
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: blocks_increasing
+2026-02-05 09:46:29 [INFO] 
+≡ƒôï Test Group: System Health
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: health_endpoint
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: health_format
+2026-02-05 09:46:29 [INFO] 
+≡ƒôï Test Group: Checkpoint System
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+checkpoint_status_endpoint
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+checkpoint_list_endpoint
+2026-02-05 09:46:29 [INFO] 
+≡ƒôï Test Group: Staking
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+get_validators_endpoint
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+validators_response
+2026-02-05 09:46:29 [INFO] 
+≡ƒôï Test Group: Edge Cases
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+nonexistent_neuron_handled
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+nonexistent_subnet_handled
+2026-02-05 09:46:29 [INFO]   Γ£à PASS: 
+invalid_unstake_rejected
+2026-02-05 09:46:29 [INFO] 
+========================================================
+====
+2026-02-05 09:46:29 [INFO] ≡ƒôè TEST RESULTS
+2026-02-05 09:46:29 [INFO] =============================
+===============================
+2026-02-05 09:46:29 [INFO] Results: 16/16 passed, 0 
+failed
+2026-02-05 09:46:29 [INFO] ≡ƒº╣ Cleaning up testnet...
+2026-02-05 09:46:29 [INFO] Γ£à Cleanup complete
+
+ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù
+Γòæ         ModernTensor E2E Full Network Test Suite             Γòæ
+Γòæ                                                              Γòæ
+Γòæ  Testing: Local Testnet (3 nodes)                            Γòæ
+Γòæ  Scenarios: Connectivity, Blocks, Staking, Edge Cases        Γòæ
+ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥
+    

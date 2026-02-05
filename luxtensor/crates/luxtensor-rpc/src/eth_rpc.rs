@@ -1,5 +1,25 @@
-// Ethereum-compatible RPC Module
-// Provides eth_* methods for EVM contract deployment and interaction
+//! # Ethereum-compatible RPC Module
+//!
+//! Provides `eth_*` methods for EVM contract deployment and interaction.
+//!
+//! ## Supported Methods
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | `eth_sendRawTransaction` | Submit signed transaction |
+//! | `eth_getTransactionReceipt` | Get transaction receipt |
+//! | `eth_call` | Execute read-only call |
+//! | `eth_getCode` | Get contract bytecode |
+//! | `eth_getBalance` | Get account balance |
+//! | `eth_blockNumber` | Get current block number |
+//! | `eth_getTransactionCount` | Get nonce |
+//! | `eth_chainId` | Get chain ID |
+//!
+//! ## Types
+//!
+//! - [`PendingTransaction`] - Transaction in mempool
+//! - [`ReadyTransaction`] - Transaction ready for block inclusion
+//! - [`DeployedContract`] - Contract metadata
 
 use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
 use std::sync::Arc;
@@ -57,62 +77,23 @@ pub struct ReadyTransaction {
     pub v: u8,
 }
 
-/// EVM state for contract management
-pub struct EvmState {
-    pub contracts: HashMap<Address, DeployedContract>,
+/// Mempool for transaction management
+/// Replaces EvmState - contains only mempool-related data
+pub struct Mempool {
+    /// Pending transactions awaiting confirmation
     pub pending_txs: HashMap<TxHash, PendingTransaction>,
-    pub nonces: HashMap<Address, u64>,
-    pub balances: HashMap<Address, u128>,
-    /// Contract storage: (contract_address, slot) -> value
-    pub storage: HashMap<(Address, [u8; 32]), [u8; 32]>,
-    pub block_number: u64,
-    pub chain_id: u64,
     /// Queue of transactions ready for block inclusion
     pub tx_queue: Arc<RwLock<Vec<ReadyTransaction>>>,
 }
 
-impl EvmState {
-    /// Create a new EVM state for production (no pre-funded accounts)
-    pub fn new(chain_id: u64) -> Self {
+impl Mempool {
+    /// Create a new empty mempool
+    pub fn new() -> Self {
         Self {
-            contracts: HashMap::new(),
             pending_txs: HashMap::new(),
-            nonces: HashMap::new(),
-            balances: HashMap::new(),
-            storage: HashMap::new(),
-            block_number: 1,
-            chain_id,
             tx_queue: Arc::new(RwLock::new(Vec::new())),
         }
     }
-
-    /// Create a new EVM state for development/testing (with pre-funded accounts)
-    pub fn new_dev(chain_id: u64) -> Self {
-        let mut balances = HashMap::new();
-        // Pre-fund test accounts with 1000 ETH each (ONLY for dev/test)
-        let test_accounts = [
-            // Hardhat default accounts
-            hex_to_address("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-            hex_to_address("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-            hex_to_address("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-        ];
-
-        for account in test_accounts.iter().flatten() {
-            balances.insert(*account, 1_000_000_000_000_000_000_000u128); // 1000 ETH
-        }
-
-        Self {
-            contracts: HashMap::new(),
-            pending_txs: HashMap::new(),
-            nonces: HashMap::new(),
-            balances,
-            storage: HashMap::new(),
-            block_number: 1,
-            chain_id,
-            tx_queue: Arc::new(RwLock::new(Vec::new())),
-        }
-    }
-
 
     /// Get and clear pending transactions for block production
     pub fn drain_tx_queue(&self) -> Vec<ReadyTransaction> {
@@ -128,48 +109,31 @@ impl EvmState {
         tracing::debug!("📥 queue_transaction: Queue size now = {}", self.tx_queue.read().len());
     }
 
-    pub fn get_nonce(&self, address: &Address) -> u64 {
-        *self.nonces.get(address).unwrap_or(&0)
+    /// Check if a transaction hash is pending
+    pub fn is_pending(&self, tx_hash: &TxHash) -> bool {
+        self.pending_txs.contains_key(tx_hash)
     }
 
-    pub fn increment_nonce(&mut self, address: &Address) {
-        let nonce = self.nonces.entry(*address).or_insert(0);
-        *nonce += 1;
+    /// Add a pending transaction
+    pub fn add_pending(&mut self, tx_hash: TxHash, tx: PendingTransaction) {
+        self.pending_txs.insert(tx_hash, tx);
     }
 
-    pub fn get_balance(&self, address: &Address) -> u128 {
-        *self.balances.get(address).unwrap_or(&0)
-    }
-
-    pub fn deploy_contract(&mut self, deployer: Address, code: Vec<u8>) -> Address {
-        let nonce = self.get_nonce(&deployer);
-        let contract_address = generate_contract_address(&deployer, nonce);
-
-        let contract = DeployedContract {
-            address: contract_address,
-            code,
-            deployer,
-            deploy_block: self.block_number,
-        };
-
-        self.contracts.insert(contract_address, contract);
-        contract_address
-    }
-
-    pub fn contract_exists(&self, address: &Address) -> bool {
-        self.contracts.contains_key(address)
-    }
-
-    /// Get storage value at slot for contract
-    pub fn get_storage(&self, address: &Address, slot: &[u8; 32]) -> [u8; 32] {
-        self.storage.get(&(*address, *slot)).copied().unwrap_or([0u8; 32])
-    }
-
-    /// Set storage value at slot for contract
-    pub fn set_storage(&mut self, address: &Address, slot: [u8; 32], value: [u8; 32]) {
-        self.storage.insert((*address, slot), value);
+    /// Remove a pending transaction
+    pub fn remove_pending(&mut self, tx_hash: &TxHash) -> Option<PendingTransaction> {
+        self.pending_txs.remove(tx_hash)
     }
 }
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Utility functions
+// ============================================================================
 
 pub fn hex_to_address(s: &str) -> Option<Address> {
     let s = s.strip_prefix("0x").unwrap_or(s);
@@ -199,7 +163,7 @@ pub fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
     nonce.hash(&mut hasher);
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_nanos()
         .hash(&mut hasher);
 
@@ -228,22 +192,28 @@ fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
 }
 
 /// Register Ethereum-compatible RPC methods
+///
+/// # Parameters
+/// - `io`: The JSON-RPC IO handler
+/// - `mempool`: Transaction mempool (pending_txs, tx_queue)
+/// - `unified_state`: Primary state source for reads (chain_id, nonces, balances, code, storage)
 pub fn register_eth_methods(
     io: &mut IoHandler,
-    evm_state: Arc<RwLock<EvmState>>,
+    mempool: Arc<RwLock<Mempool>>,
+    unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
 ) {
-    // eth_chainId
-    let state = evm_state.clone();
+    // eth_chainId - Route to UnifiedStateDB
+    let state = unified_state.clone();
     io.add_sync_method("eth_chainId", move |_params: Params| {
-        let chain_id = state.read().chain_id;
+        let chain_id = state.read().chain_id();
         Ok(json!(format!("0x{:x}", chain_id)))
     });
 
     // NOTE: eth_blockNumber is registered in server.rs with proper DB query
     // The old implementation here used EvmState.block_number which was incorrect
 
-    // eth_getBalance
-    let state = evm_state.clone();
+    // eth_getBalance - Route to UnifiedStateDB
+    let state = unified_state.clone();
     io.add_sync_method("eth_getBalance", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let address_str = p.get(0)
@@ -260,12 +230,13 @@ pub fn register_eth_methods(
             data: None,
         })?;
 
-        let balance = state.read().get_balance(&address);
+        let addr = luxtensor_core::Address::from(address);
+        let balance = state.read().get_balance(&addr);
         Ok(json!(format!("0x{:x}", balance)))
     });
 
-    // eth_getTransactionCount (nonce)
-    let state = evm_state.clone();
+    // eth_getTransactionCount (nonce) - Route to UnifiedStateDB
+    let state = unified_state.clone();
     io.add_sync_method("eth_getTransactionCount", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let address_str = p.get(0)
@@ -282,14 +253,19 @@ pub fn register_eth_methods(
             data: None,
         })?;
 
-        let nonce = state.read().get_nonce(&address);
+        let addr = luxtensor_core::Address::from(address);
+        let nonce = state.read().get_nonce(&addr);
         Ok(json!(format!("0x{:x}", nonce)))
     });
 
-    // eth_gasPrice
+    // eth_gasPrice - Returns current base fee from EIP-1559 FeeMarket
+    // Uses dynamic pricing: 0.5 gwei initial, adjusts based on block fullness
     io.add_sync_method("eth_gasPrice", move |_params: Params| {
-        // Fixed gas price: 1 gwei
-        Ok(json!("0x3b9aca00"))
+        // Use FeeMarket for dynamic gas pricing
+        use luxtensor_consensus::FeeMarket;
+        let market = FeeMarket::new();
+        let base_fee = market.current_base_fee();
+        Ok(json!(format!("0x{:x}", base_fee)))
     });
 
     // eth_estimateGas
@@ -302,8 +278,9 @@ pub fn register_eth_methods(
     // and overrides this handler. The tx_rpc.rs version includes P2P broadcasting.
     // This duplicate was removed to avoid confusion and dead code.
 
-    // eth_getTransactionReceipt
-    let state = evm_state.clone();
+    // eth_getTransactionReceipt - uses mempool for pending_txs, unified_state for block_number
+    let mp_for_receipt = mempool.clone();
+    let state_for_receipt = unified_state.clone();
     io.add_sync_method("eth_getTransactionReceipt", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let hash_str = p.get(0)
@@ -325,14 +302,15 @@ pub fn register_eth_methods(
         let len = std::cmp::min(hash_bytes.len(), 32);
         hash[..len].copy_from_slice(&hash_bytes[..len]);
 
-        let state_guard = state.read();
+        let mempool_guard = mp_for_receipt.read();
+        let block_number = state_for_receipt.read().block_number();
 
-        if let Some(tx) = state_guard.pending_txs.get(&hash) {
+        if let Some(tx) = mempool_guard.pending_txs.get(&hash) {
             Ok(json!({
                 "transactionHash": hash_to_hex(&tx.hash),
                 "transactionIndex": "0x0",
                 "blockHash": hash_to_hex(&tx.hash),
-                "blockNumber": format!("0x{:x}", state_guard.block_number),
+                "blockNumber": format!("0x{:x}", block_number),
                 "from": address_to_hex(&tx.from),
                 "to": tx.to.as_ref().map(address_to_hex),
                 "contractAddress": tx.contract_address.as_ref().map(address_to_hex),
@@ -347,7 +325,8 @@ pub fn register_eth_methods(
     });
 
     // eth_call - Execute a call without creating a transaction (read-only)
-    let state_for_call = evm_state.clone();
+    // Uses unified_state for contract code and block_number
+    let state_for_call = unified_state.clone();
     io.add_sync_method("eth_call", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let call_obj = p.get(0).ok_or_else(|| RpcError {
@@ -394,16 +373,16 @@ pub fn register_eth_methods(
             u128::from_str_radix(s, 16).unwrap_or(0)
         };
 
-        // Check if contract exists and get code
+        // Get contract code from UnifiedStateDB
         let state_guard = state_for_call.read();
-        let contract_code = match state_guard.contracts.get(&to_addr) {
-            Some(contract) => contract.code.clone(),
+        let contract_code = match state_guard.get_code(&luxtensor_core::Address::from(to_addr)) {
+            Some(code) => code.to_vec(),
             None => {
                 // No contract code, return empty
                 return Ok(json!("0x"));
             }
         };
-        let block_number = state_guard.block_number;
+        let block_number = state_guard.block_number();
         drop(state_guard);
 
         // Execute call using EvmExecutor
@@ -437,8 +416,8 @@ pub fn register_eth_methods(
         }
     });
 
-    // eth_getCode - Read from global contract_registry first, then fall back to EvmState
-    let state = evm_state.clone();
+    // eth_getCode - Route to UnifiedStateDB
+    let state = unified_state.clone();
     io.add_sync_method("eth_getCode", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let address_str = p.get(0)
@@ -455,17 +434,14 @@ pub fn register_eth_methods(
             data: None,
         })?;
 
-        // First check global contract registry (synced from executor)
-        if let Some(code) = crate::contract_registry::get_contract_code(&address) {
+        let addr = luxtensor_core::Address::from(address);
+
+        // UnifiedStateDB is the sole source of truth for contract code
+        if let Some(code) = state.read().get_code(&addr) {
             return Ok(json!(format!("0x{}", hex::encode(&code))));
         }
 
-        // Fall back to EvmState for in-memory deployed contracts
-        if state.read().contract_exists(&address) {
-            if let Some(contract) = state.read().contracts.get(&address) {
-                return Ok(json!(format!("0x{}", hex::encode(&contract.code))));
-            }
-        }
+        // No code at this address
         Ok(json!("0x"))
     });
 
@@ -478,15 +454,17 @@ pub fn register_eth_methods(
         ]))
     });
 
-    // net_version
-    let state = evm_state.clone();
+    // net_version - Route to UnifiedStateDB
+    let state = unified_state.clone();
     io.add_sync_method("net_version", move |_params: Params| {
-        let chain_id = state.read().chain_id;
+        let chain_id = state.read().chain_id();
         Ok(json!(chain_id.to_string()))
     });
 
     // eth_sendRawTransaction - process pre-signed transactions (production method)
-    let state = evm_state.clone();
+    // Uses unified_state for chain_id/nonce reads, mempool for pending_txs/tx_queue
+    let mp_for_sendraw = mempool.clone();
+    let unified_for_sendraw = unified_state.clone();
     io.add_sync_method("eth_sendRawTransaction", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let raw_tx = p.get(0)
@@ -537,18 +515,25 @@ pub fn register_eth_methods(
         let mut from = [0u8; 20];
         from.copy_from_slice(&tx_bytes[0..20]);
 
-        let nonce = u64::from_be_bytes(tx_bytes[20..28].try_into().unwrap());
+        let nonce = u64::from_be_bytes(
+            tx_bytes[20..28].try_into()
+                .map_err(|_| RpcError::invalid_params("Invalid nonce bytes"))?
+        );
 
-        let to_bytes: [u8; 20] = tx_bytes[28..48].try_into().unwrap();
+        let to_bytes: [u8; 20] = tx_bytes[28..48].try_into()
+            .map_err(|_| RpcError::invalid_params("Invalid to address bytes"))?;
         let to = if to_bytes == [0u8; 20] {
             None
         } else {
             Some(to_bytes)
         };
 
-        let value = u128::from_be_bytes(tx_bytes[48..64].try_into().unwrap());
-        let gas = u64::from_be_bytes(tx_bytes[64..72].try_into().unwrap());
-        let data_len = u32::from_be_bytes(tx_bytes[72..76].try_into().unwrap()) as usize;
+        let value = u128::from_be_bytes(tx_bytes[48..64].try_into()
+            .map_err(|_| RpcError::invalid_params("Invalid value bytes"))?);
+        let gas = u64::from_be_bytes(tx_bytes[64..72].try_into()
+            .map_err(|_| RpcError::invalid_params("Invalid gas bytes"))?);
+        let data_len = u32::from_be_bytes(tx_bytes[72..76].try_into()
+            .map_err(|_| RpcError::invalid_params("Invalid data length bytes"))?) as usize;
 
         let data = if data_len > 0 && tx_bytes.len() >= 76 + data_len + 65 {
             tx_bytes[76..76 + data_len].to_vec()
@@ -558,6 +543,51 @@ pub fn register_eth_methods(
 
         // Generate transaction hash
         let tx_hash = generate_tx_hash(&from, nonce);
+
+        // === REPLAY PROTECTION: Validate chain ID from signature ===
+        // EIP-155: v = chainId * 2 + 35 + recovery_id (0 or 1)
+        // Extract chain_id from v: chain_id = (v - 35) / 2
+        let expected_chain_id = unified_for_sendraw.read().chain_id();
+        let tx_chain_id = if v >= 35 {
+            ((v as u64) - 35) / 2
+        } else {
+            // Legacy transaction (v = 27 or 28), chain_id = 0 (mainnet)
+            0
+        };
+
+        // Reject if chain_id doesn't match (unless legacy tx with v=27/28)
+        if v >= 35 && tx_chain_id != expected_chain_id && tx_chain_id != 0 {
+            return Err(RpcError {
+                code: ErrorCode::ServerError(-32000),
+                message: format!("chain ID mismatch: expected {} got {}", expected_chain_id, tx_chain_id),
+                data: None,
+            });
+        }
+
+        // === DOUBLE-SPEND PROTECTION: Validate nonce ===
+        let from_addr = luxtensor_core::Address::from(from);
+        let current_nonce = unified_for_sendraw.read().get_nonce(&from_addr);
+        if nonce < current_nonce {
+            return Err(RpcError {
+                code: ErrorCode::ServerError(-32000),
+                message: format!("nonce too low: expected {} got {}", current_nonce, nonce),
+                data: None,
+            });
+        }
+
+        // Check for duplicate nonce in pending transactions (mempool)
+        {
+            let mempool_guard = mp_for_sendraw.read();
+            for (_, tx) in mempool_guard.pending_txs.iter() {
+                if tx.from == from && tx.nonce == nonce {
+                    return Err(RpcError {
+                        code: ErrorCode::ServerError(-32000),
+                        message: format!("known transaction: nonce {} already pending", nonce),
+                        data: None,
+                    });
+                }
+            }
+        }
 
         // Create ReadyTransaction with signature
         let ready_tx = ReadyTransaction {
@@ -572,9 +602,9 @@ pub fn register_eth_methods(
             v,
         };
 
-        let mut state_guard = state.write();
+        let mut mempool_guard = mp_for_sendraw.write();
 
-        // Store pending transaction
+        // Store pending transaction in mempool
         let pending_tx = PendingTransaction {
             hash: tx_hash,
             from,
@@ -588,10 +618,10 @@ pub fn register_eth_methods(
             status: true,
             gas_used: 0,
         };
-        state_guard.pending_txs.insert(tx_hash, pending_tx);
+        mempool_guard.pending_txs.insert(tx_hash, pending_tx);
 
-        // Queue for block production
-        state_guard.queue_transaction(ready_tx);
+        // Queue for block production (mempool)
+        mempool_guard.queue_transaction(ready_tx);
 
         info!("📥 Received signed raw transaction: {}", hash_to_hex(&tx_hash));
         Ok(json!(hash_to_hex(&tx_hash)))
@@ -624,9 +654,9 @@ pub fn register_eth_methods(
         Ok(json!("0x41")) // Protocol version 65
     });
 
-    let evm_state_storage = evm_state.clone();
+    let unified_for_storage = unified_state.clone();
 
-    // eth_getStorageAt - Returns storage at position
+    // eth_getStorageAt - Route to UnifiedStateDB
     io.add_sync_method("eth_getStorageAt", move |params: Params| {
         let parsed: Vec<String> = params.parse()?;
         if parsed.len() < 2 {
@@ -634,7 +664,7 @@ pub fn register_eth_methods(
         }
 
         // Parse address
-        let addr = match hex_to_address(&parsed[0]) {
+        let addr_bytes = match hex_to_address(&parsed[0]) {
             Some(a) => a,
             None => return Ok(json!("0x0000000000000000000000000000000000000000000000000000000000000000")),
         };
@@ -647,8 +677,9 @@ pub fn register_eth_methods(
             slot[start..].copy_from_slice(&bytes);
         }
 
-        // Get storage value from EvmState
-        let state = evm_state_storage.read();
+        // Get storage value from UnifiedStateDB
+        let addr = luxtensor_core::Address::from(addr_bytes);
+        let state = unified_for_storage.read();
         let value = state.get_storage(&addr, &slot);
 
         Ok(json!(format!("0x{}", hex::encode(value))))
@@ -685,18 +716,59 @@ pub fn register_eth_methods(
             "ai": "1.0"
         }))
     });
+
+    // dev_faucet - Credit tokens to address for testing (DEV MODE ONLY)
+    // Uses unified_state for balance operations
+    let dev_state = unified_state.clone();
+    io.add_sync_method("dev_faucet", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+        let address_str = p.get(0)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing address".to_string(),
+                data: None,
+            })?;
+
+        let address = hex_to_address(address_str).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Invalid address format".to_string(),
+            data: None,
+        })?;
+
+        // Parse amount (default: 1000 MDT = 1000 * 10^9 base units)
+        let amount: u128 = p.get(1)
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u128>().ok())
+            .unwrap_or(1_000_000_000_000); // 1000 MDT default
+
+        // Credit account in UnifiedStateDB
+        let mut state_guard = dev_state.write();
+        let addr = luxtensor_core::Address::from(address);
+        let current_balance = state_guard.get_balance(&addr);
+        let new_balance = current_balance + amount;
+        state_guard.set_balance(addr, new_balance);
+
+        Ok(json!({
+            "success": true,
+            "address": address_to_hex(&address),
+            "credited": amount,
+            "new_balance": new_balance.to_string()
+        }))
+    });
 }
 
 /// Register eth_getLogs and filter-related RPC methods
+/// Uses UnifiedStateDB for block_number reads
 pub fn register_log_methods(
     io: &mut IoHandler,
     log_store: Arc<RwLock<crate::logs::LogStore>>,
-    evm_state: Arc<RwLock<EvmState>>,
+    unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
 ) {
 
     // eth_getLogs - Query historical logs
     let store = log_store.clone();
-    let state = evm_state.clone();
+    let state = unified_state.clone();
     io.add_sync_method("eth_getLogs", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_obj = p.get(0).ok_or_else(|| RpcError {
@@ -706,7 +778,7 @@ pub fn register_log_methods(
         })?;
 
         let filter = parse_log_filter(filter_obj)?;
-        let current_block = state.read().block_number;
+        let current_block = state.read().block_number();
         let logs = store.read().get_logs(&filter, current_block);
 
         let rpc_logs: Vec<serde_json::Value> = logs.iter()
@@ -718,7 +790,7 @@ pub fn register_log_methods(
 
     // eth_newFilter - Create a new filter
     let store = log_store.clone();
-    let state = evm_state.clone();
+    let state = unified_state.clone();
     io.add_sync_method("eth_newFilter", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_obj = p.get(0).ok_or_else(|| RpcError {
@@ -728,7 +800,7 @@ pub fn register_log_methods(
         })?;
 
         let filter = parse_log_filter(filter_obj)?;
-        let current_block = state.read().block_number;
+        let current_block = state.read().block_number();
         let filter_id = store.read().new_filter(filter, current_block);
 
         Ok(json!(filter_id))
@@ -736,7 +808,7 @@ pub fn register_log_methods(
 
     // eth_getFilterChanges - Get logs since last poll
     let store = log_store.clone();
-    let state = evm_state.clone();
+    let state = unified_state.clone();
     io.add_sync_method("eth_getFilterChanges", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_id = p.get(0)
@@ -747,7 +819,7 @@ pub fn register_log_methods(
                 data: None,
             })?;
 
-        let current_block = state.read().block_number;
+        let current_block = state.read().block_number();
         match store.read().get_filter_changes(filter_id, current_block) {
             Some(logs) => {
                 let rpc_logs: Vec<serde_json::Value> = logs.iter()
@@ -765,7 +837,7 @@ pub fn register_log_methods(
 
     // eth_getFilterLogs - Get all logs for a filter
     let store = log_store.clone();
-    let state = evm_state.clone();
+    let state = unified_state.clone();
     io.add_sync_method("eth_getFilterLogs", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_id = p.get(0)
@@ -776,7 +848,7 @@ pub fn register_log_methods(
                 data: None,
             })?;
 
-        let current_block = state.read().block_number;
+        let current_block = state.read().block_number();
         let store_read = store.read();
 
         // For eth_getFilterLogs, we return all logs matching the original filter
@@ -1045,7 +1117,44 @@ pub fn register_aa_methods(
         Ok(json!(supported))
     });
 
-    info!("Registered ERC-4337 Account Abstraction RPC methods");
+    // eth_getUserOperationByHash - Get user operation by hash (ERC-4337)
+    let ep = entry_point.clone();
+    io.add_sync_method("eth_getUserOperationByHash", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+        let op_hash_str = p.get(0)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing operation hash".to_string(),
+                data: None,
+            })?;
+
+        let op_hash = parse_hash(op_hash_str)?;
+        let entry_point = ep.read();
+
+        // Return receipt info if operation was processed
+        match entry_point.get_user_op_receipt(&op_hash) {
+            Some(receipt) => Ok(json!({
+                "userOperation": null, // Original op not stored for privacy
+                "entryPoint": "0x0000000000000000000000000000000000004337",
+                "transactionHash": format!("0x{}", hex::encode(receipt.transaction_hash)),
+                "blockNumber": format!("0x{:x}", receipt.block_number),
+                "blockHash": format!("0x{}", hex::encode(receipt.block_hash)),
+            })),
+            None => Ok(json!(null)),
+        }
+    });
+
+    // eth_chainId - Return chain ID for AA context (ERC-4337)
+    // Note: This complements the standard eth_chainId but is specific to AA operations
+    let ep = entry_point.clone();
+    io.add_sync_method("aa_chainId", move |_params: Params| {
+        let entry_point = ep.read();
+        let chain_id = entry_point.chain_id();
+        Ok(json!(format!("0x{:x}", chain_id)))
+    });
+
+    info!("Registered ERC-4337 Account Abstraction RPC methods (6 methods)");
 }
 
 /// Parse a UserOperation from JSON

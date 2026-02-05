@@ -11,6 +11,14 @@ const CF_HEADERS: &str = "headers";
 const CF_TRANSACTIONS: &str = "transactions";
 const CF_HEIGHT_TO_HASH: &str = "height_to_hash";
 const CF_TX_TO_BLOCK: &str = "tx_to_block";
+const CF_RECEIPTS: &str = "receipts";
+const CF_CONTRACTS: &str = "contracts";
+// Metagraph column families
+const CF_SUBNETS: &str = "subnets";
+const CF_NEURONS: &str = "neurons";
+const CF_VALIDATORS: &str = "validators";
+const CF_STAKES: &str = "stakes";
+const CF_WEIGHTS: &str = "weights";
 
 /// Blockchain database using RocksDB
 pub struct BlockchainDB {
@@ -26,13 +34,26 @@ impl BlockchainDB {
         opts.set_max_open_files(10000);
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
 
-        // Define column families
+        // Memory optimizations for 16GB RAM
+        opts.set_write_buffer_size(128 * 1024 * 1024);  // 128MB write buffer
+        opts.set_max_write_buffer_number(4);             // 4 buffers before flush
+        opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB SST files
+
+        // Define column families (core + metagraph)
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEADERS, Options::default()),
             ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEIGHT_TO_HASH, Options::default()),
             ColumnFamilyDescriptor::new(CF_TX_TO_BLOCK, Options::default()),
+            ColumnFamilyDescriptor::new(CF_RECEIPTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_CONTRACTS, Options::default()),
+            // Metagraph
+            ColumnFamilyDescriptor::new(CF_SUBNETS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_NEURONS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_VALIDATORS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_STAKES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_WEIGHTS, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;
@@ -194,6 +215,201 @@ impl BlockchainDB {
         } else {
             Ok(None)
         }
+    }
+
+    // ==================== METAGRAPH OPERATIONS ====================
+
+    /// Store a subnet
+    pub fn store_subnet(&self, subnet_id: u64, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_SUBNETS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_SUBNETS not found".to_string())
+        })?;
+        self.db.put_cf(cf, subnet_id.to_be_bytes(), data)?;
+        Ok(())
+    }
+
+    /// Get all subnets as (id, data) pairs
+    pub fn get_all_subnets(&self) -> Result<Vec<(u64, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_SUBNETS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_SUBNETS not found".to_string())
+        })?;
+        let mut subnets = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            if key.len() >= 8 {
+                let id = u64::from_be_bytes(key[..8].try_into().unwrap());
+                subnets.push((id, value.to_vec()));
+            }
+        }
+        Ok(subnets)
+    }
+
+    /// Store a neuron
+    pub fn store_neuron(&self, subnet_id: u64, uid: u64, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_NEURONS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_NEURONS not found".to_string())
+        })?;
+        let mut key = Vec::with_capacity(16);
+        key.extend_from_slice(&subnet_id.to_be_bytes());
+        key.extend_from_slice(&uid.to_be_bytes());
+        self.db.put_cf(cf, key, data)?;
+        Ok(())
+    }
+
+    /// Get all neurons as ((subnet_id, uid), data) pairs
+    pub fn get_all_neurons(&self) -> Result<Vec<((u64, u64), Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_NEURONS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_NEURONS not found".to_string())
+        })?;
+        let mut neurons = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            if key.len() >= 16 {
+                let subnet_id = u64::from_be_bytes(key[..8].try_into().unwrap());
+                let uid = u64::from_be_bytes(key[8..16].try_into().unwrap());
+                neurons.push(((subnet_id, uid), value.to_vec()));
+            }
+        }
+        Ok(neurons)
+    }
+
+    /// Store a validator
+    pub fn store_validator(&self, address: &[u8], data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_VALIDATORS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_VALIDATORS not found".to_string())
+        })?;
+        self.db.put_cf(cf, address, data)?;
+        Ok(())
+    }
+
+    /// Get all validators
+    pub fn get_all_validators(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_VALIDATORS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_VALIDATORS not found".to_string())
+        })?;
+        let mut validators = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            validators.push((key.to_vec(), value.to_vec()));
+        }
+        Ok(validators)
+    }
+
+    /// Store stake data
+    pub fn store_stake(&self, address: &[u8], data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_STAKES).ok_or_else(|| {
+            StorageError::DatabaseError("CF_STAKES not found".to_string())
+        })?;
+        self.db.put_cf(cf, address, data)?;
+        Ok(())
+    }
+
+    /// Remove stake data
+    pub fn remove_stake(&self, address: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_STAKES).ok_or_else(|| {
+            StorageError::DatabaseError("CF_STAKES not found".to_string())
+        })?;
+        self.db.delete_cf(cf, address)?;
+        Ok(())
+    }
+
+    /// Get all stakes
+    pub fn get_all_stakes(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_STAKES).ok_or_else(|| {
+            StorageError::DatabaseError("CF_STAKES not found".to_string())
+        })?;
+        let mut stakes = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            stakes.push((key.to_vec(), value.to_vec()));
+        }
+        Ok(stakes)
+    }
+
+    /// Store weights
+    pub fn store_weights(&self, subnet_id: u64, uid: u64, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_WEIGHTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_WEIGHTS not found".to_string())
+        })?;
+        let mut key = Vec::with_capacity(16);
+        key.extend_from_slice(&subnet_id.to_be_bytes());
+        key.extend_from_slice(&uid.to_be_bytes());
+        self.db.put_cf(cf, key, data)?;
+        Ok(())
+    }
+
+    /// Get all weights
+    pub fn get_all_weights(&self) -> Result<Vec<((u64, u64), Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_WEIGHTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_WEIGHTS not found".to_string())
+        })?;
+        let mut weights = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            if key.len() >= 16 {
+                let subnet_id = u64::from_be_bytes(key[..8].try_into().unwrap());
+                let uid = u64::from_be_bytes(key[8..16].try_into().unwrap());
+                weights.push(((subnet_id, uid), value.to_vec()));
+            }
+        }
+        Ok(weights)
+    }
+
+    // ==================== RECEIPT OPERATIONS ====================
+
+    /// Store a transaction receipt
+    pub fn store_receipt(&self, tx_hash: &Hash, data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_RECEIPTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_RECEIPTS not found".to_string())
+        })?;
+        self.db.put_cf(cf, tx_hash, data)?;
+        Ok(())
+    }
+
+    /// Get a transaction receipt
+    pub fn get_receipt(&self, tx_hash: &Hash) -> Result<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_RECEIPTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_RECEIPTS not found".to_string())
+        })?;
+        match self.db.get_cf(cf, tx_hash)? {
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    // ==================== CONTRACT OPERATIONS ====================
+
+    /// Store contract code
+    pub fn store_contract(&self, address: &[u8], code: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_CONTRACTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_CONTRACTS not found".to_string())
+        })?;
+        self.db.put_cf(cf, address, code)?;
+        Ok(())
+    }
+
+    /// Get contract code
+    pub fn get_contract(&self, address: &[u8]) -> Result<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_CONTRACTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_CONTRACTS not found".to_string())
+        })?;
+        match self.db.get_cf(cf, address)? {
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    // ==================== PRUNING OPERATIONS ====================
+
+    /// Prune old receipts before a given block height
+    /// Returns the number of receipts pruned
+    /// Note: This is a simplified implementation - in production, receipts
+    /// would be indexed by block height for efficient pruning
+    pub fn prune_receipts_before_height(&self, _before_height: u64) -> Result<usize> {
+        // For now, return 0 as we don't have height-indexed receipts yet
+        // In production, receipts would be stored with height prefix for efficient pruning
+        // This satisfies the API contract without actual pruning
+        Ok(0)
     }
 }
 

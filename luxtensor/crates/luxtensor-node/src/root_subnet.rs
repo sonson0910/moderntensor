@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use luxtensor_core::{
     SubnetInfo, RootConfig, RootValidatorInfo, SubnetWeights,
-    EmissionShare, SubnetRegistrationResult
+    EmissionShare, SubnetRegistrationResult, SubnetConfig, ProtocolGuardrails
 };
 use tracing::info;
 
@@ -29,6 +29,9 @@ pub struct RootSubnetState {
 
     /// Configuration
     pub config: RootConfig,
+
+    /// Protocol-level guardrails for subnet configurations
+    pub protocol_guardrails: ProtocolGuardrails,
 
     /// Next available subnet ID
     next_netuid: u16,
@@ -52,6 +55,7 @@ impl RootSubnetState {
             weight_matrix: HashMap::new(),
             emission_shares: HashMap::new(),
             config: RootConfig::default(),
+            protocol_guardrails: ProtocolGuardrails::default(),
             next_netuid: 1,
             last_weight_update: 0,
         }
@@ -85,6 +89,64 @@ impl RootSubnetState {
         info!("Registered subnet {}: {} (owner: {:?})", netuid, name, owner);
 
         SubnetRegistrationResult::success(netuid, self.config.subnet_registration_cost)
+    }
+
+    /// Register a new subnet with custom configuration
+    pub fn register_subnet_with_config(
+        &mut self,
+        name: String,
+        owner: [u8; 20],
+        block_number: u64,
+        subnet_config: SubnetConfig,
+    ) -> SubnetRegistrationResult {
+        // Validate config against guardrails
+        if let Err(e) = subnet_config.validate(&self.protocol_guardrails) {
+            return SubnetRegistrationResult::failure(format!("Invalid subnet config: {}", e));
+        }
+
+        // Check max subnets
+        if self.subnets.len() >= self.config.max_subnets as usize {
+            return SubnetRegistrationResult::failure(
+                format!("Maximum subnets ({}) reached", self.config.max_subnets)
+            );
+        }
+
+        // Assign netuid
+        let netuid = self.next_netuid;
+        self.next_netuid += 1;
+
+        // Create subnet with config
+        let subnet = SubnetInfo::with_config(netuid, owner, name.clone(), block_number, subnet_config);
+        self.subnets.insert(netuid, subnet);
+
+        // Initialize emission share
+        self.emission_shares.insert(netuid, 0);
+
+        info!("Registered subnet {} with custom config: {} (owner: {:?})", netuid, name, owner);
+
+        SubnetRegistrationResult::success(netuid, self.config.subnet_registration_cost)
+    }
+
+    /// Update subnet configuration (owner only)
+    pub fn update_subnet_config(
+        &mut self,
+        netuid: u16,
+        caller: [u8; 20],
+        new_config: SubnetConfig,
+    ) -> Result<(), String> {
+        // Validate new config
+        new_config.validate(&self.protocol_guardrails)?;
+
+        let subnet = self.subnets.get_mut(&netuid)
+            .ok_or_else(|| format!("Subnet {} not found", netuid))?;
+
+        if subnet.owner != caller {
+            return Err("Caller is not subnet owner".to_string());
+        }
+
+        subnet.config = Some(new_config);
+        info!("Updated config for subnet {}", netuid);
+        Ok(())
     }
 
     /// Deregister a subnet

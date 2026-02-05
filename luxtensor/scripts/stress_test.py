@@ -34,10 +34,18 @@ class StressTest:
         self.rpc_url = rpc_url
         self.passed = 0
         self.failed = 0
+        # Use session for connection pooling (much faster)
+        self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=100,
+            pool_maxsize=100,
+            max_retries=0
+        )
+        self.session.mount('http://', adapter)
 
     def rpc(self, method: str, params: list = None) -> Any:
         payload = {"jsonrpc": "2.0", "method": method, "params": params or [], "id": 1}
-        resp = requests.post(self.rpc_url, json=payload, timeout=30)
+        resp = self.session.post(self.rpc_url, json=payload, timeout=5)
         data = resp.json()
         if "error" in data:
             raise Exception(data["error"]["message"])

@@ -22,6 +22,9 @@ pub enum CoreError {
 
     #[error("Invalid vector dimension: expected {0}, got {1}")]
     InvalidVectorDimension(usize, usize),
+
+    #[error("Insufficient balance")]
+    InsufficientBalance,
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

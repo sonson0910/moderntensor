@@ -1,12 +1,14 @@
-use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{EvmState, register_eth_methods}};
+use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{Mempool, register_eth_methods}};
 use crate::rate_limiter::RateLimiter;
 use jsonrpc_core::{IoHandler, Params, Value};
+use serde_json::json;
 use jsonrpc_http_server::{Server, ServerBuilder};
-use luxtensor_core::{StateDB, Transaction, Hash};
+use luxtensor_core::{StateDB, Transaction, Hash, UnifiedStateDB};
 use luxtensor_storage::{BlockchainDB, MetagraphDB};
 use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig, AILayerCircuitBreaker};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
 
 use tracing::{debug, info, warn};
@@ -45,7 +47,6 @@ use crate::tx_rpc::{TxRpcContext, register_tx_methods};
 /// ```
 pub struct RpcServer {
     db: Arc<BlockchainDB>,
-    state: Arc<RwLock<StateDB>>,
     validators: Arc<RwLock<ValidatorSet>>,
     // Persistent storage (RocksDB)
     metagraph: Arc<MetagraphDB>,
@@ -56,7 +57,7 @@ pub struct RpcServer {
     pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
     ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
     broadcaster: Arc<dyn TransactionBroadcaster>,
-    evm_state: Arc<RwLock<EvmState>>,
+    mempool: Arc<RwLock<Mempool>>,
     commit_reveal: Arc<RwLock<CommitRevealManager>>,
     /// Circuit breaker for AI layer operations
     ai_circuit_breaker: Arc<AILayerCircuitBreaker>,
@@ -64,13 +65,18 @@ pub struct RpcServer {
     rate_limiter: Arc<RateLimiter>,
     /// Data directory for checkpoints and other persistent data
     data_dir: PathBuf,
+    /// Atomic cache for block number (lock-free fast path)
+    cached_block_number: Arc<AtomicU64>,
+    /// Atomic cache for chain ID (constant, never changes)
+    cached_chain_id: Arc<AtomicU64>,
+    /// Unified state - THE source of truth for all state operations
+    unified_state: Arc<RwLock<UnifiedStateDB>>,
 }
 
 impl RpcServer {
     /// Create a new RPC server with persistent MetagraphDB
     pub fn new(
         db: Arc<BlockchainDB>,
-        state: Arc<RwLock<StateDB>>,
         metagraph: Arc<MetagraphDB>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         chain_id: u64,
@@ -81,7 +87,6 @@ impl RpcServer {
 
         Self {
             db,
-            state,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
             subnets,
@@ -90,26 +95,29 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
+            mempool: Arc::new(RwLock::new(Mempool::new())),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"), // Default data directory
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
         }
     }
 
     /// Create a new RPC server for testing (uses temp storage)
-    pub fn new_for_testing(db: Arc<BlockchainDB>, state: Arc<RwLock<StateDB>>) -> Self {
+    pub fn new_for_testing(db: Arc<BlockchainDB>) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
         let metagraph = Arc::new(
             MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
         );
-        Self::new(db, state, metagraph, Arc::new(NoOpBroadcaster), 1337)  // Default test chain_id
+        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 1337)  // Default test chain_id
     }
 
-    /// Get EVM state reference for block production polling
-    pub fn evm_state(&self) -> Arc<RwLock<EvmState>> {
-        self.evm_state.clone()
+    /// Get mempool reference for block production polling
+    pub fn mempool(&self) -> Arc<RwLock<Mempool>> {
+        self.mempool.clone()
     }
 
     /// Get AI layer circuit breaker reference for monitoring
@@ -117,11 +125,20 @@ impl RpcServer {
         self.ai_circuit_breaker.clone()
     }
 
-    /// Create a new RPC server for testing with external EVM state
-    pub fn new_for_testing_with_evm(
+    /// Get chain ID (fast atomic read)
+    pub fn chain_id(&self) -> u64 {
+        self.cached_chain_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get unified state reference (C1 Phase 2B)
+    pub fn unified_state(&self) -> Arc<RwLock<UnifiedStateDB>> {
+        self.unified_state.clone()
+    }
+
+    /// Create a new RPC server for testing with external mempool
+    pub fn new_for_testing_with_mempool(
         db: Arc<BlockchainDB>,
-        state: Arc<RwLock<StateDB>>,
-        evm_state: Arc<RwLock<EvmState>>,
+        mempool: Arc<RwLock<Mempool>>,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
         let metagraph = Arc::new(
@@ -130,7 +147,6 @@ impl RpcServer {
 
         Self {
             db,
-            state,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
             subnets: Arc::new(RwLock::new(HashMap::new())),
@@ -139,20 +155,22 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster: Arc::new(NoOpBroadcaster),
-            evm_state,
+            mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(1337)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
         }
     }
 
-    /// Create a new RPC server with external EVM state and P2P broadcaster
+    /// Create a new RPC server with external mempool and P2P broadcaster
     /// Use this for production multi-node setup
-    pub fn new_with_evm_and_broadcaster(
+    pub fn new_with_mempool_and_broadcaster(
         db: Arc<BlockchainDB>,
-        state: Arc<RwLock<StateDB>>,
-        evm_state: Arc<RwLock<EvmState>>,
+        mempool: Arc<RwLock<Mempool>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
@@ -162,7 +180,6 @@ impl RpcServer {
 
         Self {
             db,
-            state,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
             subnets: Arc::new(RwLock::new(HashMap::new())),
@@ -171,11 +188,14 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state,
+            mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(1337)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
         }
     }
 
@@ -183,8 +203,7 @@ impl RpcServer {
     /// Use this when you need P2P handlers to share the same TX pool as RPC
     pub fn new_with_shared_pending_txs(
         db: Arc<BlockchainDB>,
-        state: Arc<RwLock<StateDB>>,
-        evm_state: Arc<RwLock<EvmState>>,
+        mempool: Arc<RwLock<Mempool>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
     ) -> Self {
@@ -195,7 +214,6 @@ impl RpcServer {
 
         Self {
             db,
-            state,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
             subnets: Arc::new(RwLock::new(HashMap::new())),
@@ -204,18 +222,20 @@ impl RpcServer {
             pending_txs,
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state,
+            mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(1337)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
         }
     }
 
     /// Create a new RPC server with validator set
     pub fn with_validators(
         db: Arc<BlockchainDB>,
-        state: Arc<RwLock<StateDB>>,
         metagraph: Arc<MetagraphDB>,
         validators: Arc<RwLock<ValidatorSet>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
@@ -226,7 +246,6 @@ impl RpcServer {
 
         Self {
             db,
-            state,
             validators,
             metagraph,
             subnets,
@@ -235,11 +254,14 @@ impl RpcServer {
             pending_txs: Arc::new(RwLock::new(HashMap::new())),
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
-            evm_state: Arc::new(RwLock::new(EvmState::new(chain_id))),
+            mempool: Arc::new(RwLock::new(Mempool::new())),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"),
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
         }
     }
 
@@ -365,23 +387,102 @@ impl RpcServer {
             }))
         });
 
+        // system_health - Return node health status (for monitoring and load balancers)
+        let db_for_health = self.db.clone();
+        let unified_for_health = self.unified_state.clone();  // C1 Phase 2B: Use unified_state
+        io.add_sync_method("system_health", move |_params: Params| {
+            // Get current block height
+            let block_height = {
+                let mut ceiling: u64 = 1;
+                // Jump search for ceiling
+                loop {
+                    match db_for_health.get_block_by_height(ceiling) {
+                        Ok(Some(_)) => {
+                            ceiling *= 2;
+                            if ceiling > 1_000_000 { break; }
+                        }
+                        Ok(None) => break,
+                        Err(_) => break,
+                    }
+                }
+                // Binary search for exact height
+                let mut low = ceiling / 2;
+                let mut high = ceiling;
+                while low < high {
+                    let mid = (low + high + 1) / 2;
+                    match db_for_health.get_block_by_height(mid) {
+                        Ok(Some(_)) => low = mid,
+                        Ok(None) => high = mid - 1,
+                        Err(_) => break,
+                    }
+                }
+                low
+            };
+
+            let chain_id = unified_for_health.read().chain_id();
+
+            Ok(serde_json::json!({
+                "is_syncing": false,
+                "block": block_height,
+                "healthy": true,
+                "chain_id": chain_id,
+                "version": "0.1.0",
+                "node_name": "luxtensor-node"
+            }))
+        });
+
+        // sync_getSyncStatus - Return current sync status for state sync protocol
+        let db_for_sync = self.db.clone();
+        let unified_for_sync = self.unified_state.clone();  // C1 Phase 2B: Use unified_state
+        io.add_sync_method("sync_getSyncStatus", move |_params: Params| {
+            let current_block = unified_for_sync.read().block_number();
+            let highest_block = {
+                // Simple linear scan from current to find highest
+                let mut highest = current_block;
+                for h in (current_block + 1)..(current_block + 100) {
+                    if db_for_sync.get_block_by_height(h).ok().flatten().is_some() {
+                        highest = h;
+                    } else {
+                        break;
+                    }
+                }
+                highest
+            };
+            let is_syncing = highest_block > current_block;
+
+            Ok(json!({
+                "syncing": is_syncing,
+                "currentBlock": format!("0x{:x}", current_block),
+                "highestBlock": format!("0x{:x}", highest_block),
+                "startingBlock": "0x0",
+                "progress": if highest_block > 0 {
+                    (current_block as f64 / highest_block as f64 * 100.0).min(100.0)
+                } else {
+                    100.0
+                }
+            }))
+        });
+
         // Register Ethereum-compatible methods (eth_*)
-        register_eth_methods(&mut io, self.evm_state.clone());
+        // Uses mempool for pending txs and unified_state for state reads
+        register_eth_methods(&mut io, self.mempool.clone(), self.unified_state.clone());
 
         // Register transaction methods with P2P broadcasting (eth_sendTransaction, eth_getTransactionReceipt)
         // These override the base eth_rpc implementations with broadcast support
+        // [C1 FIX] Uses unified_state for consistent nonce reads
         let tx_ctx = TxRpcContext::new(
-            self.evm_state.clone(),
+            self.mempool.clone(),
             self.pending_txs.clone(),
-            self.state.clone(),
+            self.unified_state.clone(),  // UNIFIED: consistent with eth_* handlers
             self.broadcaster.clone(),
             self.db.clone(),
         );
         register_tx_methods(&tx_ctx, &mut io);
 
-        // Start HTTP server
+        // Start HTTP server with optimized settings
         let server = ServerBuilder::new(io)
-            .threads(4)
+            .threads(64)  // Optimal for most machines (64 threads)
+            .max_request_body_size(16 * 1024 * 1024) // 16 MB max request
             .start_http(&addr.parse().map_err(|e: std::net::AddrParseError| {
                 RpcError::ServerError(e.to_string())
             })?)
@@ -392,9 +493,26 @@ impl RpcServer {
 
     /// Register blockchain query methods
     fn register_blockchain_methods(&self, io: &mut IoHandler) {
-        // eth_blockNumber - Get current block height
+        // eth_blockNumber - Get current block height (OPTIMIZED: atomic with proper ordering)
+        let cached_block_num = self.cached_block_number.clone();
+        let unified_for_block_num = self.unified_state.clone();
         let db_for_block_num = self.db.clone();
         io.add_sync_method("eth_blockNumber", move |_params: Params| {
+            // Get block number from UnifiedStateDB first (source of truth)
+            let unified_block = unified_for_block_num.read().block_number();
+            if unified_block > 0 {
+                // Update cache atomically with Release ordering for visibility
+                cached_block_num.store(unified_block, Ordering::Release);
+                return Ok(Value::String(format!("0x{:x}", unified_block)));
+            }
+
+            // Fallback: Check atomic cache (with Acquire for proper visibility)
+            let cached = cached_block_num.load(Ordering::Acquire);
+            if cached > 0 {
+                return Ok(Value::String(format!("0x{:x}", cached)));
+            }
+
+            // SLOW PATH: Initialize from DB (only at startup)
             // Check genesis first
             match db_for_block_num.get_block_by_height(0) {
                 Ok(None) => return Ok(Value::String("0x0".to_string())),
@@ -427,6 +545,8 @@ impl RpcServer {
                 }
             }
 
+            // Cache the result
+            cached_block_num.store(low, Ordering::Relaxed);
             Ok(Value::String(format!("0x{:x}", low)))
         });
 
@@ -539,7 +659,7 @@ impl RpcServer {
 
     /// Register account methods
     fn register_account_methods(&self, io: &mut IoHandler) {
-        let state = self.state.clone();
+        let unified_state = self.unified_state.clone();
 
         // eth_getBalance - Get account balance
         io.add_sync_method("eth_getBalance", move |params: Params| {
@@ -550,11 +670,11 @@ impl RpcServer {
 
             let address = parse_address(&parsed[0])?;
 
-            let balance = state.read().get_balance(&address);
+            let balance = unified_state.read().get_balance(&address);
             Ok(Value::String(format!("0x{:x}", balance)))
         });
 
-        let state = self.state.clone();
+        let unified_state = self.unified_state.clone();
 
         // eth_getTransactionCount - Get account nonce
         io.add_sync_method("eth_getTransactionCount", move |params: Params| {
@@ -565,12 +685,12 @@ impl RpcServer {
 
             let address = parse_address(&parsed[0])?;
 
-            let nonce = state.read().get_nonce(&address);
+            let nonce = unified_state.read().get_nonce(&address);
             Ok(Value::String(format!("0x{:x}", nonce)))
         });
 
         // eth_sendRawTransaction - Submit raw signed transaction
-        let state = self.state.clone();
+        let unified_state = self.unified_state.clone();
         let pending_txs = self.pending_txs.clone();
         let broadcaster = self.broadcaster.clone();
 
@@ -600,7 +720,7 @@ impl RpcServer {
             }
 
             // 3. Check nonce
-            let state_guard = state.read();
+            let state_guard = unified_state.read();
             let expected_nonce = state_guard.get_nonce(&tx.from);
             if tx.nonce < expected_nonce {
                 return Err(jsonrpc_core::Error::invalid_params(
@@ -689,6 +809,9 @@ impl RpcServer {
                 Err(_) => Err(jsonrpc_core::Error::internal_error()),
             }
         });
+
+        // NOTE: dev_faucet is registered in eth_rpc.rs register_eth_methods()
+        // which updates EvmState.balances - the source queried by eth_getBalance
     }
 }
 
@@ -700,20 +823,19 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn create_test_setup() -> (TempDir, Arc<BlockchainDB>, Arc<RwLock<StateDB>>) {
+    fn create_test_setup() -> (TempDir, Arc<BlockchainDB>) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("blockchain");
 
         let blockchain_db = Arc::new(BlockchainDB::open(&db_path).unwrap());
-        let state_db = Arc::new(RwLock::new(StateDB::new()));
 
-        (temp_dir, blockchain_db, state_db)
+        (temp_dir, blockchain_db)
     }
 
     #[test]
     fn test_rpc_server_creation() {
-        let (_temp, db, state) = create_test_setup();
-        let _server = RpcServer::new_for_testing(db, state);
+        let (_temp, db) = create_test_setup();
+        let _server = RpcServer::new_for_testing(db);
     }
 
     #[test]

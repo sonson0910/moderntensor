@@ -1,0 +1,100 @@
+﻿cargo :    Compiling luxtensor-rpc v0.1.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\luxtenso
+r-rpc)
+At line:1 char:1
++ cargo build --release --package luxtensor-node 2>&1 | 
+Out-File -Encod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compili 
+   ng lu...\luxtensor-rpc):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error[E0433]: failed to resolve: use of undeclared type 
+`Address`
+   --> crates\luxtensor-rpc\src\server.rs:714:27
+    |
+714 |             let address = Address::from(addr_arr);
+    |                           ^^^^^^^ use of 
+undeclared type `Address`
+    |
+help: consider importing one of these items
+    |
+  1 + use crate::eth_rpc::Address;
+    |
+  1 + use luxtensor_core::Address;
+    |
+
+warning: unexpected `cfg` condition value: `reqwest`
+  --> crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove the 
+condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in 
+`Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/
+check-cfg/cargo-specifics.html> for more information 
+about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `reqwest`
+   --> crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ help: 
+remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a feature in 
+`Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc
+/check-cfg/cargo-specifics.html> for more information 
+about checking conditional configuration
+
+error[E0599]: no method named `set_balance` found for 
+struct `parking_lot::lock_api::RwLockWriteGuard<'_, 
+parking_lot::RawRwLock, luxtensor_core::StateDB>` in 
+the current scope
+   --> crates\luxtensor-rpc\src\server.rs:726:25
+    |
+726 |             match state.set_balance(&address, 
+state.get_balance(&address).unwrap_or(0) + amount) {
+    |                         ^^^^^^^^^^^
+    |
+help: there is a method `get_balance` with a similar 
+name, but with different arguments
+   --> D:\venera\cardano\moderntensor\moderntensor\luxte
+nsor\crates\luxtensor-core\src\state.rs:33:5
+    |
+ 33 |     pub fn get_balance(&self, address: &Address) 
+-> u128 {
+    |     
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `unwrap_or` found for 
+type `u128` in the current scope
+   --> crates\luxtensor-rpc\src\server.rs:726:75
+    |
+726 |             match state.set_balance(&address, 
+state.get_balance(&address).unwrap_or(0) + amount) {
+    |                                                   
+                        ^^^^^^^^^ method not found in 
+`u128`
+
+error[E0599]: no method named `unwrap_or` found for 
+type `u128` in the current scope
+   --> crates\luxtensor-rpc\src\server.rs:728:67
+    |
+728 |                     let new_balance = 
+state.get_balance(&address).unwrap_or(0);
+    |                                                   
+                ^^^^^^^^^ method not found in `u128`
+
+Some errors have detailed explanations: E0433, E0599.
+For more information about an error, try `rustc 
+--explain E0433`.
+warning: `luxtensor-rpc` (lib) generated 2 warnings
+error: could not compile `luxtensor-rpc` (lib) due to 4 
+previous errors; 2 warnings emitted

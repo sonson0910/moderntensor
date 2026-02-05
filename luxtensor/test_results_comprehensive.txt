@@ -1,0 +1,78 @@
+﻿
+[94m======================================================================[0m
+[94m  LUXTENSOR ULTIMATE FEATURE TEST - 50+ TESTS[0m
+[94m======================================================================[0m
+
+
+[96m[1] CORE BLOCKCHAIN[0m
+  [92mΓ£ô[0m eth_blockNumber
+  [92mΓ£ô[0m eth_chainId
+  [92mΓ£ô[0m eth_getBalance
+  [92mΓ£ô[0m eth_getTransactionCount
+  [92mΓ£ô[0m eth_getBlockByNumber
+  [92mΓ£ô[0m eth_getBlockByNumber (latest)
+  [92mΓ£ô[0m eth_getBlockByHash (genesis)
+  [92mΓ£ô[0m eth_gasPrice
+  [92mΓ£ô[0m eth_estimateGas
+  [92mΓ£ô[0m eth_getCode
+
+[96m[2] STAKING[0m
+  [92mΓ£ô[0m staking_getTotalStake
+  [92mΓ£ô[0m staking_getValidators
+  [92mΓ£ô[0m staking_getStake
+  [92mΓ£ô[0m staking_addStake
+  [92mΓ£ô[0m staking_getStake (verify add)
+  [92mΓ£ô[0m staking_removeStake
+  [92mΓ£ô[0m staking_getStake (verify remove)
+  [92mΓ£ô[0m staking_claimRewards
+
+[96m[3] SUBNETS[0m
+  [92mΓ£ô[0m subnet_listAll
+  [92mΓ£ô[0m subnet_getCount
+  [92mΓ£ô[0m subnet_getInfo
+  [92mΓ£ô[0m query_getSubnets
+  [92mΓ£ô[0m query_getSubnetInfo
+  [92mΓ£ô[0m subnet_create
+
+[96m[4] NEURONS[0m
+  [92mΓ£ô[0m neuron_listBySubnet
+  [92mΓ£ô[0m neuron_getCount
+  [92mΓ£ô[0m neuron_getInfo
+  [92mΓ£ô[0m query_getNeurons
+  [92mΓ£ô[0m query_getNeuronInfo
+  [92mΓ£ô[0m neuron_register
+
+[96m[5] WEIGHTS[0m
+  [92mΓ£ô[0m weight_getAll
+  [92mΓ£ô[0m weight_getWeights
+  [92mΓ£ô[0m query_getWeights
+  [92mΓ£ô[0m weight_setWeights
+
+[96m[6] AI METHODS[0m
+  [92mΓ£ô[0m ai_getMetagraph
+  [92mΓ£ô[0m ai_getIncentive
+  [92mΓ£ô[0m lux_submitAITask
+  [92mΓ£ô[0m lux_getValidatorStatus
+
+[96m[7] ETHEREUM COMPATIBILITY[0m
+  [92mΓ£ô[0m eth_getStorageAt
+  [92mΓ£ô[0m eth_accounts
+  [92mΓ£ô[0m eth_syncing
+  [92mΓ£ô[0m eth_mining
+  [92mΓ£ô[0m eth_hashrate
+  [92mΓ£ô[0m eth_coinbase
+  [92mΓ£ô[0m eth_protocolVersion
+  [92mΓ£ô[0m eth_getTransactionReceipt (null ok)
+
+[96m[8] NETWORK INFO[0m
+  [92mΓ£ô[0m net_version
+  [92mΓ£ô[0m net_peerCount
+  [92mΓ£ô[0m net_listening
+  [92mΓ£ô[0m web3_clientVersion
+  [92mΓ£ô[0m web3_sha3
+  [92mΓ£ô[0m rpc_modules
+
+[94m======================================================================[0m
+[92m  Γ£ô ALL TESTS PASSED: 52/52 (100%)[0m
+[94m======================================================================[0m
+

@@ -28,6 +28,10 @@ pub struct MinerMetrics {
     pub last_active: u64,
     /// Cumulative score (0-100_000 for precision)
     pub score: u32,
+    /// GPU tasks completed this epoch (verified by validator)
+    pub gpu_tasks_completed: u32,
+    /// GPU tasks assigned this epoch
+    pub gpu_tasks_assigned: u32,
 }
 
 /// Validator performance metrics
@@ -62,6 +66,16 @@ pub enum ScoringEvent {
     TaskFailed {
         miner: [u8; 20],
         reason: String,
+    },
+    /// GPU task assigned to miner (for AI subnets)
+    GpuTaskAssigned {
+        miner: [u8; 20],
+    },
+    /// GPU task completed by miner (verified by validator)
+    GpuTaskCompleted {
+        miner: [u8; 20],
+        execution_time: u64,
+        quality_score: u32,
     },
     /// Validator produced a block
     BlockProduced {
@@ -158,6 +172,16 @@ impl ScoringManager {
             ScoringEvent::TaskFailed { miner, .. } => {
                 self.record_task_failed(miner);
             }
+            ScoringEvent::GpuTaskAssigned { miner } => {
+                self.record_gpu_task_assigned(miner);
+            }
+            ScoringEvent::GpuTaskCompleted {
+                miner,
+                execution_time,
+                quality_score,
+            } => {
+                self.record_gpu_task_completed(miner, execution_time, quality_score);
+            }
             ScoringEvent::BlockProduced { validator } => {
                 self.record_block_produced(validator);
             }
@@ -215,6 +239,41 @@ impl ScoringManager {
 
         // Recalculate score
         self.recalculate_miner_score(miner);
+    }
+
+    /// Record GPU task assigned (for AI subnets)
+    pub fn record_gpu_task_assigned(&mut self, miner: [u8; 20]) {
+        let metrics = self
+            .miner_metrics
+            .entry(miner)
+            .or_insert_with(MinerMetrics::default);
+
+        metrics.gpu_tasks_assigned += 1;
+        metrics.last_active = current_timestamp();
+    }
+
+    /// Record GPU task completed (verified by validator)
+    pub fn record_gpu_task_completed(
+        &mut self,
+        miner: [u8; 20],
+        execution_time: u64,
+        quality_score: u32,
+    ) {
+        // Record as regular task completion
+        self.record_task_completed(miner, execution_time, quality_score);
+
+        // Also increment GPU-specific counter
+        if let Some(metrics) = self.miner_metrics.get_mut(&miner) {
+            metrics.gpu_tasks_completed += 1;
+        }
+    }
+
+    /// Reset GPU task counters for new epoch
+    pub fn reset_epoch_stats(&mut self) {
+        for metrics in self.miner_metrics.values_mut() {
+            metrics.gpu_tasks_completed = 0;
+            metrics.gpu_tasks_assigned = 0;
+        }
     }
 
     /// Record block production
@@ -375,6 +434,23 @@ impl ScoringManager {
     /// Get miner metrics
     pub fn get_miner_metrics(&self, miner: &[u8; 20]) -> Option<&MinerMetrics> {
         self.miner_metrics.get(miner)
+    }
+
+    /// Get all miners as MinerEpochStats for reward distribution
+    /// This bridges ScoringManager to RewardDistributor
+    pub fn get_all_miner_epoch_stats(&self) -> Vec<crate::reward_distribution::MinerEpochStats> {
+        self.miner_metrics
+            .iter()
+            .map(|(addr, m)| {
+                crate::reward_distribution::MinerEpochStats::with_tasks(
+                    *addr,
+                    m.score as f64 / self.config.max_score as f64,  // Normalize to 0.0-1.0
+                    (m.tasks_completed - m.gpu_tasks_completed as u64) as u32,  // CPU tasks
+                    m.gpu_tasks_completed,
+                    m.gpu_tasks_assigned,
+                )
+            })
+            .collect()
     }
 
     /// Get validator metrics

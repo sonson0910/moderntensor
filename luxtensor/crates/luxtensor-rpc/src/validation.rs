@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_validate_block_number() {
-        let limits = RpcLimits::default();
+        let _limits = RpcLimits::default();
 
         assert_eq!(validate_block_number(&Value::String("earliest".into())).unwrap(), 0);
         assert_eq!(validate_block_number(&Value::String("0x10".into())).unwrap(), 16);

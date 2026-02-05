@@ -25,4 +25,9 @@ pub use account_abstraction::{
     UserOperation, EntryPoint, UserOperationReceipt, PaymasterInfo,
     SimulationResult, GasEstimate, AccountAbstractionError,
 };
+pub use ai_precompiles::{
+    AIPrecompileState, AIRequestEntry, RequestStatus,
+    TrainingJob, TrainingStatus, gas_costs,
+};
+pub use revm_integration::precompiles;
 

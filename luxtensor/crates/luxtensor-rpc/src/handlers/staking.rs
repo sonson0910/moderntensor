@@ -368,8 +368,12 @@ pub fn register_staking_handlers(
         if let Ok(stakes) = db.get_all_stakes() {
             let mut locks = LOCKED_STAKES.write();
             for (addr, data) in &stakes {
-                if let Ok((amount, unlock_ts, bonus)) = bincode::deserialize::<(u128, u64, u64)>(data) {
-                    locks.insert(*addr, (amount, unlock_ts, bonus));
+                if addr.len() >= 20 {
+                    if let Ok((amount, unlock_ts, bonus)) = bincode::deserialize::<(u128, u64, u64)>(data) {
+                        let mut addr_arr = [0u8; 20];
+                        addr_arr.copy_from_slice(&addr[..20]);
+                        locks.insert(addr_arr, (amount, unlock_ts, bonus));
+                    }
                 }
             }
             if !stakes.is_empty() {

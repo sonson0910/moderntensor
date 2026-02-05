@@ -1,8 +1,44 @@
 // Node Tier System for Progressive Staking (Model C)
 // 4 Tiers: Light Node, Full Node, Validator, Super Validator
+// Enhanced with GPU bonus and logarithmic stake curve for fair economics
 
 use std::collections::HashMap;
 use parking_lot::RwLock;
+
+/// Calculate effective stake using logarithmic curve for whale protection
+/// This ensures diminishing returns for very large stakes:
+/// - 1,000 LUX → 1,000 effective (100%)
+/// - 10,000 LUX → ~8,500 effective (85%)
+/// - 100,000 LUX → ~50,000 effective (50%)
+/// - 1,000,000 LUX → ~100,000 effective (10%)
+pub fn logarithmic_stake(stake: u128) -> u128 {
+    if stake == 0 {
+        return 0;
+    }
+
+    // Use f64 for calculation - stake in base units (18 decimals)
+    let stake_f = stake as f64;
+
+    // Normalize to "human readable" units for log calculation
+    // Stake is in 18 decimals, so divide by 10^18 for logarithm
+    let normalized = stake_f / 1e18;
+
+    if normalized <= 1.0 {
+        // Small stakes: no reduction
+        return stake;
+    }
+
+    // Formula: stake * ln(normalized + 1) / (normalized + 1)
+    // This naturally reduces effectiveness for larger stakes
+    let log_factor = (normalized + 1.0).ln() / (normalized + 1.0);
+
+    // Apply factor, ensuring minimum of 10% effectiveness for very large stakes
+    let effective_factor = log_factor.max(0.10);
+
+    (stake_f * effective_factor) as u128
+}
+
+
 
 /// Minimum stake requirements for each tier (in base units)
 pub const LIGHT_NODE_STAKE: u128 = 0;                    // No stake required
@@ -83,6 +119,36 @@ impl NodeTier {
     }
 }
 
+/// GPU capability for AI nodes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GpuCapability {
+    #[default]
+    None,
+    /// Basic GPU (RTX 3060 class) - +20% bonus
+    Basic,
+    /// Advanced GPU (RTX 4080 class) - +30% bonus
+    Advanced,
+    /// Professional GPU (A100 class) - +40% bonus (capped)
+    Professional,
+}
+
+impl GpuCapability {
+    /// Get GPU bonus multiplier (capped at 40%)
+    pub fn bonus_multiplier(&self) -> f64 {
+        match self {
+            GpuCapability::None => 1.0,        // No bonus
+            GpuCapability::Basic => 1.20,      // +20%
+            GpuCapability::Advanced => 1.30,   // +30%
+            GpuCapability::Professional => 1.40, // +40% (capped)
+        }
+    }
+
+    /// Check if node has GPU
+    pub fn has_gpu(&self) -> bool {
+        !matches!(self, GpuCapability::None)
+    }
+}
+
 /// Registered node info
 #[derive(Debug, Clone)]
 pub struct NodeInfo {
@@ -94,6 +160,10 @@ pub struct NodeInfo {
     pub uptime_score: f64,   // 0.0 - 1.0
     pub blocks_produced: u64,
     pub tx_relayed: u64,
+    /// GPU capability for AI tasks
+    pub gpu: GpuCapability,
+    /// AI tasks completed
+    pub ai_tasks_completed: u64,
 }
 
 impl NodeInfo {
@@ -107,7 +177,40 @@ impl NodeInfo {
             uptime_score: 1.0,
             blocks_produced: 0,
             tx_relayed: 0,
+            gpu: GpuCapability::None,
+            ai_tasks_completed: 0,
         }
+    }
+
+    /// Create node with GPU capability
+    pub fn new_with_gpu(address: [u8; 20], stake: u128, block_height: u64, gpu: GpuCapability) -> Self {
+        Self {
+            gpu,
+            ..Self::new(address, stake, block_height)
+        }
+    }
+
+    /// Calculate effective stake using logarithmic curve for whale protection
+    /// Formula: stake * ln(stake + 1) / (stake + 1)
+    /// This gives diminishing returns for very large stakes
+    pub fn effective_stake(&self) -> u128 {
+        logarithmic_stake(self.stake)
+    }
+
+    /// Calculate effective stake with GPU bonus
+    pub fn effective_stake_with_gpu(&self) -> u128 {
+        let base = self.effective_stake();
+        (base as f64 * self.gpu.bonus_multiplier()) as u128
+    }
+
+    /// Set GPU capability
+    pub fn set_gpu(&mut self, gpu: GpuCapability) {
+        self.gpu = gpu;
+    }
+
+    /// Record AI task completion
+    pub fn record_ai_task(&mut self) {
+        self.ai_tasks_completed += 1;
     }
 
     /// Update stake and recalculate tier

@@ -211,6 +211,11 @@ impl EntryPoint {
             .collect()
     }
 
+    /// Get chain ID for this entry point
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Get nonce for a sender
     pub fn get_nonce(&self, sender: &Address) -> u128 {
         *self.nonces.read().get(sender).unwrap_or(&0)

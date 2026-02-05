@@ -1,0 +1,66 @@
+﻿cargo :    Compiling luxtensor-storage v0.1.0 (D
+:\venera\cardano\moderntensor\moderntensor\luxte
+nsor\crates\luxtensor-storage)
+At line:1 char:1
++ cargo build --release --package 
+luxtensor-node 2>&1 | Out-File -Encod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo          : NotSpecified: (   
+    Compiling lu...tensor-storage):String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+   Compiling luxtensor-rpc v0.1.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\
+luxtensor-rpc)
+warning: unexpected `cfg` condition value: 
+`reqwest`
+  --> 
+crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove 
+the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightl
+y/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+   = note: `#[warn(unexpected_cfgs)]` on by 
+default
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+   --> 
+crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ 
+help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/night
+ly/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+
+warning: `luxtensor-rpc` (lib) generated 2 
+warnings
+   Compiling luxtensor-node v0.1.0 (D:\venera\ca
+rdano\moderntensor\moderntensor\luxtensor\crates
+\luxtensor-node)
+    Finished `release` profile [optimized] 
+target(s) in 1m 59s
+warning: the following packages contain code 
+that will be rejected by a future version of 
+Rust: net2 v0.2.39
+note: to see what the problems were, use the 
+option `--future-incompat-report`, or run 
+`cargo report future-incompatibilities --id 1`

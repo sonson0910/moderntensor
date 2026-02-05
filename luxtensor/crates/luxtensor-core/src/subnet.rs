@@ -34,6 +34,8 @@ pub struct SubnetInfo {
     pub active: bool,
     /// Metadata (JSON string)
     pub metadata: String,
+    /// Subnet configuration (optional, None = use defaults)
+    pub config: Option<SubnetConfig>,
 }
 
 impl SubnetInfo {
@@ -49,7 +51,26 @@ impl SubnetInfo {
             emission_share_bps: 0,
             active: true,
             metadata: String::new(),
+            config: None,
         }
+    }
+
+    /// Create with custom config
+    pub fn with_config(
+        netuid: u16,
+        owner: [u8; 20],
+        name: String,
+        registered_at: u64,
+        config: SubnetConfig,
+    ) -> Self {
+        let mut info = Self::new(netuid, owner, name, registered_at);
+        info.config = Some(config);
+        info
+    }
+
+    /// Get config or default
+    pub fn get_config(&self) -> SubnetConfig {
+        self.config.clone().unwrap_or_default()
     }
 
     /// Get emission share as float
@@ -188,6 +209,154 @@ impl EmissionShare {
     }
 }
 
+/// Subnet type classification
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubnetType {
+    /// AI compute and training subnets
+    AI,
+    /// DeFi protocols
+    DeFi,
+    /// Gaming applications
+    Gaming,
+    /// Social platforms
+    Social,
+    /// Infrastructure services
+    Infrastructure,
+}
+
+impl Default for SubnetType {
+    fn default() -> Self {
+        SubnetType::AI
+    }
+}
+
+/// Subnet-specific configuration for reward and GPU settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubnetConfig {
+    /// Whether GPU is required to participate
+    pub gpu_required: bool,
+    /// Whether GPU bonus is enabled for this subnet
+    pub gpu_bonus_enabled: bool,
+    /// GPU bonus rate (1.0 = no bonus, max 1.4 = 40% bonus)
+    pub gpu_bonus_rate: f64,
+    /// Miner share of subnet rewards (0.4 - 0.7)
+    pub miner_share: f64,
+    /// Validator share of subnet rewards (0.2 - 0.4)
+    pub validator_share: f64,
+    /// Owner share of subnet rewards (0.0 - 0.2)
+    pub owner_share: f64,
+    /// Task window in seconds (300 - 86400)
+    pub task_window_seconds: u64,
+    /// Minimum stake to join subnet (wei)
+    pub min_stake_to_join: u128,
+    /// Subnet type classification
+    pub subnet_type: SubnetType,
+}
+
+impl Default for SubnetConfig {
+    fn default() -> Self {
+        Self {
+            gpu_required: false,
+            gpu_bonus_enabled: true,
+            gpu_bonus_rate: 1.2,          // 20% default bonus
+            miner_share: 0.55,            // 55% to miners
+            validator_share: 0.30,        // 30% to validators
+            owner_share: 0.15,            // 15% to owner
+            task_window_seconds: 3600,    // 1 hour
+            min_stake_to_join: 100_000_000_000_000_000_000, // 100 tokens
+            subnet_type: SubnetType::AI,
+        }
+    }
+}
+
+impl SubnetConfig {
+    /// Validate config against protocol guardrails
+    pub fn validate(&self, guardrails: &ProtocolGuardrails) -> Result<(), String> {
+        // Check GPU bonus cap
+        if self.gpu_bonus_rate > guardrails.max_gpu_bonus {
+            return Err(format!(
+                "GPU bonus {} exceeds max {}",
+                self.gpu_bonus_rate, guardrails.max_gpu_bonus
+            ));
+        }
+        if self.gpu_bonus_rate < 1.0 {
+            return Err("GPU bonus must be >= 1.0".to_string());
+        }
+
+        // Check reward shares
+        if self.miner_share < guardrails.min_miner_share {
+            return Err(format!(
+                "Miner share {} below min {}",
+                self.miner_share, guardrails.min_miner_share
+            ));
+        }
+        if self.validator_share < guardrails.min_validator_share {
+            return Err(format!(
+                "Validator share {} below min {}",
+                self.validator_share, guardrails.min_validator_share
+            ));
+        }
+        if self.owner_share > guardrails.max_owner_share {
+            return Err(format!(
+                "Owner share {} exceeds max {}",
+                self.owner_share, guardrails.max_owner_share
+            ));
+        }
+
+        // Check sum = 1.0
+        let total = self.miner_share + self.validator_share + self.owner_share;
+        if (total - 1.0).abs() > 0.001 {
+            return Err(format!("Shares must sum to 1.0, got {}", total));
+        }
+
+        // Check task window
+        if self.task_window_seconds < guardrails.min_task_window {
+            return Err(format!(
+                "Task window {} below min {}",
+                self.task_window_seconds, guardrails.min_task_window
+            ));
+        }
+        if self.task_window_seconds > guardrails.max_task_window {
+            return Err(format!(
+                "Task window {} exceeds max {}",
+                self.task_window_seconds, guardrails.max_task_window
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Protocol-level guardrails for subnet configurations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolGuardrails {
+    /// Maximum GPU bonus (1.4 = 40%)
+    pub max_gpu_bonus: f64,
+    /// Maximum owner share (0.2 = 20%)
+    pub max_owner_share: f64,
+    /// Minimum miner share (0.4 = 40%)
+    pub min_miner_share: f64,
+    /// Minimum validator share (0.2 = 20%)
+    pub min_validator_share: f64,
+    /// Minimum task window in seconds
+    pub min_task_window: u64,
+    /// Maximum task window in seconds
+    pub max_task_window: u64,
+}
+
+impl Default for ProtocolGuardrails {
+    fn default() -> Self {
+        Self {
+            max_gpu_bonus: 1.4,           // 40% max bonus
+            max_owner_share: 0.20,        // 20% max owner
+            min_miner_share: 0.40,        // 40% min miner
+            min_validator_share: 0.20,    // 20% min validator
+            min_task_window: 300,         // 5 minutes min
+            max_task_window: 86400,       // 24 hours max
+        }
+    }
+}
+
 /// Result of subnet registration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubnetRegistrationResult {
@@ -255,5 +424,69 @@ mod tests {
         let config = RootConfig::default();
         assert_eq!(config.max_subnets, 32);
         assert_eq!(config.max_root_validators, 64);
+    }
+
+    #[test]
+    fn test_subnet_config_default() {
+        let config = SubnetConfig::default();
+        assert!(!config.gpu_required);
+        assert!(config.gpu_bonus_enabled);
+        assert!((config.gpu_bonus_rate - 1.2).abs() < 0.001);
+        assert!((config.miner_share - 0.55).abs() < 0.001);
+        assert!((config.validator_share - 0.30).abs() < 0.001);
+        assert!((config.owner_share - 0.15).abs() < 0.001);
+        assert_eq!(config.subnet_type, SubnetType::AI);
+    }
+
+    #[test]
+    fn test_subnet_config_validation() {
+        let guardrails = ProtocolGuardrails::default();
+        let valid_config = SubnetConfig::default();
+        assert!(valid_config.validate(&guardrails).is_ok());
+
+        // Test GPU bonus too high
+        let mut bad_config = SubnetConfig::default();
+        bad_config.gpu_bonus_rate = 1.5; // exceeds 1.4 max
+        assert!(bad_config.validate(&guardrails).is_err());
+
+        // Test owner share too high
+        bad_config = SubnetConfig::default();
+        bad_config.owner_share = 0.25; // exceeds 0.2 max
+        bad_config.miner_share = 0.45;
+        bad_config.validator_share = 0.30;
+        assert!(bad_config.validate(&guardrails).is_err());
+
+        // Test miner share too low
+        bad_config = SubnetConfig::default();
+        bad_config.miner_share = 0.30; // below 0.4 min
+        bad_config.validator_share = 0.50;
+        bad_config.owner_share = 0.20;
+        assert!(bad_config.validate(&guardrails).is_err());
+    }
+
+    #[test]
+    fn test_protocol_guardrails_default() {
+        let guardrails = ProtocolGuardrails::default();
+        assert!((guardrails.max_gpu_bonus - 1.4).abs() < 0.001);
+        assert!((guardrails.max_owner_share - 0.20).abs() < 0.001);
+        assert!((guardrails.min_miner_share - 0.40).abs() < 0.001);
+        assert!((guardrails.min_validator_share - 0.20).abs() < 0.001);
+        assert_eq!(guardrails.min_task_window, 300);
+        assert_eq!(guardrails.max_task_window, 86400);
+    }
+
+    #[test]
+    fn test_subnet_info_with_config() {
+        let config = SubnetConfig {
+            gpu_required: true,
+            gpu_bonus_rate: 1.3,
+            subnet_type: SubnetType::DeFi,
+            ..Default::default()
+        };
+        let subnet = SubnetInfo::with_config(1, [0u8; 20], "DeFi".to_string(), 100, config);
+        assert!(subnet.config.is_some());
+        let cfg = subnet.get_config();
+        assert!(cfg.gpu_required);
+        assert_eq!(cfg.subnet_type, SubnetType::DeFi);
     }
 }

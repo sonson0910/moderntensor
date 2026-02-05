@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use parking_lot::RwLock;
 use crate::reward_distribution::{
     RewardDistributor, DistributionResult,
-    MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo
+    MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo,
+    MinerEpochStats,  // NEW: for task-based GPU verification
 };
 use crate::emission::{EmissionController, EmissionConfig, UtilityMetrics};
 use crate::burn_manager::{BurnManager, BurnConfig};
@@ -131,6 +132,77 @@ impl RewardExecutor {
                 distribution.validator_rewards.len() +
                 distribution.delegator_rewards.len() +
                 distribution.subnet_owner_rewards.len(),
+        }
+    }
+
+    /// Process end of epoch with GPU task-based verification (v2)
+    /// Uses MinerEpochStats instead of MinerInfo for true task completion proof
+    pub fn process_epoch_v2(
+        &self,
+        epoch: u64,
+        block_height: u64,
+        utility: &UtilityMetrics,
+        miner_stats: &[MinerEpochStats],  // From ScoringManager.get_all_miner_epoch_stats()
+        gpu_bonus_rate: f64,               // From SubnetConfig.gpu_bonus_rate
+        validators: &[ValidatorInfo],
+        delegators: &[DelegatorInfo],
+        subnets: &[SubnetInfo],
+    ) -> EpochResult {
+        // Calculate emission for this epoch
+        let emission_result = self.emission.write().process_block(block_height, utility);
+        let total_emission = emission_result.amount;
+
+        // Distribute miner rewards with task-based GPU verification
+        let miner_pool = (total_emission * 55) / 100;  // 55% to miners (Balanced Model)
+        let miner_distribution = self.distributor.distribute_by_epoch_stats(
+            miner_pool,
+            miner_stats,
+            gpu_bonus_rate,
+        );
+
+        // Distribute remaining pools using standard distribution
+        let validator_pool = (total_emission * 30) / 100;  // 30% validators
+        let subnet_pool = (total_emission * 15) / 100;      // 15% subnet owners
+
+        // Convert miner_stats to MinerInfo for combined distribution tracking
+        // (validators/delegators/subnets still use standard flow)
+        let dummy_miners: Vec<MinerInfo> = vec![];  // Empty - handled separately
+        let distribution = self.distributor.distribute(
+            epoch,
+            validator_pool + subnet_pool,  // Only non-miner pools
+            &dummy_miners,
+            validators,
+            delegators,
+            subnets,
+        );
+
+        // Combine distributions
+        let mut combined = distribution.clone();
+
+        // Add miner rewards from task-based distribution
+        for (addr, amount) in miner_distribution {
+            combined.miner_rewards.insert(addr, amount);
+        }
+
+        // Credit rewards to pending balances
+        self.credit_rewards(&combined, epoch);
+
+        // Update current epoch
+        *self.current_epoch.write() = epoch;
+
+        EpochResult {
+            epoch,
+            total_emission,
+            miner_rewards: combined.miner_rewards.values().sum(),
+            validator_rewards: combined.validator_rewards.values().sum(),
+            delegator_rewards: combined.delegator_rewards.values().sum(),
+            subnet_rewards: combined.subnet_owner_rewards.values().sum(),
+            dao_allocation: combined.dao_allocation,
+            participants_rewarded:
+                combined.miner_rewards.len() +
+                combined.validator_rewards.len() +
+                combined.delegator_rewards.len() +
+                combined.subnet_owner_rewards.len(),
         }
     }
 
@@ -349,7 +421,7 @@ mod tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miners = vec![
-            MinerInfo { address: test_address(1), score: 0.8 },
+            MinerInfo { address: test_address(1), score: 0.8, has_gpu: false },
         ];
         let validators = vec![
             ValidatorInfo { address: test_address(10), stake: 1000 },
@@ -380,7 +452,7 @@ mod tests {
 
         let miner_addr = test_address(1);
         let miners = vec![
-            MinerInfo { address: miner_addr, score: 1.0 },
+            MinerInfo { address: miner_addr, score: 1.0, has_gpu: false },
         ];
 
         // Process an epoch
@@ -409,7 +481,7 @@ mod tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miners = vec![
-            MinerInfo { address: test_address(1), score: 1.0 },
+            MinerInfo { address: test_address(1), score: 1.0, has_gpu: false },
         ];
 
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
@@ -417,5 +489,48 @@ mod tests {
         // DAO should have received 13%
         let dao_balance = executor.get_dao_balance();
         assert!(dao_balance > 0, "DAO should have balance");
+    }
+
+    #[test]
+    fn test_process_epoch_v2() {
+        let dao_addr = test_address(100);
+        let executor = RewardExecutor::new(dao_addr);
+
+        // Create miners with epoch stats (task-based GPU verification)
+        let gpu_miner = MinerEpochStats::with_tasks(
+            test_address(1),
+            0.8,   // base score
+            10,    // cpu tasks
+            8,     // gpu tasks completed
+            10,    // gpu tasks assigned (80% completion)
+        );
+        let cpu_miner = MinerEpochStats::new(test_address(2), 0.7);
+
+        let miner_stats = vec![gpu_miner, cpu_miner];
+        let validators = vec![ValidatorInfo { address: test_address(10), stake: 1000 }];
+        let gpu_bonus_rate = 1.4;  // 40% max bonus
+
+        let result = executor.process_epoch_v2(
+            1,
+            100,
+            &test_utility(),
+            &miner_stats,
+            gpu_bonus_rate,
+            &validators,
+            &[],
+            &[],
+        );
+
+        // Verify miner got rewards
+        assert!(result.miner_rewards > 0, "Miners should receive rewards");
+        assert!(result.validator_rewards > 0, "Validators should receive rewards");
+
+        // GPU miner should have more rewards (32% effective bonus = 80% completion * 40% max)
+        let miner1_pending = executor.get_pending_rewards(test_address(1));
+        let miner2_pending = executor.get_pending_rewards(test_address(2));
+
+        // GPU miner (score 0.8 with GPU bonus) should beat CPU miner (score 0.7)
+        assert!(miner1_pending > miner2_pending,
+            "GPU miner should have more rewards: {} vs {}", miner1_pending, miner2_pending);
     }
 }

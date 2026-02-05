@@ -1,0 +1,49 @@
+﻿cargo :    Compiling luxtensor-rpc v0.1.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\luxtenso
+r-rpc)
+At line:1 char:1
++ cargo build --release --package luxtensor-node 2>&1 | 
+Out-File -Encod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compili 
+   ng lu...\luxtensor-rpc):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unexpected `cfg` condition value: `reqwest`
+  --> crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove the 
+condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a feature in 
+`Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/
+check-cfg/cargo-specifics.html> for more information 
+about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `reqwest`
+   --> crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ help: 
+remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a feature in 
+`Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc
+/check-cfg/cargo-specifics.html> for more information 
+about checking conditional configuration
+
+warning: `luxtensor-rpc` (lib) generated 2 warnings
+   Compiling luxtensor-node v0.1.0 (D:\venera\cardano\mo
+derntensor\moderntensor\luxtensor\crates\luxtensor-node)
+error: failed to remove file `D:\venera\cardano\modernte
+nsor\moderntensor\luxtensor\target\release\luxtensor-nod
+e.exe`
+
+Caused by:
+  Access is denied. (os error 5)

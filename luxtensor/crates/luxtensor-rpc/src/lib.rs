@@ -1,5 +1,37 @@
-// LuxTensor RPC module
-// Phase 5: JSON-RPC API and WebSocket implementation
+//! # LuxTensor RPC Crate
+//!
+//! JSON-RPC 2.0 API server for the LuxTensor blockchain.
+//!
+//! ## Features
+//!
+//! - **Ethereum-compatible RPC** (`eth_*` methods)
+//! - **Staking operations** (`staking_*` methods)
+//! - **AI/ML inference** (`ai_*`, `training_*` methods)
+//! - **Zero-knowledge proofs** (`zkml_*` methods)
+//! - **WebSocket subscriptions** for real-time events
+//!
+//! ## Quick Start
+//!
+//! ```rust,ignore
+//! use luxtensor_rpc::{RpcServer, RpcServerConfig};
+//!
+//! let config = RpcServerConfig::default();
+//! let server = RpcServer::new(config);
+//! server.start("127.0.0.1:8545").await?;
+//! ```
+//!
+//! ## RPC Method Categories
+//!
+//! | Prefix | Module | Description |
+//! |--------|--------|-------------|
+//! | `eth_` | [`eth_rpc`] | Ethereum JSON-RPC compatible |
+//! | `staking_` | [`staking_rpc`] | Validator staking & delegation |
+//! | `ai_` | [`ai_rpc`] | AI model inference |
+//! | `training_` | [`training_rpc`] | Distributed training |
+//! | `zkml_` | [`zkml_rpc`] | Zero-knowledge ML proofs |
+//! | `subnet_` | [`subnet_rpc`] | Subnet management |
+//! | `tx_` | [`tx_rpc`] | Transaction handling |
+//!
 
 pub mod broadcaster;
 pub mod error;
@@ -17,7 +49,7 @@ pub mod helpers;
 pub mod handlers;
 pub mod staking_rpc;
 pub mod peer_count;
-pub mod contract_registry;
+// contract_registry module DELETED - bytecode now stored in Account.code
 pub mod rate_limiter;
 pub mod admin_auth;
 pub mod load_balancer;
@@ -47,7 +79,7 @@ pub use validation::{RpcLimits, ValidationError, validate_address, validate_hash
 pub use rewards_rpc::register_reward_methods;
 pub use allocation_rpc::register_allocation_methods;
 pub use node_rpc::register_node_methods;
-pub use eth_rpc::{register_eth_methods, register_log_methods, register_aa_methods, EvmState, ReadyTransaction};
+pub use eth_rpc::{register_eth_methods, register_log_methods, register_aa_methods, Mempool, ReadyTransaction};
 pub use logs::{LogStore, LogEntry, LogFilter, LogStoreStats};
 pub use subnet_rpc::{register_subnet_methods, RootSubnet, new_root_subnet, RootSubnetState};
 pub use query_rpc::{QueryRpcContext, register_query_methods};

@@ -1,0 +1,93 @@
+﻿cargo :     Checking luxtensor-storage v0.1.0 (D
+:\venera\cardano\moderntensor\moderntensor\luxte
+nsor\crates\luxtensor-storage)
+At line:1 char:1
++ cargo check --package luxtensor-node 2>&1 | 
+Out-File -Encoding utf8 b ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   
+     Checking lu...tensor-storage):String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+    Checking luxtensor-rpc v0.1.0 (D:\venera\car
+dano\moderntensor\moderntensor\luxtensor\crates\
+luxtensor-rpc)
+warning: unexpected `cfg` condition value: 
+`reqwest`
+  --> 
+crates\luxtensor-rpc\src\load_balancer.rs:95:11
+   |
+95 |     #[cfg(feature = "reqwest")]
+   |           ^^^^^^^^^^^^^^^^^^^ help: remove 
+the condition
+   |
+   = note: no expected values for `feature`
+   = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightl
+y/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+   = note: `#[warn(unexpected_cfgs)]` on by 
+default
+
+warning: unexpected `cfg` condition value: 
+`reqwest`
+   --> 
+crates\luxtensor-rpc\src\load_balancer.rs:111:19
+    |
+111 |             #[cfg(feature = "reqwest")]
+    |                   ^^^^^^^^^^^^^^^^^^^ 
+help: remove the condition
+    |
+    = note: no expected values for `feature`
+    = help: consider adding `reqwest` as a 
+feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/night
+ly/rustc/check-cfg/cargo-specifics.html> for 
+more information about checking conditional 
+configuration
+
+warning: `luxtensor-rpc` (lib) generated 2 
+warnings
+    Checking luxtensor-node v0.1.0 (D:\venera\ca
+rdano\moderntensor\moderntensor\luxtensor\crates
+\luxtensor-node)
+error[E0061]: this method takes 3 arguments but 
+2 arguments were supplied
+   --> 
+crates\luxtensor-node\src\service.rs:497:75
+    |
+497 | ...                   long_range_protectio
+n_for_p2p.update_finalized(finalized_block.hash(
+), finalized_height);
+    |                                           
+          ^^^^^^^^^^^^^^^^----------------------
+-------------------- argument #3 of type `[u8; 
+32]` is missing
+    |
+note: method defined here
+   --> D:\venera\cardano\moderntensor\moderntens
+or\luxtensor\crates\luxtensor-consensus\src\long
+_range_protection.rs:112:12
+    |
+112 |     pub fn update_finalized(&self, hash: 
+Hash, height: u64, state_root: Hash) {
+    |            ^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+497 |                                           
+  long_range_protection_for_p2p.update_finalized
+(finalized_block.hash(), finalized_height, /* 
+[u8; 32] */);
+    |                                           
+                                                
+                                         
+++++++++++++++++
+
+For more information about this error, try 
+`rustc --explain E0061`.
+error: could not compile `luxtensor-node` (bin 
+"luxtensor-node") due to 1 previous error

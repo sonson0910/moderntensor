@@ -12,6 +12,7 @@ pub mod subnet;
 pub mod constants;
 pub mod multisig;
 pub mod parallel;
+pub mod unified_state;
 
 pub use block::*;
 pub use transaction::*;
@@ -30,3 +31,4 @@ pub use parallel::{
     parallel_process, parallel_try_process, parallel_batch_distances,
     parallel_verify_batch, parallel_process_with_failures, optimal_thread_count,
 };
+pub use unified_state::{UnifiedStateDB, ContractInfo, StorageSlot};

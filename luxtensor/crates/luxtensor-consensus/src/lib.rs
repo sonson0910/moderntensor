@@ -14,6 +14,8 @@ pub mod reward_distribution;
 pub mod burn_manager;
 pub mod reward_executor;
 pub mod node_tier;
+// NOTE: gpu_detector module removed - never used in actual code
+// GPU detection now happens via task-based verification in ScoringManager
 pub mod token_allocation;
 pub mod commit_reveal;
 pub mod weight_consensus;
@@ -22,6 +24,9 @@ pub mod halving;
 pub mod liveness;
 pub mod circuit_breaker;
 pub mod randao;
+pub mod eip1559;
+// NOTE: oracle.rs removed - LuxTensor uses luxtensor-oracle crate for AI inference
+// Price oracle functionality is not needed for AI blockchain
 
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};
@@ -42,9 +47,10 @@ pub use reward_executor::{
     PendingReward, RewardHistoryEntry, RewardType, AccountBalance
 };
 pub use node_tier::{
-    NodeTier, NodeInfo, NodeRegistry,
+    NodeTier, NodeInfo, NodeRegistry, GpuCapability, logarithmic_stake,
     LIGHT_NODE_STAKE, FULL_NODE_STAKE, VALIDATOR_STAKE, SUPER_VALIDATOR_STAKE
 };
+// pub use gpu_detector::{GpuDetector, GpuInfo}; // REMOVED: Module unused
 pub use token_allocation::{
     TokenAllocation, AllocationCategory, VestingSchedule, VestingEntry,
     TgeResult, AllocationStats, TOTAL_SUPPLY, DECIMALS
@@ -70,6 +76,12 @@ pub use long_range_protection::{
 pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats, CircuitState,
     CircuitBreakerError, AILayerCircuitBreaker, AILayerStatus
+};
+pub use eip1559::{
+    FeeMarket, Eip1559Config, FeeHistory
+};
+pub use randao::{
+    RandaoMixer, RandaoConfig, ValidatorReveal, RandaoError
 };
 
 pub mod scoring;

@@ -157,27 +157,19 @@ impl TransactionExecutor {
                     }
                     let contract_addr = Address::from(contract_addr_bytes);
 
-                    // Create contract account with proper code hash from deployed bytecode
-                    let mut contract_account = Account::new();
-                    contract_account.balance = tx.value;
-                    contract_account.code_hash = {
+                    // Create contract account with bytecode stored directly
+                    let code_hash = {
                         let mut code_hasher = Keccak256::new();
-                        code_hasher.update(&deployed_code); // Use actual deployed bytecode
-                        let code_hash = code_hasher.finalize();
+                        code_hasher.update(&deployed_code);
                         let mut hash = [0u8; 32];
-                        hash.copy_from_slice(&code_hash);
+                        hash.copy_from_slice(&code_hasher.finalize());
                         hash
                     };
 
+                    // Use Account::contract() to store bytecode directly in StateDB
+                    // This replaces the deprecated contract_registry
+                    let contract_account = Account::contract(tx.value, deployed_code.clone(), code_hash);
                     state.set_account(contract_addr, contract_account);
-
-                    // ✅ FIX: Register deployed contract with actual runtime bytecode from revm
-                    luxtensor_rpc::contract_registry::register_contract(
-                        contract_addr_bytes,
-                        deployed_code.clone(), // Use actual deployed bytecode
-                        *tx.from.as_bytes(),
-                        block_height,
-                    );
 
                     info!("📄 Contract deployed at 0x{} (gas used: {})",
                           hex::encode(&contract_addr_bytes), gas_used);
