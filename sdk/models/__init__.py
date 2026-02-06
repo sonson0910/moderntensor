@@ -2,6 +2,9 @@
 ModernTensor SDK Data Models
 
 Standardized Pydantic models for blockchain data structures.
+
+Note: For Luxtensor-specific operations, prefer LuxtensorValidator and
+LuxtensorMiner over the generic ValidatorInfo and MinerInfo models.
 """
 
 from .neuron import NeuronInfo
@@ -24,6 +27,10 @@ from .block import BlockInfo
 from .transaction import TransactionInfo
 from .root_subnet import RootSubnet
 
+# Luxtensor-specific models (recommended for Luxtensor RPC compatibility)
+from .luxtensor_validator import LuxtensorValidator, LuxtensorValidatorSet
+from .luxtensor_miner import LuxtensorMiner, LuxtensorMinerSet
+
 __all__ = [
     "NeuronInfo",
     "SubnetInfo",
@@ -43,4 +50,10 @@ __all__ = [
     "SubnetWeights",
     "EmissionShare",
     "SubnetRegistrationResult",
+    # Luxtensor-specific (recommended)
+    "LuxtensorValidator",
+    "LuxtensorValidatorSet",
+    "LuxtensorMiner",
+    "LuxtensorMinerSet",
 ]
+
