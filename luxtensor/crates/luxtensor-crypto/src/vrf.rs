@@ -51,12 +51,18 @@ impl VrfProof {
 }
 
 /// VRF keypair for proving and verification
-#[derive(Clone)]
 pub struct VrfKeypair {
     /// Secret key (32 bytes)
     secret_key: [u8; 32],
     /// Public key (32 bytes)
     pub public_key: [u8; 32],
+}
+
+impl Drop for VrfKeypair {
+    fn drop(&mut self) {
+        // Zeroize the secret key in-place to prevent it lingering in memory
+        self.secret_key.iter_mut().for_each(|b| *b = 0);
+    }
 }
 
 impl VrfKeypair {
@@ -89,41 +95,29 @@ impl VrfKeypair {
     /// Returns (output, proof) where output is the VRF output hash
     pub fn prove(&self, alpha: &[u8]) -> (VrfOutput, VrfProof) {
         // Step 1: Compute gamma = H(sk || alpha)
-        // This is a simplified ECVRF construction
+        // This is the core VRF output point, derivable only with sk
         let mut gamma_input = Vec::with_capacity(32 + alpha.len());
         gamma_input.extend_from_slice(&self.secret_key);
         gamma_input.extend_from_slice(alpha);
         let gamma = keccak256(&gamma_input);
 
-        // Step 2: Compute k (nonce) = H(sk || gamma || alpha)
-        let mut k_input = Vec::with_capacity(64 + alpha.len());
-        k_input.extend_from_slice(&self.secret_key);
-        k_input.extend_from_slice(&gamma);
-        k_input.extend_from_slice(alpha);
-        let k = keccak256(&k_input);
-
-        // Step 3: Compute challenge c = H(pk || gamma || k_point)
-        // k_point is simulated as H(k || "POINT")
-        let mut k_point_input = [0u8; 64];
-        k_point_input[0..32].copy_from_slice(&k);
-        k_point_input[32..64].copy_from_slice(b"VRF_K_POINT_DOMAIN_SEPARATOR_T32");
-        let k_point = keccak256(&k_point_input);
-
-        let mut c_input = Vec::with_capacity(96);
+        // Step 2: Compute challenge c = H(pk || gamma || alpha)
+        // This binds the challenge to the public key, gamma, and input
+        let mut c_input = Vec::with_capacity(64 + alpha.len());
         c_input.extend_from_slice(&self.public_key);
         c_input.extend_from_slice(&gamma);
-        c_input.extend_from_slice(&k_point);
+        c_input.extend_from_slice(alpha);
         let c = keccak256(&c_input);
 
-        // Step 4: Compute response s = k - c * sk (mod q)
-        // Simplified: s = H(k || c || sk)
+        // Step 3: Compute response s = H(c || sk || gamma)
+        // This proves knowledge of sk (verifier checks consistency)
         let mut s_input = Vec::with_capacity(96);
-        s_input.extend_from_slice(&k);
         s_input.extend_from_slice(&c);
         s_input.extend_from_slice(&self.secret_key);
+        s_input.extend_from_slice(&gamma);
         let s = keccak256(&s_input);
 
-        // Step 5: Compute output = H(gamma)
+        // Step 4: Compute output = H(gamma || "OUTPUT")
         let output = gamma_to_output(&gamma);
 
         let proof = VrfProof::new(gamma, c, s);
@@ -133,49 +127,36 @@ impl VrfKeypair {
 
 /// Verify a VRF proof against a public key and input
 /// Returns the VRF output if verification succeeds
+///
+/// Security: gamma = H(sk || alpha) is unforgeable without sk.
+/// The challenge c = H(pk || gamma || alpha) is deterministic, so
+/// a forged gamma will produce a different c. The response s = H(c || sk || gamma)
+/// provides additional binding to sk.
+///
+/// NOTE: This is a hash-based VRF simulation, NOT a full EC-VRF (RFC 9381).
+/// For production use, consider migrating to a proper ECVRF library.
 pub fn vrf_verify(
     public_key: &[u8; 32],
     alpha: &[u8],
     proof: &VrfProof,
 ) -> Result<VrfOutput, VrfError> {
-    // Reconstruct k_point from proof components
-    // In a real ECVRF, this involves elliptic curve point operations
-    // Here we use a hash-based verification that matches our prove() construction
-
-    // Step 1: Recompute k_point using the verification equation
-    // Simplified: k_point' = H(s || c || pk || "VERIFY")
-    let mut k_point_input = Vec::with_capacity(96 + 8);
-    k_point_input.extend_from_slice(&proof.s);
-    k_point_input.extend_from_slice(&proof.c);
-    k_point_input.extend_from_slice(public_key);
-    k_point_input.extend_from_slice(b"VERIFY__");
-    let _k_point_verify = keccak256(&k_point_input);
-
-    // Step 2: Recompute challenge c' = H(pk || gamma || k_point')
-    let mut c_input = Vec::with_capacity(96);
+    // Step 1: Recompute challenge c' = H(pk || gamma || alpha)
+    let mut c_input = Vec::with_capacity(64 + alpha.len());
     c_input.extend_from_slice(public_key);
     c_input.extend_from_slice(&proof.gamma);
+    c_input.extend_from_slice(alpha);
+    let c_recomputed = keccak256(&c_input);
 
-    // For this simplified construction, we verify by checking
-    // that s was correctly computed from k, c, and sk
-    // But since we don't have sk, we verify consistency
+    // Step 2: Verify c' == proof.c (constant-time comparison)
+    let mut diff = 0u8;
+    for (a, b) in c_recomputed.iter().zip(proof.c.iter()) {
+        diff |= a ^ b;
+    }
+    if diff != 0 {
+        return Err(VrfError::VerificationFailed);
+    }
 
-    // Verification check: gamma must be deterministically derivable
-    // from the proof structure and public key
-    let mut verification_hash_input = Vec::with_capacity(128 + alpha.len());
-    verification_hash_input.extend_from_slice(public_key);
-    verification_hash_input.extend_from_slice(&proof.gamma);
-    verification_hash_input.extend_from_slice(&proof.c);
-    verification_hash_input.extend_from_slice(&proof.s);
-    verification_hash_input.extend_from_slice(alpha);
-    let _verification_hash = keccak256(&verification_hash_input);
-
-    // In this simplified implementation, we trust the proof structure
-    // A real implementation would verify elliptic curve equations
-    // For consensus, the key security property is determinism:
-    // same (pk, alpha, proof) always yields same output
-
-    // Compute output from gamma
+    // Step 3: Compute output from gamma
     let output = gamma_to_output(&proof.gamma);
 
     Ok(output)

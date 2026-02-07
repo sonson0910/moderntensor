@@ -19,10 +19,17 @@ spec:
         app: moderntensor
         component: validator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
       - name: validator
         image: moderntensor:latest
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
         ports:
         - name: p2p
           containerPort: 30303

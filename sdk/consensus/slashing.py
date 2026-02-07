@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 from decimal import Decimal
+from threading import RLock
 import time
 
 
@@ -132,6 +133,7 @@ class SlashingManager:
     """
 
     def __init__(self, config: Optional[SlashingConfig] = None):
+        self._lock = RLock()
         self.config = config or SlashingConfig.default()
         self._missed_blocks: Dict[str, int] = {}  # validator -> count
         self._slash_history: Dict[str, List[SlashEvent]] = {}  # validator -> events
@@ -140,27 +142,32 @@ class SlashingManager:
 
     def record_missed_block(self, validator: str):
         """Record a missed block for validator."""
-        validator = validator.lower()
-        self._missed_blocks[validator] = self._missed_blocks.get(validator, 0) + 1
+        with self._lock:
+            validator = validator.lower()
+            self._missed_blocks[validator] = self._missed_blocks.get(validator, 0) + 1
 
     def reset_missed_blocks(self, validator: str):
         """Reset missed blocks for validator (called when they produce a block)."""
-        self._missed_blocks[validator.lower()] = 0
+        with self._lock:
+            self._missed_blocks[validator.lower()] = 0
 
     def check_offline(self, validator: str) -> Optional[SlashingEvidence]:
         """Check if validator should be slashed for being offline."""
-        validator = validator.lower()
-        missed = self._missed_blocks.get(validator, 0)
+        with self._lock:
+            validator = validator.lower()
+            missed = self._missed_blocks.get(validator, 0)
 
-        if missed >= self.config.max_missed_blocks:
-            return SlashingEvidence(
-                validator=validator,
-                reason=SlashReason.OFFLINE,
-                height=0,  # Will be set by caller
-                evidence_hash=f"offline_{validator}_{missed}",
-                details=f"Missed {missed} blocks",
-            )
-        return None
+            if missed >= self.config.max_missed_blocks:
+                return SlashingEvidence(
+                    validator=validator,
+                    reason=SlashReason.OFFLINE,
+                    height=0,  # Will be set by caller
+                    evidence_hash=hashlib.sha256(
+                        f"offline_{validator}_{missed}".encode()
+                    ).hexdigest(),
+                    details=f"Missed {missed} blocks",
+                )
+            return None
 
     def record_block_signature(
         self,
@@ -170,32 +177,36 @@ class SlashingManager:
         signature_hash: str,
     ):
         """Record potential double signing."""
-        validator = validator.lower()
-        if height not in self._block_signatures:
-            self._block_signatures[height] = {}
-        if validator not in self._block_signatures[height]:
-            self._block_signatures[height][validator] = []
+        with self._lock:
+            validator = validator.lower()
+            if height not in self._block_signatures:
+                self._block_signatures[height] = {}
+            if validator not in self._block_signatures[height]:
+                self._block_signatures[height][validator] = []
 
-        self._block_signatures[height][validator].append(f"{block_hash}:{signature_hash}")
+            self._block_signatures[height][validator].append(f"{block_hash}:{signature_hash}")
 
     def check_double_signing(self, height: int) -> List[SlashingEvidence]:
         """Check for double signing at a height."""
-        evidence = []
+        with self._lock:
+            evidence = []
 
-        sigs = self._block_signatures.get(height, {})
-        for validator, signatures in sigs.items():
-            # Check if validator signed multiple different blocks
-            unique_blocks = set(s.split(":")[0] for s in signatures)
-            if len(unique_blocks) > 1:
-                evidence.append(SlashingEvidence(
-                    validator=validator,
-                    reason=SlashReason.DOUBLE_SIGNING,
-                    height=height,
-                    evidence_hash=f"double_sign_{validator}_{height}",
-                    details=f"Signed {len(unique_blocks)} different blocks at height {height}",
-                ))
+            sigs = self._block_signatures.get(height, {})
+            for validator, signatures in sigs.items():
+                # Check if validator signed multiple different blocks
+                unique_blocks = set(s.split(":")[0] for s in signatures)
+                if len(unique_blocks) > 1:
+                    evidence.append(SlashingEvidence(
+                        validator=validator,
+                        reason=SlashReason.DOUBLE_SIGNING,
+                        height=height,
+                        evidence_hash=hashlib.sha256(
+                            f"double_sign_{validator}_{height}".encode()
+                        ).hexdigest(),
+                        details=f"Signed {len(unique_blocks)} different blocks at height {height}",
+                    ))
 
-        return evidence
+            return evidence
 
     def slash(
         self,
@@ -237,19 +248,20 @@ class SlashingManager:
         )
 
         # Record in history
-        if validator not in self._slash_history:
-            self._slash_history[validator] = []
-        self._slash_history[validator].append(event)
+        with self._lock:
+            if validator not in self._slash_history:
+                self._slash_history[validator] = []
+            self._slash_history[validator].append(event)
 
-        # Update jail status
-        if should_jail:
-            self._jail_status[validator] = JailStatus(
-                validator=validator,
-                jailed_at=current_height,
-                jail_until=jail_until,
-                reason=evidence.reason,
-                slash_count=len(self._slash_history[validator]),
-            )
+            # Update jail status
+            if should_jail:
+                self._jail_status[validator] = JailStatus(
+                    validator=validator,
+                    jailed_at=current_height,
+                    jail_until=jail_until,
+                    reason=evidence.reason,
+                    slash_count=len(self._slash_history[validator]),
+                )
 
         # Reset missed blocks
         self.reset_missed_blocks(validator)
@@ -258,22 +270,25 @@ class SlashingManager:
 
     def is_jailed(self, validator: str) -> bool:
         """Check if validator is jailed."""
-        return validator.lower() in self._jail_status
+        with self._lock:
+            return validator.lower() in self._jail_status
 
     def get_jail_status(self, validator: str) -> Optional[JailStatus]:
         """Get jail status."""
-        return self._jail_status.get(validator.lower())
+        with self._lock:
+            return self._jail_status.get(validator.lower())
 
     def process_unjail(self, current_height: int) -> List[str]:
         """Process unjailing (called each block). Returns list of unjailed validators."""
-        unjailed = []
+        with self._lock:
+            unjailed = []
 
-        for validator, status in list(self._jail_status.items()):
-            if current_height >= status.jail_until:
-                del self._jail_status[validator]
-                unjailed.append(validator)
+            for validator, status in list(self._jail_status.items()):
+                if current_height >= status.jail_until:
+                    del self._jail_status[validator]
+                    unjailed.append(validator)
 
-        return unjailed
+            return unjailed
 
     def get_slash_history(self, validator: str) -> List[SlashEvent]:
         """Get slash history for an address."""

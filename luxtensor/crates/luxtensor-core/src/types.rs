@@ -11,17 +11,28 @@ impl Address {
     pub fn new(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
-    
+
+    /// Create address from byte slice (panics if too short — use try_from_slice for untrusted input)
     pub fn from_slice(slice: &[u8]) -> Self {
         let mut bytes = [0u8; 20];
         bytes.copy_from_slice(&slice[..20]);
         Self(bytes)
     }
-    
+
+    /// Safe address creation from untrusted byte slice
+    pub fn try_from_slice(slice: &[u8]) -> Option<Self> {
+        if slice.len() < 20 {
+            return None;
+        }
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&slice[..20]);
+        Some(Self(bytes))
+    }
+
     pub fn as_bytes(&self) -> &[u8; 20] {
         &self.0
     }
-    
+
     pub fn zero() -> Self {
         Self([0u8; 20])
     }

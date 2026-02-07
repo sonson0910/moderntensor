@@ -16,24 +16,25 @@ jobs:
     name: Lint Code
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+          cache: 'pip'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install flake8 black mypy
-      
+
       - name: Run Black
         run: black --check sdk/ tests/
-      
+
       - name: Run Flake8
         run: flake8 sdk/ tests/ --max-line-length=100
-      
+
       - name: Run MyPy
         run: mypy sdk/ --ignore-missing-imports
 
@@ -44,26 +45,27 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.10', '3.11']
-    
+
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      
+          cache: 'pip'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-cov
-      
+
       - name: Run tests
         run: pytest tests/ -v --cov=sdk --cov-report=xml
-      
+
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
 
@@ -72,8 +74,8 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -81,9 +83,9 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-results.sarif'
-      
+
       - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -93,23 +95,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     if: github.event_name == 'push'
-    
+
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -117,9 +119,9 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      
+
       - name: Build and push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./docker/Dockerfile.production
@@ -138,24 +140,31 @@ jobs:
     environment:
       name: staging
       url: https://staging.moderntensor.io
-    
+
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v3
+        uses: azure/k8s-set-context@v4
         with:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
-      
+
       - name: Deploy to Kubernetes
         run: |
           kubectl set image deployment/moderntensor-validator \
             validator=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop \
             -n moderntensor-staging
-          
+
           kubectl rollout status deployment/moderntensor-validator \
+            -n moderntensor-staging --timeout=300s
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/moderntensor-validator \
             -n moderntensor-staging
+          echo "::error::Deployment failed, rolled back to previous version"
 
   # Deploy to production
   deploy-production:
@@ -166,25 +175,32 @@ jobs:
     environment:
       name: production
       url: https://moderntensor.io
-    
+
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v3
+        uses: azure/k8s-set-context@v4
         with:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
-      
+
       - name: Deploy to Kubernetes
         run: |
           kubectl set image deployment/moderntensor-validator \
             validator=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main \
             -n moderntensor
-          
+
           kubectl rollout status deployment/moderntensor-validator \
+            -n moderntensor --timeout=300s
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/moderntensor-validator \
             -n moderntensor
-      
+          echo "::error::Production deployment failed, rolled back to previous version"
+
       - name: Notify deployment
         uses: 8398a7/action-slack@v3
         with:

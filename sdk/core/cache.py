@@ -290,7 +290,7 @@ class LuxtensorCache:
     def _make_key(self, method: str, *args, **kwargs) -> str:
         """Generate cache key from method and arguments."""
         key_data = f"{method}:{args}:{sorted(kwargs.items())}"
-        return hashlib.md5(key_data.encode()).hexdigest()
+        return hashlib.sha256(key_data.encode()).hexdigest()
 
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache."""

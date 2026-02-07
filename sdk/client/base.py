@@ -43,6 +43,11 @@ class TransactionResult:
     block_number: Optional[int] = None
     error: Optional[str] = None
 
+    @property
+    def success(self) -> bool:
+        """Check if transaction was successful."""
+        return self.status == "success" and self.error is None
+
 
 class BaseClient:
     """
@@ -54,11 +59,18 @@ class BaseClient:
     network: str
     timeout: int
     _request_id: int
+    _http_client: Optional[httpx.Client]
 
     def _get_request_id(self) -> int:
         """Get next request ID"""
         self._request_id += 1
         return self._request_id
+
+    def _get_http_client(self) -> httpx.Client:
+        """Get or create a persistent HTTP client for connection reuse."""
+        if not hasattr(self, '_http_client') or self._http_client is None:
+            self._http_client = httpx.Client(timeout=self.timeout)
+        return self._http_client
 
     def _call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Any:
         """
@@ -82,16 +94,16 @@ class BaseClient:
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(self.url, json=request)
-                response.raise_for_status()
+            client = self._get_http_client()
+            response = client.post(self.url, json=request)
+            response.raise_for_status()
 
-                result = response.json()
+            result = response.json()
 
-                if "error" in result:
-                    raise Exception(f"RPC error: {result['error']}")
+            if "error" in result:
+                raise Exception(f"RPC error: {result['error']}")
 
-                return result.get("result")
+            return result.get("result")
 
         except httpx.RequestError as e:
             logger.error(f"Request error: {e}")

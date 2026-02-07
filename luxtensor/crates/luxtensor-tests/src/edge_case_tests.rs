@@ -245,10 +245,10 @@ fn test_lock_bonus_zero_days() {
     use luxtensor_consensus::reward_distribution::LockBonusConfig;
 
     let config = LockBonusConfig::default();
-    let bonus = config.get_bonus(0);
+    let bonus = config.get_bonus_bps(0);
 
-    // 0 days = 0.0x multiplier (no bonus for unlocked)
-    assert_eq!(bonus, 0.0);
+    // 0 days = 0 BPS multiplier (no bonus for unlocked)
+    assert_eq!(bonus, 0);
 }
 
 // ============================================================

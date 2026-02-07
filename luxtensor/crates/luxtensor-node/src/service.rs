@@ -1,18 +1,32 @@
 use crate::config::Config;
 use crate::mempool::Mempool;
 use crate::executor::{TransactionExecutor, calculate_receipts_root};
-use crate::p2p_handler::is_leader_for_slot;
+use crate::task_dispatcher::{TaskDispatcher, DispatcherConfig, DispatchService};
+
+/// Round-robin leader selection (fallback for bootstrap when PoS has no stake data)
+fn is_leader_for_slot(validator_id: &str, slot: u64, validators: &[String]) -> bool {
+    if validators.is_empty() { return true; }
+    let leader_index = (slot % validators.len() as u64) as usize;
+    validators.get(leader_index).map_or(false, |leader| leader == validator_id)
+}
+
 use futures::FutureExt;
 use anyhow::Result;
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, TokenAllocation, NodeRegistry};
+use luxtensor_consensus::fast_finality::FastFinality;
+use luxtensor_consensus::fork_choice::ForkChoice;
 use luxtensor_consensus::long_range_protection::{LongRangeProtection, LongRangeConfig};
+use luxtensor_consensus::randao::{RandaoMixer, RandaoConfig};
+use luxtensor_consensus::slashing::{SlashingManager, SlashingConfig};
 use luxtensor_consensus::liveness::{LivenessMonitor, LivenessConfig};
 use luxtensor_core::{Block, Transaction, StateDB};
 use luxtensor_crypto::{MerkleTree, KeyPair};
 use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand, NodeIdentity, print_connection_info, get_seeds_for_chain};
 use luxtensor_network::eclipse_protection::{EclipseProtection, EclipseConfig};
+use luxtensor_network::rate_limiter::{RateLimiter as NetworkRateLimiter, RateLimiterConfig as NetworkRateLimiterConfig};
 use luxtensor_rpc::RpcServer;
 use luxtensor_storage::BlockchainDB;
+use luxtensor_storage::metagraph_store::MetagraphDB;
 use luxtensor_storage::maintenance::{DbMaintenance, BackupConfig, PruningConfig};
 use luxtensor_storage::{CheckpointManager, CHECKPOINT_INTERVAL};
 use crate::graceful_shutdown::{GracefulShutdown, ShutdownConfig};
@@ -114,6 +128,20 @@ pub struct NodeService {
     graceful_shutdown: Arc<GracefulShutdown>,
     /// Health monitor for node health checks
     health_monitor: Arc<RwLock<HealthMonitor>>,
+    /// Fast finality: BFT-style instant finality via validator signatures
+    fast_finality: Arc<RwLock<FastFinality>>,
+    /// Fork choice rule (longest chain / heaviest observed chain)
+    fork_choice: Arc<RwLock<ForkChoice>>,
+    /// AI Task Dispatcher for DePIN workload distribution
+    task_dispatcher: Arc<TaskDispatcher>,
+    /// Metagraph database for AI subnet/neuron metadata
+    metagraph_db: Arc<MetagraphDB>,
+    /// RANDAO randomness mixer for unbiased leader/task selection
+    randao: Arc<RwLock<RandaoMixer>>,
+    /// Slashing manager for punishing misbehaviour
+    slashing_manager: Arc<RwLock<SlashingManager>>,
+    /// Network-layer rate limiter for P2P flood protection
+    network_rate_limiter: Arc<NetworkRateLimiter>,
 }
 
 impl NodeService {
@@ -140,6 +168,22 @@ impl NodeService {
         // Initialize state database
         info!("💾 Initializing state database...");
         let state_db = Arc::new(RwLock::new(StateDB::new()));
+
+        // 🔧 FIX: Restore persisted state from RocksDB on startup
+        {
+            let mut state = state_db.write();
+            match state.load_from_db(storage.as_ref()) {
+                Ok(count) if count > 0 => {
+                    info!("  ✓ Restored {} accounts from disk", count);
+                }
+                Ok(_) => {
+                    info!("  ✓ No persisted state found (fresh node)");
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to load persisted state: {} (starting fresh)", e);
+                }
+            }
+        }
         info!("  ✓ State database initialized");
 
         // Initialize transaction executor
@@ -177,25 +221,26 @@ impl NodeService {
             info!("  ✓ Genesis block found");
         }
 
-        // ALWAYS initialize genesis accounts with balance for development
-        // This ensures accounts have balance even after node restart
-        // Hardhat account #0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-        let dev_accounts: &[[u8; 20]] = &[
-            [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
-             0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
-            [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
-             0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
-            [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
-             0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
-        ];
+        // Initialize development accounts ONLY in dev mode
+        // In production, genesis balances should come from the genesis block/config
+        if config.node.dev_mode {
+            let dev_accounts: &[[u8; 20]] = &[
+                [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
+                 0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
+                [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
+                 0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
+                [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
+                 0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
+            ];
 
-        for addr_bytes in dev_accounts {
-            let dev_address = luxtensor_core::Address::from(*addr_bytes);
-            let mut dev_account = luxtensor_core::Account::new();
-            dev_account.balance = 10_000_000_000_000_000_000_000_u128; // 10000 ETH in wei
-            state_db.write().set_account(dev_address, dev_account);
+            for addr_bytes in dev_accounts {
+                let dev_address = luxtensor_core::Address::from(*addr_bytes);
+                let mut dev_account = luxtensor_core::Account::new();
+                dev_account.balance = 10_000_000_000_000_000_000_000_u128; // 10000 ETH in wei
+                state_db.write().set_account(dev_address, dev_account);
+            }
+            warn!("⚠️  DEV MODE: {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
         }
-        info!("  ✓ {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
 
         // Initialize reward executor for epoch processing
         let dao_address = parse_address_from_hex(&config.node.dao_address)
@@ -252,6 +297,55 @@ impl NodeService {
         // Initialize health monitor
         let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
         info!("  ✓ Health monitor initialized");
+
+        // Initialize FastFinality (BFT-style finality via 2/3 validator signatures)
+        let fast_finality = Arc::new(RwLock::new(
+            FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
+                .expect("FastFinality config must be valid (threshold=67)")
+        ));
+        info!("  ✓ Fast finality initialized (threshold: 67%)");
+
+        // Initialize ForkChoice (GHOST algorithm for canonical chain selection)
+        let genesis_block = storage.get_block_by_height(0)?
+            .ok_or_else(|| anyhow::anyhow!("Genesis block required for fork choice"))?;
+        let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
+        info!("  ✓ Fork choice (GHOST) initialized");
+
+        // Initialize Metagraph DB for AI subnet/neuron metadata
+        let metagraph_path = config.node.data_dir.join("metagraph");
+        std::fs::create_dir_all(&metagraph_path)?;
+        let metagraph_db = Arc::new(MetagraphDB::open(&metagraph_path)?);
+        info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
+
+        // Initialize AI Task Dispatcher for DePIN workload distribution
+        let task_dispatcher = Arc::new(TaskDispatcher::new(
+            metagraph_db.clone(),
+            DispatcherConfig::default(),
+        ));
+        info!("  ✓ AI Task Dispatcher initialized");
+
+        // Initialize RANDAO mixer for unbiased randomness accumulation
+        let randao = Arc::new(RwLock::new(
+            RandaoMixer::with_genesis(RandaoConfig::default(), genesis_hash)
+        ));
+        info!("  ✓ RANDAO mixer initialized");
+
+        // Initialize Slashing manager
+        let slashing_manager = Arc::new(RwLock::new(
+            SlashingManager::new(SlashingConfig::default())
+        ));
+        info!("  ✓ Slashing manager initialized");
+
+        // Initialize network-layer rate limiter
+        let network_rate_limiter = Arc::new(NetworkRateLimiter::new(
+            NetworkRateLimiterConfig {
+                requests_per_second: 50,   // 50 msgs/s per peer
+                burst_size: 100,           // allow short bursts
+                ban_duration: std::time::Duration::from_secs(300),
+                violations_before_ban: 10,
+            }
+        ));
+        info!("  ✓ Network rate limiter initialized");
 
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(16);
@@ -328,6 +422,13 @@ impl NodeService {
             liveness_monitor,
             graceful_shutdown,
             health_monitor,
+            fast_finality,
+            fork_choice,
+            task_dispatcher,
+            metagraph_db,
+            randao,
+            slashing_manager,
+            network_rate_limiter,
         })
     }
 
@@ -350,10 +451,10 @@ impl NodeService {
         // PHASE 1: Start P2P Swarm FIRST (to get command channel)
         // ============================================================
         info!("🌐 Starting P2P Swarm network...");
-        let (p2p_event_tx, mut p2p_event_rx) = mpsc::unbounded_channel::<SwarmP2PEvent>();
+        let (p2p_event_tx, mut p2p_event_rx) = mpsc::channel::<SwarmP2PEvent>(4096);
 
         // Channel for RPC to send transactions to P2P layer
-        let (_tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::unbounded_channel::<Transaction>();
+        let (_tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::channel::<Transaction>(1024);
 
         // Load or generate persistent node identity (Peer ID)
         let node_key_path = self.config.network.node_key_path
@@ -447,12 +548,24 @@ impl NodeService {
                 let long_range_protection_for_p2p = self.long_range_protection.clone(); // Long-range attack protection
                 let liveness_monitor_for_p2p = self.liveness_monitor.clone(); // Liveness monitoring
                 let health_monitor_for_p2p = self.health_monitor.clone(); // Health monitoring
+                let fast_finality_for_p2p = self.fast_finality.clone(); // Fast finality
+                let fork_choice_for_p2p = self.fork_choice.clone(); // Fork choice
+                let mempool_for_p2p = self.mempool.clone(); // Mempool for P2P txs
+                let health_monitor_for_p2p = self.health_monitor.clone(); // Health monitoring
+                let rate_limiter_for_p2p = self.network_rate_limiter.clone(); // Network rate limiter
                 let event_task = tokio::spawn(async move {
                     while let Some(event) = p2p_event_rx.recv().await {
                         match event {
                             SwarmP2PEvent::NewBlock(block) => {
                                 let height = block.header.height;
                                 let block_hash = block.hash();
+
+                                // 🛡️ Rate-limit: check per-peer message rate
+                                let proposer_id = hex::encode(&block.header.proposer);
+                                if !rate_limiter_for_p2p.check(&proposer_id) {
+                                    warn!("🛡️ Block #{} rate-limited from proposer {}", height, proposer_id);
+                                    continue;
+                                }
 
                                 // 🛡️ Long-range attack protection: validate against checkpoints
                                 if !long_range_protection_for_p2p.validate_against_checkpoints(block_hash, height) {
@@ -472,10 +585,113 @@ impl NodeService {
                                     continue;
                                 }
 
+                                // ====================================================================
+                                // 🔐 BLOCK VALIDATION — verify before storing (CRITICAL)
+                                // ====================================================================
+
+                                // 1. Validate sequential height
+                                let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+                                if height > my_height + 1 {
+                                    // Gap — request sync instead of storing out-of-order block
+                                    debug!("Block #{} is ahead of our height {}, requesting sync", height, my_height);
+                                    if let Some(ref tx) = broadcast_tx_for_sync {
+                                        let _ = tx.send(SwarmCommand::RequestSync {
+                                            from_height: my_height + 1,
+                                            to_height: height,
+                                            my_id: node_name.clone(),
+                                        });
+                                    }
+                                    continue;
+                                }
+                                if height <= my_height {
+                                    debug!("Block #{} is not newer than our height {}", height, my_height);
+                                    continue;
+                                }
+
+                                // 2. Validate previous_hash chain link
+                                if let Ok(Some(prev_block)) = storage_for_p2p.get_block_by_height(my_height) {
+                                    if block.header.previous_hash != prev_block.hash() {
+                                        warn!("🚫 Block #{} rejected: previous_hash mismatch (expected {:?}, got {:?})",
+                                            height, &prev_block.hash()[..4], &block.header.previous_hash[..4]);
+                                        continue;
+                                    }
+                                }
+
+                                // 3. Validate block signature (if validator field is set)
+                                if block.header.validator != [0u8; 32] && !block.header.signature.is_empty() {
+                                    // Extract the 20-byte address from the 32-byte validator field
+                                    let validator_addr = &block.header.validator[12..32];
+                                    // Reconstruct unsigned header for hash verification
+                                    let mut unsigned_header = block.header.clone();
+                                    let sig_backup = unsigned_header.signature.clone();
+                                    unsigned_header.signature = vec![];
+                                    let header_hash = unsigned_header.hash();
+
+                                    // Verify signature using ECDSA recovery
+                                    if sig_backup.len() >= 64 {
+                                        match luxtensor_crypto::recover_address(&header_hash, &sig_backup) {
+                                            Ok(recovered_addr) => {
+                                                if recovered_addr != validator_addr {
+                                                    warn!("🚫 Block #{} rejected: invalid validator signature (recovered {:?} != expected {:?})",
+                                                        height, &recovered_addr[..4], &validator_addr[..4]);
+                                                    continue;
+                                                }
+                                            }
+                                            Err(_) => {
+                                                warn!("🚫 Block #{} rejected: signature recovery failed", height);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 4. Validate txs_root (Merkle root of transactions)
+                                let tx_hashes: Vec<[u8; 32]> = block.transactions.iter()
+                                    .map(|tx| tx.hash())
+                                    .collect();
+                                let expected_txs_root = if tx_hashes.is_empty() {
+                                    [0u8; 32]
+                                } else {
+                                    luxtensor_crypto::MerkleTree::new(tx_hashes).root()
+                                };
+                                if block.header.txs_root != expected_txs_root {
+                                    warn!("🚫 Block #{} rejected: txs_root mismatch", height);
+                                    continue;
+                                }
+
+                                // 5. Validate reasonable timestamp (not too far in future)
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
+                                if block.header.timestamp > now + 30 {
+                                    warn!("🚫 Block #{} rejected: timestamp {} is too far in the future (now={})",
+                                        height, block.header.timestamp, now);
+                                    continue;
+                                }
+
                                 if let Err(e) = storage_for_p2p.store_block(&block) {
                                     warn!("Failed to store received block: {}", e);
                                 } else {
                                     info!("📥 Synced block #{} from peer", height);
+
+                                    // 🔗 Feed block to ForkChoice (GHOST) for canonical chain tracking
+                                    if let Err(e) = fork_choice_for_p2p.read().add_block(block.clone()) {
+                                        debug!("ForkChoice: {}", e);
+                                    }
+
+                                    // 🔐 FastFinality: record the block producer's attestation
+                                    if block.header.validator != [0u8; 32] {
+                                        let mut validator_addr = [0u8; 20];
+                                        validator_addr.copy_from_slice(&block.header.validator[12..32]);
+                                        let addr = luxtensor_core::Address::from(validator_addr);
+                                        let finalized = fast_finality_for_p2p.write().add_signature(block_hash, addr);
+                                        match finalized {
+                                            Ok(true) => info!("⚡ Block #{} reached fast finality!", height),
+                                            Ok(false) => debug!("Block #{} collecting finality signatures", height),
+                                            Err(e) => debug!("FastFinality skipped: {}", e),
+                                        }
+                                    }
 
                                     // 🎯 Record block for liveness monitoring
                                     liveness_monitor_for_p2p.write().record_block(height);
@@ -498,12 +714,24 @@ impl NodeService {
                                 }
                             }
                             SwarmP2PEvent::NewTransaction(tx) => {
-                                // 🚀 Add received TX to shared pending_txs for RPC query
+                                // �️ Rate-limit: check per-sender message rate
+                                let sender_id = hex::encode(&tx.from);
+                                if !rate_limiter_for_p2p.check(&sender_id) {
+                                    warn!("🛡️ Transaction rate-limited from sender {}", sender_id);
+                                    continue;
+                                }
+
+                                // �🚀 Add received TX to shared pending_txs for RPC query
                                 let tx_hash = tx.hash();
                                 let mut pending = shared_pending_txs_for_p2p.write();
                                 if !pending.contains_key(&tx_hash) {
-                                    pending.insert(tx_hash, tx);
+                                    pending.insert(tx_hash, tx.clone());
                                     info!("📥 Added transaction from peer to shared pool");
+
+                                    // 🔧 FIX: Also add to the actual mempool for block production
+                                    if let Err(e) = mempool_for_p2p.add_transaction(tx) {
+                                        debug!("Mempool rejected P2P tx: {}", e);
+                                    }
                                 }
                             }
                             SwarmP2PEvent::PeerConnected(peer_id) => {
@@ -557,10 +785,20 @@ impl NodeService {
                                 health_monitor_for_p2p.write().update_peer_count(current_peer_count);
                             }
                             SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
-                                info!("🔄 Got sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
+                                // 🛡️ Rate-limit sync requests (cost 5 tokens — heavier than single msg)
+                                if !rate_limiter_for_p2p.check_with_cost(&requester_id, 5.0) {
+                                    warn!("🛡️ SyncRequest rate-limited from {}", requester_id);
+                                    continue;
+                                }
+
+                                // Cap sync response to prevent memory exhaustion
+                                let max_blocks_per_response = 50u64;
+                                let capped_to = to_height.min(from_height + max_blocks_per_response - 1);
+                                info!("🔄 Got sync request from {} for blocks {}-{} (capped at {})",
+                                    requester_id, from_height, to_height, capped_to);
                                 // Collect blocks we have in range
                                 let mut blocks_to_send = Vec::new();
-                                for h in from_height..=to_height {
+                                for h in from_height..=capped_to {
                                     if let Ok(Some(block)) = storage_for_p2p.get_block_by_height(h) {
                                         blocks_to_send.push(block);
                                     }
@@ -588,23 +826,28 @@ impl NodeService {
                 let sync_node_name = self.config.node.name.clone();
                 let sync_task = tokio::spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                    let mut last_sync_height = 0u64;
                     loop {
                         interval.tick().await;
 
                         // Check if we're behind
                         let my_height = sync_storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
 
-                        // Always request sync for next 50 blocks (peers respond with blocks they have)
-                        let _ = sync_command_tx.send(SwarmCommand::RequestSync {
-                            from_height: my_height + 1,
-                            to_height: my_height + 50,
-                            my_id: sync_node_name.clone(),
-                        });
+                        // Only request sync if we've made no progress since last check
+                        // This prevents spamming when we're already caught up
+                        if my_height == last_sync_height {
+                            let batch_size = 50u64.min(100); // Cap batch to avoid huge responses
+                            let _ = sync_command_tx.send(SwarmCommand::RequestSync {
+                                from_height: my_height + 1,
+                                to_height: my_height + batch_size,
+                                my_id: sync_node_name.clone(),
+                            });
 
-                        // Log if we're at height 0 (likely still syncing)
-                        if my_height == 0 {
-                            info!("🔄 Periodic sync: Still at height 0, requesting blocks...");
+                            if my_height == 0 {
+                                info!("🔄 Periodic sync: Still at height 0, requesting blocks...");
+                            }
                         }
+                        last_sync_height = my_height;
                     }
                 });
                 self.tasks.push(sync_task);
@@ -677,6 +920,8 @@ impl NodeService {
             let genesis_timestamp = self.genesis_timestamp;
             let broadcast_tx = self.broadcast_tx.clone();
             let chain_id = self.config.node.chain_id as u64;
+            // Get our validator address for PoS leader election
+            let our_validator_address: Option<[u8; 20]> = self.validator_keypair.as_ref().map(|kp| kp.address());
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -693,7 +938,8 @@ impl NodeService {
                     validators,
                     genesis_timestamp,
                     broadcast_tx,
-                    chain_id,  // Pass chain_id from config
+                    chain_id,
+                    our_validator_address,
                 ).await
             });
 
@@ -703,6 +949,21 @@ impl NodeService {
                 info!("    Validator ID: {}", vid);
             }
             info!("    Known validators: {:?}", self.config.consensus.validators);
+        }
+
+        // Start AI Task Dispatcher service (DePIN workload distribution)
+        {
+            let dispatch_service = if let Some(ref cmd_tx) = self.broadcast_tx {
+                DispatchService::with_p2p(self.task_dispatcher.clone(), cmd_tx.clone())
+            } else {
+                DispatchService::new(self.task_dispatcher.clone())
+            };
+            let dispatch_handle = tokio::spawn(async move {
+                dispatch_service.start().await;
+                Ok::<(), anyhow::Error>(())
+            });
+            self.tasks.push(dispatch_handle);
+            info!("  ✓ AI Task Dispatcher service started");
         }
 
         info!("✅ All services started successfully");
@@ -795,7 +1056,8 @@ impl NodeService {
         validators: Vec<String>,
         genesis_timestamp: u64,
         broadcast_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
-        chain_id: u64,  // Chain ID for transaction creation
+        chain_id: u64,
+        our_validator_address: Option<[u8; 20]>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -852,11 +1114,39 @@ impl NodeService {
                         }
                     }
 
-                    // Check if we are the leader for this slot
-                    if !validators.is_empty() && !is_leader_for_slot(&validator_id, slot, &validators) {
-                        debug!("⏳ Slot {}: Not our turn (leader: {})",
-                               slot,
-                               validators.get((slot % validators.len() as u64) as usize).unwrap_or(&"unknown".to_string()));
+                    // Check if we are the leader for this slot using PoS VRF selection
+                    // Fallback to round-robin if validator set is empty (bootstrapping)
+                    let is_our_turn = if let Some(our_addr) = our_validator_address {
+                        let our_addr_typed = luxtensor_core::Address::from(our_addr);
+                        match consensus.read().select_validator(slot) {
+                            Ok(selected) => {
+                                if selected != our_addr_typed {
+                                    debug!("⏳ Slot {}: Not selected by PoS (leader: 0x{})",
+                                           slot, hex::encode(selected.as_bytes()));
+                                    false
+                                } else {
+                                    true
+                                }
+                            }
+                            Err(_) => {
+                                // Validator set empty — fall back to round-robin for bootstrap
+                                if !validators.is_empty() {
+                                    is_leader_for_slot(&validator_id, slot, &validators)
+                                } else {
+                                    true // No validators configured, produce blocks
+                                }
+                            }
+                        }
+                    } else {
+                        // No keypair — use legacy round-robin
+                        if !validators.is_empty() {
+                            is_leader_for_slot(&validator_id, slot, &validators)
+                        } else {
+                            true
+                        }
+                    };
+
+                    if !is_our_turn {
                         continue;
                     }
 
@@ -926,7 +1216,7 @@ impl NodeService {
 
     /// Produce a single block
     async fn produce_block(
-        _consensus: &Arc<RwLock<ProofOfStake>>,
+        consensus: &Arc<RwLock<ProofOfStake>>,
         storage: &Arc<BlockchainDB>,
         state_db: &Arc<RwLock<StateDB>>,
         mempool: &Arc<Mempool>,
@@ -1001,6 +1291,11 @@ impl NodeService {
 
         // Calculate state root
         let state_root = state.commit()?;
+
+        // 🔧 FIX: Persist state to RocksDB for crash recovery
+        if let Err(e) = state.flush_to_db(storage.as_ref()) {
+            warn!("Failed to persist state to disk: {} (state is in-memory only)", e);
+        }
         drop(state); // Release lock
 
 
@@ -1056,6 +1351,27 @@ impl NodeService {
 
         // Store block
         storage.store_block(&block)?;
+
+        // Update consensus with the new block hash for VRF entropy
+        consensus.read().update_last_block_hash(block.hash());
+
+        // Distribute block reward using halving schedule
+        let producer_addr = if header.validator != [0u8; 32] {
+            let mut addr = [0u8; 20];
+            addr.copy_from_slice(&header.validator[12..32]);
+            luxtensor_core::Address::from(addr)
+        } else {
+            luxtensor_core::Address::zero()
+        };
+        match consensus.read().distribute_reward_with_height(&producer_addr, new_height) {
+            Ok(reward) if reward > 0 => {
+                info!("💰 Block #{} reward: {} wei to 0x{}", new_height, reward, hex::encode(producer_addr.as_bytes()));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                debug!("Block reward distribution skipped: {}", e);
+            }
+        }
 
         // 🔧 FIX: Store receipts for eth_getTransactionReceipt
         for receipt in &valid_receipts {

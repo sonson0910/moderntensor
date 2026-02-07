@@ -25,6 +25,12 @@ pub enum CoreError {
 
     #[error("Insufficient balance")]
     InsufficientBalance,
+
+    #[error("Nonce overflow")]
+    NonceOverflow,
+
+    #[error("Balance overflow")]
+    BalanceOverflow,
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

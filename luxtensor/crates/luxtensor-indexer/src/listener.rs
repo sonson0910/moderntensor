@@ -160,8 +160,16 @@ impl BlockListener {
     async fn handle_block_event(&self, data: &serde_json::Value) -> Result<()> {
         let block_number = data.get("number")
             .and_then(|n| n.as_str())
-            .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-            .unwrap_or(0);
+            .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+
+        // Reject blocks with unparseable block numbers to prevent overwriting block 0
+        let block_number = match block_number {
+            Some(n) if n >= 0 => n,
+            _ => {
+                warn!("Skipping block event with invalid/missing block number: {:?}", data.get("number"));
+                return Ok(());
+            }
+        };
 
         let block_hash = data.get("hash")
             .and_then(|h| h.as_str())

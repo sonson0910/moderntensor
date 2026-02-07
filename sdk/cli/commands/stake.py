@@ -69,8 +69,8 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
 
         # Get network config
         net_config = get_network_config(network)
-        rpc_url = net_config.get('rpc_url', 'http://localhost:8545')
-        chain_id = net_config.get('chain_id', 2)
+        rpc_url = net_config.rpc_url
+        chain_id = net_config.chain_id
 
         # Initialize client
         client = LuxtensorClient(rpc_url)
@@ -180,8 +180,8 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
 
         # Get network config
         net_config = get_network_config(network)
-        rpc_url = net_config.get('rpc_url', 'http://localhost:8545')
-        chain_id = net_config.get('chain_id', 2)
+        rpc_url = net_config.rpc_url
+        chain_id = net_config.chain_id
 
         # Initialize client
         client = LuxtensorClient(rpc_url)
@@ -298,8 +298,8 @@ def claim_rewards(coldkey: str, hotkey: str, base_dir: Optional[str], network: s
 
         # Get network config
         net_config = get_network_config(network)
-        rpc_url = net_config.get('rpc_url', 'http://localhost:8545')
-        chain_id = net_config.get('chain_id', 2)
+        rpc_url = net_config.rpc_url
+        chain_id = net_config.chain_id
 
         # Initialize client
         client = LuxtensorClient(rpc_url)
@@ -395,7 +395,7 @@ def stake_info(coldkey: str, hotkey: str, base_dir: Optional[str], network: str)
 
         # Get network config
         net_config = get_network_config(network)
-        rpc_url = net_config.get('rpc_url', 'http://localhost:8545')
+        rpc_url = net_config.rpc_url
 
         # Initialize client
         client = LuxtensorClient(rpc_url)
@@ -464,7 +464,7 @@ def list_stakes(network: str, limit: int):
 
         # Get network config
         net_config = get_network_config(network)
-        rpc_url = net_config.get('rpc_url', 'http://localhost:8545')
+        rpc_url = net_config.rpc_url
 
         # Initialize client
         client = LuxtensorClient(rpc_url)

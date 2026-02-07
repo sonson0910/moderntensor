@@ -4,25 +4,26 @@
 use parking_lot::RwLock;
 
 /// Burn configuration
+/// Rates are expressed in basis points (BPS): 10000 = 100%, 5000 = 50%
 #[derive(Debug, Clone)]
 pub struct BurnConfig {
-    /// Transaction fee burn rate (50%)
-    pub tx_fee_burn_rate: f64,
-    /// Subnet registration burn rate (50%, 50% to grants)
-    pub subnet_burn_rate: f64,
-    /// Unmet quota burn rate (100%)
-    pub unmet_quota_burn_rate: f64,
-    /// Slashing burn rate (80%)
-    pub slashing_burn_rate: f64,
+    /// Transaction fee burn rate in BPS (5000 = 50%)
+    pub tx_fee_burn_rate_bps: u32,
+    /// Subnet registration burn rate in BPS (5000 = 50%, remainder to grants)
+    pub subnet_burn_rate_bps: u32,
+    /// Unmet quota burn rate in BPS (10000 = 100%)
+    pub unmet_quota_burn_rate_bps: u32,
+    /// Slashing burn rate in BPS (8000 = 80%)
+    pub slashing_burn_rate_bps: u32,
 }
 
 impl Default for BurnConfig {
     fn default() -> Self {
         Self {
-            tx_fee_burn_rate: 0.50,
-            subnet_burn_rate: 0.50,
-            unmet_quota_burn_rate: 1.00,
-            slashing_burn_rate: 0.80,
+            tx_fee_burn_rate_bps: 5000,      // 50%
+            subnet_burn_rate_bps: 5000,      // 50%
+            unmet_quota_burn_rate_bps: 10000, // 100%
+            slashing_burn_rate_bps: 8000,    // 80%
         }
     }
 }
@@ -98,8 +99,8 @@ impl BurnManager {
 
     /// Process transaction fee - returns (burned, remaining)
     pub fn burn_tx_fee(&self, fee: u128, block_height: u64) -> (u128, u128) {
-        let burn_amount = (fee as f64 * self.config.tx_fee_burn_rate) as u128;
-        let remaining = fee - burn_amount;
+        let burn_amount = fee * self.config.tx_fee_burn_rate_bps as u128 / 10000;
+        let remaining = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::TransactionFee, burn_amount, block_height, None);
 
@@ -112,8 +113,8 @@ impl BurnManager {
 
     /// Process subnet registration - returns (burned, recycled_to_grants)
     pub fn burn_subnet_registration(&self, fee: u128, block_height: u64, owner: [u8; 20]) -> (u128, u128) {
-        let burn_amount = (fee as f64 * self.config.subnet_burn_rate) as u128;
-        let recycle_amount = fee - burn_amount;
+        let burn_amount = fee * self.config.subnet_burn_rate_bps as u128 / 10000;
+        let recycle_amount = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::SubnetRegistration, burn_amount, block_height, Some(owner));
 
@@ -127,7 +128,7 @@ impl BurnManager {
 
     /// Burn for unmet quota (100% burned)
     pub fn burn_unmet_quota(&self, amount: u128, block_height: u64, participant: [u8; 20]) -> u128 {
-        let burn_amount = (amount as f64 * self.config.unmet_quota_burn_rate) as u128;
+        let burn_amount = amount * self.config.unmet_quota_burn_rate_bps as u128 / 10000;
 
         self.record_burn(BurnType::UnmetQuota, burn_amount, block_height, Some(participant));
 
@@ -140,8 +141,8 @@ impl BurnManager {
 
     /// Process slashing - returns (burned, remaining)
     pub fn burn_slashing(&self, slashed_amount: u128, block_height: u64, validator: [u8; 20]) -> (u128, u128) {
-        let burn_amount = (slashed_amount as f64 * self.config.slashing_burn_rate) as u128;
-        let remaining = slashed_amount - burn_amount;
+        let burn_amount = slashed_amount * self.config.slashing_burn_rate_bps as u128 / 10000;
+        let remaining = slashed_amount.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::Slashing, burn_amount, block_height, Some(validator));
 

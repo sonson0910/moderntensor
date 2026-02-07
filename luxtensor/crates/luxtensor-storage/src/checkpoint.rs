@@ -287,8 +287,42 @@ impl CheckpointManager {
         fs::create_dir_all(&snapshot_path)
             .map_err(|e| CheckpointError::ImportFailed(e.to_string()))?;
 
-        archive.unpack(&snapshot_path)
-            .map_err(|e| CheckpointError::ImportFailed(e.to_string()))?;
+        // SECURITY: Validate all archive entries to prevent path traversal attacks.
+        // A malicious archive could contain entries like "../../../etc/crontab"
+        // that would write files outside the intended directory.
+        let canonical_snapshot = snapshot_path.canonicalize()
+            .map_err(|e| CheckpointError::ImportFailed(format!("Cannot canonicalize snapshot path: {}", e)))?;
+
+        for entry_result in archive.entries()
+            .map_err(|e| CheckpointError::ImportFailed(e.to_string()))? {
+            let mut entry = entry_result
+                .map_err(|e| CheckpointError::ImportFailed(e.to_string()))?;
+
+            let entry_path = entry.path()
+                .map_err(|e| CheckpointError::ImportFailed(e.to_string()))?
+                .into_owned();
+
+            // Check for absolute paths or path traversal sequences
+            if entry_path.is_absolute() || entry_path.components().any(|c| c == std::path::Component::ParentDir) {
+                return Err(CheckpointError::ImportFailed(
+                    format!("Refusing to extract archive entry with path traversal: {:?}", entry_path)
+                ));
+            }
+
+            let target = snapshot_path.join(&entry_path);
+            // Verify the resolved target is still within our snapshot directory
+            if let Ok(canonical_target) = target.canonicalize() {
+                if !canonical_target.starts_with(&canonical_snapshot) {
+                    return Err(CheckpointError::ImportFailed(
+                        format!("Archive entry escapes snapshot directory: {:?}", entry_path)
+                    ));
+                }
+            }
+
+            // Safe to extract this entry
+            entry.unpack_in(&snapshot_path)
+                .map_err(|e| CheckpointError::ImportFailed(e.to_string()))?;
+        }
 
         // Save metadata
         let meta_path = self.checkpoint_dir.join(format!("checkpoint_{}.meta", height));

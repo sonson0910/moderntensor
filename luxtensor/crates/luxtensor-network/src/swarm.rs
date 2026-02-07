@@ -58,10 +58,14 @@ pub enum SwarmCommand {
 }
 
 /// P2P Swarm Node for actual network connectivity
+/// Default capacity for bounded P2P channels
+const P2P_CHANNEL_CAPACITY: usize = 4096;
+
+/// P2P Swarm Node for actual network connectivity
 pub struct SwarmP2PNode {
     swarm: Swarm<BlockchainBehaviour>,
-    event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
-    command_rx: mpsc::UnboundedReceiver<SwarmCommand>,
+    event_sender: mpsc::Sender<SwarmP2PEvent>,
+    command_rx: mpsc::Receiver<SwarmCommand>,
     blocks_topic: IdentTopic,
     #[allow(dead_code)] // Reserved for future direct TX topic usage
     transactions_topic: IdentTopic,
@@ -110,12 +114,12 @@ impl SwarmP2PNode {
     /// * Tuple of (SwarmP2PNode, command sender)
     pub async fn with_keypair(
         listen_port: u16,
-        event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
+        event_sender: mpsc::Sender<SwarmP2PEvent>,
         keypair: Keypair,
         bootstrap_nodes: Vec<String>,
         enable_mdns: bool,
-    ) -> Result<(Self, mpsc::UnboundedSender<SwarmCommand>), NetworkError> {
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
+    ) -> Result<(Self, mpsc::Sender<SwarmCommand>), NetworkError> {
+        let (command_tx, command_rx) = mpsc::channel(P2P_CHANNEL_CAPACITY);
         let local_peer_id = PeerId::from(keypair.public());
 
         info!("🔗 Local Peer ID: {}", local_peer_id);
@@ -136,15 +140,44 @@ impl SwarmP2PNode {
             .mesh_n_high(6)          // Maximum peers in mesh (default: 12)
             .mesh_n(2)               // Desired peers in mesh (default: 6)
             .mesh_outbound_min(1)    // Minimum outbound peers (default: 2)
-            .flood_publish(true)     // Publish to ALL connected peers, not just mesh
+            // 🔧 FIX: Disable flood_publish — use mesh routing for O(log N) instead of O(N)
+            .flood_publish(false)
+            // 🔧 FIX: cap max message size to 4MB to prevent memory exhaustion
+            .max_transmit_size(4 * 1024 * 1024)
             .build()
             .map_err(|e| NetworkError::GossipsubInit(e.to_string()))?;
 
-        // Create gossipsub behaviour
-        let gossipsub = gossipsub::Behaviour::new(
+        // Create gossipsub behaviour with peer scoring
+        let mut gossipsub = gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(keypair.clone()),
             gossipsub_config,
         ).map_err(|e| NetworkError::GossipsubInit(e.to_string()))?;
+
+        // 🔧 FIX: Enable gossipsub peer scoring to penalise bad actors
+        let peer_score_params = gossipsub::PeerScoreParams {
+            // Decay scores over 10 minutes
+            decay_interval: Duration::from_secs(10),
+            decay_to_zero: 0.01,
+            retain_score: Duration::from_secs(3600), // remember scores for 1 hour
+            // Application-specific: start with 0, each app-level misbehaviour decreases
+            app_specific_weight: 1.0,
+            // IP colocation: penalise peers sharing IPs
+            ip_colocation_factor_weight: -10.0,
+            ip_colocation_factor_threshold: 3.0,
+            ..Default::default()
+        };
+        let peer_score_thresholds = gossipsub::PeerScoreThresholds {
+            gossip_threshold: -100.0,       // don't gossip to peers below this
+            publish_threshold: -200.0,      // don't publish to peers below this
+            graylist_threshold: -400.0,     // ignore all messages from peers below this
+            opportunistic_graft_threshold: 5.0,
+            ..Default::default()
+        };
+        if let Err(e) = gossipsub.with_peer_score(peer_score_params, peer_score_thresholds) {
+            warn!("⚠️ Failed to enable gossipsub peer scoring: {}", e);
+        } else {
+            info!("  ✓ Gossipsub peer scoring enabled");
+        }
 
         // Create mDNS behaviour for local discovery
         let mdns = mdns::tokio::Behaviour::new(
@@ -240,6 +273,13 @@ impl SwarmP2PNode {
                     }
                 }
             }
+
+            // 🔧 FIX: Trigger Kademlia bootstrap to discover peers through DHT
+            if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
+                warn!("⚠️ Kademlia bootstrap failed (need at least one peer): {}", e);
+            } else {
+                info!("🔍 Kademlia DHT bootstrap initiated");
+            }
         } else if enable_mdns {
             info!("📡 mDNS enabled - will discover local peers automatically");
         } else {
@@ -291,11 +331,15 @@ impl SwarmP2PNode {
                         }
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                             info!("✅ Connected to peer: {}", peer_id);
-                            let _ = self.event_sender.send(SwarmP2PEvent::PeerConnected(peer_id));
+                            if self.event_sender.try_send(SwarmP2PEvent::PeerConnected(peer_id)).is_err() {
+                                warn!("⚠️ Event channel full, dropping PeerConnected event");
+                            }
                         }
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
                             info!("❌ Disconnected from peer: {}", peer_id);
-                            let _ = self.event_sender.send(SwarmP2PEvent::PeerDisconnected(peer_id));
+                            if self.event_sender.try_send(SwarmP2PEvent::PeerDisconnected(peer_id)).is_err() {
+                                warn!("⚠️ Event channel full, dropping PeerDisconnected event");
+                            }
                         }
                         _ => {}
                     }
@@ -320,7 +364,14 @@ impl SwarmP2PNode {
                             }
                         }
                         SwarmCommand::SendBlocks { blocks } => {
-                            // 🔧 FIX: Send all blocks in a single message for faster sync
+                            // SECURITY: Cap batch size to prevent oversized gossip messages
+                            const MAX_SYNC_BATCH: usize = 100;
+                            let blocks = if blocks.len() > MAX_SYNC_BATCH {
+                                warn!("⚠️ Truncating sync batch from {} to {} blocks", blocks.len(), MAX_SYNC_BATCH);
+                                blocks[..MAX_SYNC_BATCH].to_vec()
+                            } else {
+                                blocks
+                            };
                             if !blocks.is_empty() {
                                 info!("📤 SWARM: Broadcasting {} blocks for sync", blocks.len());
                                 let message = NetworkMessage::Blocks(blocks);
@@ -437,17 +488,29 @@ impl SwarmP2PNode {
     /// Handle incoming gossip message
     fn handle_gossip_message(&mut self, source: PeerId, message: gossipsub::Message) {
         let topic = message.topic.to_string();
-        info!("📨 GOSSIP RECEIVED: from {} on topic {} - {} bytes", source, topic, message.data.len());
+        let msg_len = message.data.len();
+        info!("📨 GOSSIP RECEIVED: from {} on topic {} - {} bytes", source, topic, msg_len);
 
-        // Deserialize message
-        match bincode::deserialize::<NetworkMessage>(&message.data) {
+        // SECURITY: Reject oversized messages before deserialization
+        if msg_len > crate::messages::MAX_MESSAGE_SIZE as usize {
+            warn!("🚫 Dropping oversized gossip message from {}: {} bytes (max {})",
+                  source, msg_len, crate::messages::MAX_MESSAGE_SIZE);
+            return;
+        }
+
+        // Deserialize message with size limit to prevent DoS
+        match crate::messages::deserialize_message(&message.data) {
             Ok(NetworkMessage::NewBlock(block)) => {
                 info!("📥 Received block #{} from peer {}", block.header.height, source);
-                let _ = self.event_sender.send(SwarmP2PEvent::NewBlock(block));
+                if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
+                    warn!("⚠️ Event channel full, dropping NewBlock — node is falling behind");
+                }
             }
             Ok(NetworkMessage::NewTransaction(tx)) => {
                 info!("📥 SWARM: Received NewTransaction from peer {}", source);
-                let _ = self.event_sender.send(SwarmP2PEvent::NewTransaction(tx));
+                if self.event_sender.try_send(SwarmP2PEvent::NewTransaction(tx)).is_err() {
+                    warn!("⚠️ Event channel full, dropping NewTransaction");
+                }
             }
             Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id }) => {
                 // SECURITY: Rate limit sync requests per peer
@@ -469,16 +532,21 @@ impl SwarmP2PNode {
 
                 entry.0 += 1;
                 info!("🔄 Sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
-                let _ = self.event_sender.send(SwarmP2PEvent::SyncRequest {
+                if self.event_sender.try_send(SwarmP2PEvent::SyncRequest {
                     from_height,
                     to_height,
                     requester_id
-                });
+                }).is_err() {
+                    warn!("⚠️ Event channel full, dropping SyncRequest");
+                }
             }
             Ok(NetworkMessage::Blocks(blocks)) => {
                 info!("📥 Received {} blocks from sync", blocks.len());
                 for block in blocks {
-                    let _ = self.event_sender.send(SwarmP2PEvent::NewBlock(block));
+                    if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
+                        warn!("⚠️ Event channel full, dropping sync block");
+                        break;
+                    }
                 }
             }
             Ok(_) => {

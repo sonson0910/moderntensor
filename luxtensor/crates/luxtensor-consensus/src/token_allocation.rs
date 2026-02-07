@@ -171,7 +171,11 @@ impl VestingEntry {
             return 0;
         }
 
-        let days_since_tge = ((current_timestamp - self.tge_timestamp) / 86400) as u32;
+        // Guard against timestamps before TGE (prevents underflow)
+        let days_since_tge = current_timestamp
+            .saturating_sub(self.tge_timestamp)
+            .checked_div(86400)
+            .unwrap_or(0) as u32;
         let schedule = self.category.vesting();
         let vested = schedule.vested_amount(self.total_amount, days_since_tge);
 

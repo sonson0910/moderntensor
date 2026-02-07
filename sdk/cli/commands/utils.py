@@ -156,8 +156,8 @@ def generate_keypair():
         console.print("\n✅ Generated new keypair:", style="bold green")
         console.print(f"Address: {keypair['address']}")
         console.print(f"Public Key: {keypair['public_key']}")
-        console.print(f"\n⚠️  Private Key: {keypair['private_key']}", style="bold red")
-        console.print("⚠️  Keep this private key secure!", style="bold red")
+        console.print("\n⚠️  Private key generated but NOT displayed for security.", style="bold yellow")
+        console.print("⚠️  Use 'wallet create-coldkey' for secure key storage.", style="bold yellow")
 
     except Exception as e:
         console.print(f"❌ Error: {str(e)}", style="bold red")

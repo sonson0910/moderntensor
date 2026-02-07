@@ -46,11 +46,9 @@ def print_success(message: str):
     """Prints a success message."""
     console.print(f"[success]✅ {message}[/success]")
 
-def print_error(message: str, exit_code: int = 1):
-    """Prints an error message and optionally exits."""
+def print_error(message: str, exit_code: int = 0):
+    """Prints an error message. Does not exit by default."""
     console.print(f"[error]❌ {message}[/error]")
-    if exit_code != 0:
-        sys.exit(exit_code)
 
 def print_info(message: str):
     """Prints an info message."""
@@ -79,9 +77,10 @@ def create_table(title: str = None, columns: list = None) -> Table:
 
     return table
 
-def print_panel(message: str, title: str = "Alert", style: str = "brand"):
+def print_panel(message: str, title: str = "Alert", style: str = "brand", border_style: str = None):
     """Prints a prominent panel."""
-    console.print(Panel(message, title=f"[{style}]{title}[/{style}]", border_style=style))
+    bs = border_style or style
+    console.print(Panel(message, title=f"[{style}]{title}[/{style}]", border_style=bs))
 
 def spinner(message: str):
     """Returns a spinner context manager."""

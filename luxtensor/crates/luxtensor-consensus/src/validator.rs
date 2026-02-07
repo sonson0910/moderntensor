@@ -181,13 +181,18 @@ impl ValidatorSet {
 
     /// Select a validator using weighted random selection based on seed
     pub fn select_by_seed(&self, seed: &[u8; 32]) -> Result<Address, &'static str> {
-        let active = self.active_validators();
+        let mut active: Vec<&Validator> = self.active_validators();
         if active.is_empty() {
             return Err("No active validators");
         }
 
-        // Calculate active stake
-        let active_stake: u128 = active.iter().map(|v| v.stake).sum();
+        // Sort by address for deterministic ordering (HashMap iteration is non-deterministic)
+        active.sort_by_key(|v| v.address);
+
+        // Calculate active stake using checked arithmetic to prevent overflow
+        let active_stake: u128 = active.iter()
+            .try_fold(0u128, |acc, v| acc.checked_add(v.stake))
+            .ok_or("Total active stake overflow")?;
         if active_stake == 0 {
             return Err("No stake in active validators");
         }

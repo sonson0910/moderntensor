@@ -60,26 +60,36 @@ impl Transaction {
         }
     }
 
-    /// Calculate transaction hash
+    /// Calculate transaction hash (excludes signature fields to prevent malleability)
     pub fn hash(&self) -> Hash {
-        let bytes = bincode::serialize(self)
-            .expect("Transaction serialization should never fail");
-        keccak256(&bytes)
+        // Hash only pre-signature fields to ensure TX ID stability
+        // This prevents signature malleability from changing the txid
+        keccak256(&self.signing_message())
     }
 
     /// Get signing message for this transaction (includes chain_id for replay protection)
+    /// Uses length-prefixed encoding to prevent field collision attacks
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
         // Include chain_id FIRST to prevent cross-chain replay attacks
         msg.extend_from_slice(&self.chain_id.to_le_bytes());
         msg.extend_from_slice(&self.nonce.to_le_bytes());
         msg.extend_from_slice(self.from.as_bytes());
-        if let Some(to) = self.to {
-            msg.extend_from_slice(to.as_bytes());
+        // Use presence byte to distinguish None from Some (prevents collision)
+        match self.to {
+            Some(to) => {
+                msg.push(0x01); // present
+                msg.extend_from_slice(to.as_bytes());
+            }
+            None => {
+                msg.push(0x00); // absent
+            }
         }
         msg.extend_from_slice(&self.value.to_le_bytes());
         msg.extend_from_slice(&self.gas_price.to_le_bytes());
         msg.extend_from_slice(&self.gas_limit.to_le_bytes());
+        // Length-prefix data to prevent collision with other fields
+        msg.extend_from_slice(&(self.data.len() as u64).to_le_bytes());
         msg.extend_from_slice(&self.data);
         msg
     }

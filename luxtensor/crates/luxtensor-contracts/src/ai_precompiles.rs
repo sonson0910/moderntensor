@@ -340,7 +340,8 @@ pub fn verify_proof_precompile(
     let is_valid = match proof_type {
         0 => verify_risc_zero_proof(input),
         1 => verify_groth16_proof(input),
-        2 => true, // Dev mode - always valid for testing
+        // NOTE: Dev-mode proof_type=2 (always-valid) was REMOVED for security.
+        // All proofs must go through actual verification.
         _ => false,
     };
 

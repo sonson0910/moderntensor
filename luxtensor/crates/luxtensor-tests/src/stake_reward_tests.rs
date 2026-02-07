@@ -44,21 +44,23 @@ mod distribution_config_tests {
     #[test]
     fn test_config_shares_sum_to_one() {
         let config = DistributionConfig::default();
-        let total = config.miner_share + config.validator_share +
-                   config.infrastructure_share + config.delegator_share +
-                   config.subnet_owner_share + config.dao_share;
-        assert!((total - 1.0).abs() < 0.001, "Shares should sum to 1.0, got {}", total);
+        let total = config.miner_share_bps + config.validator_share_bps +
+                   config.infrastructure_share_bps + config.delegator_share_bps +
+                   config.subnet_owner_share_bps + config.dao_share_bps +
+                   config.community_ecosystem_share_bps;
+        assert_eq!(total, 10_000, "Shares should sum to 10_000 BPS, got {}", total);
     }
 
     #[test]
     fn test_model_c_percentages() {
         let config = DistributionConfig::default();
-        assert_eq!(config.miner_share, 0.35, "Miners should get 35%");
-        assert_eq!(config.validator_share, 0.28, "Validators should get 28%");
-        assert_eq!(config.delegator_share, 0.12, "Delegators should get 12%");
-        assert_eq!(config.subnet_owner_share, 0.10, "Subnet owners should get 10%");
-        assert_eq!(config.dao_share, 0.13, "DAO should get 13%");
-        assert_eq!(config.infrastructure_share, 0.02, "Infrastructure should get 2%");
+        assert_eq!(config.miner_share_bps, 3500, "Miners should get 35%");
+        assert_eq!(config.validator_share_bps, 2800, "Validators should get 28%");
+        assert_eq!(config.delegator_share_bps, 1200, "Delegators should get 12%");
+        assert_eq!(config.subnet_owner_share_bps, 800, "Subnet owners should get 8%");
+        assert_eq!(config.dao_share_bps, 500, "DAO should get 5%");
+        assert_eq!(config.infrastructure_share_bps, 200, "Infrastructure should get 2%");
+        assert_eq!(config.community_ecosystem_share_bps, 1000, "Community should get 10%");
     }
 }
 
@@ -73,40 +75,40 @@ mod lock_bonus_tests {
     #[test]
     fn test_no_lock_no_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(0), 0.0);
-        assert_eq!(config.get_bonus(1), 0.0);
-        assert_eq!(config.get_bonus(29), 0.0);
+        assert_eq!(config.get_bonus_bps(0), 0);
+        assert_eq!(config.get_bonus_bps(1), 0);
+        assert_eq!(config.get_bonus_bps(29), 0);
     }
 
     #[test]
     fn test_30_day_lock_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(30), 0.10, "30 days should get +10%");
-        assert_eq!(config.get_bonus(45), 0.10, "45 days should get +10%");
-        assert_eq!(config.get_bonus(89), 0.10, "89 days should get +10%");
+        assert_eq!(config.get_bonus_bps(30), 1000, "30 days should get +10%");
+        assert_eq!(config.get_bonus_bps(45), 1000, "45 days should get +10%");
+        assert_eq!(config.get_bonus_bps(89), 1000, "89 days should get +10%");
     }
 
     #[test]
     fn test_90_day_lock_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(90), 0.25, "90 days should get +25%");
-        assert_eq!(config.get_bonus(120), 0.25, "120 days should get +25%");
-        assert_eq!(config.get_bonus(179), 0.25, "179 days should get +25%");
+        assert_eq!(config.get_bonus_bps(90), 2500, "90 days should get +25%");
+        assert_eq!(config.get_bonus_bps(120), 2500, "120 days should get +25%");
+        assert_eq!(config.get_bonus_bps(179), 2500, "179 days should get +25%");
     }
 
     #[test]
     fn test_180_day_lock_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(180), 0.50, "180 days should get +50%");
-        assert_eq!(config.get_bonus(300), 0.50, "300 days should get +50%");
-        assert_eq!(config.get_bonus(364), 0.50, "364 days should get +50%");
+        assert_eq!(config.get_bonus_bps(180), 5000, "180 days should get +50%");
+        assert_eq!(config.get_bonus_bps(300), 5000, "300 days should get +50%");
+        assert_eq!(config.get_bonus_bps(364), 5000, "364 days should get +50%");
     }
 
     #[test]
     fn test_365_day_lock_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(365), 1.00, "365 days should get +100%");
-        assert_eq!(config.get_bonus(730), 1.00, "730 days should get +100%");
+        assert_eq!(config.get_bonus_bps(365), 10000, "365 days should get +100%");
+        assert_eq!(config.get_bonus_bps(730), 10000, "730 days should get +100%");
     }
 }
 
@@ -128,7 +130,7 @@ mod distribution_edge_cases {
 
         // Miner rewards should be empty
         assert!(result.miner_rewards.is_empty());
-        // DAO should still receive 13%
+        // DAO should still receive 5%
         assert!(result.dao_allocation > 0);
     }
 
@@ -137,7 +139,7 @@ mod distribution_edge_cases {
         let dao_addr = test_address(100);
         let distributor = RewardDistributor::default_with_dao(dao_addr);
 
-        let miners = vec![MinerInfo { address: test_address(1), score: 1.0 }];
+        let miners = vec![MinerInfo::new(test_address(1), 1.0)];
         let result = distributor.distribute(1, 1_000_000_000, &miners, &[], &[], &[]);
 
         // Validator rewards should be empty
@@ -152,11 +154,11 @@ mod distribution_edge_cases {
         let distributor = RewardDistributor::default_with_dao(dao_addr);
 
         let total: u128 = 1_000_000_000;
-        let miners = vec![MinerInfo { address: test_address(1), score: 1.0 }];
+        let miners = vec![MinerInfo::new(test_address(1), 1.0)];
         let result = distributor.distribute(1, total, &miners, &[], &[], &[]);
 
         let miner_reward = *result.miner_rewards.get(&test_address(1)).unwrap();
-        let expected = (total as f64 * 0.35) as u128;
+        let expected = total * 3500 / 10_000;
         assert_eq!(miner_reward, expected, "Single miner should get full 35%");
     }
 
@@ -240,10 +242,10 @@ mod distribution_edge_cases {
 
         // Create 100 miners with varying scores
         let miners: Vec<MinerInfo> = (1..=100)
-            .map(|i| MinerInfo {
-                address: { let mut a = [0u8; 20]; a[0] = i; a },
-                score: (i as f64) / 100.0
-            })
+            .map(|i| MinerInfo::new(
+                { let mut a = [0u8; 20]; a[0] = i; a },
+                (i as f64) / 100.0
+            ))
             .collect();
 
         // Create 50 validators
@@ -264,10 +266,11 @@ mod distribution_edge_cases {
         let total_distributed: u128 =
             result.miner_rewards.values().sum::<u128>() +
             result.validator_rewards.values().sum::<u128>() +
-            result.dao_allocation;
+            result.dao_allocation +
+            result.community_ecosystem_allocation;
 
         assert!(total_distributed <= total);
-        // With no delegators/subnets: miners 35% + validators 28% + DAO 13% = 76%
+        // With no delegators/subnets: miners 35% + validators 28% + DAO 5% + community 10% = 78%
         assert!(total_distributed > total * 75 / 100, "At least 75% should be distributed");
     }
 }
@@ -285,7 +288,7 @@ mod reward_executor_tests {
         let dao_addr = test_address(100);
         let executor = RewardExecutor::new(dao_addr);
 
-        let miners = vec![MinerInfo { address: test_address(1), score: 1.0 }];
+        let miners = vec![MinerInfo::new(test_address(1), 1.0)];
 
         // Process 5 epochs
         for epoch in 1..=5 {
@@ -311,7 +314,7 @@ mod reward_executor_tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miner_addr = test_address(1);
-        let miners = vec![MinerInfo { address: miner_addr, score: 1.0 }];
+        let miners = vec![MinerInfo::new(miner_addr, 1.0)];
 
         // Process first epoch
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
@@ -330,7 +333,7 @@ mod reward_executor_tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miner_addr = test_address(1);
-        let miners = vec![MinerInfo { address: miner_addr, score: 1.0 }];
+        let miners = vec![MinerInfo::new(miner_addr, 1.0)];
 
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
 
@@ -351,7 +354,7 @@ mod reward_executor_tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miner_addr = test_address(1);
-        let miners = vec![MinerInfo { address: miner_addr, score: 1.0 }];
+        let miners = vec![MinerInfo::new(miner_addr, 1.0)];
 
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
 
@@ -371,7 +374,7 @@ mod reward_executor_tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miner_addr = test_address(1);
-        let miners = vec![MinerInfo { address: miner_addr, score: 1.0 }];
+        let miners = vec![MinerInfo::new(miner_addr, 1.0)];
 
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
 
@@ -387,7 +390,7 @@ mod reward_executor_tests {
         let dao_addr = test_address(100);
         let executor = RewardExecutor::new(dao_addr);
 
-        let miners = vec![MinerInfo { address: test_address(1), score: 1.0 }];
+        let miners = vec![MinerInfo::new(test_address(1), 1.0)];
 
         assert_eq!(executor.get_dao_balance(), 0, "Initial DAO balance should be 0");
 
@@ -405,7 +408,7 @@ mod reward_executor_tests {
         let dao_addr = test_address(100);
         let executor = RewardExecutor::new(dao_addr);
 
-        let miners = vec![MinerInfo { address: test_address(1), score: 1.0 }];
+        let miners = vec![MinerInfo::new(test_address(1), 1.0)];
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);
 
         let stats = executor.stats();

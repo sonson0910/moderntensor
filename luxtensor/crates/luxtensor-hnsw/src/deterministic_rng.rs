@@ -77,14 +77,33 @@ impl DeterministicRng {
     ///
     /// # Returns
     /// A level in [0, max_level] where 0 is most common.
-    pub fn next_level(&mut self, max_level: u8, ml: f64) -> u8 {
-        let random_float = self.next_f64();
+    pub fn next_level(&mut self, max_level: u8, _ml: f64) -> u8 {
+        // CONSENSUS-SAFE: Use integer-only level selection to avoid f64
+        // cross-platform non-determinism (x87 vs SSE vs ARM).
+        //
+        // We use a geometric distribution approximation based on leading zeros.
+        // For M=16, the probability of level l should be (1/M)^l.
+        // P(level 0) ≈ 93.75%, P(level 1) ≈ 5.86%, P(level 2) ≈ 0.37%, etc.
+        //
+        // We count how many times a random value falls in successive 1/M bands.
+        let rand_val = self.next_u64();
 
-        // Level calculation: floor(-ln(rand) * ml)
-        // This produces a geometric distribution
-        let level = (-random_float.ln() * ml).floor() as u8;
+        // Each "round" we check if the value falls in the top 1/M fraction
+        // M=16 → each level has a 1/16 = 6.25% chance of advancing
+        // We use fixed-point bit shifting: threshold = u64::MAX / M
+        const M: u64 = super::M as u64;
+        let threshold = u64::MAX / M;
 
-        level.min(max_level)
+        let mut level: u8 = 0;
+        let mut remaining = rand_val;
+
+        while remaining < threshold && level < max_level {
+            level += 1;
+            // Next "roll" uses a different portion of entropy
+            remaining = remaining.wrapping_mul(6364136223846793005).wrapping_add(1);
+        }
+
+        level
     }
 
     /// Generate the next random u64 value.

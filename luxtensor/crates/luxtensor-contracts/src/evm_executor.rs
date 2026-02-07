@@ -216,12 +216,12 @@ impl EvmExecutor {
         }
     }
 
-    /// Ensure account exists in state with reasonable default balance for gas
+    /// Ensure account exists in state
+    /// New accounts start with zero balance; use fund_account() to add funds explicitly
     fn ensure_account(&self, address: &RevmAddress) {
         let mut accounts = self.accounts.write();
         accounts.entry(*address).or_insert(AccountInfo {
-            // Provide enough balance for gas payments (100 ETH equivalent)
-            balance: U256::from(100_000_000_000_000_000_000u128),
+            balance: U256::ZERO,
             nonce: 0,
             code_hash: revm::primitives::KECCAK_EMPTY,
             code: None,

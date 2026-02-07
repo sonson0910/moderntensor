@@ -19,7 +19,7 @@ impl OracleConfig {
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string())
                 .parse()?,
             private_key: env::var("ORACLE_PRIVATE_KEY")
-                .expect("ORACLE_PRIVATE_KEY must be set"),
+                .map_err(|_| anyhow::anyhow!("ORACLE_PRIVATE_KEY environment variable must be set"))?,
             database_url: env::var("DATABASE_URL").ok(),
         })
     }

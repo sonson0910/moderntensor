@@ -56,6 +56,9 @@ pub enum ConsensusError {
 
     #[error("Slashing failed: {0}")]
     SlashingFailed(String),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConsensusError>;

@@ -5,7 +5,7 @@ version: '3.8'
 
 services:
   # ========== ModernTensor Nodes ==========
-  
+
   # Validator Node (can be scaled)
   validator:
     build:
@@ -53,7 +53,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-  
+
   # Miner Node (can be scaled)
   miner:
     build:
@@ -86,9 +86,9 @@ services:
       options:
         max-size: "100m"
         max-file: "5"
-  
+
   # ========== Monitoring Stack ==========
-  
+
   # Prometheus - Metrics collection
   prometheus:
     image: prom/prometheus:latest
@@ -114,7 +114,7 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-  
+
   # Grafana - Visualization
   grafana:
     image: grafana/grafana:latest
@@ -142,7 +142,7 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-  
+
   # OpenTelemetry Collector - Distributed tracing
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -163,7 +163,7 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-  
+
   # Jaeger - Trace visualization
   jaeger:
     image: jaegertracing/all-in-one:latest
@@ -183,7 +183,7 @@ services:
     networks:
       - monitoring
     restart: unless-stopped
-  
+
   # Loki - Log aggregation
   loki:
     image: grafana/loki:latest
@@ -197,7 +197,7 @@ services:
     networks:
       - monitoring
     restart: unless-stopped
-  
+
   # Promtail - Log shipping to Loki
   promtail:
     image: grafana/promtail:latest
@@ -212,7 +212,7 @@ services:
     restart: unless-stopped
     depends_on:
       - loki
-  
+
   # Alertmanager - Alert routing
   alertmanager:
     image: prom/alertmanager:latest
@@ -228,27 +228,25 @@ services:
     networks:
       - monitoring
     restart: unless-stopped
-  
+
   # ========== Support Services ==========
-  
+
   # Redis - Caching
   redis:
     image: redis:7-alpine
     container_name: mt-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
     networks:
       - moderntensor-prod
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis_password}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
-  
+
   # Nginx - Load balancer and reverse proxy
   nginx:
     image: nginx:alpine

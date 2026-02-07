@@ -272,8 +272,8 @@ impl P2PNode {
             stats.messages_received += 1;
         }
 
-        // Parse message
-        let message: NetworkMessage = bincode::deserialize(&data)
+        // Parse message with size limit to prevent DoS
+        let message: NetworkMessage = crate::messages::deserialize_message(&data)
             .map_err(|e| NetworkError::DeserializationFailed(e.to_string()))?;
 
         debug!(

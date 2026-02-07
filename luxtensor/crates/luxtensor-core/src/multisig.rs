@@ -54,7 +54,7 @@ pub struct MultisigWallet {
 
 impl MultisigWallet {
     /// Create a new multisig wallet
-    pub fn new(signers: Vec<Address>, threshold: u8, name: Option<String>) -> Result<Self> {
+    pub fn new(signers: Vec<Address>, threshold: u8, name: Option<String>, block_timestamp: u64) -> Result<Self> {
         // Validate threshold
         if threshold == 0 || threshold as usize > signers.len() {
             return Err(MultisigError::InvalidThreshold {
@@ -75,16 +75,13 @@ impl MultisigWallet {
             hasher_input.extend_from_slice(signer.as_ref());
         }
         hasher_input.push(threshold);
-        let id = hex::encode(&keccak256(&hasher_input)[..8]);
+        let id = hex::encode(keccak256(&hasher_input));
 
         Ok(Self {
             id,
             threshold,
             signers,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            created_at: block_timestamp,
             name,
         })
     }
@@ -140,11 +137,9 @@ impl PendingMultisigTx {
         data: Vec<u8>,
         proposer: Address,
         ttl_seconds: u64,
+        block_timestamp: u64,  // use block timestamp for determinism
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = block_timestamp;
 
         // Generate unique tx ID
         let mut id_input = Vec::new();
@@ -152,7 +147,7 @@ impl PendingMultisigTx {
         id_input.extend_from_slice(to.as_ref());
         id_input.extend_from_slice(&value.to_be_bytes());
         id_input.extend_from_slice(&now.to_be_bytes());
-        let id = hex::encode(&keccak256(&id_input)[..12]);
+        let id = hex::encode(keccak256(&id_input));
 
         Self {
             id,
@@ -169,16 +164,12 @@ impl PendingMultisigTx {
         }
     }
 
-    /// Check if transaction has expired
-    pub fn is_expired(&self) -> bool {
+    /// Check if transaction has expired (uses provided timestamp for determinism)
+    pub fn is_expired(&self, current_timestamp: u64) -> bool {
         if self.expires_at == 0 {
             return false;
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        now > self.expires_at
+        current_timestamp > self.expires_at
     }
 
     /// Get number of approvals
@@ -218,8 +209,9 @@ impl MultisigManager {
         signers: Vec<Address>,
         threshold: u8,
         name: Option<String>,
+        block_timestamp: u64,
     ) -> Result<MultisigWallet> {
-        let wallet = MultisigWallet::new(signers, threshold, name)?;
+        let wallet = MultisigWallet::new(signers, threshold, name, block_timestamp)?;
         let wallet_id = wallet.id.clone();
 
         let mut wallets = self.wallets.write();
@@ -241,6 +233,7 @@ impl MultisigManager {
         to: Address,
         value: u128,
         data: Vec<u8>,
+        block_timestamp: u64,
     ) -> Result<PendingMultisigTx> {
         // Verify wallet exists
         let wallet = self.get_wallet(wallet_id)
@@ -259,6 +252,7 @@ impl MultisigManager {
             data,
             *proposer,
             self.default_ttl,
+            block_timestamp,
         );
 
         let tx_id = tx.id.clone();
@@ -272,6 +266,7 @@ impl MultisigManager {
         &self,
         tx_id: &str,
         signer: &Address,
+        current_timestamp: u64,
     ) -> Result<PendingMultisigTx> {
         let mut pending = self.pending_txs.write();
         let tx = pending.get_mut(tx_id)
@@ -283,7 +278,7 @@ impl MultisigManager {
         }
 
         // Check if expired
-        if tx.is_expired() {
+        if tx.is_expired(current_timestamp) {
             return Err(MultisigError::Expired);
         }
 
@@ -305,7 +300,7 @@ impl MultisigManager {
     }
 
     /// Check if transaction can be executed
-    pub fn can_execute(&self, tx_id: &str) -> Result<bool> {
+    pub fn can_execute(&self, tx_id: &str, current_timestamp: u64) -> Result<bool> {
         let pending = self.pending_txs.read();
         let tx = pending.get(tx_id)
             .ok_or_else(|| MultisigError::TransactionNotFound(tx_id.to_string()))?;
@@ -314,7 +309,7 @@ impl MultisigManager {
             return Ok(false);
         }
 
-        if tx.is_expired() {
+        if tx.is_expired(current_timestamp) {
             return Err(MultisigError::Expired);
         }
 
@@ -325,7 +320,7 @@ impl MultisigManager {
     }
 
     /// Execute a transaction (called by executor after threshold reached)
-    pub fn mark_executed(&self, tx_id: &str, tx_hash: Hash) -> Result<()> {
+    pub fn mark_executed(&self, tx_id: &str, tx_hash: Hash, current_timestamp: u64) -> Result<()> {
         let mut pending = self.pending_txs.write();
         let tx = pending.get_mut(tx_id)
             .ok_or_else(|| MultisigError::TransactionNotFound(tx_id.to_string()))?;
@@ -341,22 +336,17 @@ impl MultisigManager {
         }
 
         tx.executed = true;
-        tx.executed_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        );
+        tx.executed_at = Some(current_timestamp);
         tx.tx_hash = Some(tx_hash);
 
         Ok(())
     }
 
     /// Get all pending transactions for a wallet
-    pub fn get_pending_for_wallet(&self, wallet_id: &str) -> Vec<PendingMultisigTx> {
+    pub fn get_pending_for_wallet(&self, wallet_id: &str, current_timestamp: u64) -> Vec<PendingMultisigTx> {
         self.pending_txs.read()
             .values()
-            .filter(|tx| tx.wallet_id == wallet_id && !tx.executed && !tx.is_expired())
+            .filter(|tx| tx.wallet_id == wallet_id && !tx.executed && !tx.is_expired(current_timestamp))
             .cloned()
             .collect()
     }
@@ -367,11 +357,11 @@ impl MultisigManager {
     }
 
     /// Cleanup expired transactions
-    pub fn cleanup_expired(&self) {
+    pub fn cleanup_expired(&self, current_timestamp: u64) {
         let mut pending = self.pending_txs.write();
         let expired: Vec<String> = pending
             .iter()
-            .filter(|(_, tx)| tx.is_expired() && !tx.executed)
+            .filter(|(_, tx)| tx.is_expired(current_timestamp) && !tx.executed)
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -402,7 +392,7 @@ mod tests {
         let manager = MultisigManager::new();
         let signers = vec![test_address(1), test_address(2), test_address(3)];
 
-        let wallet = manager.create_wallet(signers.clone(), 2, Some("Treasury".to_string())).unwrap();
+        let wallet = manager.create_wallet(signers.clone(), 2, Some("Treasury".to_string()), 1_700_000_000).unwrap();
 
         assert_eq!(wallet.threshold, 2);
         assert_eq!(wallet.signers.len(), 3);
@@ -414,7 +404,7 @@ mod tests {
         let manager = MultisigManager::new();
         let signers = vec![test_address(1), test_address(2)];
 
-        let result = manager.create_wallet(signers, 3, None); // 3-of-2 invalid
+        let result = manager.create_wallet(signers, 3, None, 1_700_000_000); // 3-of-2 invalid
         assert!(result.is_err());
     }
 
@@ -423,24 +413,26 @@ mod tests {
         let manager = MultisigManager::new();
         let signers = vec![test_address(1), test_address(2), test_address(3)];
 
-        let wallet = manager.create_wallet(signers.clone(), 2, None).unwrap();
+        let wallet = manager.create_wallet(signers.clone(), 2, None, 1_700_000_000).unwrap();
 
         // Propose transaction
+        let now = 1_700_000_000u64;
         let tx = manager.propose_transaction(
             &wallet.id,
             &test_address(1),
             test_address(99),
             1000,
             vec![],
+            now,
         ).unwrap();
 
         assert_eq!(tx.approval_count(), 1); // Proposer auto-approves
-        assert!(!manager.can_execute(&tx.id).unwrap());
+        assert!(!manager.can_execute(&tx.id, now).unwrap());
 
         // Second signer approves
-        let tx = manager.approve_transaction(&tx.id, &test_address(2)).unwrap();
+        let tx = manager.approve_transaction(&tx.id, &test_address(2), now).unwrap();
         assert_eq!(tx.approval_count(), 2);
-        assert!(manager.can_execute(&tx.id).unwrap());
+        assert!(manager.can_execute(&tx.id, now).unwrap());
     }
 
     #[test]
@@ -448,7 +440,7 @@ mod tests {
         let manager = MultisigManager::new();
         let signers = vec![test_address(1), test_address(2)];
 
-        let wallet = manager.create_wallet(signers, 2, None).unwrap();
+        let wallet = manager.create_wallet(signers, 2, None, 1_700_000_000).unwrap();
 
         // Non-signer tries to propose
         let result = manager.propose_transaction(
@@ -457,6 +449,7 @@ mod tests {
             test_address(50),
             1000,
             vec![],
+            1_700_000_000,
         );
 
         assert!(matches!(result, Err(MultisigError::NotAuthorized)));

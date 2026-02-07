@@ -45,7 +45,7 @@ class ConnectionPool:
             limits=limits,
             timeout=timeout,
             headers=config.default_headers,
-            follow_redirects=True,
+            follow_redirects=False,
         )
 
         # Connection tracking

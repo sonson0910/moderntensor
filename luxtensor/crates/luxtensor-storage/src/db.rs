@@ -570,3 +570,34 @@ mod tests {
         assert!(result.is_none());
     }
 }
+
+// ============================================================================
+// Implement RocksDbLike trait for BlockchainDB so core::StateDB can persist
+// ============================================================================
+impl luxtensor_core::RocksDbLike for BlockchainDB {
+    fn put(&self, key: &[u8], value: &[u8]) -> std::result::Result<(), String> {
+        self.db.put(key, value).map_err(|e| e.to_string())
+    }
+
+    fn get(&self, key: &[u8]) -> std::result::Result<Option<Vec<u8>>, String> {
+        self.db.get(key).map_err(|e| e.to_string())
+    }
+
+    fn prefix_scan(&self, prefix: &[u8]) -> std::result::Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let mut result = Vec::new();
+        let iter = self.db.prefix_iterator(prefix);
+        for item in iter {
+            match item {
+                Ok((key, value)) => {
+                    if key.starts_with(prefix) {
+                        result.push((key.to_vec(), value.to_vec()));
+                    } else {
+                        break; // Past the prefix range
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(result)
+    }
+}

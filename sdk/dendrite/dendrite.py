@@ -280,7 +280,9 @@ class Dendrite:
                         logger.info(f"Query succeeded on attempt {attempt + 1}")
                     return response
 
-            except Exception as e:\n                _ = e  # Capture exception for logging context\n                logger.warning(f\"Query attempt {attempt + 1} failed: {e}\")
+            except Exception as e:
+                _ = e  # Capture exception for logging context
+                logger.warning(f"Query attempt {attempt + 1} failed: {e}")
 
             # Don't sleep after last attempt
             if attempt < self.config.max_retries:
@@ -353,12 +355,12 @@ class Dendrite:
     def _get_cache_key(self, endpoints: List[str], data: Dict[str, Any]) -> str:
         """Generate cache key from endpoints and data."""
         key_str = f"{sorted(endpoints)}:{str(data)}"
-        return hashlib.md5(key_str.encode()).hexdigest()
+        return hashlib.sha256(key_str.encode()).hexdigest()
 
     def _get_dedup_key(self, endpoint: str, data: Dict[str, Any]) -> str:
         """Generate deduplication key."""
         key_str = f"{endpoint}:{str(data)}"
-        return hashlib.md5(key_str.encode()).hexdigest()
+        return hashlib.sha256(key_str.encode()).hexdigest()
 
     def _get_from_cache(self, key: str) -> Optional[Any]:
         """Get response from cache if not expired."""

@@ -278,7 +278,8 @@ except Exception as e:
     settings = Settings()
 
 
-# Configure logging
+# Configure logging (scoped to 'sdk' namespace to avoid hijacking root logger)
+SDK_LOGGER_NAME = "sdk"
 try:
     log_level_str = settings.LOG_LEVEL.upper()
     if log_level_str not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
@@ -287,26 +288,28 @@ try:
 except Exception:
     LOG_LEVEL_CONFIG = logging.INFO
 
-# Clear existing handlers
-root_logger = logging.getLogger()
-if root_logger.hasHandlers():
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
 # Configure logging format
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+sdk_logger = logging.getLogger(SDK_LOGGER_NAME)
+sdk_logger.setLevel(LOG_LEVEL_CONFIG)
+
+# Clear existing handlers on SDK logger
+if sdk_logger.hasHandlers():
+    for handler in sdk_logger.handlers[:]:
+        sdk_logger.removeHandler(handler)
 
 if COLOREDLOGS_AVAILABLE:
     coloredlogs.install(
         level=LOG_LEVEL_CONFIG,
         fmt=LOG_FORMAT,
+        logger=sdk_logger,
         reconfigure=True,
     )
 else:
-    logging.basicConfig(
-        level=LOG_LEVEL_CONFIG,
-        format=LOG_FORMAT,
-    )
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    sdk_logger.addHandler(_handler)
 
 logger = logging.getLogger(__name__)
 logger.info(f"Settings loaded. Log level: {logging.getLevelName(LOG_LEVEL_CONFIG)}")

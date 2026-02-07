@@ -7,14 +7,19 @@ mod service;
 mod mempool;
 mod executor;
 mod genesis_config;
-mod p2p_handler;
 mod swarm_broadcaster;
 mod health;
 mod metrics;
-mod shutdown;
 mod graceful_shutdown;
-pub mod root_subnet;
 pub mod task_dispatcher;
+
+// Legacy modules — only compiled with `legacy` feature flag
+#[cfg(feature = "legacy")]
+mod p2p_handler;
+#[cfg(feature = "legacy")]
+mod shutdown;
+#[cfg(feature = "legacy")]
+pub mod root_subnet;
 
 pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};
 pub use task_dispatcher::{TaskDispatcher, DispatcherConfig, MinerInfo, TaskAssignment, TaskResult, DispatchService};

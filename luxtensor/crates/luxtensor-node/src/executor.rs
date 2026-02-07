@@ -123,11 +123,63 @@ impl TransactionExecutor {
 
         // Transfer value to recipient if present
         let (status, contract_address) = if let Some(to_addr) = tx.to {
-            let mut recipient = state.get_account(&to_addr)
-                .unwrap_or_else(|| Account::new());
-            recipient.balance = recipient.balance.saturating_add(tx.value);
-            state.set_account(to_addr, recipient);
-            (ExecutionStatus::Success, None)
+            // Check if destination is a contract (has code)
+            let has_code = state.get_code(&to_addr)
+                .map(|code| !code.is_empty())
+                .unwrap_or(false);
+
+            if has_code && !tx.data.is_empty() {
+                // Contract call — execute via EVM
+                use luxtensor_contracts::EvmExecutor;
+
+                let contract_code = state.get_code(&to_addr).unwrap_or_default();
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                let evm_executor = EvmExecutor::new();
+                let contract_addr_bytes: [u8; 20] = *to_addr.as_bytes();
+
+                match evm_executor.call(
+                    tx.from,
+                    luxtensor_contracts::ContractAddress(contract_addr_bytes),
+                    contract_code,
+                    tx.data.clone(),
+                    tx.value,
+                    tx.gas_limit,
+                    block_height,
+                    timestamp,
+                ) {
+                    Ok((_output, _gas_used, _logs_data)) => {
+                        // Credit value to contract if sent
+                        if tx.value > 0 {
+                            let mut recipient = state.get_account(&to_addr)
+                                .unwrap_or_else(|| Account::new());
+                            recipient.balance = recipient.balance.saturating_add(tx.value);
+                            state.set_account(to_addr, recipient);
+                        }
+                        info!("📞 Contract call to 0x{} succeeded", hex::encode(contract_addr_bytes));
+                        (ExecutionStatus::Success, None)
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Contract call FAILED: {:?}", e);
+                        // Refund value to sender on failure
+                        let mut sender_refund = state.get_account(&tx.from)
+                            .unwrap_or_else(|| Account::new());
+                        sender_refund.balance = sender_refund.balance.saturating_add(tx.value);
+                        state.set_account(tx.from, sender_refund);
+                        (ExecutionStatus::Failed, None)
+                    }
+                }
+            } else {
+                // Plain value transfer (no contract code at destination or empty data)
+                let mut recipient = state.get_account(&to_addr)
+                    .unwrap_or_else(|| Account::new());
+                recipient.balance = recipient.balance.saturating_add(tx.value);
+                state.set_account(to_addr, recipient);
+                (ExecutionStatus::Success, None)
+            }
         } else {
             // Contract deployment - CREATE operation using real EVM execution
             use luxtensor_contracts::EvmExecutor;

@@ -16,17 +16,18 @@ COPY requirements.txt pyproject.toml ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir pytest pytest-asyncio
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code (no tests in production image)
 COPY sdk/ ./sdk/
-COPY tests/ ./tests/
 COPY *.md ./
-COPY *.py ./
 
 # Create data directory
 RUN mkdir -p /data/blockchain /data/state
+
+# Create non-root user
+RUN useradd -m -u 1000 moderntensor && chown -R moderntensor:moderntensor /data /app
+USER moderntensor
 
 # Expose ports
 # 30303: P2P networking

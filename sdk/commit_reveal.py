@@ -138,7 +138,7 @@ def compute_commit_hash(weights: List[Tuple[int, int]], salt: bytes) -> str:
     # Encode weights deterministically (same as Rust)
     for uid, weight in sorted(weights, key=lambda x: x[0]):
         hasher.update(uid.to_bytes(8, 'big'))
-        hasher.update(weight.to_bytes(2, 'big'))
+        hasher.update(weight.to_bytes(4, 'big'))  # 4 bytes supports weights up to 4,294,967,295
 
     # Add salt
     if isinstance(salt, str):
@@ -158,9 +158,10 @@ def verify_commit(
     weights: List[Tuple[int, int]],
     salt: bytes,
 ) -> bool:
-    """Verify that weights and salt match commit hash"""
+    """Verify that weights and salt match commit hash (constant-time comparison)"""
+    import hmac as _hmac
     computed = compute_commit_hash(weights, salt)
-    return computed.lower() == commit_hash.lower()
+    return _hmac.compare_digest(computed.lower(), commit_hash.lower())
 
 
 # =============================================================================

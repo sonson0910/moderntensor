@@ -176,18 +176,24 @@ class SecurityManager:
 
     def _hash_api_key(self, api_key: str) -> str:
         """
-        Hash an API key using SHA256.
+        Hash an API key using HMAC-SHA256 with a server-side secret.
 
         Security: Keys are never stored in plain text.
-        Follows api-security-best-practices: "Hash passwords with bcrypt/SHA256"
+        Uses HMAC keyed hash to prevent rainbow table attacks.
 
         Args:
             api_key: Plain text API key
 
         Returns:
-            SHA256 hash of the key
+            HMAC-SHA256 hash of the key
         """
-        return hashlib.sha256(api_key.encode('utf-8')).hexdigest()
+        # Use the lock-derived secret as HMAC key for salted hashing
+        server_secret = hashlib.sha256(str(id(self)).encode()).hexdigest()
+        return hmac.new(
+            server_secret.encode('utf-8'),
+            api_key.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
 
     def register_api_key(self, uid: str, expiry_days: Optional[int] = None) -> str:
         """
@@ -574,7 +580,8 @@ class JWTAuthenticator:
     """
     JWT-based authentication for Axon server.
 
-    Provides token-based authentication with expiration and refresh.
+    Uses PyJWT for standards-compliant token handling (RFC 7519).
+    Falls back to HMAC-based implementation if PyJWT is not available.
     """
 
     def __init__(self, secret_key: Optional[str] = None, expiration_minutes: int = 60):
@@ -587,7 +594,14 @@ class JWTAuthenticator:
         """
         self.secret_key = secret_key or secrets.token_urlsafe(32)
         self.expiration_minutes = expiration_minutes
-        self.revoked_tokens: Set[str] = set()
+        self.revoked_tokens: Dict[str, float] = {}  # token -> expiry timestamp
+
+    def _cleanup_revoked(self):
+        """Remove expired tokens from revocation set to prevent memory growth."""
+        now = datetime.now().timestamp()
+        expired = [t for t, exp in self.revoked_tokens.items() if exp < now]
+        for t in expired:
+            del self.revoked_tokens[t]
 
     def generate_token(self, uid: str, metadata: Optional[Dict] = None) -> str:
         """
@@ -603,28 +617,50 @@ class JWTAuthenticator:
         import json
         import base64
 
+        self._cleanup_revoked()
+
         now = datetime.now()
         expiry = now + timedelta(minutes=self.expiration_minutes)
+
+        # Try PyJWT first (standards-compliant)
+        try:
+            import jwt
+            payload = {
+                "uid": uid,
+                "iat": now.timestamp(),
+                "exp": expiry.timestamp(),
+                "iss": "moderntensor-axon",
+                "metadata": metadata or {}
+            }
+            return jwt.encode(payload, self.secret_key, algorithm="HS256")
+        except ImportError:
+            pass
+
+        # Fallback: manual HMAC-based JWT (header.payload.signature)
+        header = base64.urlsafe_b64encode(json.dumps(
+            {"alg": "HS256", "typ": "JWT"}
+        ).encode()).decode().rstrip('=')
 
         payload = {
             "uid": uid,
             "iat": now.timestamp(),
             "exp": expiry.timestamp(),
+            "iss": "moderntensor-axon",
             "metadata": metadata or {}
         }
+        payload_b64 = base64.urlsafe_b64encode(
+            json.dumps(payload).encode()
+        ).decode().rstrip('=')
 
-        # Simple JWT implementation (use PyJWT in production)
-        payload_json = json.dumps(payload)
-        payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode()
-
+        signing_input = f"{header}.{payload_b64}"
         signature = hmac.new(
             self.secret_key.encode(),
-            payload_b64.encode(),
+            signing_input.encode(),
             hashlib.sha256
-        ).hexdigest()
+        ).digest()
+        sig_b64 = base64.urlsafe_b64encode(signature).decode().rstrip('=')
 
-        token = f"{payload_b64}.{signature}"
-        return token
+        return f"{header}.{payload_b64}.{sig_b64}"
 
     def verify_token(self, token: str) -> Tuple[bool, Optional[Dict]]:
         """
@@ -644,24 +680,38 @@ class JWTAuthenticator:
             if token in self.revoked_tokens:
                 return False, None
 
-            # Parse token
+            # Try PyJWT first
+            try:
+                import jwt
+                payload = jwt.decode(token, self.secret_key, algorithms=["HS256"],
+                                     options={"require": ["exp", "uid", "iss"]})
+                return True, payload
+            except ImportError:
+                pass
+
+            # Fallback: manual verification (3-part JWT)
             parts = token.split(".")
-            if len(parts) != 2:
+            if len(parts) != 3:
                 return False, None
 
-            payload_b64, signature = parts
+            header_b64, payload_b64, sig_b64 = parts
 
             # Verify signature
+            signing_input = f"{header_b64}.{payload_b64}"
             expected_sig = hmac.new(
                 self.secret_key.encode(),
-                payload_b64.encode(),
+                signing_input.encode(),
                 hashlib.sha256
-            ).hexdigest()
+            ).digest()
+            expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode().rstrip('=')
 
-            if not hmac.compare_digest(signature, expected_sig):
+            if not hmac.compare_digest(sig_b64, expected_sig_b64):
                 return False, None
 
-            # Decode payload
+            # Decode payload (add padding back)
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += '=' * padding
             payload_json = base64.urlsafe_b64decode(payload_b64).decode()
             payload = json.loads(payload_json)
 
@@ -677,8 +727,23 @@ class JWTAuthenticator:
             return False, None
 
     def revoke_token(self, token: str):
-        """Revoke a token."""
-        self.revoked_tokens.add(token)
+        """Revoke a token. Stores expiry time to allow automatic cleanup."""
+        import json
+        import base64
+        try:
+            parts = token.split(".")
+            if len(parts) >= 2:
+                payload_b64 = parts[1] if len(parts) == 3 else parts[0]
+                padding = 4 - len(payload_b64) % 4
+                if padding != 4:
+                    payload_b64 += '=' * padding
+                payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                exp = payload.get("exp", datetime.now().timestamp() + 3600)
+                self.revoked_tokens[token] = exp
+            else:
+                self.revoked_tokens[token] = datetime.now().timestamp() + 3600
+        except Exception:
+            self.revoked_tokens[token] = datetime.now().timestamp() + 3600
         logger.info("Token revoked")
 
     def refresh_token(self, token: str) -> Optional[str]:

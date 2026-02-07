@@ -75,9 +75,10 @@ impl GraphQLServer {
                 .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
 
             let storage = self.storage.clone();
+            let api_key = std::env::var("INDEXER_API_KEY").ok();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, storage).await {
+                if let Err(e) = handle_connection(socket, storage, api_key.as_deref()).await {
                     tracing::error!("Connection error from {}: {}", addr, e);
                 }
             });
@@ -88,8 +89,10 @@ impl GraphQLServer {
 async fn handle_connection(
     mut socket: tokio::net::TcpStream,
     storage: Arc<Storage>,
+    api_key: Option<&str>,
 ) -> Result<()> {
-    let mut buffer = [0; 8192];
+    // 64 KB read buffer (increased from 8 KB to handle larger POST bodies)
+    let mut buffer = vec![0u8; 65536];
     let n = socket.read(&mut buffer).await
         .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
 
@@ -100,6 +103,28 @@ async fn handle_connection(
 
     let method = parts.first().unwrap_or(&"GET");
     let path = parts.get(1).unwrap_or(&"/");
+
+    // API key authentication (if INDEXER_API_KEY env var is set)
+    // Health endpoint is always public
+    if let Some(expected_key) = api_key {
+        if *path != "/health" {
+            let auth_header = lines.iter()
+                .find(|l| l.to_lowercase().starts_with("authorization:"))
+                .and_then(|l| l.split_once(':'))
+                .map(|(_, v)| v.trim());
+            let bearer = auth_header
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .unwrap_or("");
+            if bearer != expected_key {
+                let response = json_response(401, &serde_json::json!({
+                    "error": "Unauthorized: invalid or missing API key"
+                }));
+                socket.write_all(response.as_bytes()).await
+                    .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
+                return Ok(());
+            }
+        }
+    }
 
     let response = match (*method, *path) {
         // Health check
@@ -404,6 +429,7 @@ fn json_response(status: u16, data: &serde_json::Value) -> String {
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
         500 => "Internal Server Error",
         _ => "Unknown",

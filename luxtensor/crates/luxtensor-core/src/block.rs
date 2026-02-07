@@ -52,10 +52,41 @@ impl BlockHeader {
         }
     }
 
+    /// Maximum extra_data size in bytes
+    pub const MAX_EXTRA_DATA_SIZE: usize = 1024;
+
+    /// Calculate block header hash (excludes signature for signing stability)
     pub fn hash(&self) -> Hash {
-        let bytes = bincode::serialize(self)
-            .expect("BlockHeader serialization should never fail");
-        keccak256(&bytes)
+        // Hash all fields EXCEPT signature to allow stable block hash before/after signing
+        let mut data = Vec::new();
+        data.extend_from_slice(&self.version.to_le_bytes());
+        data.extend_from_slice(&self.height.to_le_bytes());
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data.extend_from_slice(&self.previous_hash);
+        data.extend_from_slice(&self.state_root);
+        data.extend_from_slice(&self.txs_root);
+        data.extend_from_slice(&self.receipts_root);
+        data.extend_from_slice(&self.validator);
+        data.extend_from_slice(&self.gas_used.to_le_bytes());
+        data.extend_from_slice(&self.gas_limit.to_le_bytes());
+        data.extend_from_slice(&(self.extra_data.len() as u32).to_le_bytes());
+        data.extend_from_slice(&self.extra_data);
+        keccak256(&data)
+    }
+
+    /// Validate block header fields
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.extra_data.len() > Self::MAX_EXTRA_DATA_SIZE {
+            return Err(crate::CoreError::InvalidBlock(
+                format!("extra_data too large: {} > {}", self.extra_data.len(), Self::MAX_EXTRA_DATA_SIZE)
+            ));
+        }
+        if self.gas_used > self.gas_limit {
+            return Err(crate::CoreError::InvalidBlock(
+                format!("gas_used {} exceeds gas_limit {}", self.gas_used, self.gas_limit)
+            ));
+        }
+        Ok(())
     }
 }
 

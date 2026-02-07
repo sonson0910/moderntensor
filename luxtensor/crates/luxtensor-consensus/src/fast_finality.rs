@@ -30,17 +30,18 @@ struct BlockSignatures {
 
 impl FastFinality {
     /// Create a new fast finality instance
-    pub fn new(finality_threshold_percent: u8, validator_set: ValidatorSet) -> Self {
-        assert!(
-            finality_threshold_percent > 50 && finality_threshold_percent <= 100,
-            "Threshold must be between 51 and 100"
-        );
+    pub fn new(finality_threshold_percent: u8, validator_set: ValidatorSet) -> Result<Self, ConsensusError> {
+        if finality_threshold_percent <= 50 || finality_threshold_percent > 100 {
+            return Err(ConsensusError::InvalidConfig(
+                format!("Finality threshold must be between 51 and 100, got {}", finality_threshold_percent)
+            ));
+        }
 
-        Self {
+        Ok(Self {
             finality_threshold_percent,
             validator_set,
             signatures: HashMap::new(),
-        }
+        })
     }
 
     /// Add a validator signature for a block
@@ -245,22 +246,22 @@ mod tests {
     #[test]
     fn test_fast_finality_creation() {
         let (validator_set, _) = create_validator_set(4, 100);
-        let finality = FastFinality::new(67, validator_set);
+        let finality = FastFinality::new(67, validator_set).unwrap();
 
         assert_eq!(finality.finality_threshold_percent, 67);
     }
 
     #[test]
-    #[should_panic(expected = "Threshold must be between 51 and 100")]
     fn test_fast_finality_invalid_threshold() {
         let (validator_set, _) = create_validator_set(4, 100);
-        let _ = FastFinality::new(50, validator_set); // Should panic
+        let result = FastFinality::new(50, validator_set);
+        assert!(result.is_err()); // Threshold <= 50 is rejected
     }
 
     #[test]
     fn test_add_signature() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 
@@ -280,7 +281,7 @@ mod tests {
     #[test]
     fn test_duplicate_signature() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 
@@ -297,7 +298,7 @@ mod tests {
     #[test]
     fn test_is_finalized() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 
@@ -314,7 +315,7 @@ mod tests {
     #[test]
     fn test_get_finality_progress() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 
@@ -337,7 +338,7 @@ mod tests {
     #[test]
     fn test_get_signers() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 
@@ -353,7 +354,7 @@ mod tests {
     #[test]
     fn test_prune_old_signatures() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block1 = [1u8; 32];
         let block2 = [2u8; 32];
@@ -374,7 +375,7 @@ mod tests {
     #[test]
     fn test_get_stats() {
         let (validator_set, addresses) = create_validator_set(4, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block1 = [1u8; 32];
         let block2 = [2u8; 32];
@@ -398,7 +399,7 @@ mod tests {
     #[test]
     fn test_invalid_validator() {
         let (validator_set, _) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
         let invalid_validator = Address::from([99u8; 20]);
@@ -410,7 +411,7 @@ mod tests {
     #[test]
     fn test_update_validator_set() {
         let (validator_set, addresses) = create_validator_set(3, 100);
-        let mut finality = FastFinality::new(67, validator_set);
+        let mut finality = FastFinality::new(67, validator_set).unwrap();
 
         let block_hash = [1u8; 32];
 

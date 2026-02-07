@@ -4,7 +4,20 @@ ModernTensor Core Module
 Core utilities and data types.
 """
 
-from .datatypes import *
+from .datatypes import (
+    MinerInfo,
+    ValidatorInfo,
+    SubnetInfo,
+    WeightEntry,
+    AITask,
+    TaskAssignment,
+    MinerResult,
+    MinerCommitment,
+    ValidatorScore,
+    ScoreSubmissionPayload,
+    MinerConsensusResult,
+    CycleConsensusResults,
+)
 from .cache import (
     LuxtensorCache,
     MemoryCache,
@@ -34,6 +47,19 @@ from .scoring import (
 )
 
 __all__ = [
+    # Datatypes
+    "MinerInfo",
+    "ValidatorInfo",
+    "SubnetInfo",
+    "WeightEntry",
+    "AITask",
+    "TaskAssignment",
+    "MinerResult",
+    "MinerCommitment",
+    "ValidatorScore",
+    "ScoreSubmissionPayload",
+    "MinerConsensusResult",
+    "CycleConsensusResults",
     # Cache
     "LuxtensorCache",
     "MemoryCache",

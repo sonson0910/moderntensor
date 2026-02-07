@@ -16,6 +16,7 @@ Commands:
 """
 
 import click
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -110,18 +111,27 @@ If someone else gets this phrase, they can steal your funds.
             from sdk.keymanager.encryption import encrypt_data
             encrypted_mnemonic = encrypt_data(mnemonic.encode(), password)
 
-            with open(coldkey_path / "coldkey.enc", 'wb') as f:
-                f.write(encrypted_mnemonic)
+            # Write with restricted permissions (owner-only read/write)
+            enc_path = coldkey_path / "coldkey.enc"
+            fd = os.open(str(enc_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, encrypted_mnemonic)
+            finally:
+                os.close(fd)
 
             # Create metadata file
             import json
             metadata = {
                 'name': name,
                 'type': 'coldkey',
-                'created_at': str(Path(coldkey_path / "coldkey.enc").stat().st_mtime)
+                'created_at': str(enc_path.stat().st_mtime)
             }
-            with open(coldkey_path / "metadata.json", 'w') as f:
-                json.dump(metadata, f, indent=2)
+            meta_path = coldkey_path / "metadata.json"
+            fd = os.open(str(meta_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps(metadata, indent=2).encode())
+            finally:
+                os.close(fd)
 
         print_success(f"Coldkey '{name}' created successfully at {coldkey_path}")
 
@@ -134,9 +144,8 @@ If someone else gets this phrase, they can steal your funds.
 @click.option('--name', required=True, help='Name for the restored coldkey')
 @click.option('--base-dir', type=click.Path(), default=None,
               help='Base directory for wallets')
-@click.option('--mnemonic', help='Mnemonic phrase (will prompt if not provided)')
 @click.pass_context
-def restore_coldkey(ctx, name: str, base_dir: Optional[str], mnemonic: Optional[str]):
+def restore_coldkey(ctx, name: str, base_dir: Optional[str]):
     """
     Restore coldkey from mnemonic phrase
 
@@ -162,9 +171,8 @@ def restore_coldkey(ctx, name: str, base_dir: Optional[str], mnemonic: Optional[
 
         print_info(f"Restoring coldkey: {name}")
 
-        # Get mnemonic
-        if not mnemonic:
-            mnemonic = click.prompt("Enter your mnemonic phrase", type=str)
+        # Get mnemonic via secure interactive prompt (never accept as CLI argument)
+        mnemonic = click.prompt("Enter your mnemonic phrase", type=str, hide_input=True)
 
         # Validate mnemonic
         kg = KeyGenerator()
@@ -181,8 +189,13 @@ def restore_coldkey(ctx, name: str, base_dir: Optional[str], mnemonic: Optional[
 
             encrypted_mnemonic = encrypt_data(mnemonic.encode(), password)
 
-            with open(coldkey_path / "coldkey.enc", 'wb') as f:
-                f.write(encrypted_mnemonic)
+            # Write with restricted permissions (owner-only read/write)
+            enc_path = coldkey_path / "coldkey.enc"
+            fd = os.open(str(enc_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, encrypted_mnemonic)
+            finally:
+                os.close(fd)
 
             # Create metadata file
             import json
@@ -190,10 +203,14 @@ def restore_coldkey(ctx, name: str, base_dir: Optional[str], mnemonic: Optional[
                 'name': name,
                 'type': 'coldkey',
                 'restored': True,
-                'created_at': str(Path(coldkey_path / "coldkey.enc").stat().st_mtime)
+                'created_at': str(enc_path.stat().st_mtime)
             }
-            with open(coldkey_path / "metadata.json", 'w') as f:
-                json.dump(metadata, f, indent=2)
+            meta_path = coldkey_path / "metadata.json"
+            fd = os.open(str(meta_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps(metadata, indent=2).encode())
+            finally:
+                os.close(fd)
 
         print_success(f"Coldkey '{name}' restored successfully at {coldkey_path}")
 
@@ -322,8 +339,12 @@ def generate_hotkey(ctx, coldkey: str, hotkey_name: str, base_dir: Optional[str]
 
             hotkeys_data['hotkeys'].append(hotkey_info)
 
-            with open(hotkeys_file, 'w') as f:
-                json.dump(hotkeys_data, f, indent=2)
+            # Write with restricted permissions
+            fd = os.open(str(hotkeys_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps(hotkeys_data, indent=2).encode())
+            finally:
+                os.close(fd)
 
         print_success(f"Hotkey '{hotkey_name}' generated successfully")
         print_info(f"Derivation index: {next_index}")

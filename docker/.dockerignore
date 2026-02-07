@@ -1,0 +1,77 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Tests (not needed in production image)
+tests/
+test_*.py
+*_test.py
+pytest.ini
+.pytest_cache
+.coverage
+htmlcov/
+
+# Documentation
+docs/
+book/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Docker files (prevent recursive copy)
+docker/
+Dockerfile*
+docker-compose*
+
+# Development files
+*.log
+*.txt
+debug_*.py
+simple_test.py
+quick_test.py
+final_test.py
+ruff_*.txt
+
+# Rust/Luxtensor (separate build)
+luxtensor/
+indexer/
+
+# Kubernetes
+k8s/
+
+# Grafana
+grafana/
+
+# Scripts (not needed in image)
+scripts/
+
+# Analysis files
+analyze_*.py
+check_exports.py
+detect_exports.py
+find_missing.py
+migrate_*.py
+append_*.py

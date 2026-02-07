@@ -719,8 +719,20 @@ pub fn register_eth_methods(
 
     // dev_faucet - Credit tokens to address for testing (DEV MODE ONLY)
     // Uses unified_state for balance operations
+    // SECURITY: This endpoint only works when chain_id indicates a dev/test network
     let dev_state = unified_state.clone();
     io.add_sync_method("dev_faucet", move |params: Params| {
+        // Guard: only allow faucet on dev/test chain IDs
+        // Chain ID 1337 = local dev, 31337 = Hardhat, 1 = mainnet (blocked), etc.
+        let chain_id = dev_state.read().chain_id();
+        if chain_id != 1337 && chain_id != 31337 && chain_id != 0 {
+            return Err(RpcError {
+                code: ErrorCode::MethodNotFound,
+                message: "dev_faucet is only available on dev/test networks (chain_id 1337, 31337)".to_string(),
+                data: None,
+            });
+        }
+
         let p: Vec<serde_json::Value> = params.parse()?;
         let address_str = p.get(0)
             .and_then(|v| v.as_str())

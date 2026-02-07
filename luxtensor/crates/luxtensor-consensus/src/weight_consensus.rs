@@ -34,7 +34,10 @@ pub struct WeightConsensusConfig {
 impl Default for WeightConsensusConfig {
     fn default() -> Self {
         Self {
-            min_validators: 2,
+            // 🔧 FIX: Raised from 2 to 5 — with min_validators=2, a single
+            // compromised node + the proposer can approve malicious weight updates.
+            // 5 validators require at least 4 votes at 67% threshold.
+            min_validators: 5,
             approval_threshold_percent: 67, // 2/3 majority
             proposal_timeout: 200,           // ~40 minutes
             proposal_cooldown: 50,           // ~10 minutes

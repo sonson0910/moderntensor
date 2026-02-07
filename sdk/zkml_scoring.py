@@ -318,8 +318,8 @@ class ZkMLResponseVerifier:
     def _verify_proof(self, response: ProofAttachedResponse) -> bool:
         """Verify the proof using zkML verifier"""
         if self._proof_verifier is None:
-            logger.warning("No proof verifier available, accepting proof")
-            return True
+            logger.error("No proof verifier available — rejecting proof for security")
+            return False
 
         try:
             from sdk.ai_ml.zkml import Proof

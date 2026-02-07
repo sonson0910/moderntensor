@@ -115,11 +115,12 @@ impl UnifiedStateDB {
         self.dirty = true;
     }
 
-    /// Credit account (add to balance)
-    pub fn credit(&mut self, address: &Address, amount: u128) {
+    /// Credit account (add to balance, returns error on overflow)
+    pub fn credit(&mut self, address: &Address, amount: u128) -> Result<()> {
         let balance = self.balances.entry(*address).or_insert(0);
-        *balance = balance.saturating_add(amount);
+        *balance = balance.checked_add(amount).ok_or(CoreError::BalanceOverflow)?;
         self.dirty = true;
+        Ok(())
     }
 
     /// Debit account (subtract from balance)
@@ -138,11 +139,12 @@ impl UnifiedStateDB {
         *self.nonces.get(address).unwrap_or(&0)
     }
 
-    /// Increment account nonce
-    pub fn increment_nonce(&mut self, address: &Address) {
+    /// Increment account nonce (checked to prevent overflow)
+    pub fn increment_nonce(&mut self, address: &Address) -> Result<()> {
         let nonce = self.nonces.entry(*address).or_insert(0);
-        *nonce += 1;
+        *nonce = nonce.checked_add(1).ok_or(CoreError::NonceOverflow)?;
         self.dirty = true;
+        Ok(())
     }
 
     /// Get full account info
@@ -382,7 +384,7 @@ mod tests {
 
         assert_eq!(state.get_balance(&addr), 0);
 
-        state.credit(&addr, 1000);
+        state.credit(&addr, 1000).unwrap();
         assert_eq!(state.get_balance(&addr), 1000);
 
         state.debit(&addr, 300).unwrap();
@@ -399,10 +401,10 @@ mod tests {
 
         assert_eq!(state.get_nonce(&addr), 0);
 
-        state.increment_nonce(&addr);
+        state.increment_nonce(&addr).unwrap();
         assert_eq!(state.get_nonce(&addr), 1);
 
-        state.increment_nonce(&addr);
+        state.increment_nonce(&addr).unwrap();
         assert_eq!(state.get_nonce(&addr), 2);
     }
 
@@ -451,7 +453,7 @@ mod tests {
 
         let root1 = state.root_hash().unwrap();
 
-        state.credit(&addr, 1000);
+        state.credit(&addr, 1000).unwrap();
         let root2 = state.root_hash().unwrap();
 
         assert_ne!(root1, root2); // State changed, root should change

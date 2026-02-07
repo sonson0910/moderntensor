@@ -226,8 +226,17 @@ impl EntryPoint {
         &self,
         user_op: &UserOperation,
     ) -> Result<(), AccountAbstractionError> {
-        // Basic validation
+        // Basic validation (includes signature non-empty check)
         user_op.validate_basic()?;
+
+        // Verify the signature against the user operation hash
+        // The signature must be valid for the sender's address
+        let entry_point = self.supported_entry_points.first()
+            .ok_or(AccountAbstractionError::InvalidSignature)?;
+        let op_hash = user_op.hash(entry_point, self.chain_id);
+        if !self.verify_user_op_signature(user_op, &op_hash) {
+            return Err(AccountAbstractionError::InvalidSignature);
+        }
 
         // Check nonce
         let expected_nonce = self.get_nonce(&user_op.sender);
@@ -247,6 +256,42 @@ impl EntryPoint {
 
         debug!("User operation validated: {:?}", user_op.sender);
         Ok(())
+    }
+
+    /// Verify the signature on a UserOperation
+    /// Returns true if the signature is valid for the sender address
+    fn verify_user_op_signature(&self, user_op: &UserOperation, op_hash: &Hash) -> bool {
+        // Signature must be at least 64 bytes (compact ECDSA) + 1 byte recovery id
+        if user_op.signature.len() < 64 {
+            return false;
+        }
+
+        let sig_bytes: [u8; 64] = match user_op.signature[..64].try_into() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+
+        // Recovery ID is the 65th byte (if present), default to 0
+        let recovery_id = if user_op.signature.len() > 64 {
+            user_op.signature[64]
+        } else {
+            0
+        };
+
+        // Recover public key from signature
+        match luxtensor_crypto::recover_public_key(op_hash, &sig_bytes, recovery_id) {
+            Ok(recovered_pubkey) => {
+                // Derive address from recovered public key
+                match luxtensor_crypto::address_from_public_key(&recovered_pubkey) {
+                    Ok(recovered_addr) => {
+                        // Compare recovered address with sender
+                        recovered_addr == *user_op.sender.as_bytes()
+                    }
+                    Err(_) => false,
+                }
+            }
+            Err(_) => false,
+        }
     }
 
     /// Simulate validation of a user operation

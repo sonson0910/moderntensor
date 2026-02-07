@@ -482,7 +482,7 @@ impl RpcServer {
         // Start HTTP server with optimized settings
         let server = ServerBuilder::new(io)
             .threads(64)  // Optimal for most machines (64 threads)
-            .max_request_body_size(16 * 1024 * 1024) // 16 MB max request
+            .max_request_body_size(2 * 1024 * 1024) // 2 MB max request (reduced from 16 MB)
             .start_http(&addr.parse().map_err(|e: std::net::AddrParseError| {
                 RpcError::ServerError(e.to_string())
             })?)

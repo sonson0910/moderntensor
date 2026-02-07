@@ -63,7 +63,10 @@ impl Backfill {
         let mut current = start_block;
 
         while current <= target_block {
-            let batch_end = std::cmp::min(current + self.batch_size - 1, target_block);
+            let batch_end = std::cmp::min(
+                current.saturating_add(self.batch_size.max(1).saturating_sub(1)),
+                target_block,
+            );
 
             info!("Indexing blocks {} - {}", current, batch_end);
 

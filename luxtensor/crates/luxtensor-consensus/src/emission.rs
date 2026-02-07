@@ -23,8 +23,12 @@ impl Default for EmissionConfig {
         Self {
             max_supply: 21_000_000_000_000_000_000_000_000u128, // 21 million tokens
             initial_emission: 2_000_000_000_000_000_000u128,   // 2 tokens/block
-            halving_interval: 2_100_000,                       // ~4 years @ 12s blocks
-            min_emission: 100_000_000_000_000_000u128,         // 0.1 tokens minimum
+            // 🔧 FIX: Aligned with HalvingSchedule (1,051,200 blocks ≈ 3.33 years @ 100s)
+            // Previously used 2,100,000 which was inconsistent and halved too frequently
+            halving_interval: 1_051_200,
+            // 🔧 FIX: Aligned with HalvingSchedule MINIMUM_REWARD (0.001 MDT)
+            // Previously 0.1 MDT — 100x higher than halving.rs
+            min_emission: 1_000_000_000_000_000u128,           // 0.001 tokens minimum
             utility_weight: 30,                                 // 30% adjustment based on utility
         }
     }
@@ -118,12 +122,18 @@ impl EmissionController {
         let base = self.base_emission(block_height);
         let utility_score = utility.utility_score();
 
-        // Calculate adjustment factor based on utility weight
-        let weight = self.config.utility_weight as f64 / 100.0;
-        let adjustment = 1.0 + (utility_score - 1.0) * weight;
+        // Calculate adjustment factor using integer BPS to avoid f64 precision loss on u128
+        // utility_score range: 0.5 - 1.5 → utility_bps range: 5000 - 15000
+        let utility_bps = (utility_score * 10_000.0).round() as i64;
+        let weight = self.config.utility_weight as i64; // 0-100
 
-        // Apply adjustment (0.7x to 1.3x of base)
-        let adjusted = (base as f64 * adjustment) as u128;
+        // adjustment_bps = 10_000 + (utility_bps - 10_000) * weight / 100
+        // Range: ~7000 to ~13000 (0.7x to 1.3x)
+        let adjustment_bps = 10_000i64 + (utility_bps - 10_000) * weight / 100;
+        let adjustment_bps = adjustment_bps.max(0) as u128;
+
+        // Apply adjustment using integer math
+        let adjusted = base * adjustment_bps / 10_000;
 
         // Ensure we don't exceed remaining supply
         let remaining = self.config.max_supply.saturating_sub(self.current_supply);

@@ -6,88 +6,91 @@ use std::collections::HashMap;
 use super::node_tier::logarithmic_stake;
 
 /// Distribution configuration for reward allocation (Model C v2 - Community Focus)
+/// All shares are in basis points (BPS): 10_000 BPS = 100%.
+/// Using integer BPS instead of f64 prevents precision loss on large token amounts.
 #[derive(Debug, Clone)]
 pub struct DistributionConfig {
-    /// Miner share (35%) - AI compute providers
-    pub miner_share: f64,
-    /// Validator share (28%) - AI quality validation
-    pub validator_share: f64,
-    /// Infrastructure share (2%) - Full node operators
-    pub infrastructure_share: f64,
-    /// Delegator share (12%) - Passive stakers
-    pub delegator_share: f64,
-    /// Subnet owner share (8%) - Subnet creators (reduced from 10%)
-    pub subnet_owner_share: f64,
-    /// DAO treasury share (5%) - Protocol development (reduced from 13%)
-    pub dao_share: f64,
-    /// Community ecosystem share (10%) - Developer grants, hackathons, dApp incentives
-    pub community_ecosystem_share: f64,
+    /// Miner share in BPS (3500 = 35%) - AI compute providers
+    pub miner_share_bps: u32,
+    /// Validator share in BPS (2800 = 28%) - AI quality validation
+    pub validator_share_bps: u32,
+    /// Infrastructure share in BPS (200 = 2%) - Full node operators
+    pub infrastructure_share_bps: u32,
+    /// Delegator share in BPS (1200 = 12%) - Passive stakers
+    pub delegator_share_bps: u32,
+    /// Subnet owner share in BPS (800 = 8%) - Subnet creators
+    pub subnet_owner_share_bps: u32,
+    /// DAO treasury share in BPS (500 = 5%) - Protocol development
+    pub dao_share_bps: u32,
+    /// Community ecosystem share in BPS (1000 = 10%) - Developer grants, hackathons
+    pub community_ecosystem_share_bps: u32,
 }
 
 impl Default for DistributionConfig {
     fn default() -> Self {
         Self {
-            miner_share: 0.35,
-            validator_share: 0.28,
-            infrastructure_share: 0.02,
-            delegator_share: 0.12,
-            subnet_owner_share: 0.08,       // Reduced from 10% to fund community
-            dao_share: 0.05,                 // Reduced from 13% to fund community
-            community_ecosystem_share: 0.10, // NEW: Developer grants, hackathons
+            miner_share_bps: 3500,           // 35%
+            validator_share_bps: 2800,       // 28%
+            infrastructure_share_bps: 200,   // 2%
+            delegator_share_bps: 1200,       // 12%
+            subnet_owner_share_bps: 800,     // 8%
+            dao_share_bps: 500,              // 5%
+            community_ecosystem_share_bps: 1000, // 10%
         }
     }
 }
 
 impl DistributionConfig {
-    /// Validate that shares sum to 1.0
+    /// Validate that shares sum to 10_000 BPS (100%)
     pub fn validate(&self) -> Result<(), &'static str> {
-        let total = self.miner_share + self.validator_share + self.infrastructure_share +
-                    self.delegator_share + self.subnet_owner_share + self.dao_share +
-                    self.community_ecosystem_share;
-        if (total - 1.0).abs() > 0.001 {
-            return Err("Distribution shares must sum to 1.0");
+        let total = self.miner_share_bps + self.validator_share_bps + self.infrastructure_share_bps +
+                    self.delegator_share_bps + self.subnet_owner_share_bps + self.dao_share_bps +
+                    self.community_ecosystem_share_bps;
+        if total != 10_000 {
+            return Err("Distribution shares must sum to 10_000 BPS (100%)");
         }
         Ok(())
     }
 }
 
-/// Lock bonus configuration for delegators
+/// Lock bonus configuration for delegators.
+/// Bonuses are in basis points (BPS): 1000 BPS = +10%.
 #[derive(Debug, Clone)]
 pub struct LockBonusConfig {
-    /// Bonus for 30-day lock (+10%)
-    pub bonus_30d: f64,
-    /// Bonus for 90-day lock (+25%)
-    pub bonus_90d: f64,
-    /// Bonus for 180-day lock (+50%)
-    pub bonus_180d: f64,
-    /// Bonus for 365-day lock (+100%)
-    pub bonus_365d: f64,
+    /// Bonus for 30-day lock (+10% = 1000 BPS)
+    pub bonus_30d_bps: u32,
+    /// Bonus for 90-day lock (+25% = 2500 BPS)
+    pub bonus_90d_bps: u32,
+    /// Bonus for 180-day lock (+50% = 5000 BPS)
+    pub bonus_180d_bps: u32,
+    /// Bonus for 365-day lock (+100% = 10000 BPS)
+    pub bonus_365d_bps: u32,
 }
 
 impl Default for LockBonusConfig {
     fn default() -> Self {
         Self {
-            bonus_30d: 0.10,
-            bonus_90d: 0.25,
-            bonus_180d: 0.50,
-            bonus_365d: 1.00,
+            bonus_30d_bps: 1000,   // +10%
+            bonus_90d_bps: 2500,   // +25%
+            bonus_180d_bps: 5000,  // +50%
+            bonus_365d_bps: 10000, // +100%
         }
     }
 }
 
 impl LockBonusConfig {
-    /// Get bonus multiplier based on lock days
-    pub fn get_bonus(&self, lock_days: u32) -> f64 {
+    /// Get bonus in BPS based on lock days (0 = no bonus, 1000 = +10%, etc.)
+    pub fn get_bonus_bps(&self, lock_days: u32) -> u32 {
         if lock_days >= 365 {
-            self.bonus_365d
+            self.bonus_365d_bps
         } else if lock_days >= 180 {
-            self.bonus_180d
+            self.bonus_180d_bps
         } else if lock_days >= 90 {
-            self.bonus_90d
+            self.bonus_90d_bps
         } else if lock_days >= 30 {
-            self.bonus_30d
+            self.bonus_30d_bps
         } else {
-            0.0
+            0
         }
     }
 }
@@ -251,13 +254,13 @@ impl RewardDistributor {
         delegators: &[DelegatorInfo],
         subnets: &[SubnetInfo],
     ) -> DistributionResult {
-        // Calculate pool sizes
-        let miner_pool = (total_emission as f64 * self.config.miner_share) as u128;
-        let validator_pool = (total_emission as f64 * self.config.validator_share) as u128;
-        let delegator_pool = (total_emission as f64 * self.config.delegator_share) as u128;
-        let subnet_pool = (total_emission as f64 * self.config.subnet_owner_share) as u128;
-        let dao_allocation = (total_emission as f64 * self.config.dao_share) as u128;
-        let community_ecosystem_allocation = (total_emission as f64 * self.config.community_ecosystem_share) as u128;
+        // Calculate pool sizes using integer BPS arithmetic (no f64 precision loss)
+        let miner_pool = total_emission * self.config.miner_share_bps as u128 / 10_000;
+        let validator_pool = total_emission * self.config.validator_share_bps as u128 / 10_000;
+        let delegator_pool = total_emission * self.config.delegator_share_bps as u128 / 10_000;
+        let subnet_pool = total_emission * self.config.subnet_owner_share_bps as u128 / 10_000;
+        let dao_allocation = total_emission * self.config.dao_share_bps as u128 / 10_000;
+        let community_ecosystem_allocation = total_emission * self.config.community_ecosystem_share_bps as u128 / 10_000;
 
         // Distribute to each group
         let miner_rewards = self.distribute_by_score(miner_pool, miners);
@@ -404,11 +407,12 @@ impl RewardDistributor {
     fn distribute_to_delegators(&self, pool: u128, delegators: &[DelegatorInfo]) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
-        // Calculate weighted stake: logarithmic_stake * (1 + lock_bonus)
+        // Calculate weighted stake: logarithmic_stake * (1 + lock_bonus_bps/10000)
         let weighted_stakes: Vec<(_, u128)> = delegators.iter().map(|d| {
-            let bonus = self.lock_bonus.get_bonus(d.lock_days);
+            let bonus_bps = self.lock_bonus.get_bonus_bps(d.lock_days);
             let effective = logarithmic_stake(d.stake);
-            let weight = (effective as f64 * (1.0 + bonus)) as u128;
+            // Integer-safe: effective * (10_000 + bonus_bps) / 10_000
+            let weight = effective * (10_000 + bonus_bps as u128) / 10_000;
             (d.address, weight)
         }).collect();
 
@@ -457,6 +461,16 @@ impl RewardDistributor {
     pub fn dao_address(&self) -> [u8; 20] {
         self.dao_address
     }
+
+    /// Get reference to distribution config
+    pub fn config(&self) -> &DistributionConfig {
+        &self.config
+    }
+
+    /// Get reference to lock bonus config
+    pub fn lock_bonus_config(&self) -> &LockBonusConfig {
+        &self.lock_bonus
+    }
 }
 
 #[cfg(test)]
@@ -473,24 +487,24 @@ mod tests {
     fn test_distribution_config_default() {
         let config = DistributionConfig::default();
         assert!(config.validate().is_ok());
-        assert_eq!(config.miner_share, 0.35);
-        assert_eq!(config.validator_share, 0.28);
-        assert_eq!(config.delegator_share, 0.12);
-        assert_eq!(config.subnet_owner_share, 0.08);  // Reduced from 10%
-        assert_eq!(config.dao_share, 0.05);            // Reduced from 13%
-        assert_eq!(config.community_ecosystem_share, 0.10); // NEW
+        assert_eq!(config.miner_share_bps, 3500);
+        assert_eq!(config.validator_share_bps, 2800);
+        assert_eq!(config.delegator_share_bps, 1200);
+        assert_eq!(config.subnet_owner_share_bps, 800);
+        assert_eq!(config.dao_share_bps, 500);
+        assert_eq!(config.community_ecosystem_share_bps, 1000);
     }
 
     #[test]
     fn test_lock_bonus() {
         let config = LockBonusConfig::default();
-        assert_eq!(config.get_bonus(0), 0.0);
-        assert_eq!(config.get_bonus(29), 0.0);
-        assert_eq!(config.get_bonus(30), 0.10);
-        assert_eq!(config.get_bonus(90), 0.25);
-        assert_eq!(config.get_bonus(180), 0.50);
-        assert_eq!(config.get_bonus(365), 1.00);
-        assert_eq!(config.get_bonus(1000), 1.00);
+        assert_eq!(config.get_bonus_bps(0), 0);
+        assert_eq!(config.get_bonus_bps(29), 0);
+        assert_eq!(config.get_bonus_bps(30), 1000);
+        assert_eq!(config.get_bonus_bps(90), 2500);
+        assert_eq!(config.get_bonus_bps(180), 5000);
+        assert_eq!(config.get_bonus_bps(365), 10000);
+        assert_eq!(config.get_bonus_bps(1000), 10000);
     }
 
     #[test]
@@ -534,12 +548,12 @@ mod tests {
         assert!(total_rewards > 0);
         assert!(total_rewards <= total_emission);
 
-        // Check DAO got 5% (reduced from 13%)
-        let expected_dao = (total_emission as f64 * 0.05) as u128;
+        // Check DAO got 5% (500 BPS)
+        let expected_dao = total_emission * 500 / 10_000;
         assert_eq!(result.dao_allocation, expected_dao);
 
-        // Check community ecosystem got 10%
-        let expected_community = (total_emission as f64 * 0.10) as u128;
+        // Check community ecosystem got 10% (1000 BPS)
+        let expected_community = total_emission * 1000 / 10_000;
         assert_eq!(result.community_ecosystem_allocation, expected_community);
 
         // Check delegator with lock gets more than one without

@@ -216,7 +216,8 @@ class EmissionController:
         Returns:
             Projection data
         """
-        projections = []\n        _ = self.current_supply  # Reference current supply for future use
+        projections = []
+        _ = self.current_supply  # Reference current supply for future use
 
         # Sample key epochs
         sample_epochs = [0, epochs // 4, epochs // 2, epochs * 3 // 4, epochs]

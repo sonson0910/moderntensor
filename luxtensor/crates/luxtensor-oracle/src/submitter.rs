@@ -23,9 +23,15 @@ impl TxSubmitter {
             .await
             .map_err(|e| OracleError::Connection(e.to_string()))?;
 
+        // Get chain ID from the connected node instead of hardcoding
+        let chain_id = provider.get_chainid()
+            .await
+            .map_err(|e| OracleError::Connection(format!("Failed to get chain ID: {}", e)))?
+            .as_u64();
+
         let wallet = LocalWallet::from_str(&config.private_key)
             .map_err(|e| OracleError::Connection(format!("Invalid private key: {}", e)))?
-            .with_chain_id(777u64); // Hardcoded chain ID for now
+            .with_chain_id(chain_id);
 
         let client = Arc::new(SignerMiddleware::new(provider, wallet));
 

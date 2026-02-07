@@ -14,11 +14,18 @@ pub struct KeyPair {
 
 impl Drop for KeyPair {
     fn drop(&mut self) {
-        // Get mutable reference to secret key bytes and zero them
-        // Note: secp256k1::SecretKey doesn't expose its internal bytes directly,
-        // but we can serialize it, zero that, to trigger secure handling.
-        // The SecretKey itself will be dropped after, but this ensures we
-        // explicitly handle the cleanup.
+        // SECURITY NOTE: secp256k1::SecretKey stores the 32-byte scalar internally
+        // and `secret_bytes()` returns a COPY, so zeroizing that copy does not clear
+        // the actual key material inside SecretKey.
+        //
+        // To properly zeroize, we overwrite the SecretKey in-place with a dummy value.
+        // SecretKey::from_slice will accept any valid 32-byte scalar (non-zero, < curve order).
+        // We overwrite self.secret_key with a well-known dummy to obliterate the real key.
+        let dummy = [0x01u8; 32]; // Valid scalar (1)
+        if let Ok(dummy_key) = SecretKey::from_slice(&dummy) {
+            self.secret_key = dummy_key;
+        }
+        // Also zeroize the copy for defense in depth
         let mut secret_bytes = self.secret_key.secret_bytes();
         secret_bytes.zeroize();
     }
@@ -129,6 +136,38 @@ pub fn recover_public_key(message_hash: &Hash, signature: &[u8; 64], recovery_id
         .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
 
     Ok(pubkey.serialize_uncompressed().to_vec())
+}
+
+/// Recover the 20-byte Ethereum-style address from a message hash and signature.
+///
+/// Tries recovery_id 0 first, then 1.  Returns the first address that
+/// successfully recovers.  The signature must be exactly 64 bytes (r‖s)
+/// or 65 bytes (r‖s‖v) — if 65 bytes, the last byte is used as the
+/// recovery id directly.
+pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<[u8; 20]> {
+    let (sig_bytes, recovery_ids): ([u8; 64], Vec<u8>) = if signature.len() == 65 {
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&signature[..64]);
+        (sig, vec![signature[64]])
+    } else if signature.len() == 64 {
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(signature);
+        (sig, vec![0, 1])
+    } else {
+        return Err(CryptoError::Secp256k1Error(
+            format!("Invalid signature length: expected 64 or 65, got {}", signature.len()),
+        ));
+    };
+
+    for rid in recovery_ids {
+        if let Ok(pubkey) = recover_public_key(message_hash, &sig_bytes, rid) {
+            if let Ok(addr) = address_from_public_key(&pubkey) {
+                return Ok(addr);
+            }
+        }
+    }
+
+    Err(CryptoError::Secp256k1Error("Failed to recover address with any recovery id".into()))
 }
 
 /// Derive address from public key bytes

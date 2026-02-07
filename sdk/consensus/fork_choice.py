@@ -77,6 +77,7 @@ class ForkChoice:
         self._blocks: Dict[str, BlockInfo] = {}
         self._children: Dict[str, List[str]] = {}  # parent_hash -> [child_hashes]
         self._scores: Dict[str, int] = {}          # hash -> score
+        self._attestations: Dict[str, int] = {}    # hash -> total stake attesting
         self._head_hash: str = genesis.hash
         self._lock = threading.RLock()
 
@@ -84,6 +85,7 @@ class ForkChoice:
         self._blocks[genesis.hash] = genesis
         self._children[genesis.hash] = []
         self._scores[genesis.hash] = 1  # Genesis has base score of 1
+        self._attestations[genesis.hash] = 0
 
     def add_block(self, block: BlockInfo) -> None:
         """
@@ -115,11 +117,39 @@ class ForkChoice:
                 self._children[block.parent_hash] = []
             self._children[block.parent_hash].append(block.hash)
 
-            # Calculate score (parent's score + 1)
+            # Calculate score (parent's cumulative score + own attestation weight + 1 base)
             parent_score = self._scores.get(block.parent_hash, 0)
+            self._attestations[block.hash] = 0
             self._scores[block.hash] = parent_score + 1
 
             # Update head if this block has higher score
+            self._update_head()
+
+    def add_attestation(self, block_hash: str, stake: int) -> None:
+        """
+        Add a stake-weighted attestation to a block.
+
+        In GHOST, blocks with more stake-weighted attestations
+        (even from descendants) have higher scores.
+
+        Args:
+            block_hash: Block hash to attest to
+            stake: Amount of stake backing this attestation
+        """
+        with self._lock:
+            if block_hash not in self._blocks:
+                raise ForkChoiceError(f"Unknown block: {block_hash[:16]}...")
+
+            # Add attestation weight to this block and all ancestors
+            current = block_hash
+            while current in self._blocks:
+                self._attestations[current] = self._attestations.get(current, 0) + stake
+                self._scores[current] = self._scores.get(current, 0) + stake
+                block = self._blocks[current]
+                if block.parent_hash not in self._blocks:
+                    break
+                current = block.parent_hash
+
             self._update_head()
 
     def get_head(self) -> BlockInfo:
@@ -213,6 +243,7 @@ class ForkChoice:
 
             # BFS from genesis
             self._scores = {genesis_hash: 1}
+            self._attestations = {genesis_hash: self._attestations.get(genesis_hash, 0)}
             queue = deque([genesis_hash])
 
             while queue:
@@ -220,7 +251,8 @@ class ForkChoice:
                 current_score = self._scores[current_hash]
 
                 for child_hash in self._children.get(current_hash, []):
-                    self._scores[child_hash] = current_score + 1
+                    att = self._attestations.get(child_hash, 0)
+                    self._scores[child_hash] = current_score + 1 + att
                     queue.append(child_hash)
 
             self._update_head()
@@ -264,6 +296,8 @@ class ForkChoice:
                 del self._blocks[hash]
                 if hash in self._scores:
                     del self._scores[hash]
+                if hash in self._attestations:
+                    del self._attestations[hash]
                 if hash in self._children:
                     del self._children[hash]
 

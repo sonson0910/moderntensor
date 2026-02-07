@@ -290,18 +290,35 @@ def _calculate_recovery_id(message_hash: bytes, r: bytes, s: bytes, verifying_ke
 
 def _recover_public_key(message_hash: bytes, signature: bytes, recovery_id: int) -> Optional[bytes]:
     """
-    Recover public key from signature (simplified implementation).
+    Recover public key from ECDSA signature using coincurve (libsecp256k1 binding).
 
-    For full implementation, would use secp256k1 library with recovery support.
+    Args:
+        message_hash: 32-byte hash of the signed message
+        signature: 64-byte signature (r + s)
+        recovery_id: Recovery ID (0 or 1)
+
+    Returns:
+        64-byte uncompressed public key (without 0x04 prefix), or None on failure
     """
-    # This is a simplified version - in production, would use a proper recovery implementation
-    # The signature verification will still work without perfect recovery id
-    return None
+    try:
+        from coincurve import PublicKey as CoincurvePublicKey
+        # coincurve expects: recovery_id (1 byte) + r (32 bytes) + s (32 bytes)
+        recoverable_sig = bytes([recovery_id]) + signature
+        public_key = CoincurvePublicKey.from_signature_and_message(
+            recoverable_sig, message_hash, hasher=None
+        )
+        # Return uncompressed key without the 0x04 prefix (64 bytes)
+        return public_key.format(compressed=False)[1:]
+    except Exception:
+        return None
 
 
 def verify_transaction_signature(tx: LuxtensorTransaction) -> bool:
     """
     Verify that a transaction's signature is valid (matching Luxtensor Rust implementation).
+
+    Recovers the public key from the (v, r, s) signature components and verifies
+    that the derived address matches tx.from_address.
 
     Args:
         tx: Signed transaction
@@ -309,29 +326,38 @@ def verify_transaction_signature(tx: LuxtensorTransaction) -> bool:
     Returns:
         True if signature is valid, False otherwise
     """
-    # Get signing message and hash\n    message = tx.get_signing_message()\n    _ = keccak256(message)  # Compute hash for validation
-
     try:
-        # Combine r and s into signature
-        signature = tx.r + tx.s
-
-        # Derive public key from address
-        # In a full implementation, would recover public key from signature using recovery id
-        # For now, we verify by checking if signature is valid for the claimed address
-
-        # Convert address to bytes for validation
-        _ = bytes.fromhex(tx.from_address[2:] if tx.from_address.startswith('0x') else tx.from_address)
-
-        # This is a basic check - full implementation would recover public key
-        # and verify it matches the address
-        if len(signature) != 64:
-            return False
-
+        # Basic format checks
         if len(tx.r) != 32 or len(tx.s) != 32:
             return False
 
-        # Signature format is valid
-        return True
+        # Get signing message and compute hash
+        message = tx.get_signing_message()
+        message_hash = keccak256(message)
+
+        # Combine r and s into signature
+        signature = tx.r + tx.s
+
+        # Calculate recovery id from v (v = recovery_id + 27)
+        recovery_id = tx.v - 27
+        if recovery_id not in (0, 1):
+            return False
+
+        # Recover public key from signature
+        recovered_pubkey = _recover_public_key(message_hash, signature, recovery_id)
+        if recovered_pubkey is None:
+            return False
+
+        # Derive address from recovered public key using keccak256
+        pubkey_hash = keccak256(recovered_pubkey)
+        recovered_address = '0x' + pubkey_hash[12:].hex()
+
+        # Compare with claimed from_address (case-insensitive)
+        claimed_address = tx.from_address.lower()
+        if not claimed_address.startswith('0x'):
+            claimed_address = '0x' + claimed_address
+
+        return recovered_address.lower() == claimed_address.lower()
 
     except Exception:
         return False

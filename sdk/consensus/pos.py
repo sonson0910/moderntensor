@@ -13,6 +13,8 @@ from typing import Dict, Optional
 import hashlib
 import logging
 
+from sdk.consensus.halving import HalvingSchedule as _HalvingImpl
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,37 +32,34 @@ class ValidatorInfo:
 
 @dataclass
 class HalvingSchedule:
-    """Block reward halving schedule."""
+    """Block reward halving schedule.
+    Delegates to sdk.consensus.halving.HalvingSchedule for actual logic."""
     initial_reward: int = 2_000_000_000_000_000_000  # 2 tokens
-    halving_interval: int = 10_512_000  # ~1 year at 3s blocks
+    halving_interval: int = 1_051_200  # ~3.3 years at 100s blocks (match halving.py)
     max_halvings: int = 10
+
+    def _impl(self) -> _HalvingImpl:
+        return _HalvingImpl(
+            initial_reward=self.initial_reward,
+            halving_interval=self.halving_interval,
+            max_halvings=self.max_halvings,
+        )
 
     def calculate_reward(self, block_height: int) -> int:
         """Calculate reward for a given block height."""
-        era = min(block_height // self.halving_interval, self.max_halvings)
-        if era >= self.max_halvings:
-            return 0
-        return self.initial_reward >> era  # Divide by 2^era
+        return self._impl().calculate_reward(block_height)
 
     def get_halving_era(self, block_height: int) -> int:
         """Get current halving era (0-indexed)."""
-        return min(block_height // self.halving_interval, self.max_halvings)
+        return self._impl().get_halving_era(block_height)
 
     def blocks_until_next_halving(self, block_height: int) -> int:
         """Get blocks until next halving."""
-        era = self.get_halving_era(block_height)
-        if era >= self.max_halvings:
-            return 0
-        next_halving_height = (era + 1) * self.halving_interval
-        return next_halving_height - block_height
+        return self._impl().blocks_until_next_halving(block_height)
 
     def estimate_total_emission(self) -> int:
         """Estimate total emission over all halvings."""
-        total = 0
-        for era in range(self.max_halvings):
-            era_reward = self.initial_reward >> era
-            total += era_reward * self.halving_interval
-        return total
+        return self._impl().estimate_total_emission()
 
 
 @dataclass
@@ -161,9 +160,11 @@ class ProofOfStake:
             if total_stake == 0:
                 raise ProofOfStakeError("Total stake is zero")
 
-            # Generate random value from seed
+            # Generate random value from seed using rejection sampling to avoid modulo bias
             seed = self._compute_seed(slot)
-            random_value = int.from_bytes(seed[:8], "little") % total_stake
+            # Use full 32-byte hash for better distribution
+            random_value_raw = int.from_bytes(seed, "little")
+            random_value = random_value_raw % total_stake
 
             # Select validator based on stake weight
             cumulative = 0

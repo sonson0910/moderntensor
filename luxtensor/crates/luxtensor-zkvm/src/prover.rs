@@ -122,10 +122,13 @@ impl ZkProver {
         {
             let mut stats = self.stats.write().await;
             stats.proofs_generated += 1;
-            stats.total_proving_time_ms += duration.as_millis() as u64;
+            stats.total_proving_time_ms = stats.total_proving_time_ms.saturating_add(duration.as_millis() as u64);
             if stats.proofs_generated > 0 {
-                stats.avg_cycles = (stats.avg_cycles * (stats.proofs_generated - 1)
-                    + receipt.metadata.cycles) / stats.proofs_generated;
+                // Use saturating arithmetic to prevent overflow in running average
+                stats.avg_cycles = stats.avg_cycles
+                    .saturating_mul(stats.proofs_generated.saturating_sub(1))
+                    .saturating_add(receipt.metadata.cycles)
+                    / stats.proofs_generated;
             }
             if self.config.use_gpu && self.gpu_available() {
                 stats.gpu_proofs += 1;

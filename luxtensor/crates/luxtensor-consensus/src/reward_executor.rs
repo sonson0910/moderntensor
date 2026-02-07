@@ -152,40 +152,101 @@ impl RewardExecutor {
         let emission_result = self.emission.write().process_block(block_height, utility);
         let total_emission = emission_result.amount;
 
+        // 🔧 FIX: Use DistributionConfig BPS ratios for proper allocation
+        // Instead of hardcoded 55/30/15 splits, use the config for all pools
+        // This ensures delegators, DAO, and community ecosystem get their shares
+        let config = &self.distributor.config();
+        let miner_pool = (total_emission * config.miner_share_bps as u128) / 10_000;
+        let validator_pool = (total_emission * config.validator_share_bps as u128) / 10_000;
+        let delegator_pool = (total_emission * config.delegator_share_bps as u128) / 10_000;
+        let subnet_pool = (total_emission * config.subnet_owner_share_bps as u128) / 10_000;
+        let dao_pool = (total_emission * config.dao_share_bps as u128) / 10_000;
+        let community_pool = (total_emission * config.community_ecosystem_share_bps as u128) / 10_000;
+
         // Distribute miner rewards with task-based GPU verification
-        let miner_pool = (total_emission * 55) / 100;  // 55% to miners (Balanced Model)
         let miner_distribution = self.distributor.distribute_by_epoch_stats(
             miner_pool,
             miner_stats,
             gpu_bonus_rate,
         );
 
-        // Distribute remaining pools using standard distribution
-        let validator_pool = (total_emission * 30) / 100;  // 30% validators
-        let subnet_pool = (total_emission * 15) / 100;      // 15% subnet owners
+        // Distribute validator rewards by stake
+        let validator_distribution = if !validators.is_empty() {
+            let total_stake: u128 = validators.iter().map(|v| v.stake as u128).sum();
+            if total_stake > 0 {
+                validators.iter().map(|v| {
+                    let share = (validator_pool * v.stake as u128) / total_stake;
+                    (v.address, share)
+                }).collect::<std::collections::HashMap<_, _>>()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
 
-        // Convert miner_stats to MinerInfo for combined distribution tracking
-        // (validators/delegators/subnets still use standard flow)
-        let dummy_miners: Vec<MinerInfo> = vec![];  // Empty - handled separately
-        let distribution = self.distributor.distribute(
+        // Distribute delegator rewards by stake + lock bonus
+        let delegator_distribution = if !delegators.is_empty() {
+            let lock_bonus = &self.distributor.lock_bonus_config();
+            let total_weighted: u128 = delegators.iter().map(|d| {
+                let bonus = lock_bonus.get_bonus_bps(d.lock_days);
+                (d.stake as u128) * (10_000 + bonus as u128) / 10_000
+            }).sum();
+            if total_weighted > 0 {
+                delegators.iter().map(|d| {
+                    let bonus = lock_bonus.get_bonus_bps(d.lock_days);
+                    let weighted = (d.stake as u128) * (10_000 + bonus as u128) / 10_000;
+                    let share = (delegator_pool * weighted) / total_weighted;
+                    (d.address, share)
+                }).collect::<std::collections::HashMap<_, _>>()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // Distribute subnet owner rewards by emission weight
+        let subnet_distribution = if !subnets.is_empty() {
+            let total_weight: u128 = subnets.iter().map(|s| s.emission_weight as u128).sum();
+            if total_weight > 0 {
+                subnets.iter().map(|s| {
+                    let share = (subnet_pool * s.emission_weight as u128) / total_weight;
+                    (s.owner, share)
+                }).collect::<std::collections::HashMap<_, _>>()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // Build combined distribution result
+        let combined = DistributionResult {
             epoch,
-            validator_pool + subnet_pool,  // Only non-miner pools
-            &dummy_miners,
-            validators,
-            delegators,
-            subnets,
-        );
-
-        // Combine distributions
-        let mut combined = distribution.clone();
-
-        // Add miner rewards from task-based distribution
-        for (addr, amount) in miner_distribution {
-            combined.miner_rewards.insert(addr, amount);
-        }
+            total_distributed: total_emission,
+            miner_rewards: miner_distribution,
+            validator_rewards: validator_distribution,
+            delegator_rewards: delegator_distribution,
+            subnet_owner_rewards: subnet_distribution,
+            dao_allocation: dao_pool,
+            community_ecosystem_allocation: community_pool,
+        };
 
         // Credit rewards to pending balances
         self.credit_rewards(&combined, epoch);
+
+        // Credit DAO allocation
+        if dao_pool > 0 {
+            let mut pending = self.pending_rewards.write();
+            let entry = pending.entry(self.dao_address).or_insert_with(|| PendingReward {
+                amount: 0,
+                last_epoch: epoch,
+                accumulated_from_epoch: epoch,
+            });
+            entry.amount = entry.amount.saturating_add(dao_pool);
+            entry.last_epoch = epoch;
+        }
 
         // Update current epoch
         *self.current_epoch.write() = epoch;
@@ -197,7 +258,7 @@ impl RewardExecutor {
             validator_rewards: combined.validator_rewards.values().sum(),
             delegator_rewards: combined.delegator_rewards.values().sum(),
             subnet_rewards: combined.subnet_owner_rewards.values().sum(),
-            dao_allocation: combined.dao_allocation,
+            dao_allocation: dao_pool,
             participants_rewarded:
                 combined.miner_rewards.len() +
                 combined.validator_rewards.len() +
