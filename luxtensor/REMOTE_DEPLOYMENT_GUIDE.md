@@ -56,7 +56,7 @@ cat /opt/luxtensor/validator.key | sha256sum | cut -c25-64
 cat > /opt/luxtensor/config.toml << 'EOF'
 [node]
 name = "seed-node"
-chain_id = 1
+chain_id = 8898
 data_dir = "./data"
 is_validator = true
 validator_key_path = "./validator.key"
@@ -115,7 +115,7 @@ grep "Local peer id" node.log
 cat > /opt/luxtensor/config.toml << 'EOF'
 [node]
 name = "node-2"
-chain_id = 1
+chain_id = 8898
 data_dir = "./data"
 is_validator = true
 validator_key_path = "./validator.key"

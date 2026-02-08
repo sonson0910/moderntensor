@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("5️⃣  Creating transaction...");
     let transfer_amount = 100_000u128;
     let tx = Transaction {
+        chain_id: 8898, // Devnet
         nonce: 0,
         from: sender_addr,
         to: Some(receiver_addr),

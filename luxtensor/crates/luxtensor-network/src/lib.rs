@@ -1,6 +1,5 @@
 // LuxTensor network module
 // Phase 3: Network Layer Implementation
-#![allow(dead_code)] // Config fields reserved for future use
 
 pub mod error;
 pub mod identity;

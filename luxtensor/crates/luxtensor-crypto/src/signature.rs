@@ -31,6 +31,17 @@ impl Drop for KeyPair {
     }
 }
 
+impl Clone for KeyPair {
+    fn clone(&self) -> Self {
+        // Reconstruct from raw secret bytes; SecretKey::from_slice is infallible
+        // for bytes that were already a valid key.
+        let sk = SecretKey::from_slice(&self.secret_key.secret_bytes())
+            .expect("cloning a valid SecretKey");
+        let pk = self.public_key; // PublicKey is Copy
+        Self { secret_key: sk, public_key: pk }
+    }
+}
+
 impl KeyPair {
     /// Generate a new random key pair
     pub fn generate() -> Self {

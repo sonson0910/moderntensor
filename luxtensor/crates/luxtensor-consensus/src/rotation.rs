@@ -195,7 +195,13 @@ impl ValidatorRotation {
         for address in ready_to_activate {
             if let Some(pending) = self.pending_validators.remove(&address) {
                 if self.current_validators.len() < self.config.max_validators {
-                    self.current_validators.add_validator(pending.validator).ok();
+                    if let Err(e) = self.current_validators.add_validator(pending.validator) {
+                        warn!(
+                            "Failed to activate validator {}: {}",
+                            hex::encode(&address), e
+                        );
+                        continue;
+                    }
                     activated.push(address);
                     info!(
                         "Activated validator {} at epoch {}",
@@ -240,7 +246,12 @@ impl ValidatorRotation {
             .collect();
 
         for address in ready_to_exit {
-            self.current_validators.remove_validator(&address).ok();
+            if let Err(e) = self.current_validators.remove_validator(&address) {
+                warn!(
+                    "Failed to remove exiting validator {}: {}",
+                    hex::encode(&address), e
+                );
+            }
             self.exiting_validators.remove(&address);
             exited.push(address);
             info!(
@@ -310,8 +321,24 @@ impl ValidatorRotation {
         let mut updated_validator = validator.clone();
         updated_validator.stake = new_stake;
 
-        self.current_validators.remove_validator(address).ok();
-        self.current_validators.add_validator(updated_validator).ok();
+        if let Err(e) = self.current_validators.remove_validator(address) {
+            warn!(
+                "Failed to remove validator {} during slash: {}",
+                hex::encode(address), e
+            );
+            return Err(ConsensusError::InvalidOperation(
+                format!("Failed to remove validator for stake update: {}", e)
+            ));
+        }
+        if let Err(e) = self.current_validators.add_validator(updated_validator) {
+            warn!(
+                "Failed to re-add validator {} after slash: {}",
+                hex::encode(address), e
+            );
+            return Err(ConsensusError::InvalidOperation(
+                format!("Failed to re-add validator after slash: {}", e)
+            ));
+        }
 
         // If stake falls below minimum, schedule for exit
         if new_stake < self.config.min_stake {
@@ -319,7 +346,8 @@ impl ValidatorRotation {
                 "Validator {} stake below minimum, scheduling exit",
                 hex::encode(address)
             );
-            self.exiting_validators.insert(*address);
+            let exit_epoch = self.current_epoch + self.config.exit_delay_epochs;
+            self.exiting_validators.insert(*address, exit_epoch);
         }
 
         Ok(())

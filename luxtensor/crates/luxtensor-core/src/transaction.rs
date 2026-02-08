@@ -21,7 +21,9 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    /// Create a new transaction with chain_id
+    /// Create a new transaction with default devnet chain_id (8898)
+    ///
+    /// For production, prefer `with_chain_id()` with the correct chain ID.
     pub fn new(
         nonce: u64,
         from: Address,
@@ -31,7 +33,7 @@ impl Transaction {
         gas_limit: u64,
         data: Vec<u8>,
     ) -> Self {
-        Self::with_chain_id(1, nonce, from, to, value, gas_price, gas_limit, data)
+        Self::with_chain_id(8898, nonce, from, to, value, gas_price, gas_limit, data)
     }
 
     /// Create a new transaction with explicit chain_id
@@ -142,7 +144,7 @@ mod tests {
         let to = Some(Address::zero());
         let tx = Transaction::new(0, from, to, 1000, 1, 21000, vec![]);
 
-        assert_eq!(tx.chain_id, 1); // Default chain_id
+        assert_eq!(tx.chain_id, 8898); // Default chain_id (DEVNET)
         assert_eq!(tx.nonce, 0);
         assert_eq!(tx.value, 1000);
         assert_eq!(tx.gas_limit, 21000);

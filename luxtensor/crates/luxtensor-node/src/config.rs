@@ -180,7 +180,7 @@ impl Default for Config {
         Self {
             node: NodeConfig {
                 name: "luxtensor-node".to_string(),
-                chain_id: 1,
+                chain_id: 8898, // LuxTensor devnet (SECURITY: previously 1, matching Ethereum mainnet)
                 data_dir: PathBuf::from("./data"),
                 is_validator: false,
                 validator_key_path: None,

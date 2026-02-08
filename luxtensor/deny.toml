@@ -1,0 +1,74 @@
+# LuxTensor Dependency Policy — cargo-deny configuration
+# Run: cargo deny check
+# CI: cargo deny check advisories bans licenses sources
+
+# ============================================================
+# Advisory Database — block known-vulnerable crates
+# ============================================================
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+ignore = []
+
+# ============================================================
+# License Policy — only allow permissive licenses
+# ============================================================
+[licenses]
+unlicensed = "deny"
+# Copyleft licenses are NOT allowed in a blockchain node binary
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "MPL-2.0",  # Weak copyleft, allowed for dependencies
+]
+deny = [
+    "GPL-2.0",
+    "GPL-3.0",
+    "AGPL-1.0",
+    "AGPL-3.0",
+]
+copyleft = "warn"
+default = "deny"
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+# ============================================================
+# Bans — prevent problematic crates
+# ============================================================
+[bans]
+# Lint level for when multiple versions of the same crate are detected
+multiple-versions = "warn"
+# Lint level for crates from crates.io that are not in the allow list
+wildcards = "allow"
+highlight = "all"
+
+deny = [
+    # crypto: prevent use of deprecated/weak crypto
+    { name = "openssl", wrappers = ["openssl-sys"] },
+
+    # Prevent accidental std::env dependency leaks
+    { name = "dotenv", reason = "Use config files, not .env in production" },
+]
+
+# ============================================================
+# Sources — only allow crates.io & our own git repos
+# ============================================================
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

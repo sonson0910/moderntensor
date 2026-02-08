@@ -16,7 +16,7 @@
 # Human-readable node name (for logs and monitoring)
 name = "luxtensor-mainnet-01"
 
-# Chain ID: 8899 = Mainnet, 9999 = Testnet, 1 = Devnet
+# Chain ID: 8899 = Mainnet, 9999 = Testnet, 8898 = Devnet
 chain_id = 8899
 
 # Data directory for all node data

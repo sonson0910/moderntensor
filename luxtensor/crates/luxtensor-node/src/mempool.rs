@@ -27,11 +27,13 @@ pub struct Mempool {
     validate_signatures: bool,
     /// Transaction expiration time (default: 30 minutes)
     tx_expiration: Duration,
+    /// Expected chain_id — transactions with a different chain_id are rejected
+    chain_id: u64,
 }
 
 impl Mempool {
     /// Create a new mempool with maximum size and signature validation enabled
-    pub fn new(max_size: usize) -> Self {
+    pub fn new(max_size: usize, chain_id: u64) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
@@ -41,6 +43,7 @@ impl Mempool {
             max_tx_size: 128 * 1024,               // DoS: Max 128KB per transaction
             validate_signatures: true,              // PRODUCTION: always validate
             tx_expiration: Duration::from_secs(30 * 60), // 30 minutes
+            chain_id,
         }
     }
 
@@ -50,6 +53,7 @@ impl Mempool {
         max_per_sender: usize,
         min_gas_price: u64,
         max_tx_size: usize,
+        chain_id: u64,
     ) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -60,12 +64,13 @@ impl Mempool {
             max_tx_size,
             validate_signatures: true,
             tx_expiration: Duration::from_secs(30 * 60),
+            chain_id,
         }
     }
 
     /// Create mempool for development (no signature validation, relaxed limits)
     /// WARNING: Only use for local development/testing!
-    pub fn new_dev_mode(max_size: usize) -> Self {
+    pub fn new_dev_mode(max_size: usize, chain_id: u64) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
@@ -75,6 +80,7 @@ impl Mempool {
             max_tx_size: 1024 * 1024,              // 1MB for dev
             validate_signatures: false,
             tx_expiration: Duration::from_secs(30 * 60),
+            chain_id,
         }
     }
 
@@ -97,6 +103,18 @@ impl Mempool {
 
     /// Add a transaction to the mempool with DoS protection
     pub fn add_transaction(&self, tx: Transaction) -> Result<(), MempoolError> {
+        // SECURITY: Validate chain_id — reject cross-chain transactions early
+        if tx.chain_id != self.chain_id {
+            warn!(
+                "🛡️ Rejected transaction: chain_id {} != expected {}",
+                tx.chain_id, self.chain_id
+            );
+            return Err(MempoolError::WrongChainId {
+                expected: self.chain_id,
+                got: tx.chain_id,
+            });
+        }
+
         // DoS Protection 1: Check transaction size
         let tx_size = bincode::serialized_size(&tx).unwrap_or(u64::MAX) as usize;
         if tx_size > self.max_tx_size {
@@ -171,9 +189,26 @@ impl Mempool {
     }
 
     /// Get transactions for block production (up to limit)
+    ///
+    /// Returns transactions sorted by (sender, nonce) for correct execution order.
+    /// Within a block, transactions from the same sender MUST be ordered by nonce
+    /// to prevent execution failures (nonce gaps cause all subsequent txs to fail).
+    /// Transactions are also prioritized by gas_price (higher gas = earlier inclusion).
     pub fn get_transactions_for_block(&self, limit: usize) -> Vec<Transaction> {
         let txs = self.transactions.read();
-        txs.values().take(limit).map(|t| t.tx.clone()).collect()
+        let mut sorted: Vec<Transaction> = txs.values().map(|t| t.tx.clone()).collect();
+
+        // Primary sort: gas_price descending (priority), secondary: sender + nonce ascending
+        sorted.sort_by(|a, b| {
+            // First: higher gas_price transactions get priority
+            b.gas_price.cmp(&a.gas_price)
+                // Then: group by sender and order by nonce within sender
+                .then_with(|| a.from.cmp(&b.from))
+                .then_with(|| a.nonce.cmp(&b.nonce))
+        });
+
+        sorted.truncate(limit);
+        sorted
     }
 
     /// Remove transactions from mempool (also updates sender counts)
@@ -290,12 +325,18 @@ pub enum MempoolError {
 
     #[error("Sender {sender:?} has reached limit of {limit} pending transactions")]
     SenderLimitReached { sender: Address, limit: usize },
+
+    #[error("Wrong chain_id: expected {expected}, got {got}")]
+    WrongChainId { expected: u64, got: u64 },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use luxtensor_core::Address;
+
+    /// Test chain_id — matches Transaction::new() default (devnet)
+    const TEST_CHAIN_ID: u64 = 8898;
 
     fn create_test_transaction(nonce: u64) -> Transaction {
         Transaction::new(
@@ -311,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_mempool_creation() {
-        let mempool = Mempool::new_dev_mode(100);
+        let mempool = Mempool::new_dev_mode(100, TEST_CHAIN_ID);
         assert_eq!(mempool.len(), 0);
         assert!(mempool.is_empty());
     }
@@ -319,7 +360,7 @@ mod tests {
     #[test]
     fn test_add_transaction() {
         // Use dev mode for unsigned test transactions
-        let mempool = Mempool::new_dev_mode(100);
+        let mempool = Mempool::new_dev_mode(100, TEST_CHAIN_ID);
         let tx = create_test_transaction(0);
 
         assert!(mempool.add_transaction(tx).is_ok());
@@ -328,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_get_pending_transactions() {
-        let mempool = Mempool::new_dev_mode(100);
+        let mempool = Mempool::new_dev_mode(100, TEST_CHAIN_ID);
 
         mempool.add_transaction(create_test_transaction(0)).unwrap();
         mempool.add_transaction(create_test_transaction(1)).unwrap();
@@ -339,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_remove_transactions() {
-        let mempool = Mempool::new_dev_mode(100);
+        let mempool = Mempool::new_dev_mode(100, TEST_CHAIN_ID);
         let tx = create_test_transaction(0);
         let hash = tx.hash();
 
@@ -352,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_mempool_full() {
-        let mempool = Mempool::new_dev_mode(2);
+        let mempool = Mempool::new_dev_mode(2, TEST_CHAIN_ID);
 
         mempool.add_transaction(create_test_transaction(0)).unwrap();
         mempool.add_transaction(create_test_transaction(1)).unwrap();
@@ -363,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_transaction() {
-        let mempool = Mempool::new_dev_mode(100);
+        let mempool = Mempool::new_dev_mode(100, TEST_CHAIN_ID);
         let tx = create_test_transaction(0);
 
         mempool.add_transaction(tx.clone()).unwrap();

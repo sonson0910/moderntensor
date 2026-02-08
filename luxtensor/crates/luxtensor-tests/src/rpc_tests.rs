@@ -18,6 +18,7 @@ fn ensure_node_running() -> RpcClient {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_block_number_returns_hex() {
     let client = ensure_node_running();
 
@@ -30,6 +31,7 @@ fn test_eth_block_number_returns_hex() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_block_number_increases_over_time() {
     let client = ensure_node_running();
 
@@ -49,6 +51,7 @@ fn test_eth_block_number_increases_over_time() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_block_by_number_genesis() {
     let client = ensure_node_running();
 
@@ -63,6 +66,7 @@ fn test_eth_get_block_by_number_genesis() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_block_by_number_latest() {
     let client = ensure_node_running();
 
@@ -74,6 +78,7 @@ fn test_eth_get_block_by_number_latest() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_block_by_number_future() {
     let client = ensure_node_running();
 
@@ -90,6 +95,7 @@ fn test_eth_get_block_by_number_future() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_send_transaction_success() {
     let client = ensure_node_running();
 
@@ -108,6 +114,7 @@ fn test_eth_send_transaction_success() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_send_transaction_without_gas() {
     let client = ensure_node_running();
 
@@ -123,6 +130,7 @@ fn test_eth_send_transaction_without_gas() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_send_transaction_high_value() {
     let client = ensure_node_running();
 
@@ -142,6 +150,7 @@ fn test_eth_send_transaction_high_value() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_transaction_by_hash_pending() {
     let client = ensure_node_running();
 
@@ -162,6 +171,7 @@ fn test_eth_get_transaction_by_hash_pending() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_transaction_by_hash_not_found() {
     let client = ensure_node_running();
 
@@ -180,6 +190,7 @@ fn test_eth_get_transaction_by_hash_not_found() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_balance_existing_account() {
     let client = ensure_node_running();
 
@@ -191,6 +202,7 @@ fn test_eth_get_balance_existing_account() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_eth_get_balance_new_account() {
     let client = ensure_node_running();
 
@@ -207,6 +219,7 @@ fn test_eth_get_balance_new_account() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_multiple_transactions_sequence() {
     let client = ensure_node_running();
 
@@ -236,6 +249,7 @@ fn test_multiple_transactions_sequence() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_concurrent_block_number_requests() {
     let client = ensure_node_running();
 

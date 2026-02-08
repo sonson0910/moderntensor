@@ -346,7 +346,7 @@ impl WebSocketServer {
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
                                     result: serde_json::to_value(&block).unwrap_or_else(|e| {
-                                        log::warn!("Failed to serialize block for subscription: {}", e);
+                                        tracing::warn!("Failed to serialize block for subscription: {}", e);
                                         serde_json::Value::Null
                                     }),
                                 },
@@ -367,7 +367,7 @@ impl WebSocketServer {
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
                                     result: serde_json::to_value(&tx.hash).unwrap_or_else(|e| {
-                                        log::warn!("Failed to serialize tx hash for subscription: {}", e);
+                                        tracing::warn!("Failed to serialize tx hash for subscription: {}", e);
                                         serde_json::Value::Null
                                     }),
                                 },

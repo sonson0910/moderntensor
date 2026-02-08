@@ -4,7 +4,7 @@
 //! when starting up. This allows nodes to join the network without any configuration.
 //!
 //! ## Network Types
-//! - **Devnet (Chain ID: 1)**: Local development, uses mDNS, no seed nodes needed
+//! - **Devnet (Chain ID: 8898)**: Local development, uses mDNS, no seed nodes needed
 //! - **Testnet (Chain ID: 9999)**: Public testnet, requires seed nodes
 //! - **Mainnet (Chain ID: 8899)**: Production network, requires seed nodes
 //!
@@ -46,7 +46,7 @@ pub fn testnet_seeds() -> Vec<String> {
     vec![]
 }
 
-/// Get seed nodes for devnet/local development (Chain ID: 1, 31337, etc.)
+/// Get seed nodes for devnet/local development (Chain ID: 8898, 1337, 31337)
 /// Uses mDNS for automatic peer discovery on local network
 pub fn devnet_seeds() -> Vec<String> {
     // Devnet uses mDNS discovery - no hardcoded seeds needed
@@ -64,7 +64,7 @@ pub fn get_seeds_for_chain(chain_id: u64) -> Vec<String> {
     let seeds = match chain_id {
         8899 => mainnet_seeds(),
         9999 => testnet_seeds(),
-        _ => devnet_seeds(), // Chain ID 1, 31337, etc. = devnet
+        _ => devnet_seeds(), // Chain ID 8898, 1337, 31337, etc. = devnet
     };
 
     if seeds.is_empty() && (chain_id == 8899 || chain_id == 9999) {
@@ -91,8 +91,8 @@ pub fn get_network_name(chain_id: u64) -> &'static str {
     match chain_id {
         8899 => "Mainnet",
         9999 => "Testnet",
-        1 => "Devnet",
-        31337 => "Local",
+        8898 => "Devnet",
+        1337 | 31337 => "Local",
         _ => "Unknown",
     }
 }
@@ -104,7 +104,8 @@ mod tests {
     #[test]
     fn test_devnet_uses_mdns() {
         // Devnet should have no seeds (uses mDNS)
-        assert!(get_seeds_for_chain(1).is_empty());
+        assert!(get_seeds_for_chain(8898).is_empty());
+        assert!(get_seeds_for_chain(1337).is_empty());
         assert!(get_seeds_for_chain(31337).is_empty());
     }
 
@@ -112,6 +113,6 @@ mod tests {
     fn test_network_names() {
         assert_eq!(get_network_name(8899), "Mainnet");
         assert_eq!(get_network_name(9999), "Testnet");
-        assert_eq!(get_network_name(1), "Devnet");
+        assert_eq!(get_network_name(8898), "Devnet");
     }
 }

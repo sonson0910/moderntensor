@@ -11,6 +11,7 @@ members = [
     "crates/luxtensor-cli",
     "crates/luxtensor-tests",
     "crates/luxtensor-hnsw",
+    "crates/luxtensor-indexer",
 ]
 resolver = "2"
 

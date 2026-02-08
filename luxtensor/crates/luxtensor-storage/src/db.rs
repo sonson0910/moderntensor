@@ -776,12 +776,13 @@ impl luxtensor_core::RocksDbLike for BlockchainDB {
         }
         Ok(result)
     }
+}
 
-    // ========================================================================
-    // Fork Choice Persistence — stores head hash, scores, attestation stakes
-    // ========================================================================
-
-    /// Key constants for fork choice metadata
+// ============================================================================
+// Fork Choice Persistence — stores head hash, scores, attestation stakes
+// ============================================================================
+impl BlockchainDB {
+    /// Key constant for fork choice head
     const FC_HEAD_KEY: &'static [u8] = b"fc_head";
 
     /// Store the current fork choice head hash
@@ -881,6 +882,7 @@ impl luxtensor_core::RocksDbLike for BlockchainDB {
     }
 
     /// Load all block scores from the fork choice CF
+    #[allow(dead_code)]
     pub fn load_all_block_scores(&self) -> Result<Vec<(Hash, u64)>> {
         let cf = self.db.cf_handle(CF_FORK_CHOICE)
             .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
@@ -905,6 +907,7 @@ impl luxtensor_core::RocksDbLike for BlockchainDB {
     }
 
     /// Load all attestation stakes from the fork choice CF
+    #[allow(dead_code)]
     pub fn load_all_attestation_stakes(&self) -> Result<Vec<(Hash, u128)>> {
         let cf = self.db.cf_handle(CF_FORK_CHOICE)
             .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;

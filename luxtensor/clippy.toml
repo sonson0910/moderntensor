@@ -1,0 +1,30 @@
+# LuxTensor Clippy Configuration — Production-Grade Lints
+# See: https://doc.rust-lang.org/clippy/configuration.html
+
+# Cognitive complexity threshold for functions
+cognitive-complexity-threshold = 30
+
+# Maximum number of lines in a function body
+too-many-lines-threshold = 200
+
+# Maximum number of arguments a function can have
+too-many-arguments-threshold = 8
+
+# Type complexity threshold (deeply nested generics)
+type-complexity-threshold = 300
+
+# Maximum number of struct fields
+max-struct-bools = 4
+
+# MSRV — minimum supported Rust version
+msrv = "1.75"
+
+# Allow common blockchain-domain abbreviations
+allowed-idents-below-min-chars = ["i", "j", "k", "n", "x", "y", "tx", "rx", "db", "id", "ok", "pb", "ip"]
+
+# Disallow print/eprintln in non-test code (use tracing instead)
+disallowed-macros = [
+    { path = "std::println", reason = "Use tracing::info! instead of println! in production code" },
+    { path = "std::eprintln", reason = "Use tracing::error! instead of eprintln! in production code" },
+    { path = "std::dbg", reason = "Remove dbg! before committing" },
+]

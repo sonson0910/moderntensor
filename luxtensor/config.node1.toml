@@ -5,8 +5,8 @@
 # Node name/identifier
 name = "node-1"
 
-# Chain ID (1 for local development)
-chain_id = 1
+# Chain ID (8898 for local development/devnet)
+chain_id = 8898
 
 # Data directory for blockchain data
 data_dir = "./data"

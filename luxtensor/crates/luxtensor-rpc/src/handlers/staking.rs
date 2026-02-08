@@ -390,7 +390,7 @@ pub fn register_staking_handlers(
     // SECURITY: Only available on dev/test chains to prevent abuse on mainnet.
     // Params: [address, amount, lock_seconds]
     // Returns: { success, unlock_timestamp }
-    let is_dev_chain = chain_id == 1 || chain_id == 31337 || chain_id == 1337;
+    let is_dev_chain = chain_id == 8898 || chain_id == 31337 || chain_id == 1337;
     io.add_sync_method("staking_lockStakeSeconds", move |params: Params| {
         if !is_dev_chain {
             return Err(jsonrpc_core::Error {

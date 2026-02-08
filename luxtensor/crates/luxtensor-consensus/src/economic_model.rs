@@ -20,8 +20,8 @@ use super::reward_distribution::DistributionConfig;
 /// Block time in seconds (12s target, matching Ethereum post-merge)
 pub const BLOCK_TIME_SECONDS: u64 = 12;
 
-/// Blocks per year at 12s block time = 365.25 * 24 * 3600 / 12 ≈ 2,628,000
-pub const BLOCKS_PER_YEAR: u64 = 2_628_000;
+/// Blocks per year at 12s block time = 365.25 * 24 * 3600 / 12 = 2,629,800
+pub const BLOCKS_PER_YEAR: u64 = 2_629_800;
 
 /// Pre-minted supply at TGE (55% of 21M = 11.55M MDT)
 /// Includes: Team 10%, Private 8%, IDO 5%, DAO 10%, Liquidity 5%, Foundation 5%, Ecosystem 12%
@@ -620,7 +620,7 @@ pub fn generate_report(
             (era + 1) as f64 * halving.halving_interval as f64 / BLOCKS_PER_YEAR as f64;
         let annual = reward as f64 * BLOCKS_PER_YEAR as f64 / ONE_MDT as f64;
         report.push_str(&format!(
-            "  {:>3}   {:.6} MDT   Year {:.1} – {:.1}   {:>12,.0} MDT\n",
+            "  {:>3}   {:.6} MDT   Year {:.1} – {:.1}   {:>12.0} MDT\n",
             era,
             reward as f64 / ONE_MDT as f64,
             era_start_year,
@@ -659,7 +659,7 @@ pub fn generate_report(
         if let Some(snap) = snapshots.get(y as usize) {
             let halving_marker = if snap.halving_this_year { " ★" } else { "" };
             report.push_str(&format!(
-                "  {:>4}   {:>16,.0}    {:>+7.2}%    {:.6} MDT     {:>+14,.0}   {}\n",
+                "  {:>4}   {:>16.0}    {:>+7.2}%    {:.6} MDT     {:>+14.0}   {}\n",
                 snap.year,
                 snap.circulating_supply as f64 / ONE_MDT as f64,
                 snap.inflation_rate_pct,

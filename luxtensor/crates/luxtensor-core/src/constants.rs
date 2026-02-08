@@ -9,7 +9,12 @@ pub mod chain_id {
     /// Testnet chain ID
     pub const TESTNET: u64 = 9999;
     /// Devnet chain ID (local development)
-    pub const DEVNET: u64 = 1;
+    ///
+    /// SECURITY: Previously set to 1 (Ethereum Mainnet chain_id), which is
+    /// dangerous because dev-mode signing with hardcoded keys would be enabled
+    /// on any node configured with chain_id=1. Changed to 8898 to avoid
+    /// collision with any well-known chain.
+    pub const DEVNET: u64 = 8898;
 }
 
 /// Official Treasury and System Addresses

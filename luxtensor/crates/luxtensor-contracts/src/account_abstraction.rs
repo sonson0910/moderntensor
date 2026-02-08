@@ -523,10 +523,51 @@ pub struct GasEstimate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use luxtensor_crypto::KeyPair;
 
+    /// Well-known test secret key (deterministic).
+    const TEST_SECRET: [u8; 32] = [1u8; 32];
+    /// Chain ID used by tests.
+    const TEST_CHAIN_ID: u64 = 1;
+
+    /// Create a keypair and derive the sender address from it.
+    fn test_keypair() -> KeyPair {
+        KeyPair::from_secret(&TEST_SECRET).unwrap()
+    }
+
+    /// Sign a UserOperation in-place with the given keypair.
+    /// Determines the correct ECDSA recovery id (0 or 1) so that
+    /// `recover_public_key` reproduces the signer's address.
+    fn sign_user_op(op: &mut UserOperation, keypair: &KeyPair, entry_point: &Address, chain_id: u64) {
+        let op_hash = op.hash(entry_point, chain_id);
+        let sig = keypair.sign(&op_hash).unwrap();
+        let sender_bytes = keypair.address();
+
+        for rid in 0u8..=1 {
+            if let Ok(pubkey) = luxtensor_crypto::recover_public_key(&op_hash, &sig, rid) {
+                if let Ok(addr) = luxtensor_crypto::address_from_public_key(&pubkey) {
+                    if addr == sender_bytes {
+                        let mut signature = sig.to_vec();
+                        signature.push(rid);
+                        op.signature = signature;
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("Could not find valid recovery ID for test signature");
+    }
+
+    /// Create a properly-signed test UserOperation.
     fn create_test_user_op() -> UserOperation {
-        UserOperation {
-            sender: Address::from([1u8; 20]),
+        let keypair = test_keypair();
+        let sender = Address::from(keypair.address());
+
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
+        let ep_addr = entry_point.supported_entry_points[0];
+
+        let mut op = UserOperation {
+            sender,
             nonce: 0,
             init_code: vec![],
             call_data: vec![0x12, 0x34, 0x56, 0x78],
@@ -536,13 +577,15 @@ mod tests {
             max_fee_per_gas: 1_000_000_000,
             max_priority_fee_per_gas: 1_000_000,
             paymaster_and_data: vec![],
-            signature: vec![0xAA; 65], // 64-byte signature + 1-byte recovery id
-        }
+            signature: vec![0x00], // placeholder — will be overwritten
+        };
+        sign_user_op(&mut op, &keypair, &ep_addr, TEST_CHAIN_ID);
+        op
     }
 
     #[test]
     fn test_entry_point_creation() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
         let supported = entry_point.get_supported_entry_points();
         assert_eq!(supported.len(), 1);
     }
@@ -562,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_validate_user_op() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
         let op = create_test_user_op();
 
         let result = entry_point.validate_user_op(&op);
@@ -571,9 +614,27 @@ mod tests {
 
     #[test]
     fn test_invalid_nonce() {
-        let entry_point = EntryPoint::new(1);
-        let mut op = create_test_user_op();
-        op.nonce = 5; // Wrong nonce
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
+        let keypair = test_keypair();
+        let sender = Address::from(keypair.address());
+        let ep_addr = entry_point.supported_entry_points[0];
+
+        let mut op = UserOperation {
+            sender,
+            nonce: 5, // Wrong nonce — expected 0
+            init_code: vec![],
+            call_data: vec![0x12, 0x34, 0x56, 0x78],
+            call_gas_limit: 100_000,
+            verification_gas_limit: 100_000,
+            pre_verification_gas: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000,
+            paymaster_and_data: vec![],
+            signature: vec![0x00],
+        };
+        // Sign with the wrong nonce so the op passes signature check
+        // but fails the nonce check
+        sign_user_op(&mut op, &keypair, &ep_addr, TEST_CHAIN_ID);
 
         let result = entry_point.validate_user_op(&op);
         assert!(matches!(result, Err(AccountAbstractionError::InvalidNonce)));
@@ -581,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_handle_ops() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
         let op = create_test_user_op();
         let beneficiary = Address::from([2u8; 20]);
 
@@ -597,8 +658,9 @@ mod tests {
 
     #[test]
     fn test_nonce_increment() {
-        let entry_point = EntryPoint::new(1);
-        let sender = Address::from([1u8; 20]);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
+        let keypair = test_keypair();
+        let sender = Address::from(keypair.address());
 
         assert_eq!(entry_point.get_nonce(&sender), 0);
 
@@ -611,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_estimate_gas() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
         let op = create_test_user_op();
 
         let estimate = entry_point.estimate_user_op_gas(&op).unwrap();
@@ -622,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_paymaster_stake() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
         let paymaster = Address::from([3u8; 20]);
 
         entry_point.add_paymaster_stake(paymaster, MIN_PAYMASTER_STAKE, 86400);
@@ -636,14 +698,30 @@ mod tests {
 
     #[test]
     fn test_user_op_with_paymaster() {
-        let entry_point = EntryPoint::new(1);
+        let entry_point = EntryPoint::new(TEST_CHAIN_ID);
+        let keypair = test_keypair();
+        let sender = Address::from(keypair.address());
         let paymaster = Address::from([3u8; 20]);
+        let ep_addr = entry_point.supported_entry_points[0];
 
         // Add paymaster stake
         entry_point.add_paymaster_stake(paymaster, MIN_PAYMASTER_STAKE, 86400);
 
-        let mut op = create_test_user_op();
-        op.paymaster_and_data = paymaster.as_bytes().to_vec();
+        let mut op = UserOperation {
+            sender,
+            nonce: 0,
+            init_code: vec![],
+            call_data: vec![0x12, 0x34, 0x56, 0x78],
+            call_gas_limit: 100_000,
+            verification_gas_limit: 100_000,
+            pre_verification_gas: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000,
+            paymaster_and_data: paymaster.as_bytes().to_vec(),
+            signature: vec![0x00],
+        };
+        // Sign AFTER setting paymaster_and_data since it's part of the hash
+        sign_user_op(&mut op, &keypair, &ep_addr, TEST_CHAIN_ID);
 
         let result = entry_point.validate_user_op(&op);
         assert!(result.is_ok());

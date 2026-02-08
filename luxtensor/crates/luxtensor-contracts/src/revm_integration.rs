@@ -292,12 +292,14 @@ pub fn is_luxtensor_precompile(address: &[u8; 20]) -> bool {
 /// * `gas_limit` — available gas
 /// * `state` — shared AI precompile state (vector stores, registries, etc.)
 /// * `caller` — 20-byte caller address
+/// * `block_number` — current block height (for registry TTL)
 pub fn execute_ai_precompile(
     address: &[u8; 20],
     input: &Bytes,
     gas_limit: u64,
     state: &AIPrecompileState,
     caller: [u8; 20],
+    block_number: u64,
 ) -> Option<revm::primitives::PrecompileResult> {
     let last_byte = address[19];
 
@@ -307,13 +309,13 @@ pub fn execute_ai_precompile(
             Some(ai_request_precompile(input, gas_limit, state, caller))
         }
         0x11 if is_ai_precompile(address) => {
-            Some(verify_proof_precompile(input, gas_limit, state))
+            Some(verify_proof_precompile(input, gas_limit))
         }
         0x12 if is_ai_precompile(address) => {
             Some(get_result_precompile(input, gas_limit, state))
         }
         0x13 if is_ai_precompile(address) => {
-            Some(compute_payment_precompile(input, gas_limit, state))
+            Some(compute_payment_precompile(input, gas_limit))
         }
         // Training (0x14)
         0x14 if is_training_precompile(address) => {
@@ -321,7 +323,7 @@ pub fn execute_ai_precompile(
         }
         // Semantic Layer (0x20, 0x21)
         0x20 if is_semantic_precompile(address) => {
-            Some(vector_store_precompile(input, gas_limit, state, caller))
+            Some(vector_store_precompile(input, gas_limit, state))
         }
         0x21 if is_semantic_precompile(address) => {
             Some(vector_query_precompile(input, gas_limit, state))
@@ -344,7 +346,7 @@ pub fn execute_ai_precompile(
         }
         // World Semantic Index (0x27, 0x28)
         0x27 if is_registry_precompile(address) => {
-            Some(register_vector_precompile(input, gas_limit, state, caller))
+            Some(register_vector_precompile(input, gas_limit, state, &caller, block_number))
         }
         0x28 if is_registry_precompile(address) => {
             Some(global_search_precompile(input, gas_limit, state))

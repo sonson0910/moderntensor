@@ -85,7 +85,8 @@ fn rlp_decode_item(data: &[u8]) -> Result<(Vec<u8>, usize), String> {
         let start = 8 - len_of_len;
         len_bytes[start..].copy_from_slice(&data[1..1 + len_of_len]);
         let len = u64::from_be_bytes(len_bytes) as usize;
-        let total = 1 + len_of_len + len;
+        let total = (1usize + len_of_len).checked_add(len)
+            .ok_or_else(|| "RLP long string length overflow".to_string())?;
         if data.len() < total {
             return Err("RLP long string data truncated".into());
         }
@@ -93,7 +94,11 @@ fn rlp_decode_item(data: &[u8]) -> Result<(Vec<u8>, usize), String> {
     } else {
         // List prefix — return entire list payload
         let (payload_offset, payload_len) = rlp_list_info(data)?;
-        Ok((data[payload_offset..payload_offset + payload_len].to_vec(), payload_offset + payload_len))
+        let end = payload_offset + payload_len;
+        if data.len() < end {
+            return Err("RLP list data truncated".into());
+        }
+        Ok((data[payload_offset..end].to_vec(), end))
     }
 }
 
@@ -103,8 +108,14 @@ fn rlp_list_info(data: &[u8]) -> Result<(usize, usize), String> {
         return Err("Empty RLP list".into());
     }
     let prefix = data[0];
+    if prefix < 0xc0 {
+        return Err(format!("Not an RLP list: prefix 0x{:02x}", prefix));
+    }
     if prefix <= 0xf7 {
         let len = (prefix - 0xc0) as usize;
+        if data.len() < 1 + len {
+            return Err("RLP short list payload truncated".into());
+        }
         Ok((1, len))
     } else {
         let len_of_len = (prefix - 0xf7) as usize;
@@ -115,6 +126,11 @@ fn rlp_list_info(data: &[u8]) -> Result<(usize, usize), String> {
         let start = 8 - len_of_len;
         len_bytes[start..].copy_from_slice(&data[1..1 + len_of_len]);
         let len = u64::from_be_bytes(len_bytes) as usize;
+        let total = (1usize + len_of_len).checked_add(len)
+            .ok_or_else(|| "RLP list length overflow".to_string())?;
+        if data.len() < total {
+            return Err("RLP list payload truncated".into());
+        }
         Ok((1 + len_of_len, len))
     }
 }
@@ -297,6 +313,9 @@ fn decode_rlp_transaction(raw: &[u8]) -> Result<RlpDecodedTx, String> {
 
 fn decode_legacy_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
     let (payload_offset, payload_len) = rlp_list_info(raw)?;
+    if raw.len() < payload_offset + payload_len {
+        return Err("Legacy TX RLP truncated".into());
+    }
     let payload = &raw[payload_offset..payload_offset + payload_len];
     let items = rlp_decode_list(payload)?;
 
@@ -319,9 +338,11 @@ fn decode_legacy_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
         let chain_id = (v_raw - 35) / 2;
         let rec = ((v_raw - 35) % 2) as u8;
         (chain_id, rec)
-    } else {
+    } else if v_raw >= 27 {
         // Pre-EIP-155: v = 27 or 28
         (0u64, (v_raw - 27) as u8)
+    } else {
+        return Err(format!("Invalid v value in legacy TX: {}", v_raw));
     };
 
     // Compute signing hash:
@@ -390,6 +411,9 @@ fn decode_eip2930_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
     // raw[0] == 0x01, rest is RLP list
     let rlp_data = &raw[1..];
     let (payload_offset, payload_len) = rlp_list_info(rlp_data)?;
+    if rlp_data.len() < payload_offset + payload_len {
+        return Err("EIP-2930 TX RLP truncated".into());
+    }
     let payload = &rlp_data[payload_offset..payload_offset + payload_len];
     let items = rlp_decode_list(payload)?;
 
@@ -462,6 +486,9 @@ fn decode_eip1559_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
     // raw[0] == 0x02, rest is RLP list
     let rlp_data = &raw[1..];
     let (payload_offset, payload_len) = rlp_list_info(rlp_data)?;
+    if rlp_data.len() < payload_offset + payload_len {
+        return Err("EIP-1559 TX RLP truncated".into());
+    }
     let payload = &rlp_data[payload_offset..payload_offset + payload_len];
     let items = rlp_decode_list(payload)?;
 
@@ -1360,12 +1387,12 @@ pub fn register_eth_methods(
     let dev_state = unified_state.clone();
     io.add_sync_method("dev_faucet", move |params: Params| {
         // Guard: only allow faucet on dev/test chain IDs
-        // Chain ID 1337 = local dev, 31337 = Hardhat, 1 = mainnet (blocked), etc.
+        // Chain ID 8898 = LuxTensor devnet, 1337 = local dev, 31337 = Hardhat
         let chain_id = dev_state.read().chain_id();
-        if chain_id != 1337 && chain_id != 31337 && chain_id != 0 {
+        if chain_id != 8898 && chain_id != 1337 && chain_id != 31337 {
             return Err(RpcError {
                 code: ErrorCode::MethodNotFound,
-                message: "dev_faucet is only available on dev/test networks (chain_id 1337, 31337)".to_string(),
+                message: "dev_faucet is only available on dev/test networks (chain_id 8898, 1337, 31337)".to_string(),
                 data: None,
             });
         }
@@ -1451,7 +1478,8 @@ pub fn register_eth_methods(
             // Find the corresponding ReadyTransaction for signature data
             let (r_hex, s_hex, v_hex) = {
                 let mut found = ("0x0".to_string(), "0x0".to_string(), "0x0".to_string());
-                for ready_tx in &mempool_guard.tx_queue {
+                let queue_guard = mempool_guard.tx_queue.read();
+                for ready_tx in queue_guard.iter() {
                     if ready_tx.from == tx.from && ready_tx.nonce == tx.nonce {
                         found = (
                             format!("0x{}", hex::encode(ready_tx.r)),
@@ -2197,11 +2225,10 @@ mod tests {
 
     #[test]
     fn test_rlp_list_truncated() {
-        // Says list length=100 but nothing follows
+        // Says list length=55 but nothing follows — should be rejected
         let data = [0xc0 + 55]; // short list, len=55
         let result = rlp_list_info(&data);
-        assert!(result.is_ok()); // rlp_list_info just returns offset/len
-        // But trying to decode the payload will fail since there's no data
+        assert!(result.is_err()); // rlp_list_info now validates payload length
     }
 
     #[test]

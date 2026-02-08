@@ -30,6 +30,9 @@ fn convert_evm_logs(evm_logs: &[EvmLog]) -> Vec<Log> {
 /// block and across blocks (the executor is created once at node startup
 /// and lives for the lifetime of the node process).
 pub struct TransactionExecutor {
+    /// Chain ID for cross-chain replay protection.
+    /// Every transaction must carry this chain_id or it will be rejected.
+    chain_id: u64,
     base_gas_cost: u64,
     gas_per_byte: u64,
     /// Skip signature verification (for development only!)
@@ -40,8 +43,10 @@ pub struct TransactionExecutor {
 
 impl TransactionExecutor {
     /// Create a new transaction executor with signature verification enabled (production mode)
-    pub fn new() -> Self {
+    #[must_use]
+    pub fn new(chain_id: u64) -> Self {
         Self {
+            chain_id,
             base_gas_cost: 21000,  // Base transaction cost
             gas_per_byte: 68,      // Cost per byte of data
             skip_signature_verification: false,  // PRODUCTION: always verify
@@ -51,13 +56,20 @@ impl TransactionExecutor {
 
     /// Create executor for development mode (signature verification disabled)
     /// WARNING: Only use for local development/testing!
-    pub fn new_dev_mode() -> Self {
+    #[must_use]
+    pub fn new_dev_mode(chain_id: u64) -> Self {
         Self {
+            chain_id,
             base_gas_cost: 21000,
             gas_per_byte: 68,
             skip_signature_verification: true,
             evm: EvmExecutor::new(),
         }
+    }
+
+    /// Get the chain_id this executor validates against
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
     }
 
     /// Get a reference to the shared EVM executor (for state inspection or persistence)
@@ -74,6 +86,16 @@ impl TransactionExecutor {
         block_hash: [u8; 32],
         tx_index: usize,
     ) -> Result<Receipt> {
+        // SECURITY: Validate chain_id — reject cross-chain replay attacks
+        if tx.chain_id != self.chain_id {
+            return Err(CoreError::InvalidTransaction(
+                format!(
+                    "Chain ID mismatch: tx has {}, node expects {}",
+                    tx.chain_id, self.chain_id
+                )
+            ));
+        }
+
         // Signature verification - CRITICAL for production!
         if !self.skip_signature_verification {
             tx.verify_signature()?;
@@ -307,12 +329,14 @@ impl TransactionExecutor {
 }
 
 impl Default for TransactionExecutor {
+    /// Default executor uses LuxTensor mainnet chain_id (8899)
     fn default() -> Self {
-        Self::new()
+        Self::new(8899) // luxtensor_core::constants::chain_id::MAINNET
     }
 }
 
 /// Calculate receipts merkle root
+#[must_use]
 pub fn calculate_receipts_root(receipts: &[Receipt]) -> [u8; 32] {
     if receipts.is_empty() {
         return [0u8; 32];
@@ -333,6 +357,9 @@ pub fn calculate_receipts_root(receipts: &[Receipt]) -> [u8; 32] {
 mod tests {
     use super::*;
     use luxtensor_crypto::KeyPair;
+
+    /// Test chain_id — matches Transaction::new() default (devnet)
+    const TEST_CHAIN_ID: u64 = 8898;
 
     fn create_signed_transaction(
         keypair: &KeyPair,
@@ -357,13 +384,14 @@ mod tests {
 
     #[test]
     fn test_executor_creation() {
-        let executor = TransactionExecutor::new();
+        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
         assert_eq!(executor.base_gas_cost, 21000);
+        assert_eq!(executor.chain_id, TEST_CHAIN_ID);
     }
 
     #[test]
     fn test_gas_calculation() {
-        let executor = TransactionExecutor::new();
+        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
         let tx = Transaction::new(
             0,
             Address::zero(),
@@ -380,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_simple_transfer() {
-        let executor = TransactionExecutor::new();
+        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
         let mut state = StateDB::new();
 
         // Setup sender with balance
@@ -411,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_balance() {
-        let executor = TransactionExecutor::new();
+        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
         let mut state = StateDB::new();
 
         // Setup sender with insufficient balance
@@ -438,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_batch_execution() {
-        let executor = TransactionExecutor::new();
+        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
         let mut state = StateDB::new();
 
         let keypair = KeyPair::generate();

@@ -30,7 +30,7 @@ Create `/opt/luxtensor/config.toml`:
 ```toml
 [node]
 name = "my-node"
-chain_id = 1
+chain_id = 8898  # 8898=devnet, 8899=mainnet, 9999=testnet
 data_dir = "./data"
 is_validator = true
 validator_id = "validator-N"  # Change N

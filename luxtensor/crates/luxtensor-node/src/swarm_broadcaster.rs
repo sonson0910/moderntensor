@@ -4,16 +4,16 @@
 use luxtensor_core::Transaction;
 use luxtensor_network::SwarmCommand;
 use luxtensor_rpc::{TransactionBroadcaster, BroadcastError};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::info;
 
 /// Direct broadcaster that sends SwarmCommand::BroadcastTransaction to P2P swarm
 pub struct SwarmBroadcaster {
-    sender: UnboundedSender<SwarmCommand>,
+    sender: Sender<SwarmCommand>,
 }
 
 impl SwarmBroadcaster {
-    pub fn new(sender: UnboundedSender<SwarmCommand>) -> Self {
+    pub fn new(sender: Sender<SwarmCommand>) -> Self {
         Self { sender }
     }
 }
@@ -21,7 +21,7 @@ impl SwarmBroadcaster {
 impl TransactionBroadcaster for SwarmBroadcaster {
     fn broadcast(&self, tx: &Transaction) -> Result<(), BroadcastError> {
         self.sender
-            .send(SwarmCommand::BroadcastTransaction(tx.clone()))
+            .try_send(SwarmCommand::BroadcastTransaction(tx.clone()))
             .map_err(|e| BroadcastError::ChannelClosed(e.to_string()))?;
 
         info!("📤 SwarmBroadcaster: Sent TX directly to swarm: 0x{}", hex::encode(tx.hash()));

@@ -473,7 +473,7 @@ pub struct DispatchService {
     dispatcher: Arc<TaskDispatcher>,
     running: Arc<RwLock<bool>>,
     /// Optional command sender for P2P broadcast integration
-    command_tx: Option<tokio::sync::mpsc::UnboundedSender<luxtensor_network::SwarmCommand>>,
+    command_tx: Option<tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>>,
 }
 
 impl DispatchService {
@@ -489,7 +489,7 @@ impl DispatchService {
     /// Create a new dispatch service with P2P broadcast capability
     pub fn with_p2p(
         dispatcher: Arc<TaskDispatcher>,
-        command_tx: tokio::sync::mpsc::UnboundedSender<luxtensor_network::SwarmCommand>,
+        command_tx: tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>,
     ) -> Self {
         Self {
             dispatcher,
@@ -521,7 +521,7 @@ impl DispatchService {
                 for task in pending_tasks.iter().take(5) { // Limit broadcast batch
                     let deadline = task.created_at + self.dispatcher.config.task_timeout;
                     use luxtensor_network::SwarmCommand;
-                    if let Err(e) = tx.send(SwarmCommand::BroadcastTaskDispatch {
+                    if let Err(e) = tx.try_send(SwarmCommand::BroadcastTaskDispatch {
                         task_id: task.task_id,
                         model_hash: task.model_hash.clone(),
                         input_hash: task.input_hash,

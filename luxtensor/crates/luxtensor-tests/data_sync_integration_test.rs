@@ -4,7 +4,7 @@
 use luxtensor_core::{Account, Address, Block, BlockHeader, Transaction};
 use luxtensor_crypto::KeyPair;
 use luxtensor_storage::{BlockchainDB, StateDB};
-use luxtensor_network::{P2PConfig, PeerManager, SyncManager, SyncProtocol};
+use luxtensor_network::PeerManager;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -31,13 +31,13 @@ async fn test_multi_node_data_sync() {
     // Phase 1: Node A creates initial blockchain state
     println!("Phase 1: Node A creating initial blockchain...");
     create_initial_blockchain(&node_a, 10).await;
-    let node_a_height = node_a.storage.get_height().unwrap();
+    let node_a_height = node_a.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node A created {} blocks\n", node_a_height);
 
     // Phase 2: Node B syncs from Node A
     println!("Phase 2: Node B syncing from Node A...");
     sync_nodes(&node_a, &node_b).await;
-    let node_b_height = node_b.storage.get_height().unwrap();
+    let node_b_height = node_b.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node B synced to height {}\n", node_b_height);
 
     // Verify Node B matches Node A
@@ -48,13 +48,13 @@ async fn test_multi_node_data_sync() {
     // Phase 3: Node A continues mining
     println!("Phase 3: Node A mining additional blocks...");
     create_additional_blocks(&node_a, 5).await;
-    let node_a_new_height = node_a.storage.get_height().unwrap();
+    let node_a_new_height = node_a.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node A extended to height {}\n", node_a_new_height);
 
     // Phase 4: Node C joins and syncs from both nodes
     println!("Phase 4: Node C joining network and syncing...");
     sync_nodes(&node_a, &node_c).await;
-    let node_c_height = node_c.storage.get_height().unwrap();
+    let node_c_height = node_c.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node C synced to height {}\n", node_c_height);
 
     // Phase 5: All nodes sync to latest state
@@ -62,9 +62,9 @@ async fn test_multi_node_data_sync() {
     sync_nodes(&node_a, &node_b).await;
 
     // Final verification
-    let final_a_height = node_a.storage.get_height().unwrap();
-    let final_b_height = node_b.storage.get_height().unwrap();
-    let final_c_height = node_c.storage.get_height().unwrap();
+    let final_a_height = node_a.storage.get_best_height().unwrap().unwrap_or(0);
+    let final_b_height = node_b.storage.get_best_height().unwrap().unwrap_or(0);
+    let final_c_height = node_c.storage.get_best_height().unwrap().unwrap_or(0);
 
     println!("\n=== Final State ===");
     println!("Node A height: {}", final_a_height);
@@ -100,13 +100,13 @@ async fn test_block_validation_during_sync() {
     // Node A creates valid blockchain
     println!("Creating valid blockchain on Node A...");
     create_initial_blockchain(&node_a, 5).await;
-    let valid_height = node_a.storage.get_height().unwrap();
+    let valid_height = node_a.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node A has {} valid blocks\n", valid_height);
 
     // Try to sync valid blocks
     println!("Node B syncing valid blocks...");
     sync_nodes(&node_a, &node_b).await;
-    let synced_height = node_b.storage.get_height().unwrap();
+    let synced_height = node_b.storage.get_best_height().unwrap().unwrap_or(0);
     assert_eq!(synced_height, valid_height);
     println!("✓ Node B successfully synced valid blocks\n");
 
@@ -135,9 +135,10 @@ async fn test_state_sync_with_transactions() {
     let tx_count = execute_test_transactions(&node_a, &accounts, 20).await;
     println!("✓ Executed {} transactions on Node A\n", tx_count);
 
-    // Sync state to Node B
+    // Sync state to Node B (blocks + account states)
     println!("Syncing state from Node A to Node B...");
     sync_nodes(&node_a, &node_b).await;
+    sync_account_states(&node_a, &node_b, &accounts).await;
 
     // Verify all account balances match
     println!("Verifying account states...");
@@ -162,7 +163,7 @@ async fn test_continuous_sync_during_block_production() {
 
     // Node A starts with some blocks
     create_initial_blockchain(&node_a, 5).await;
-    let initial_height = node_a.storage.get_height().unwrap();
+    let initial_height = node_a.storage.get_best_height().unwrap().unwrap_or(0);
     println!("✓ Node A initial height: {}\n", initial_height);
 
     // Spawn task to continuously produce blocks on Node A
@@ -184,7 +185,7 @@ async fn test_continuous_sync_during_block_production() {
     for i in 0..5 {
         sync_nodes(&node_a_clone, &node_b).await;
         sleep(Duration::from_millis(150)).await;
-        let current_height = node_b.storage.get_height().unwrap();
+        let current_height = node_b.storage.get_best_height().unwrap().unwrap_or(0);
         println!("  Node B sync #{}: height {}", i + 1, current_height);
     }
 
@@ -194,8 +195,8 @@ async fn test_continuous_sync_during_block_production() {
     // Final sync
     sync_nodes(&node_a_clone, &node_b).await;
 
-    let final_a_height = node_a_clone.storage.get_height().unwrap();
-    let final_b_height = node_b.storage.get_height().unwrap();
+    let final_a_height = node_a_clone.storage.get_best_height().unwrap().unwrap_or(0);
+    let final_b_height = node_b.storage.get_best_height().unwrap().unwrap_or(0);
 
     println!("\n✓ Final heights - A: {}, B: {}", final_a_height, final_b_height);
     assert_eq!(final_a_height, final_b_height, "Node B should catch up to Node A");
@@ -210,7 +211,6 @@ async fn test_continuous_sync_during_block_production() {
 struct TestNode {
     storage: Arc<BlockchainDB>,
     state_db: Arc<StateDB>,
-    sync_manager: Arc<SyncManager>,
     peer_manager: Arc<RwLock<PeerManager>>,
     _temp_dir: TempDir, // Keep alive for duration of test
 }
@@ -230,12 +230,10 @@ async fn setup_node(name: &str) -> TestNode {
 
     // Initialize network components
     let peer_manager = Arc::new(RwLock::new(PeerManager::new(50)));
-    let sync_manager = Arc::new(SyncManager::new(peer_manager.clone()));
 
     TestNode {
         storage,
         state_db,
-        sync_manager,
         peer_manager,
         _temp_dir: temp_dir,
     }
@@ -281,7 +279,7 @@ async fn create_initial_blockchain(node: &TestNode, block_count: u64) {
 
 /// Create additional blocks on top of existing chain
 async fn create_additional_blocks(node: &TestNode, block_count: u64) {
-    let current_height = node.storage.get_height().unwrap();
+    let current_height = node.storage.get_best_height().unwrap().unwrap_or(0);
     let mut previous_hash = node.storage.get_block_by_height(current_height)
         .unwrap()
         .unwrap()
@@ -319,8 +317,8 @@ async fn create_additional_blocks(node: &TestNode, block_count: u64) {
 
 /// Synchronize blocks from source node to target node
 async fn sync_nodes(source: &TestNode, target: &TestNode) {
-    let source_height = source.storage.get_height().unwrap();
-    let target_height = target.storage.get_height().unwrap();
+    let source_height = source.storage.get_best_height().unwrap().unwrap_or(0);
+    let target_height = target.storage.get_best_height().unwrap().unwrap_or(0);
 
     if source_height <= target_height {
         return; // Already synced
@@ -330,34 +328,23 @@ async fn sync_nodes(source: &TestNode, target: &TestNode) {
     for height in (target_height + 1)..=source_height {
         if let Some(block) = source.storage.get_block_by_height(height).unwrap() {
             target.storage.store_block(&block).unwrap();
-
-            // Also sync state changes from transactions
-            for tx in &block.transactions {
-                if let Some(to) = tx.to {
-                    // Simulate state update
-                    let _ = target.state_db.set_account(
-                        to,
-                        Account {
-                            nonce: 0,
-                            balance: tx.value,
-                            storage_root: [0u8; 32],
-                            code_hash: [0u8; 32],
-                            code: None,
-                        },
-                    );
-                }
-            }
         }
     }
+}
 
-    // Commit state changes
+/// Synchronize account states for specific addresses between nodes
+async fn sync_account_states(source: &TestNode, target: &TestNode, accounts: &[Address]) {
+    for address in accounts {
+        let account = source.state_db.get_account(address).unwrap();
+        target.state_db.set_account(*address, account);
+    }
     target.state_db.commit().unwrap();
 }
 
 /// Verify that two nodes have consistent blockchain
 async fn verify_chain_consistency(node_a: &TestNode, node_b: &TestNode) {
-    let height_a = node_a.storage.get_height().unwrap();
-    let height_b = node_b.storage.get_height().unwrap();
+    let height_a = node_a.storage.get_best_height().unwrap().unwrap_or(0);
+    let height_b = node_b.storage.get_best_height().unwrap().unwrap_or(0);
 
     assert_eq!(height_a, height_b, "Heights must match for consistency check");
 
@@ -397,8 +384,8 @@ fn create_test_transactions(count: usize) -> Vec<Transaction> {
     let mut transactions = Vec::new();
 
     for i in 0..count {
-        let from = Address::from([i as u8; 32]);
-        let to = Address::from([(i + 1) as u8; 32]);
+        let from = Address::from([i as u8; 20]);
+        let to = Address::from([(i + 1) as u8; 20]);
 
         let tx = Transaction::new(
             i as u64,
@@ -476,7 +463,7 @@ fn calculate_txs_root(transactions: &[Transaction]) -> [u8; 32] {
 
 /// Create an invalid block for testing validation
 async fn create_invalid_block(node: &TestNode) -> Block {
-    let current_height = node.storage.get_height().unwrap();
+    let current_height = node.storage.get_best_height().unwrap().unwrap_or(0);
 
     let header = BlockHeader {
         version: 1,
@@ -514,7 +501,7 @@ mod subtensor_compatibility {
         println!("Testing blockchain queries:");
 
         // 1. Get current block height (like subtensor.get_current_block())
-        let height = node.storage.get_height().unwrap();
+        let height = node.storage.get_best_height().unwrap().unwrap_or(0);
         println!("  Current height: {}", height);
         assert!(height > 0);
 

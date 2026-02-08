@@ -568,17 +568,17 @@ mod tests {
 
         // First proposal
         manager
-            .propose_weights(1, proposer, weights.clone(), 0, 3)
+            .propose_weights(1, proposer, weights.clone(), 0, 5)
             .unwrap();
 
         // Second proposal too soon
         assert_eq!(
-            manager.propose_weights(1, proposer, weights.clone(), 10, 3),
+            manager.propose_weights(1, proposer, weights.clone(), 10, 5),
             Err(ConsensusError::ProposalCooldown)
         );
 
         // After cooldown
-        assert!(manager.propose_weights(1, proposer, weights, 60, 3).is_ok());
+        assert!(manager.propose_weights(1, proposer, weights, 60, 5).is_ok());
     }
 
     #[test]
@@ -589,7 +589,7 @@ mod tests {
         let weights = vec![(0, 500u16)];
 
         let proposal_id = manager
-            .propose_weights(1, proposer, weights, 0, 3)
+            .propose_weights(1, proposer, weights, 0, 5)
             .unwrap();
 
         // Proposer tries to vote
@@ -611,7 +611,7 @@ mod tests {
         let weights = vec![(0, 500u16)];
 
         let proposal_id = manager
-            .propose_weights(1, proposer, weights, 0, 3)
+            .propose_weights(1, proposer, weights, 0, 5)
             .unwrap();
 
         // Vote after expiry

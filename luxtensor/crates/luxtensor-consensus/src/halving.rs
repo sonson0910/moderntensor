@@ -9,8 +9,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Initial block reward: 2 MDT (with 18 decimals)
-pub const INITIAL_BLOCK_REWARD: u128 = 2_000_000_000_000_000_000;
+/// Initial block reward: 0.24 MDT (with 18 decimals)
+/// Scaled from 2 MDT for 100s blocks → 0.24 MDT for 12s blocks
+/// to preserve the same annual emission (~631K MDT/year)
+pub const INITIAL_BLOCK_REWARD: u128 = 240_000_000_000_000_000;
 
 /// Halving interval in blocks
 /// With 12-second block times: 8,760,000 blocks ≈ 3.33 years
@@ -70,22 +72,19 @@ impl HalvingSchedule {
     /// Where: halvings = min(block_height / halving_interval, max_halvings)
     ///
     /// # Examples
-    /// - Block 0:        2.0 MDT
-    /// - Block 1M:       2.0 MDT (before first halving)
-    /// - Block 1,051,200: 1.0 MDT (first halving)
-    /// - Block 2,102,400: 0.5 MDT (second halving)
-    /// - Block 10,512,000: ~0.002 MDT (10th halving)
+    /// - Block 0:          0.24 MDT
+    /// - Block 8,760,000:  0.12 MDT (first halving)
+    /// - Block 17,520,000: 0.06 MDT (second halving)
     pub fn calculate_reward(&self, block_height: u64) -> u128 {
         let halvings = (block_height / self.halving_interval) as u32;
 
         // Cap at max halvings
         let effective_halvings = halvings.min(self.max_halvings);
 
-        // 🔧 FIX: After max halvings, return min_emission (tail emission) instead of 0
-        // Previously returned 0 which diverged from EmissionController.base_emission()
-        // Tail emission ensures perpetual validator incentives for long-term network security
+        // After max halvings, reward is 0 (emission ends)
+        // Note: EmissionController handles tail emission via its own min_emission floor
         if halvings > self.max_halvings {
-            return self.minimum_reward;
+            return 0;
         }
 
         // Calculate reward: initial_reward >> halvings (divide by 2^halvings)

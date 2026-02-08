@@ -16,6 +16,7 @@ parking_lot = { workspace = true }
 hex = { workspace = true }
 bincode = { workspace = true }
 sha3 = "0.10"
+k256 = { workspace = true }
 sha2 = { workspace = true }
 subtle = "2"
 alloy-rlp = { workspace = true }  # Constant-time comparison for cryptographic security

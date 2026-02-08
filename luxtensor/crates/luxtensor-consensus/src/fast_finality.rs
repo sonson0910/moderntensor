@@ -17,7 +17,7 @@ use crate::validator::ValidatorSet;
 use luxtensor_core::types::{Address, Hash};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // ============================================================================
 // View-Change Types
@@ -149,7 +149,7 @@ impl FastFinality {
         let vote_key = (validator, block_height);
         if let Some(previous_hash) = self.height_votes.get(&vote_key) {
             if *previous_hash != block_hash {
-                return Err(ConsensusError::InvalidBlock(format!(
+                return Err(ConsensusError::InvalidOperation(format!(
                     "Equivocation detected: validator {:?} signed conflicting blocks at height {}. \
                      Previous: {}, Current: {}",
                     validator, block_height,
@@ -390,7 +390,7 @@ impl FastFinality {
                 return Ok(false); // Already finalized, ignore
             }
             if new_view <= state.current_view {
-                return Err(ConsensusError::InvalidBlock(format!(
+                return Err(ConsensusError::InvalidOperation(format!(
                     "View-change for view {} but current view is already {}",
                     new_view, state.current_view
                 )));
@@ -398,7 +398,7 @@ impl FastFinality {
         }
 
         if new_view > self.max_view {
-            return Err(ConsensusError::InvalidBlock(format!(
+            return Err(ConsensusError::InvalidOperation(format!(
                 "View {} exceeds max_view {}", new_view, self.max_view
             )));
         }
@@ -430,6 +430,10 @@ impl FastFinality {
 
         if vc_state.total_stake >= required {
             vc_state.threshold_reached = true;
+            let completed_stake = vc_state.total_stake;
+
+            // Compute leader index before borrowing self mutably via height_states
+            let leader_index = self.get_leader_index(height, new_view);
 
             // Execute the view-change: update height state
             let height_state = self.height_states.entry(height).or_insert_with(|| HeightState {
@@ -448,8 +452,8 @@ impl FastFinality {
                 "BFT: View-change completed for height {} → view {}. \
                  New leader: validator #{}. Stake: {}/{}",
                 height, new_view,
-                self.get_leader_index(height, new_view),
-                vc_state.total_stake, total_stake
+                leader_index,
+                completed_stake, total_stake
             );
 
             Ok(true)

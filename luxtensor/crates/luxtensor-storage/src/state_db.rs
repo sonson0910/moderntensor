@@ -366,6 +366,7 @@ mod tests {
             balance: 1000,
             storage_root: [0u8; 32],
             code_hash: [0u8; 32],
+            code: None,
         };
 
         state_db.set_account(address, account.clone());

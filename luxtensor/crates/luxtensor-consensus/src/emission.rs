@@ -22,7 +22,7 @@ impl Default for EmissionConfig {
     fn default() -> Self {
         Self {
             max_supply: 21_000_000_000_000_000_000_000_000u128, // 21 million tokens
-            initial_emission: 2_000_000_000_000_000_000u128,   // 2 tokens/block
+            initial_emission: 240_000_000_000_000_000u128,   // 0.24 tokens/block (scaled for 12s blocks)
             // 🔧 FIX: Aligned with HalvingSchedule (8,760,000 blocks ≈ 3.33 years @ 12s)
             // Corrected from 1,051,200 which was for 100s blocks — 8× faster halving at 12s
             halving_interval: 8_760_000,

@@ -5,8 +5,8 @@
 # Node name/identifier
 name = "luxtensor-node"
 
-# Chain ID (mainnet=1, testnet=2)
-chain_id = 1
+# Chain ID (devnet=8898, mainnet=8899, testnet=9999)
+chain_id = 8898
 
 # Data directory for blockchain data
 data_dir = "./data"

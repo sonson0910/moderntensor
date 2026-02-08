@@ -1,6 +1,6 @@
-// Infrastructure code for future integration - suppress unused warnings during development
-#![allow(dead_code)]
-#![allow(unused)]
+// LuxTensor Node — Production Entry Point
+// Note: dead_code/unused warnings are enabled to catch real issues.
+// If specific items are intentionally unused, use #[allow(dead_code)] per-item.
 
 mod config;
 mod service;

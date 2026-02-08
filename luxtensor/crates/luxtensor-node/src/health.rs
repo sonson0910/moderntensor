@@ -148,11 +148,6 @@ impl HealthMonitor {
         }
     }
 
-    /// Create with default config
-    pub fn default() -> Self {
-        Self::new(HealthConfig::default())
-    }
-
     /// Update block height
     pub fn update_block_height(&self, height: u64) {
         *self.block_height.write() = height;
@@ -255,6 +250,12 @@ impl HealthMonitor {
                 status.issues
             );
         }
+    }
+}
+
+impl Default for HealthMonitor {
+    fn default() -> Self {
+        Self::new(HealthConfig::default())
     }
 }
 

@@ -271,12 +271,15 @@ impl TrieNode {
         }
     }
 
-    /// Collect proof hashes along the path to a key
+    /// Collect proof hashes along the path to a key.
+    /// Returns hashes of every node from root to the target leaf (inclusive).
     fn collect_proof(&self, nibbles: &[u8], proof: &mut Vec<Hash>) {
         proof.push(self.hash());
         match self {
             TrieNode::Empty => {}
-            TrieNode::Leaf { .. } => {}
+            TrieNode::Leaf { .. } => {
+                // Leaf is already pushed above — nothing more to add
+            }
             TrieNode::Extension { nibbles: ext_nibbles, child } => {
                 if nibbles.starts_with(ext_nibbles) {
                     child.collect_proof(&nibbles[ext_nibbles.len()..], proof);
@@ -355,97 +358,43 @@ impl MerkleTrie {
 
     /// Verify a Merkle proof against an expected root hash.
     ///
-    /// The proof is a sequence of hashes from leaf to root. We verify by:
-    /// 1. Starting from the leaf hash (computed from key + value)
-    /// 2. Walking up the proof path, hashing each pair of siblings
-    /// 3. Checking the final computed root matches the expected root
+    /// The proof is a sequence of hashes collected by `collect_proof`:
+    ///   `[root_hash, ..intermediate.., leaf_hash]`
     ///
-    /// SECURITY: Previous implementation only checked proof[0] == root, which
-    /// was trivially forgeable. Now performs full path verification.
+    /// Verification checks:
+    /// 1. `proof[0]` equals the expected root
+    /// 2. The proof contains the leaf hash. In an MPT the leaf stores only
+    ///    the *remaining* nibbles after branching, so we check all possible
+    ///    suffix lengths of the key nibbles.
     pub fn verify_proof(root: &Hash, key: &[u8], value: &[u8], proof: &[Hash]) -> bool {
         if proof.is_empty() {
             return false;
         }
 
-        // The first element must match the root
+        // The first element must match the expected root
         if proof[0] != *root {
             return false;
         }
 
-        // For a single-element proof, verify the root was computed from key+value
-        // Use the same leaf hashing as get_proof
-        let leaf_data = {
-            let mut d = Vec::with_capacity(key.len() + value.len());
-            d.extend_from_slice(key);
-            d.extend_from_slice(value);
-            d
-        };
-        let leaf_hash = luxtensor_crypto::keccak256(&leaf_data);
-
-        if proof.len() == 1 {
-            // Single node trie: root must equal the leaf hash
-            return proof[0] == leaf_hash;
-        }
-
-        // Multi-element proof: walk the path from the leaf toward the root.
-        // proof layout: [root, intermediate..., sibling_of_leaf]
-        // Verify that the proof chain is consistent:
-        //   - The last element should be a sibling of the leaf
-        //   - Each pair hashes to produce the next level up
-        //   - The final hash must equal the root
-        //
-        // We verify by checking that the leaf hash appears in the proof chain.
-        // The proof must contain the leaf hash or a node that hashes with
-        // the leaf hash to produce an ancestor in the proof.
-
-        // Verify the leaf hash is referenced in the proof
-        // (either directly present, or its parent is computable from proof elements)
-        let last_proof_element = proof[proof.len() - 1];
-
-        // Compute parent from leaf_hash and sibling
-        let parent_a = {
-            let mut d = Vec::with_capacity(64);
-            d.extend_from_slice(&leaf_hash);
-            d.extend_from_slice(&last_proof_element);
-            luxtensor_crypto::keccak256(&d)
-        };
-        let parent_b = {
-            let mut d = Vec::with_capacity(64);
-            d.extend_from_slice(&last_proof_element);
-            d.extend_from_slice(&leaf_hash);
-            luxtensor_crypto::keccak256(&d)
-        };
-
-        // Check that one of the computed parents appears in the proof
-        // (or the leaf hash itself is in the proof)
-        let mut found_link = proof.contains(&leaf_hash)
-            || proof.contains(&parent_a)
-            || proof.contains(&parent_b);
-
-        // Also verify top-level root consistency: the root must be verifiable
-        // from the proof path
-        if proof.len() >= 2 {
-            // Root should be derivable from combining proof elements
-            // For paths of length 2: root = H(child || sibling) or H(sibling || child)
-            let root_check_a = {
-                let mut d = Vec::with_capacity(64);
-                d.extend_from_slice(&proof[1]);
-                d.extend_from_slice(&leaf_hash);
+        // In an MPT, the leaf only stores the remaining nibble suffix after
+        // the path has been consumed by Extension and Branch nodes.
+        // Try every possible suffix length (including the full key).
+        let nibbles = bytes_to_nibbles(key);
+        for start in 0..=nibbles.len() {
+            let suffix = &nibbles[start..];
+            let encoded_path = hex_prefix_encode(suffix, true);
+            let candidate = {
+                let mut d = Vec::with_capacity(encoded_path.len() + value.len());
+                d.extend_from_slice(&encoded_path);
+                d.extend_from_slice(value);
                 luxtensor_crypto::keccak256(&d)
             };
-            let root_check_b = {
-                let mut d = Vec::with_capacity(64);
-                d.extend_from_slice(&leaf_hash);
-                d.extend_from_slice(&proof[1]);
-                luxtensor_crypto::keccak256(&d)
-            };
-
-            if proof.len() == 2 {
-                found_link = root_check_a == proof[0] || root_check_b == proof[0] || found_link;
+            if proof.contains(&candidate) {
+                return true;
             }
         }
 
-        found_link
+        false
     }
 
     /// Delete a key from the trie (re-insert remaining keys)
@@ -570,8 +519,13 @@ mod tests {
 
         let proof = trie.get_proof(b"key").unwrap();
         assert!(!proof.is_empty());
-        // Proof should contain at least 2 hashes (root + leaf)
-        assert!(proof.len() >= 2);
+        // Single-key trie: root IS the leaf, so proof has 1 element
+        assert_eq!(proof.len(), 1);
+
+        // Multi-key trie should produce a longer proof
+        trie.insert(b"other", b"data").unwrap();
+        let proof2 = trie.get_proof(b"key").unwrap();
+        assert!(proof2.len() >= 2);
     }
 
     #[test]

@@ -490,11 +490,13 @@ impl RewardDistributor {
             return rewards;
         }
 
+        let mut distributed: u128 = 0;
         for node in nodes {
             let share = node.uptime_score / total_score;
-            let reward = (pool as f64 * share) as u128;
+            let reward = ((pool as f64 * share) as u128).min(pool.saturating_sub(distributed));
             if reward > 0 {
                 rewards.insert(node.address, reward);
+                distributed += reward;
             }
         }
 

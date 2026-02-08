@@ -143,6 +143,8 @@ pub struct NodeService {
     slashing_manager: Arc<RwLock<SlashingManager>>,
     /// Network-layer rate limiter for P2P flood protection
     network_rate_limiter: Arc<NetworkRateLimiter>,
+    /// Atomic height guard to prevent block height race between P2P and block production
+    best_height_guard: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl NodeService {
@@ -164,6 +166,7 @@ impl NodeService {
         let db_path_str = config.storage.db_path.to_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?;
         let storage = Arc::new(BlockchainDB::open(db_path_str)?);
+        let initial_best_height = storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
         info!("  ✓ Storage initialized at {:?}", config.storage.db_path);
 
         // Initialize state database
@@ -189,8 +192,8 @@ impl NodeService {
 
         // Initialize transaction executor
         info!("⚡ Initializing transaction executor...");
-        let executor = Arc::new(TransactionExecutor::new());
-        info!("  ✓ Transaction executor initialized");
+        let executor = Arc::new(TransactionExecutor::new(config.node.chain_id));
+        info!("  ✓ Transaction executor initialized (chain_id: {})", config.node.chain_id);
 
         // Initialize consensus
         info!("⚖️  Initializing consensus...");
@@ -209,8 +212,8 @@ impl NodeService {
 
         // Initialize mempool
         info!("📝 Initializing transaction mempool...");
-        let mempool = Arc::new(Mempool::new(10000)); // Max 10k transactions
-        info!("  ✓ Mempool initialized (max size: 10000)");
+        let mempool = Arc::new(Mempool::new(10000, config.node.chain_id)); // Max 10k transactions
+        info!("  ✓ Mempool initialized (max size: 10000, chain_id: {})", config.node.chain_id);
 
         // Check if genesis block exists, create if not
         if storage.get_block_by_height(0)?.is_none() {
@@ -333,7 +336,10 @@ impl NodeService {
 
         // Initialize Slashing manager
         let slashing_manager = Arc::new(RwLock::new(
-            SlashingManager::new(SlashingConfig::default())
+            SlashingManager::new(
+                SlashingConfig::default(),
+                Arc::new(RwLock::new(luxtensor_consensus::ValidatorSet::new())),
+            )
         ));
         info!("  ✓ Slashing manager initialized");
 
@@ -430,6 +436,9 @@ impl NodeService {
             randao,
             slashing_manager,
             network_rate_limiter,
+            best_height_guard: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                initial_best_height
+            )),
         })
     }
 
@@ -538,7 +547,9 @@ impl NodeService {
                 tokio::spawn(async move {
                     while let Some(tx) = tx_broadcast_rx.recv().await {
                         info!("📡 TX RELAY: Received TX, forwarding to P2P swarm: 0x{}", hex::encode(tx.hash()));
-                        let _ = command_tx_for_rpc.send(SwarmCommand::BroadcastTransaction(tx)).await;
+                        if let Err(e) = command_tx_for_rpc.send(SwarmCommand::BroadcastTransaction(tx)).await {
+                            warn!("Failed to relay transaction to P2P swarm: {}", e);
+                        }
                     }
                 });
 
@@ -561,11 +572,9 @@ impl NodeService {
                 let executor_for_p2p = self.executor.clone();
                 // 🔧 FIX #9: Atomic height guard to prevent block height race between
                 // P2P handler and block production (both reading/writing at the same height)
-                let best_height_guard = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
-                    self.storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0)
-                ));
+                let best_height_guard = self.best_height_guard.clone();
                 let best_height_for_p2p = best_height_guard.clone();
-                let best_height_for_block_prod = best_height_guard.clone();
+                let best_height_for_block_prod_p2p = best_height_guard.clone();
                 let event_task = tokio::spawn(async move {
                     while let Some(event) = p2p_event_rx.recv().await {
                         match event {
@@ -574,7 +583,7 @@ impl NodeService {
                                 let block_hash = block.hash();
 
                                 // 🛡️ Rate-limit: check per-peer message rate
-                                let proposer_id = hex::encode(&block.header.proposer);
+                                let proposer_id = hex::encode(&block.header.validator);
                                 if !rate_limiter_for_p2p.check(&proposer_id) {
                                     warn!("🛡️ Block #{} rate-limited from proposer {}", height, proposer_id);
                                     continue;
@@ -608,11 +617,13 @@ impl NodeService {
                                     // Gap — request sync instead of storing out-of-order block
                                     debug!("Block #{} is ahead of our height {}, requesting sync", height, my_height);
                                     if let Some(ref tx) = broadcast_tx_for_sync {
-                                        let _ = tx.send(SwarmCommand::RequestSync {
+                                        if let Err(e) = tx.send(SwarmCommand::RequestSync {
                                             from_height: my_height + 1,
                                             to_height: height,
                                             my_id: node_name.clone(),
-                                        }).await;
+                                        }).await {
+                                            warn!("Failed to send sync request: {}", e);
+                                        }
                                     }
                                     continue;
                                 }
@@ -817,11 +828,13 @@ impl NodeService {
                                 let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
                                 if let Some(ref tx) = broadcast_tx_for_sync {
                                     // Request blocks we don't have (up to 100 ahead)
-                                    let _ = tx.send(SwarmCommand::RequestSync {
+                                    if let Err(e) = tx.send(SwarmCommand::RequestSync {
                                         from_height: my_height + 1,
                                         to_height: my_height + 100,
                                         my_id: node_name.clone(),
-                                    }).await;
+                                    }).await {
+                                        warn!("Failed to send sync request on peer connect: {}", e);
+                                    }
                                     info!("🔄 Requesting sync from height {}", my_height + 1);
                                 }
                             }
@@ -861,7 +874,9 @@ impl NodeService {
                                 if !blocks_to_send.is_empty() {
                                     info!("📤 Sending {} blocks to {}", blocks_to_send.len(), requester_id);
                                     if let Some(ref tx) = broadcast_tx_for_sync {
-                                        let _ = tx.send(SwarmCommand::SendBlocks { blocks: blocks_to_send }).await;
+                                        if let Err(e) = tx.send(SwarmCommand::SendBlocks { blocks: blocks_to_send }).await {
+                                            warn!("Failed to send blocks in sync response: {}", e);
+                                        }
                                     }
                                 }
                             }
@@ -894,11 +909,13 @@ impl NodeService {
                         // This prevents spamming when we're already caught up
                         if my_height == last_sync_height {
                             let batch_size = 50u64.min(100); // Cap batch to avoid huge responses
-                            let _ = sync_command_tx.send(SwarmCommand::RequestSync {
+                            if let Err(e) = sync_command_tx.send(SwarmCommand::RequestSync {
                                 from_height: my_height + 1,
                                 to_height: my_height + batch_size,
                                 my_id: sync_node_name.clone(),
-                            }).await;
+                            }).await {
+                                warn!("Failed to send periodic sync request: {}", e);
+                            }
 
                             if my_height == 0 {
                                 info!("🔄 Periodic sync: Still at height 0, requesting blocks...");
@@ -984,6 +1001,7 @@ impl NodeService {
                 if let Err(e) = ws_server.start(&ws_addr).await {
                     error!("WebSocket server error: {:?}", e);
                 }
+                Ok::<(), anyhow::Error>(())
             });
 
             self.tasks.push(task);
@@ -991,6 +1009,7 @@ impl NodeService {
 
 
         // Start block production if validator
+        let best_height_for_block_prod = self.best_height_guard.clone();
         if self.config.node.is_validator {
             info!("🔨 Starting block production...");
             let consensus = self.consensus.clone();
@@ -1283,7 +1302,7 @@ impl NodeService {
                         &reward_executor, epoch_length,
                         // 🔧 FIX: Pass validator keypair for block signing
                         // Previously hardcoded to None — blocks were always unsigned
-                        our_validator_address.map(|_| validator_keypair_ref.clone()).flatten(),
+                        validator_keypair_ref.as_ref(),
                         &best_height_guard,  // 🔧 FIX #9: Atomic height guard
                         &metagraph_db,   // For reward distribution from metagraph
                     ).await {
@@ -1511,7 +1530,7 @@ impl NodeService {
         let header = unsigned_header;
 
         // Create new block
-        let block = Block::new(header, valid_transactions.clone());
+        let block = Block::new(header.clone(), valid_transactions.clone());
 
         // Store block
         storage.store_block(&block)?;
@@ -1583,8 +1602,8 @@ impl NodeService {
                 .count();
 
             let utility = UtilityMetrics {
-                active_validators: active_validator_count.max(1) as u32,
-                active_subnets: metagraph_subnets.len().max(1) as u32,
+                active_validators: active_validator_count.max(1) as u64,
+                active_subnets: metagraph_subnets.len().max(1) as u64,
                 epoch_transactions: valid_transactions.len() as u64,
                 epoch_ai_tasks: 0, // Tracked via MetagraphDB AI task store
                 block_utilization: actual_utilization.min(100) as u8,
@@ -1628,7 +1647,7 @@ impl NodeService {
             let subnets: Vec<SubnetInfo> = metagraph_subnets.iter()
                 .map(|s| SubnetInfo {
                     owner: s.owner,
-                    emission_weight: s.emission as u128,
+                    emission_weight: s.emission_rate,
                 })
                 .collect();
 
@@ -1782,14 +1801,19 @@ mod tests {
         let stats = service.get_stats().await.unwrap();
 
         assert_eq!(stats.height, 0); // Genesis block
-        assert_eq!(stats.chain_id, 1);
+        assert_eq!(stats.chain_id, 8898); // LuxTensor devnet chain_id
     }
 }
 
 /// Check if the chain ID indicates a development/test chain.
 /// Dev chains allow unsigned internal transactions to be signed with dev keys.
+///
+/// SECURITY: Only well-known test chain IDs are included here.
+/// chain_id=1 (Ethereum Mainnet) was deliberately REMOVED to prevent
+/// accidentally enabling dev-mode signing on production-like chains.
+/// LuxTensor devnet uses chain_id=8898.
 fn is_dev_chain(chain_id: u64) -> bool {
-    matches!(chain_id, 1 | 1337 | 31337)
+    matches!(chain_id, 8898 | 1337 | 31337)
 }
 
 /// Sign a transaction with a development private key (proper secp256k1 signing)

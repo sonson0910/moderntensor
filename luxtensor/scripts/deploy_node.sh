@@ -58,7 +58,7 @@ fi
 cat > /opt/luxtensor/config.toml << EOF
 [node]
 name = "$NODE_NAME"
-chain_id = 1
+chain_id = 8898  # LuxTensor devnet (use 8899 for mainnet, 9999 for testnet)
 data_dir = "./data"
 is_validator = true
 validator_key_path = "./validator.key"

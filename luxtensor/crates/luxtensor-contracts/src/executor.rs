@@ -220,6 +220,12 @@ impl ContractExecutor {
             hex::encode(&contract_address.0)
         );
 
+        // Fund deployer in EVM state so gas fees (gas_limit × gas_price) are covered
+        {
+            let evm = self.evm.read();
+            evm.fund_account(&deployer, gas_limit as u128 + value);
+        }
+
         // Execute deployment with EVM
         let evm = self.evm.read();
         let (returned_address, gas_used, evm_logs, _deployed_code) = evm
@@ -262,6 +268,12 @@ impl ContractExecutor {
         // Validate gas limit
         if context.gas_limit > MAX_GAS_LIMIT {
             return Err(ContractError::GasLimitExceeded);
+        }
+
+        // Fund caller in EVM state so gas fees are covered
+        {
+            let evm_ref = self.evm.read();
+            evm_ref.fund_account(&context.caller, context.gas_limit as u128 + context.value);
         }
 
         // Execute with EVM
@@ -313,6 +325,12 @@ impl ContractExecutor {
         // Validate gas limit
         if context.gas_limit > MAX_GAS_LIMIT {
             return Err(ContractError::GasLimitExceeded);
+        }
+
+        // Fund caller in EVM state so gas fees are covered
+        {
+            let evm_ref = self.evm.read();
+            evm_ref.fund_account(&context.caller, context.gas_limit as u128);
         }
 
         // Execute with EVM (value must be 0 for static calls)

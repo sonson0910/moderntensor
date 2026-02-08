@@ -19,6 +19,9 @@ parking_lot = { workspace = true }
 revm = "14.0"
 revm-primitives = "10.0"
 
+sha3 = { workspace = true }
+bincode = { workspace = true }
+
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 
