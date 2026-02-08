@@ -25,7 +25,7 @@ def example_neuron_model():
     print("=" * 60)
     print("Example 1: NeuronInfo Model")
     print("=" * 60)
-    
+
     # Create a neuron
     neuron = NeuronInfo(
         uid=0,
@@ -45,7 +45,7 @@ def example_neuron_model():
         active=True,
         last_update=12345
     )
-    
+
     print(f"Neuron: {neuron}")
     print(f"  UID: {neuron.uid}")
     print(f"  Hotkey: {neuron.hotkey[:16]}...")
@@ -61,7 +61,7 @@ def example_subnet_model():
     print("=" * 60)
     print("Example 2: SubnetInfo Model")
     print("=" * 60)
-    
+
     # Create a subnet
     subnet = SubnetInfo(
         subnet_uid=1,
@@ -75,7 +75,7 @@ def example_subnet_model():
         block=123456,
         burn=1.0
     )
-    
+
     print(f"Subnet: {subnet}")
     print(f"  Name: {subnet.name}")
     print(f"  Neurons: {subnet.n}/{subnet.max_n}")
@@ -89,7 +89,7 @@ def example_validator_and_miner():
     print("=" * 60)
     print("Example 3: Validator & Miner Models")
     print("=" * 60)
-    
+
     # Create a validator
     validator = ValidatorInfo(
         uid=0,
@@ -103,13 +103,13 @@ def example_validator_and_miner():
         dividends=0.88,
         weights_set=True
     )
-    
+
     print(f"Validator: {validator}")
     print(f"  Total Stake: {validator.total_stake} TAO")
     print(f"  Own: {validator.own_stake}, Delegated: {validator.delegated_stake}")
     print(f"  Trust: {validator.validator_trust:.3f}")
     print()
-    
+
     # Create a miner
     miner = MinerInfo(
         uid=100,
@@ -123,7 +123,7 @@ def example_validator_and_miner():
         stake=100.0,
         active=True
     )
-    
+
     print(f"Miner: {miner}")
     print(f"  Rank: {miner.rank:.3f}")
     print(f"  Incentive: {miner.incentive:.3f}")
@@ -136,7 +136,7 @@ def example_axon_and_prometheus():
     print("=" * 60)
     print("Example 4: Axon & Prometheus Endpoints")
     print("=" * 60)
-    
+
     # Create axon info
     axon = AxonInfo(
         ip="192.168.1.100",
@@ -147,11 +147,11 @@ def example_axon_and_prometheus():
         coldkey="axon_coldkey",
         version=1
     )
-    
+
     print(f"Axon: {axon}")
     print(f"  Endpoint: {axon.endpoint}")
     print()
-    
+
     # Create prometheus info
     prometheus = PrometheusInfo(
         ip="192.168.1.100",
@@ -160,7 +160,7 @@ def example_axon_and_prometheus():
         version=1,
         block=12345
     )
-    
+
     print(f"Prometheus: {prometheus}")
     print(f"  Metrics URL: {prometheus.endpoint}")
     print()
@@ -171,7 +171,7 @@ def example_delegate():
     print("=" * 60)
     print("Example 5: DelegateInfo Model")
     print("=" * 60)
-    
+
     # Create delegate info
     delegate = DelegateInfo(
         hotkey="delegate_hotkey",
@@ -184,7 +184,7 @@ def example_delegate():
         return_per_1000=12.5,
         total_daily_return=625.0
     )
-    
+
     print(f"Delegate: {delegate}")
     print(f"  Total Stake: {delegate.total_stake} TAO")
     print(f"  Nominators: {len(delegate.nominators)}")
@@ -199,7 +199,7 @@ def example_block_and_transaction():
     print("=" * 60)
     print("Example 6: Block & Transaction Models")
     print("=" * 60)
-    
+
     # Create block info
     block = BlockInfo(
         block_number=12345,
@@ -209,36 +209,40 @@ def example_block_and_transaction():
         transactions=["0xabc123", "0xdef456"],
         transaction_count=2,
         state_root="0xstateroot123",
-        extrinsics_root="0xextroot456",
-        author="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        txs_root="0xtxsroot456",
+        receipts_root="0xreceiptsroot789",
+        author="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb2",
+        gas_used=42000,
+        gas_limit=10_000_000
     )
-    
+
     print(f"Block: {block}")
     print(f"  Block #: {block.block_number}")
     print(f"  Transactions: {block.transaction_count}")
     print(f"  Hash: {block.block_hash[:16]}...")
     print()
-    
+
     # Create transaction info
     tx = TransactionInfo(
         tx_hash="0x1234567890abcdef",
         block_number=12345,
         block_hash="0xabcdef1234567890",
-        from_address="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-        to_address="5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
-        method="transfer",
-        pallet="balances",
-        success=True,
-        fee=0.01,
-        args={"amount": 100.0},
+        from_address="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb2",
+        to_address="0x892d35Cc6634C0532925a3b844Bc9e7595f0cCd3",
+        value=1_000_000_000_000_000_000,
+        gas_price=50,
+        gas_limit=21_000,
+        gas_used=21_000,
+        chain_id=8898,
         nonce=5,
+        success=True,
         timestamp=1704643200
     )
-    
+
     print(f"Transaction: {tx}")
     print(f"  Status: {'✓ Success' if tx.success else '✗ Failed'}")
-    print(f"  Method: {tx.pallet}.{tx.method}")
-    print(f"  Fee: {tx.fee} TAO")
+    print(f"  Value: {tx.value} wei")
+    print(f"  Gas: {tx.gas_used}/{tx.gas_limit}")
     print()
 
 
@@ -247,7 +251,7 @@ def example_validation():
     print("=" * 60)
     print("Example 7: Validation")
     print("=" * 60)
-    
+
     # Valid stake
     try:
         stake = StakeInfo(
@@ -258,7 +262,7 @@ def example_validation():
         print(f"✓ Valid stake: {stake}")
     except Exception as e:
         print(f"✗ Error: {e}")
-    
+
     # Invalid stake (negative)
     try:
         stake = StakeInfo(
@@ -269,7 +273,7 @@ def example_validation():
         print(f"✓ Created: {stake}")
     except Exception as e:
         print(f"✗ Validation error (expected): Stake cannot be negative")
-    
+
     # Invalid port
     try:
         axon = AxonInfo(
@@ -281,7 +285,7 @@ def example_validation():
         print(f"✓ Created: {axon}")
     except Exception as e:
         print(f"✗ Validation error (expected): Port must be 1-65535")
-    
+
     print()
 
 
@@ -290,7 +294,7 @@ async def example_async_client():
     print("=" * 60)
     print("Example 8: Async Client (Coming Soon)")
     print("=" * 60)
-    
+
     print("Async client implementation in progress...")
     print("Will support:")
     print("  - Async neuron queries")
@@ -299,7 +303,7 @@ async def example_async_client():
     print("  - Connection pooling")
     print("  - Batch operations")
     print()
-    
+
     # Example code (when implemented):
     print("Example usage (when available):")
     print("""
@@ -307,11 +311,11 @@ async with AsyncLuxtensorClient("ws://localhost:9944") as client:
     # Get neuron info
     neuron = await client.get_neuron(uid=0, netuid=1)
     print(f"Neuron stake: {neuron.stake}")
-    
+
     # Get all neurons in subnet
     neurons = await client.get_neurons(netuid=1)
     print(f"Found {len(neurons)} neurons")
-    
+
     # Batch query (parallel)
     neurons = await client.get_neurons_batch([0, 1, 2, 3], netuid=1)
     """)
@@ -325,7 +329,7 @@ def main():
     print("ModernTensor SDK - Data Models Examples")
     print("*" * 60)
     print()
-    
+
     # Run all examples
     example_neuron_model()
     example_subnet_model()
@@ -334,10 +338,10 @@ def main():
     example_delegate()
     example_block_and_transaction()
     example_validation()
-    
+
     # Async example
     asyncio.run(example_async_client())
-    
+
     print("=" * 60)
     print("✅ All examples completed successfully!")
     print("=" * 60)

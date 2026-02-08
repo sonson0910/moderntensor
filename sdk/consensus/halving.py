@@ -4,8 +4,8 @@ Block Reward Halving Schedule
 Ported from luxtensor-consensus/src/halving.rs
 
 Implements Bitcoin-like halving to ensure sustainable token emission:
-- Initial reward: 2 MDT per block
-- Halving interval: ~3.3 years
+- Initial reward: 0.24 MDT per block (scaled for 12s block time)
+- Halving interval: 8,760,000 blocks (~3.33 years at 12s block time)
 - Total emission from rewards: 45% of 21M = 9.45M MDT
 """
 
@@ -14,10 +14,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Block time in seconds (matching luxtensor-consensus/economic_model.rs)
+BLOCK_TIME_SECONDS = 12
 
-# Constants matching Rust implementation
-INITIAL_BLOCK_REWARD = 2_000_000_000_000_000_000  # 2 MDT with 18 decimals
-HALVING_INTERVAL = 1_051_200  # ~3.33 years at 100s block time
+# Constants matching Rust implementation (luxtensor-consensus/src/halving.rs)
+INITIAL_BLOCK_REWARD = 240_000_000_000_000_000  # 0.24 MDT with 18 decimals (scaled for 12s blocks)
+HALVING_INTERVAL = 8_760_000  # ~3.33 years at 12s block time
 MINIMUM_REWARD = 1_000_000_000_000_000  # 0.001 MDT
 MAX_HALVINGS = 10
 
@@ -68,10 +70,9 @@ class HalvingSchedule:
         Formula: reward = initial_reward / 2^halvings
 
         Examples:
-            - Block 0:         2.0 MDT
-            - Block 1M:        2.0 MDT (before first halving)
-            - Block 1,051,200: 1.0 MDT (first halving)
-            - Block 2,102,400: 0.5 MDT (second halving)
+            - Block 0:         0.24 MDT
+            - Block 8.76M:     0.12 MDT (first halving)
+            - Block 17.52M:    0.06 MDT (second halving)
         """
         halvings = block_height // self.halving_interval
 
@@ -146,7 +147,7 @@ class HalvingSchedule:
         return HalvingInfo(
             initial_reward_mdt=self.initial_reward / 1e18,
             halving_interval_blocks=self.halving_interval,
-            halving_interval_years=(self.halving_interval * 100.0) / (365.25 * 24 * 3600),
+            halving_interval_years=(self.halving_interval * BLOCK_TIME_SECONDS) / (365.25 * 24 * 3600),
             max_halvings=self.max_halvings,
             estimated_total_emission_mdt=self.estimate_total_emission() / 1e18,
         )

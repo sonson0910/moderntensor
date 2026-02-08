@@ -11,6 +11,7 @@ pub mod swarm;
 pub mod eclipse_protection;
 pub mod peer_discovery;
 pub mod state_sync;
+pub mod light_client;
 
 // Legacy modules — only compiled with `legacy` feature flag
 #[cfg(feature = "legacy")]
@@ -31,4 +32,8 @@ pub use peer_discovery::{PeerDiscovery, DiscoveryConfig, DiscoveredPeer, Discove
 pub use state_sync::{
     StateSyncManager, StateSyncConfig, SyncProgress, SyncPhase, StateSnapshot,
     GetStateRange, StateRange, GetStorageRange, StorageRange, SyncError
+};
+pub use light_client::{
+    LightClientState, LightClientConfig, LightClientError,
+    TrustedHeader, MerkleProof, SyncStatus,
 };

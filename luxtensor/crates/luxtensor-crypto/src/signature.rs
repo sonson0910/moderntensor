@@ -1,6 +1,6 @@
-use secp256k1::{Secp256k1, SecretKey, PublicKey, Message, ecdsa::Signature};
+use crate::{keccak256, CryptoError, Hash, Result};
+use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroize;
-use crate::{Hash, Result, CryptoError, keccak256};
 
 /// Key pair for signing and verification
 ///
@@ -49,23 +49,17 @@ impl KeyPair {
         let mut rng = rand::thread_rng();
         let (secret_key, public_key) = secp.generate_keypair(&mut rng);
 
-        Self {
-            secret_key,
-            public_key,
-        }
+        Self { secret_key, public_key }
     }
 
     /// Create key pair from secret key bytes
     pub fn from_secret(bytes: &[u8; 32]) -> Result<Self> {
-        let secret_key = SecretKey::from_slice(bytes)
-            .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+        let secret_key =
+            SecretKey::from_slice(bytes).map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
         let secp = Secp256k1::new();
         let public_key = PublicKey::from_secret_key(&secp, &secret_key);
 
-        Ok(Self {
-            secret_key,
-            public_key,
-        })
+        Ok(Self { secret_key, public_key })
     }
 
     /// Sign a message hash
@@ -100,7 +94,11 @@ impl KeyPair {
 }
 
 /// Verify a signature against a message hash and public key
-pub fn verify_signature(message_hash: &Hash, signature: &[u8; 64], public_key: &[u8]) -> Result<bool> {
+pub fn verify_signature(
+    message_hash: &Hash,
+    signature: &[u8; 64],
+    public_key: &[u8],
+) -> Result<bool> {
     let secp = Secp256k1::new();
 
     // Parse the signature
@@ -123,7 +121,11 @@ pub fn verify_signature(message_hash: &Hash, signature: &[u8; 64], public_key: &
 }
 
 /// Recover public key from signature
-pub fn recover_public_key(message_hash: &Hash, signature: &[u8; 64], recovery_id: u8) -> Result<Vec<u8>> {
+pub fn recover_public_key(
+    message_hash: &Hash,
+    signature: &[u8; 64],
+    recovery_id: u8,
+) -> Result<Vec<u8>> {
     let secp = Secp256k1::new();
 
     // Parse the signature
@@ -143,7 +145,8 @@ pub fn recover_public_key(message_hash: &Hash, signature: &[u8; 64], recovery_id
         .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
 
     // Recover the public key
-    let pubkey = secp.recover_ecdsa(&message, &rec_sig)
+    let pubkey = secp
+        .recover_ecdsa(&message, &rec_sig)
         .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
 
     Ok(pubkey.serialize_uncompressed().to_vec())
@@ -165,9 +168,10 @@ pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<[u8; 20]
         sig.copy_from_slice(signature);
         (sig, vec![0, 1])
     } else {
-        return Err(CryptoError::Secp256k1Error(
-            format!("Invalid signature length: expected 64 or 65, got {}", signature.len()),
-        ));
+        return Err(CryptoError::Secp256k1Error(format!(
+            "Invalid signature length: expected 64 or 65, got {}",
+            signature.len()
+        )));
     };
 
     for rid in recovery_ids {

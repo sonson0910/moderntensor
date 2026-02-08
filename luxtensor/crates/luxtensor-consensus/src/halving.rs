@@ -58,12 +58,7 @@ impl HalvingSchedule {
         minimum_reward: u128,
         max_halvings: u32,
     ) -> Self {
-        Self {
-            initial_reward,
-            halving_interval,
-            minimum_reward,
-            max_halvings,
-        }
+        Self { initial_reward, halving_interval, minimum_reward, max_halvings }
     }
 
     /// Calculate block reward for a given block height
@@ -129,11 +124,13 @@ impl HalvingSchedule {
             }
 
             if era_start < block_height {
-                let blocks_in_era = era_end.saturating_sub(era_start).min(block_height.saturating_sub(era_start));
+                let blocks_in_era =
+                    era_end.saturating_sub(era_start).min(block_height.saturating_sub(era_start));
                 let reward_per_block = self.initial_reward >> era;
 
                 if reward_per_block >= self.minimum_reward {
-                    total = total.saturating_add((blocks_in_era as u128).saturating_mul(reward_per_block));
+                    total = total
+                        .saturating_add((blocks_in_era as u128).saturating_mul(reward_per_block));
                 }
             }
 
@@ -167,7 +164,8 @@ impl HalvingSchedule {
             halving_interval_blocks: self.halving_interval,
             // 🔧 FIX: Use 12s block time (not 100s from original design)
             // At 12s blocks: 8,760,000 blocks × 12s = 105,120,000s ≈ 3.33 years
-            halving_interval_years: (self.halving_interval as f64 * 12.0) / (365.25 * 24.0 * 3600.0),
+            halving_interval_years: (self.halving_interval as f64 * 12.0)
+                / (365.25 * 24.0 * 3600.0),
             max_halvings: self.max_halvings,
             estimated_total_emission_mdt: self.estimate_total_emission() as f64 / 1e18,
         }
@@ -214,10 +212,11 @@ mod tests {
         let schedule = HalvingSchedule::default();
 
         // Test several halvings
-        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 0), INITIAL_BLOCK_REWARD);      // 2 MDT
-        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 1), INITIAL_BLOCK_REWARD / 2);  // 1 MDT
-        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 2), INITIAL_BLOCK_REWARD / 4);  // 0.5 MDT
-        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 3), INITIAL_BLOCK_REWARD / 8);  // 0.25 MDT
+        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 0), INITIAL_BLOCK_REWARD); // 2 MDT
+        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 1), INITIAL_BLOCK_REWARD / 2); // 1 MDT
+        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 2), INITIAL_BLOCK_REWARD / 4); // 0.5 MDT
+        assert_eq!(schedule.calculate_reward(HALVING_INTERVAL * 3), INITIAL_BLOCK_REWARD / 8);
+        // 0.25 MDT
     }
 
     #[test]

@@ -48,7 +48,7 @@ impl GenesisConfig {
     /// Create default mainnet genesis config
     pub fn mainnet() -> Self {
         Self {
-            chain_id: 777,  // LuxTensor mainnet chain ID
+            chain_id: 8899,  // LuxTensor mainnet chain ID
             timestamp: 0,
             accounts: vec![],  // No pre-funded accounts in mainnet
             validators: vec![],
@@ -59,7 +59,7 @@ impl GenesisConfig {
     /// Create default testnet genesis config
     pub fn testnet() -> Self {
         Self {
-            chain_id: 7777,  // LuxTensor testnet chain ID
+            chain_id: 9999,  // LuxTensor testnet chain ID
             timestamp: 0,
             accounts: vec![
                 GenesisAccount {
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn test_mainnet_config() {
         let config = GenesisConfig::mainnet();
-        assert_eq!(config.chain_id, 777);
+        assert_eq!(config.chain_id, 8899);
         assert!(config.accounts.is_empty());
         assert!(!config.is_development());
     }

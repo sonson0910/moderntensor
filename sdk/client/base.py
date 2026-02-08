@@ -26,11 +26,14 @@ class ChainInfo:
 
 @dataclass
 class Account:
-    """Account information from Luxtensor"""
+    """Account information from Luxtensor (matches luxtensor-core Account struct)"""
 
     address: str
     balance: int
     nonce: int
+    storage_root: str = "0x" + "00" * 32
+    code_hash: str = "0x" + "00" * 32
+    code: Optional[bytes] = None
     stake: int = 0
 
 

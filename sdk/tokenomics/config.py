@@ -50,9 +50,11 @@ class TokenomicsConfig:
         - min_emission_floor: Minimum daily emission to ensure incentives
     """
     # Core token parameters
+    # max_supply in whole MDT tokens (21M fixed supply, like Bitcoin)
+    # On-chain representation uses 18 decimals: 21_000_000 * 10^18 base units
     max_supply: int = 21_000_000
     base_reward: int = 1000  # Base reward per epoch
-    halving_interval: int = 210_000  # ~2 years at 10min/epoch
+    halving_interval: int = 8_760_000  # ~3.3 years at 12s block time
 
     # Adaptive emission parameters
     max_expected_tasks: int = 10_000

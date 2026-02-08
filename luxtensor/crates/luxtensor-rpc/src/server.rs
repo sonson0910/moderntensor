@@ -113,7 +113,7 @@ impl RpcServer {
         let metagraph = Arc::new(
             MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
         );
-        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 1337)  // Default test chain_id
+        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 8898)  // LuxTensor devnet chain_id
     }
 
     /// Get mempool reference for block production polling
@@ -141,8 +141,7 @@ impl RpcServer {
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
     ) -> Self {
-        // 🔧 FIX: Use a test chain_id constant instead of hardcoded 1337
-        let chain_id = 1337_u64; // Explicit: test-only default
+        let chain_id = 8898_u64; // LuxTensor devnet chain_id
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
         let metagraph = Arc::new(
             MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")

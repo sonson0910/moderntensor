@@ -14,6 +14,7 @@ pub mod multisig;
 pub mod parallel;
 pub mod unified_state;
 pub mod receipt;
+pub mod bridge;
 
 pub use block::*;
 pub use transaction::*;

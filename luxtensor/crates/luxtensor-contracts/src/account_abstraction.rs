@@ -528,7 +528,7 @@ mod tests {
     /// Well-known test secret key (deterministic).
     const TEST_SECRET: [u8; 32] = [1u8; 32];
     /// Chain ID used by tests.
-    const TEST_CHAIN_ID: u64 = 1;
+    const TEST_CHAIN_ID: u64 = 8898;
 
     /// Create a keypair and derive the sender address from it.
     fn test_keypair() -> KeyPair {

@@ -98,3 +98,10 @@ pub use scoring::{
     MinerMetrics, ValidatorMetrics
 };
 
+pub mod governance;
+pub use governance::{
+    GovernanceModule, GovernanceConfig, GovernanceError,
+    Proposal, ProposalType, Vote,
+    ProposalStatus as GovProposalStatus,
+};
+

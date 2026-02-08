@@ -207,22 +207,26 @@ Delegation data:
 
 ### BlockInfo
 
-Block data:
+Block data (matches luxtensor-core BlockHeader):
 
-- **Identity**: block_number, block_hash, parent_hash
+- **Identity**: block_number, block_hash, parent_hash, version
 - **Transactions**: transactions (list), transaction_count
-- **State**: state_root, extrinsics_root
-- **Metadata**: timestamp, author
+- **State**: state_root, txs_root, receipts_root
+- **Gas**: gas_used, gas_limit
+- **Metadata**: timestamp, author, signature, extra_data
 
 ### TransactionInfo
 
-Transaction data:
+Transaction data (matches luxtensor-core Transaction):
 
 - **Identity**: tx_hash, block_number, block_hash
 - **Addresses**: from_address, to_address
-- **Type**: method, pallet
-- **Status**: success, fee
-- **Data**: args, nonce, signature, timestamp
+- **Value & Gas**: value, gas_price, gas_limit, gas_used
+- **Chain**: chain_id, nonce
+- **Data**: data (hex)
+- **Status**: success
+- **Signature**: v, r, s
+- **Metadata**: timestamp
 
 ## Testing
 

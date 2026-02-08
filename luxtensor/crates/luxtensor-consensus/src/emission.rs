@@ -22,14 +22,14 @@ impl Default for EmissionConfig {
     fn default() -> Self {
         Self {
             max_supply: 21_000_000_000_000_000_000_000_000u128, // 21 million tokens
-            initial_emission: 240_000_000_000_000_000u128,   // 0.24 tokens/block (scaled for 12s blocks)
+            initial_emission: 240_000_000_000_000_000u128, // 0.24 tokens/block (scaled for 12s blocks)
             // 🔧 FIX: Aligned with HalvingSchedule (8,760,000 blocks ≈ 3.33 years @ 12s)
             // Corrected from 1,051,200 which was for 100s blocks — 8× faster halving at 12s
             halving_interval: 8_760_000,
             // 🔧 FIX: Aligned with HalvingSchedule MINIMUM_REWARD (0.001 MDT)
             // Previously 0.1 MDT — 100x higher than halving.rs
-            min_emission: 1_000_000_000_000_000u128,           // 0.001 tokens minimum
-            utility_weight: 30,                                 // 30% adjustment based on utility
+            min_emission: 1_000_000_000_000_000u128, // 0.001 tokens minimum
+            utility_weight: 30,                      // 30% adjustment based on utility
         }
     }
 }
@@ -86,20 +86,12 @@ pub struct EmissionController {
 impl EmissionController {
     /// Create new emission controller
     pub fn new(config: EmissionConfig) -> Self {
-        Self {
-            config,
-            current_supply: 0,
-            halving_epoch: 0,
-        }
+        Self { config, current_supply: 0, halving_epoch: 0 }
     }
 
     /// Create with existing supply (for resuming)
     pub fn with_supply(config: EmissionConfig, current_supply: u128) -> Self {
-        Self {
-            config,
-            current_supply,
-            halving_epoch: 0,
-        }
+        Self { config, current_supply, halving_epoch: 0 }
     }
 
     /// Calculate base emission for a block height (before utility adjustment)
@@ -252,7 +244,10 @@ mod tests {
         assert_eq!(controller.base_emission(config.halving_interval), config.initial_emission / 2);
 
         // After second halving
-        assert_eq!(controller.base_emission(config.halving_interval * 2), config.initial_emission / 4);
+        assert_eq!(
+            controller.base_emission(config.halving_interval * 2),
+            config.initial_emission / 4
+        );
     }
 
     #[test]
@@ -273,8 +268,12 @@ mod tests {
         let high_emission = controller.adjusted_emission(0, &high_utility);
 
         // High utility should get more emission
-        assert!(high_emission > low_emission,
-            "high {} should > low {}", high_emission, low_emission);
+        assert!(
+            high_emission > low_emission,
+            "high {} should > low {}",
+            high_emission,
+            low_emission
+        );
     }
 
     #[test]

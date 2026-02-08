@@ -111,7 +111,7 @@ class TestnetManager:
         config = f"""
 [node]
 name = "{node.name}"
-chain_id = 1337
+chain_id = 8898
 data_dir = "{node.data_dir.as_posix()}"
 is_validator = {str(node.is_validator).lower()}
 validator_id = "{node.name}"

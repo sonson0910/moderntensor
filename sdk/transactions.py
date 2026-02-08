@@ -70,7 +70,7 @@ class LuxtensorTransaction:
 
     Corresponds to the Transaction struct in luxtensor-core/src/transaction.rs
     """
-    chain_id: int  # Chain ID for replay protection (default: 1)
+    chain_id: int  # Chain ID for replay protection (default: 8898 devnet)
     nonce: int
     from_address: str  # ModernTensor address (0x...)
     to_address: Optional[str]  # None for contract creation
@@ -92,10 +92,12 @@ class LuxtensorTransaction:
         - chain_id (8 bytes, little endian) - FIRST for replay protection
         - nonce (8 bytes, little endian)
         - from address (20 bytes)
+        - presence byte (0x01 if to is present, 0x00 if absent)
         - to address (20 bytes if present)
         - value (16 bytes, little endian, u128)
         - gas_price (8 bytes, little endian)
         - gas_limit (8 bytes, little endian)
+        - data length (8 bytes, little endian, u64)
         - data
         """
         msg = bytearray()
@@ -110,10 +112,13 @@ class LuxtensorTransaction:
         from_bytes = bytes.fromhex(self.from_address[2:] if self.from_address.startswith('0x') else self.from_address)
         msg.extend(from_bytes)
 
-        # To address (20 bytes if present)
+        # To address with presence byte (matching Rust enum encoding)
         if self.to_address:
+            msg.append(0x01)  # present
             to_bytes = bytes.fromhex(self.to_address[2:] if self.to_address.startswith('0x') else self.to_address)
             msg.extend(to_bytes)
+        else:
+            msg.append(0x00)  # absent
 
         # Value (u128 little endian)
         msg.extend(struct.pack('<QQ', self.value & 0xFFFFFFFFFFFFFFFF, self.value >> 64))
@@ -124,7 +129,8 @@ class LuxtensorTransaction:
         # Gas limit (u64 little endian)
         msg.extend(struct.pack('<Q', self.gas_limit))
 
-        # Data
+        # Data with length prefix (u64 little endian) - prevents field collision
+        msg.extend(struct.pack('<Q', len(self.data)))
         msg.extend(self.data)
 
         return bytes(msg)
@@ -169,7 +175,7 @@ def create_transfer_transaction(
     gas_price: int = 50,
     gas_limit: int = 21000,
     data: bytes = b'',
-    chain_id: int = 1
+    chain_id: int = 8898
 ) -> Dict[str, Any]:
     """
     Create and sign a transfer transaction for Luxtensor blockchain.
@@ -183,7 +189,7 @@ def create_transfer_transaction(
         gas_price: Gas price (default: 50)
         gas_limit: Gas limit (default: 21000)
         data: Additional transaction data (default: empty)
-        chain_id: Chain ID for replay protection (default: 1)
+        chain_id: Chain ID for replay protection (default: 8898 devnet)
 
     Returns:
         Signed transaction dictionary ready for submission via RPC
@@ -195,7 +201,7 @@ def create_transfer_transaction(
         ...     amount=1000000000,  # 1 MDT
         ...     nonce=0,
         ...     private_key="0x...",
-        ...     chain_id=1  # mainnet
+        ...     chain_id=8899  # mainnet
         ... )
         >>> client.submit_transaction(tx)
     """

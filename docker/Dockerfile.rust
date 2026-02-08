@@ -1,0 +1,81 @@
+# LuxTensor Rust Node — Multi-stage Production Dockerfile
+# Usage:
+#   docker build -f docker/Dockerfile.rust -t luxtensor-node .
+#   docker run -p 8545:8545 -p 30303:30303 -p 9090:9090 -v luxtensor-data:/data luxtensor-node
+
+# ===========================================================================
+# Stage 1: Build the Rust binary
+# ===========================================================================
+FROM rust:1.82-slim-bookworm AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libclang-dev \
+    cmake \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace Cargo files first for dependency caching
+COPY luxtensor/Cargo.toml luxtensor/Cargo.lock ./
+COPY luxtensor/crates/ ./crates/
+
+# Build release binary
+RUN cargo build --release --bin luxtensor-node 2>&1 \
+    && strip target/release/luxtensor-node
+
+# ===========================================================================
+# Stage 2: Minimal runtime image
+# ===========================================================================
+FROM debian:bookworm-slim AS runtime
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash luxtensor
+
+# Create data directories
+RUN mkdir -p /data/db /data/state /config /logs \
+    && chown -R luxtensor:luxtensor /data /config /logs
+
+# Copy binary from builder
+COPY --from=builder /build/target/release/luxtensor-node /usr/local/bin/luxtensor-node
+
+# Copy default configs
+COPY luxtensor/config.example.toml /config/config.toml
+COPY luxtensor/genesis.testnet.json /config/genesis.json
+
+# Switch to non-root user
+USER luxtensor
+WORKDIR /home/luxtensor
+
+# Expose ports
+# 30303: P2P networking (TCP + UDP)
+# 8545:  JSON-RPC API
+# 9090:  Prometheus metrics
+EXPOSE 30303 30303/udp 8545 9090
+
+# Environment
+ENV RUST_LOG=info
+ENV LUXTENSOR_DATA_DIR=/data
+ENV LUXTENSOR_CONFIG=/config/config.toml
+
+# Health check: query eth_blockNumber via JSON-RPC
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -sf -X POST http://localhost:8545 \
+        -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+        || exit 1
+
+# Default command
+ENTRYPOINT ["luxtensor-node"]
+CMD ["--config", "/config/config.toml"]

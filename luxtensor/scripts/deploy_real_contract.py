@@ -42,7 +42,7 @@ import requests
 # CONFIGURATION
 # =============================================================================
 
-CHAIN_ID = 1337
+CHAIN_ID = 8898
 
 # Test accounts (any address works, no signature needed)
 DEPLOYER_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

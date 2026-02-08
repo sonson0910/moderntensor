@@ -123,7 +123,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
         // Reject unsigned transactions on non-dev chains
         // eth_sendTransaction cannot sign — use eth_sendRawTransaction for production
         // Dev chains: 1337 (Hardhat default), 31337, 1, 5, 11155111 (Sepolia/Goerli)
-        let is_dev = matches!(chain_id, 1337 | 31337 | 1 | 5 | 11155111);
+        let is_dev = matches!(chain_id, 8898 | 1337 | 31337 | 1 | 5 | 11155111);
         if !is_dev {
             return Err(jsonrpc_core::Error {
                 code: jsonrpc_core::ErrorCode::ServerError(-32000),

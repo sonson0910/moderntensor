@@ -27,7 +27,7 @@ def main():
     config = f"""
 [node]
 name = "test"
-chain_id = 1337
+chain_id = 8898
 data_dir = "{node_dir.as_posix()}"
 is_validator = true
 validator_id = "test"

@@ -1,4 +1,6 @@
 # ModernTensor Layer 1 Node - Dockerfile
+# For the Rust-native node, use docker/Dockerfile.rust instead.
+# This Dockerfile runs the Python SDK API (for development/SDK testing only).
 FROM python:3.11-slim
 
 # Set working directory

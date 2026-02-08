@@ -67,7 +67,7 @@ impl EventDecoder {
         let chain_id = tx_data.get("chainId")
             .and_then(|c| c.as_str())
             .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-            .unwrap_or(1); // Default to chain_id 1
+            .unwrap_or(8898); // Default to LuxTensor devnet chain_id
 
         // Store transaction
         let transaction = Transaction {

@@ -35,8 +35,8 @@ pub mod addresses {
 
 /// Block and Consensus Parameters
 pub mod consensus {
-    /// Target block time in seconds
-    pub const BLOCK_TIME_SECS: u64 = 3;
+    /// Target block time in seconds (matching economic_model.rs BLOCK_TIME_SECONDS)
+    pub const BLOCK_TIME_SECS: u64 = 12;
 
     /// Epoch length in blocks
     pub const EPOCH_LENGTH: u64 = 100;
@@ -56,8 +56,8 @@ pub mod consensus {
 
 /// Token Economics
 pub mod tokenomics {
-    /// Total supply (1 billion tokens)
-    pub const TOTAL_SUPPLY: u128 = 1_000_000_000_000_000_000_000_000_000;
+    /// Total supply (21 million tokens, matching emission.rs max_supply)
+    pub const TOTAL_SUPPLY: u128 = 21_000_000_000_000_000_000_000_000;
 
     /// Decimals (18, like ETH)
     pub const DECIMALS: u8 = 18;
@@ -65,8 +65,9 @@ pub mod tokenomics {
     /// One full token in base units
     pub const ONE_TOKEN: u128 = 1_000_000_000_000_000_000;
 
-    /// Block reward (initial)
-    pub const INITIAL_BLOCK_REWARD: u128 = 2_000_000_000_000_000_000; // 2 tokens
+    /// Block reward (initial) - 0.24 MDT, matching halving.rs INITIAL_BLOCK_REWARD
+    /// Scaled from 2 MDT for 100s blocks → 0.24 MDT for 12s blocks
+    pub const INITIAL_BLOCK_REWARD: u128 = 240_000_000_000_000_000;
 
     /// DAO share of block rewards (10%)
     pub const DAO_REWARD_SHARE_BPS: u64 = 1000; // basis points

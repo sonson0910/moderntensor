@@ -251,14 +251,14 @@ fn generate_config(args: ConfigGenArgs) -> Result<()> {
 
 [node]
 name = "{name}"
-chain_id = 777
+chain_id = 8898
 data_dir = "./data"
 is_validator = {validator}
 validator_key_path = "./validator.key"
 validator_id = "{name}"
 
 [consensus]
-block_time = 3
+block_time = 12
 epoch_length = 100
 min_stake = "1000000000000000000000"
 max_validators = 100

@@ -23,6 +23,14 @@ pub struct VerifierConfig {
     pub require_groth16: bool,
     /// Maximum proof age in seconds (0 = no limit)
     pub max_proof_age_seconds: u64,
+    /// Maximum proof seal size in bytes (prevent DoS via large proofs)
+    pub max_seal_size_bytes: usize,
+    /// Minimum proof seal size in bytes (reject trivially small proofs)
+    pub min_seal_size_bytes: usize,
+    /// Enable proof replay protection (track seen proof hashes)
+    pub replay_protection: bool,
+    /// Maximum number of cached proof hashes for replay protection
+    pub replay_cache_size: usize,
 }
 
 impl Default for VerifierConfig {
@@ -32,6 +40,10 @@ impl Default for VerifierConfig {
             allow_dev_proofs: false,
             require_groth16: false,
             max_proof_age_seconds: 0,
+            max_seal_size_bytes: 16 * 1024 * 1024, // 16 MB
+            min_seal_size_bytes: 16,                // minimum meaningful proof
+            replay_protection: true,
+            replay_cache_size: 100_000,
         }
     }
 }
@@ -44,6 +56,10 @@ impl VerifierConfig {
             allow_dev_proofs: true,
             require_groth16: false,
             max_proof_age_seconds: 0,
+            max_seal_size_bytes: 16 * 1024 * 1024,
+            min_seal_size_bytes: 1,
+            replay_protection: false,
+            replay_cache_size: 0,
         }
     }
 
@@ -84,6 +100,8 @@ pub struct ZkVerifier {
     success_count: std::sync::atomic::AtomicU64,
     /// Failed verifications
     failure_count: std::sync::atomic::AtomicU64,
+    /// Proof hashes seen (replay protection)
+    seen_proofs: parking_lot::RwLock<std::collections::HashSet<Hash>>,
 }
 
 impl ZkVerifier {
@@ -101,6 +119,7 @@ impl ZkVerifier {
             verification_count: std::sync::atomic::AtomicU64::new(0),
             success_count: std::sync::atomic::AtomicU64::new(0),
             failure_count: std::sync::atomic::AtomicU64::new(0),
+            seen_proofs: parking_lot::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -140,6 +159,17 @@ impl ZkVerifier {
 
         let is_valid = result.as_ref().map(|r| r.is_valid).unwrap_or(false);
         self.update_stats(is_valid);
+
+        // Track verified proof hash for replay protection
+        if is_valid && self.config.replay_protection {
+            let proof_hash = keccak256(&receipt.proof.seal);
+            let mut seen = self.seen_proofs.write();
+            seen.insert(proof_hash);
+            // Evict oldest entries if cache is full (approximate LRU via clear)
+            if seen.len() > self.config.replay_cache_size && self.config.replay_cache_size > 0 {
+                seen.clear(); // Simple eviction — full HashSet rebuild
+            }
+        }
 
         let duration = start.elapsed();
         info!(
@@ -189,12 +219,50 @@ impl ZkVerifier {
             ));
         }
 
-        // Check proof size
+        // Check proof size bounds
         if receipt.proof.seal.is_empty() {
             return Some(VerificationResult::invalid(
                 receipt.image_id,
                 "Empty proof seal".to_string(),
             ));
+        }
+        if receipt.proof.seal.len() < self.config.min_seal_size_bytes {
+            return Some(VerificationResult::invalid(
+                receipt.image_id,
+                format!(
+                    "Proof seal too small ({} < {} bytes)",
+                    receipt.proof.seal.len(),
+                    self.config.min_seal_size_bytes
+                ),
+            ));
+        }
+        if receipt.proof.seal.len() > self.config.max_seal_size_bytes {
+            warn!(
+                seal_size = receipt.proof.seal.len(),
+                max = self.config.max_seal_size_bytes,
+                "Proof seal exceeds maximum size — potential DoS"
+            );
+            return Some(VerificationResult::invalid(
+                receipt.image_id,
+                format!(
+                    "Proof seal too large ({} > {} bytes)",
+                    receipt.proof.seal.len(),
+                    self.config.max_seal_size_bytes
+                ),
+            ));
+        }
+
+        // Replay protection: reject proofs we've already verified
+        if self.config.replay_protection {
+            let proof_hash = keccak256(&receipt.proof.seal);
+            let seen = self.seen_proofs.read();
+            if seen.contains(&proof_hash) {
+                warn!(image_id = %receipt.image_id, "Duplicate proof detected (replay)");
+                return Some(VerificationResult::invalid(
+                    receipt.image_id,
+                    "Proof already verified (replay detected)".to_string(),
+                ));
+            }
         }
 
         None

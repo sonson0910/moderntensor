@@ -3,8 +3,8 @@
 
 use luxtensor_core::{Account, Address, Block, BlockHeader, Transaction};
 use luxtensor_crypto::KeyPair;
-use luxtensor_storage::{BlockchainDB, StateDB};
 use luxtensor_network::PeerManager;
+use luxtensor_storage::{BlockchainDB, StateDB};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -231,12 +231,7 @@ async fn setup_node(name: &str) -> TestNode {
     // Initialize network components
     let peer_manager = Arc::new(RwLock::new(PeerManager::new(50)));
 
-    TestNode {
-        storage,
-        state_db,
-        peer_manager,
-        _temp_dir: temp_dir,
-    }
+    TestNode { storage, state_db, peer_manager, _temp_dir: temp_dir }
 }
 
 /// Create initial blockchain with specified number of blocks
@@ -280,10 +275,8 @@ async fn create_initial_blockchain(node: &TestNode, block_count: u64) {
 /// Create additional blocks on top of existing chain
 async fn create_additional_blocks(node: &TestNode, block_count: u64) {
     let current_height = node.storage.get_best_height().unwrap().unwrap_or(0);
-    let mut previous_hash = node.storage.get_block_by_height(current_height)
-        .unwrap()
-        .unwrap()
-        .hash();
+    let mut previous_hash =
+        node.storage.get_block_by_height(current_height).unwrap().unwrap().hash();
 
     for i in 1..=block_count {
         let height = current_height + i;
@@ -353,16 +346,10 @@ async fn verify_chain_consistency(node_a: &TestNode, node_b: &TestNode) {
         let block_a = node_a.storage.get_block_by_height(height).unwrap().unwrap();
         let block_b = node_b.storage.get_block_by_height(height).unwrap().unwrap();
 
-        assert_eq!(
-            block_a.hash(),
-            block_b.hash(),
-            "Block hash mismatch at height {}",
-            height
-        );
+        assert_eq!(block_a.hash(), block_b.hash(), "Block hash mismatch at height {}", height);
 
         assert_eq!(
-            block_a.header.state_root,
-            block_b.header.state_root,
+            block_a.header.state_root, block_b.header.state_root,
             "State root mismatch at height {}",
             height
         );
@@ -387,15 +374,8 @@ fn create_test_transactions(count: usize) -> Vec<Transaction> {
         let from = Address::from([i as u8; 20]);
         let to = Address::from([(i + 1) as u8; 20]);
 
-        let tx = Transaction::new(
-            i as u64,
-            from,
-            Some(to),
-            1000 + (i as u128 * 100),
-            1,
-            21000,
-            vec![],
-        );
+        let tx =
+            Transaction::new(i as u64, from, Some(to), 1000 + (i as u128 * 100), 1, 21000, vec![]);
 
         transactions.push(tx);
     }
@@ -428,17 +408,17 @@ async fn create_test_accounts(node: &TestNode, count: usize) -> Vec<Address> {
 }
 
 /// Execute test transactions between accounts
-async fn execute_test_transactions(node: &TestNode, accounts: &[Address], tx_count: usize) -> usize {
+async fn execute_test_transactions(
+    node: &TestNode,
+    accounts: &[Address],
+    tx_count: usize,
+) -> usize {
     for i in 0..tx_count {
         let from_idx = i % accounts.len();
         let to_idx = (i + 1) % accounts.len();
         let amount = 10_000_000_000_000_000; // 0.01 token
 
-        let _ = node.state_db.transfer(
-            &accounts[from_idx],
-            &accounts[to_idx],
-            amount,
-        );
+        let _ = node.state_db.transfer(&accounts[from_idx], &accounts[to_idx], amount);
     }
 
     node.state_db.commit().unwrap();
