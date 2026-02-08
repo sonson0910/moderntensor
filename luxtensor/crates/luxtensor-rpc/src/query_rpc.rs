@@ -224,7 +224,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
 
     let neurons = ctx.neurons.clone();
 
-    // query_consensus - Get neuron consensus (same as trust for now)
+    // query_consensus - Get neuron consensus score
     io.add_sync_method("query_consensus", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
@@ -240,7 +240,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
         let neurons_map = neurons.read();
         if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
-            Ok(serde_json::json!(neuron.trust))
+            Ok(serde_json::json!(neuron.consensus))
         } else {
             Ok(Value::Null)
         }

@@ -255,6 +255,104 @@ pub fn estimate_transaction_gas(
     gas
 }
 
+// ============================================================================
+// AI Precompile Router — maps addresses 0x10-0x28 to concrete handlers
+// ============================================================================
+// This is the bridge between revm's EVM execution and LuxTensor's native AI
+// precompiles. It checks if a CALL target is an AI precompile address and,
+// if so, executes the corresponding handler instead of running EVM bytecode.
+
+use crate::ai_precompiles::{
+    AIPrecompileState,
+    ai_request_precompile, verify_proof_precompile, get_result_precompile,
+    compute_payment_precompile, train_request_precompile,
+    vector_store_precompile, vector_query_precompile,
+    classify_precompile, anomaly_score_precompile, similarity_gate_precompile,
+    semantic_relate_precompile, cluster_assign_precompile,
+    register_vector_precompile, global_search_precompile,
+    is_ai_precompile, is_semantic_precompile, is_training_precompile,
+    is_ai_primitives_precompile, is_registry_precompile,
+};
+use revm::primitives::Bytes;
+
+/// Check if a given 20-byte address is any LuxTensor custom precompile
+pub fn is_luxtensor_precompile(address: &[u8; 20]) -> bool {
+    is_ai_precompile(address) || is_training_precompile(address) ||
+    is_semantic_precompile(address) || is_ai_primitives_precompile(address) ||
+    is_registry_precompile(address)
+}
+
+/// Route a call to the appropriate AI precompile handler.
+/// Returns `None` if the address is NOT a custom precompile.
+/// Returns `Some(PrecompileResult)` if it IS a custom precompile.
+///
+/// # Arguments
+/// * `address` — 20-byte target address of the CALL
+/// * `input` — calldata (ABI-encoded arguments)
+/// * `gas_limit` — available gas
+/// * `state` — shared AI precompile state (vector stores, registries, etc.)
+/// * `caller` — 20-byte caller address
+pub fn execute_ai_precompile(
+    address: &[u8; 20],
+    input: &Bytes,
+    gas_limit: u64,
+    state: &AIPrecompileState,
+    caller: [u8; 20],
+) -> Option<revm::primitives::PrecompileResult> {
+    let last_byte = address[19];
+
+    // AI Core (0x10 - 0x13)
+    match last_byte {
+        0x10 if is_ai_precompile(address) => {
+            Some(ai_request_precompile(input, gas_limit, state, caller))
+        }
+        0x11 if is_ai_precompile(address) => {
+            Some(verify_proof_precompile(input, gas_limit, state))
+        }
+        0x12 if is_ai_precompile(address) => {
+            Some(get_result_precompile(input, gas_limit, state))
+        }
+        0x13 if is_ai_precompile(address) => {
+            Some(compute_payment_precompile(input, gas_limit, state))
+        }
+        // Training (0x14)
+        0x14 if is_training_precompile(address) => {
+            Some(train_request_precompile(input, gas_limit, state, caller))
+        }
+        // Semantic Layer (0x20, 0x21)
+        0x20 if is_semantic_precompile(address) => {
+            Some(vector_store_precompile(input, gas_limit, state, caller))
+        }
+        0x21 if is_semantic_precompile(address) => {
+            Some(vector_query_precompile(input, gas_limit, state))
+        }
+        // AI Primitives (0x22-0x26)
+        0x22 if is_ai_primitives_precompile(address) => {
+            Some(classify_precompile(input, gas_limit, state))
+        }
+        0x23 if is_ai_primitives_precompile(address) => {
+            Some(anomaly_score_precompile(input, gas_limit, state))
+        }
+        0x24 if is_ai_primitives_precompile(address) => {
+            Some(similarity_gate_precompile(input, gas_limit, state))
+        }
+        0x25 if is_ai_primitives_precompile(address) => {
+            Some(semantic_relate_precompile(input, gas_limit, state))
+        }
+        0x26 if is_ai_primitives_precompile(address) => {
+            Some(cluster_assign_precompile(input, gas_limit, state))
+        }
+        // World Semantic Index (0x27, 0x28)
+        0x27 if is_registry_precompile(address) => {
+            Some(register_vector_precompile(input, gas_limit, state, caller))
+        }
+        0x28 if is_registry_precompile(address) => {
+            Some(global_search_precompile(input, gas_limit, state))
+        }
+        _ => None, // Not a custom precompile
+    }
+}
+
 /// EVM execution result with detailed information
 #[derive(Debug, Clone)]
 pub struct DetailedExecutionResult {

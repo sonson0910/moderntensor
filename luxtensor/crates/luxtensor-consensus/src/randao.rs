@@ -42,7 +42,11 @@ pub struct ValidatorReveal {
 }
 
 /// RANDAO entropy mixer
-/// Accumulates validator reveals into a shared random beacon
+/// Accumulates validator reveals into a shared random beacon.
+///
+/// Security: Uses a commit-reveal scheme. Validators must first submit
+/// commitment = keccak256(reveal) before revealing. This prevents
+/// validators from choosing reveals after seeing others' values.
 pub struct RandaoMixer {
     config: RandaoConfig,
     /// Current cumulative mix
@@ -51,6 +55,8 @@ pub struct RandaoMixer {
     current_epoch_reveals: RwLock<Vec<ValidatorReveal>>,
     /// Validators who have revealed this epoch (prevent double reveal)
     revealed_validators: RwLock<HashSet<Address>>,
+    /// Commitments for current epoch: validator -> commitment hash
+    commitments: RwLock<HashMap<Address, Hash>>,
     /// Current epoch number
     current_epoch: RwLock<u64>,
     /// Historical epoch mixes for verification
@@ -65,6 +71,7 @@ impl RandaoMixer {
             current_mix: RwLock::new(initial_seed),
             current_epoch_reveals: RwLock::new(Vec::new()),
             revealed_validators: RwLock::new(HashSet::new()),
+            commitments: RwLock::new(HashMap::new()),
             current_epoch: RwLock::new(0),
             epoch_mixes: RwLock::new(HashMap::new()),
         }
@@ -85,8 +92,45 @@ impl RandaoMixer {
         *self.current_mix.read()
     }
 
-    /// Mix a new reveal into the accumulator
-    /// Returns true if reveal was accepted, false if validator already revealed
+    /// Submit a commitment for the current epoch (Phase 1 of commit-reveal).
+    /// commitment = keccak256(reveal_value)
+    /// Must be called BEFORE mix_reveal for this validator.
+    pub fn submit_commitment(
+        &self,
+        validator: Address,
+        commitment: Hash,
+    ) -> Result<(), RandaoError> {
+        // Check if validator already committed
+        {
+            let commitments = self.commitments.read();
+            if commitments.contains_key(&validator) {
+                return Err(RandaoError::DuplicateCommitment(validator));
+            }
+        }
+
+        // Reject zero commitment (trivially forgeable)
+        if commitment == [0u8; 32] {
+            return Err(RandaoError::InvalidReveal);
+        }
+
+        // Store commitment
+        {
+            let mut commitments = self.commitments.write();
+            commitments.insert(validator, commitment);
+        }
+
+        Ok(())
+    }
+
+    /// Check if a validator has committed this epoch
+    pub fn has_committed(&self, validator: &Address) -> bool {
+        self.commitments.read().contains_key(validator)
+    }
+
+    /// Mix a new reveal into the accumulator (Phase 2 of commit-reveal).
+    /// The reveal must match the previously submitted commitment:
+    ///   keccak256(reveal) == commitment
+    /// Returns Ok(()) if reveal was accepted.
     pub fn mix_reveal(
         &self,
         validator: Address,
@@ -98,6 +142,22 @@ impl RandaoMixer {
             let revealed = self.revealed_validators.read();
             if revealed.contains(&validator) {
                 return Err(RandaoError::DuplicateReveal(validator));
+            }
+        }
+
+        // SECURITY: Verify reveal matches commitment (commit-reveal scheme)
+        {
+            let commitments = self.commitments.read();
+            match commitments.get(&validator) {
+                None => {
+                    return Err(RandaoError::NoCommitment(validator));
+                }
+                Some(commitment) => {
+                    let expected = keccak256(&reveal);
+                    if expected != *commitment {
+                        return Err(RandaoError::CommitmentMismatch(validator));
+                    }
+                }
             }
         }
 
@@ -174,10 +234,11 @@ impl RandaoMixer {
             *self.current_epoch.write() = current_epoch + 1;
         }
 
-        // Clear reveals for new epoch
+        // Clear reveals and commitments for new epoch
         {
             self.current_epoch_reveals.write().clear();
             self.revealed_validators.write().clear();
+            self.commitments.write().clear();
         }
 
         // Note: We DON'T reset current_mix - it carries forward
@@ -207,6 +268,14 @@ impl RandaoMixer {
 pub enum RandaoError {
     /// Validator already revealed this epoch
     DuplicateReveal(Address),
+    /// Validator already committed this epoch
+    DuplicateCommitment(Address),
+    /// Validator has not submitted a commitment yet
+    NoCommitment(Address),
+    /// Reveal does not match the previously submitted commitment
+    CommitmentMismatch(Address),
+    /// Reveal value is invalid (e.g., zero hash)
+    InvalidReveal,
     /// Maximum reveals per epoch reached
     MaxRevealsReached,
     /// Not enough reveals to finalize epoch
@@ -218,6 +287,18 @@ impl std::fmt::Display for RandaoError {
         match self {
             RandaoError::DuplicateReveal(addr) => {
                 write!(f, "Validator {:?} already revealed this epoch", addr)
+            }
+            RandaoError::DuplicateCommitment(addr) => {
+                write!(f, "Validator {:?} already committed this epoch", addr)
+            }
+            RandaoError::NoCommitment(addr) => {
+                write!(f, "Validator {:?} has not submitted a commitment", addr)
+            }
+            RandaoError::CommitmentMismatch(addr) => {
+                write!(f, "Reveal from validator {:?} does not match commitment", addr)
+            }
+            RandaoError::InvalidReveal => {
+                write!(f, "Invalid reveal value")
             }
             RandaoError::MaxRevealsReached => {
                 write!(f, "Maximum reveals per epoch reached")
@@ -247,18 +328,24 @@ mod tests {
         hash
     }
 
+    /// Helper: commit then reveal for a validator
+    fn commit_and_reveal(mixer: &RandaoMixer, validator: Address, reveal: Hash, block: u64) {
+        let commitment = keccak256(&reveal);
+        mixer.submit_commitment(validator, commitment).unwrap();
+        mixer.mix_reveal(validator, reveal, block).unwrap();
+    }
 
     #[test]
     fn test_basic_mixing() {
         let config = RandaoConfig::default();
         let mixer = RandaoMixer::new(config, [0u8; 32]);
 
-        // Mix first reveal
-        mixer.mix_reveal(test_address(1), test_hash(1), 100).unwrap();
+        // Commit-and-reveal first
+        commit_and_reveal(&mixer, test_address(1), test_hash(1), 100);
         let mix1 = mixer.current_mix();
 
-        // Mix second reveal - should change mix
-        mixer.mix_reveal(test_address(2), test_hash(2), 101).unwrap();
+        // Commit-and-reveal second - should change mix
+        commit_and_reveal(&mixer, test_address(2), test_hash(2), 101);
         let mix2 = mixer.current_mix();
 
         assert_ne!(mix1, mix2);
@@ -266,14 +353,38 @@ mod tests {
     }
 
     #[test]
+    fn test_reveal_without_commitment_rejected() {
+        let config = RandaoConfig::default();
+        let mixer = RandaoMixer::new(config, [0u8; 32]);
+
+        // Reveal without commitment should fail
+        let result = mixer.mix_reveal(test_address(1), test_hash(1), 100);
+        assert!(matches!(result, Err(RandaoError::NoCommitment(_))));
+    }
+
+    #[test]
+    fn test_wrong_reveal_rejected() {
+        let config = RandaoConfig::default();
+        let mixer = RandaoMixer::new(config, [0u8; 32]);
+
+        // Commit with hash of reveal_1
+        let commitment = keccak256(&test_hash(1));
+        mixer.submit_commitment(test_address(1), commitment).unwrap();
+
+        // Reveal with a DIFFERENT value should fail
+        let result = mixer.mix_reveal(test_address(1), test_hash(2), 100);
+        assert!(matches!(result, Err(RandaoError::CommitmentMismatch(_))));
+    }
+
+    #[test]
     fn test_duplicate_reveal_rejected() {
         let config = RandaoConfig::default();
         let mixer = RandaoMixer::new(config, [0u8; 32]);
 
-        // First reveal succeeds
-        mixer.mix_reveal(test_address(1), test_hash(1), 100).unwrap();
+        // First commit-and-reveal succeeds
+        commit_and_reveal(&mixer, test_address(1), test_hash(1), 100);
 
-        // Second reveal from same validator fails
+        // Second reveal from same validator fails (even if they somehow re-commit)
         let result = mixer.mix_reveal(test_address(1), test_hash(2), 101);
         assert!(matches!(result, Err(RandaoError::DuplicateReveal(_))));
     }
@@ -287,12 +398,12 @@ mod tests {
         let mixer = RandaoMixer::new(config, [0u8; 32]);
 
         // Not enough reveals
-        mixer.mix_reveal(test_address(1), test_hash(1), 100).unwrap();
+        commit_and_reveal(&mixer, test_address(1), test_hash(1), 100);
         let result = mixer.finalize_epoch();
         assert!(matches!(result, Err(RandaoError::InsufficientReveals { .. })));
 
         // Add another reveal
-        mixer.mix_reveal(test_address(2), test_hash(2), 101).unwrap();
+        commit_and_reveal(&mixer, test_address(2), test_hash(2), 101);
 
         // Now finalization should succeed
         let final_mix = mixer.finalize_epoch().unwrap();
@@ -301,8 +412,9 @@ mod tests {
         // Epoch advanced
         assert_eq!(mixer.current_epoch(), 1);
 
-        // Reveals cleared
+        // Reveals and commitments cleared
         assert_eq!(mixer.reveal_count(), 0);
+        assert!(!mixer.has_committed(&test_address(1)));
 
         // Historical mix stored
         assert_eq!(mixer.get_epoch_mix(0), Some(final_mix));
@@ -315,11 +427,11 @@ mod tests {
         let mixer2 = RandaoMixer::new(config, [0u8; 32]);
 
         // Same reveals in same order = same result
-        mixer1.mix_reveal(test_address(1), test_hash(1), 100).unwrap();
-        mixer1.mix_reveal(test_address(2), test_hash(2), 101).unwrap();
+        commit_and_reveal(&mixer1, test_address(1), test_hash(1), 100);
+        commit_and_reveal(&mixer1, test_address(2), test_hash(2), 101);
 
-        mixer2.mix_reveal(test_address(1), test_hash(1), 100).unwrap();
-        mixer2.mix_reveal(test_address(2), test_hash(2), 101).unwrap();
+        commit_and_reveal(&mixer2, test_address(1), test_hash(1), 100);
+        commit_and_reveal(&mixer2, test_address(2), test_hash(2), 101);
 
         assert_eq!(mixer1.current_mix(), mixer2.current_mix());
     }

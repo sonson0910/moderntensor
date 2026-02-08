@@ -256,35 +256,22 @@ impl ZkVerifier {
     }
 
     /// Structural STARK proof validation (when risc0 feature disabled)
+    ///
+    /// SECURITY: Without the risc0 cryptographic verifier, we CANNOT validate
+    /// STARK proofs. All proofs are rejected to prevent accepting unverified work.
+    /// Enable the `risc0` feature for production use.
     #[cfg(not(feature = "risc0"))]
     fn verify_stark_structural(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
-        // Minimum valid STARK proof size (empirically determined)
-        const MIN_STARK_PROOF_SIZE: usize = 32;
+        tracing::warn!(
+            "STARK proof verification attempted without `risc0` feature enabled. \
+             Proof REJECTED. Enable the `risc0` feature for cryptographic verification."
+        );
 
-        if receipt.proof.seal.len() < MIN_STARK_PROOF_SIZE {
-            return Ok(VerificationResult::invalid(
-                receipt.image_id,
-                format!(
-                    "Invalid STARK proof size: {} bytes (minimum: {})",
-                    receipt.proof.seal.len(),
-                    MIN_STARK_PROOF_SIZE
-                ),
-            ));
-        }
-
-        // Check that journal is not empty
-        if receipt.journal.is_empty() {
-            return Ok(VerificationResult::invalid(
-                receipt.image_id,
-                "Empty journal in STARK proof".to_string(),
-            ));
-        }
-
-        let journal_hash = keccak256(&receipt.journal);
-        Ok(VerificationResult::valid(
+        Ok(VerificationResult::invalid(
             receipt.image_id,
-            journal_hash,
-            start.elapsed().as_micros() as u64,
+            "STARK verification unavailable: `risc0` feature not enabled. \
+             Cannot cryptographically verify proof — rejecting for safety."
+                .to_string(),
         ))
     }
 
@@ -344,34 +331,22 @@ impl ZkVerifier {
     }
 
     /// Structural Groth16 validation (when groth16 feature disabled)
+    ///
+    /// SECURITY: Without the groth16 cryptographic verifier, we CANNOT validate
+    /// Groth16 proofs. All proofs are rejected to prevent accepting unverified work.
+    /// Enable the `groth16` feature for production use.
     #[cfg(not(feature = "groth16"))]
     fn verify_groth16_structural(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
-        // Minimum Groth16 proof size (empirically determined)
-        const MIN_GROTH16_PROOF_SIZE: usize = 32;
+        tracing::warn!(
+            "Groth16 proof verification attempted without `groth16` feature enabled. \
+             Proof REJECTED. Enable the `groth16` feature for cryptographic verification."
+        );
 
-        if receipt.proof.seal.len() < MIN_GROTH16_PROOF_SIZE {
-            return Ok(VerificationResult::invalid(
-                receipt.image_id,
-                format!(
-                    "Invalid Groth16 proof size: {} bytes (minimum: {})",
-                    receipt.proof.seal.len(),
-                    MIN_GROTH16_PROOF_SIZE
-                ),
-            ));
-        }
-
-        if receipt.journal.is_empty() {
-            return Ok(VerificationResult::invalid(
-                receipt.image_id,
-                "Empty journal in Groth16 proof".to_string(),
-            ));
-        }
-
-        let journal_hash = keccak256(&receipt.journal);
-        Ok(VerificationResult::valid(
+        Ok(VerificationResult::invalid(
             receipt.image_id,
-            journal_hash,
-            start.elapsed().as_micros() as u64,
+            "Groth16 verification unavailable: `groth16` feature not enabled. \
+             Cannot cryptographically verify proof — rejecting for safety."
+                .to_string(),
         ))
     }
 

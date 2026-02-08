@@ -4,9 +4,10 @@ use luxtensor_core::types::Hash;
 use serde::{Deserialize, Serialize};
 use bincode::Options;
 
-/// Maximum allowed size for a single deserialized network message (8 MB)
-/// This prevents memory exhaustion attacks via oversized bincode payloads.
-pub const MAX_MESSAGE_SIZE: u64 = 8 * 1024 * 1024;
+/// Maximum allowed size for a single deserialized network message (4 MB)
+/// 🔧 FIX: Aligned with gossipsub max_transmit_size (4 MB) to avoid
+/// accepting messages at deserialization layer that gossipsub already rejects.
+pub const MAX_MESSAGE_SIZE: u64 = 4 * 1024 * 1024;
 
 /// Deserialize a NetworkMessage with a size limit to prevent DoS attacks.
 /// Returns an error if the data exceeds MAX_MESSAGE_SIZE.

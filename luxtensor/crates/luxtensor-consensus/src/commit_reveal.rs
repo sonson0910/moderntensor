@@ -41,7 +41,7 @@ impl Default for CommitRevealConfig {
             min_commits: 1,          // At least 1 validator (for testnets)
             slash_on_no_reveal: true,
             // Per tokenomics: validators who don't reveal get slashed
-            no_reveal_slash_percent: 80,  // 80% of stake slashed
+            no_reveal_slash_percent: 5,  // 5% of stake slashed (was 80%, reduced to prevent catastrophic loss from transient issues)
             // Per tokenomics: 80% of slashed tokens are burned
             slash_burn_percent: 80,
         }

@@ -66,8 +66,15 @@ impl MerkleTree {
     }
 
     /// Hash two nodes together
+    /// Hash two child hashes into a parent hash with domain separation.
+    ///
+    /// SECURITY: Prepends 0x01 byte to distinguish internal node hashes from
+    /// leaf hashes (which should be prefixed with 0x00). This prevents
+    /// second-preimage attacks where an attacker could create a 64-byte leaf
+    /// that collides with an internal node hash.
     fn hash_pair(left: &Hash, right: &Hash) -> Hash {
-        let mut combined = Vec::with_capacity(64);
+        let mut combined = Vec::with_capacity(65);
+        combined.push(0x01); // Internal node domain separator
         combined.extend_from_slice(left);
         combined.extend_from_slice(right);
         keccak256(&combined)

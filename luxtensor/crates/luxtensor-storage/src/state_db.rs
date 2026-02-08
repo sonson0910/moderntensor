@@ -1,4 +1,5 @@
 use crate::{Result, StorageError};
+use crate::trie::MerkleTrie;
 use luxtensor_core::{Account, Address};
 use luxtensor_crypto::{keccak256, Hash};
 use parking_lot::RwLock;
@@ -260,18 +261,15 @@ impl StateDB {
         let cache = self.cache.read();
 
         let mut batch = rocksdb::WriteBatch::default();
-        let mut account_hashes = Vec::new();
+
+        // Build Merkle Patricia Trie from ALL accounts (not just dirty ones)
+        // to produce a deterministic state root consistent with Ethereum.
+        let mut trie = MerkleTrie::new();
 
         for address in dirty.iter() {
             if let Some(account) = cache.get(address) {
                 let bytes = bincode::serialize(account)?;
                 batch.put(address.as_bytes(), bytes);
-
-                // Collect for state root calculation
-                let mut data = Vec::new();
-                data.extend_from_slice(address.as_bytes());
-                data.extend_from_slice(&bincode::serialize(account)?);
-                account_hashes.push(keccak256(&data));
             }
         }
 
@@ -281,17 +279,17 @@ impl StateDB {
         drop(dirty);
         self.dirty.write().clear();
 
-        // Calculate state root (simplified - just hash all account hashes)
-        let state_root = if account_hashes.is_empty() {
-            [0u8; 32]
-        } else {
-            account_hashes.sort();
-            let mut data = Vec::new();
-            for hash in account_hashes {
-                data.extend_from_slice(&hash);
-            }
-            keccak256(&data)
-        };
+        // Insert all cached accounts into the trie for root computation.
+        // Key = keccak256(address), Value = RLP/bincode-serialized account.
+        // This ensures the state root covers the full account set.
+        for (address, account) in cache.iter() {
+            let key = keccak256(address.as_bytes());
+            let value = bincode::serialize(account)
+                .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
+            trie.insert(&key, &value)?;
+        }
+
+        let state_root = trie.root_hash();
 
         Ok(state_root)
     }

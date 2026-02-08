@@ -147,6 +147,12 @@ impl UnifiedStateDB {
         Ok(())
     }
 
+    /// Set account nonce directly (used by state sync from block production)
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) {
+        self.nonces.insert(address, nonce);
+        self.dirty = true;
+    }
+
     /// Get full account info
     pub fn get_account(&self, address: &Address) -> Option<Account> {
         let balance = self.get_balance(address);
@@ -351,6 +357,33 @@ pub struct UnifiedStateStats {
     pub storage_slot_count: usize,
     pub vector_count: usize,
     pub block_number: u64,
+}
+
+impl UnifiedStateDB {
+    /// Synchronize this UnifiedStateDB from a StateDB snapshot.
+    ///
+    /// Called after each block is produced so that the RPC layer reflects
+    /// the latest on-chain state (balances, nonces, contract code).
+    /// `new_block_number` should be the height of the just-produced block.
+    pub fn sync_from_state_db(&mut self, state: &crate::StateDB, new_block_number: u64) {
+        for (address, account) in state.accounts() {
+            self.balances.insert(*address, account.balance);
+            self.nonces.insert(*address, account.nonce);
+
+            // Sync contract code if present
+            if let Some(ref code) = account.code {
+                if !code.is_empty() && !self.contracts.contains_key(address) {
+                    self.contracts.insert(*address, ContractInfo {
+                        code: code.clone(),
+                        deployer: Address::zero(), // deployer unknown from StateDB
+                        deploy_block: new_block_number,
+                    });
+                }
+            }
+        }
+        self.block_number = new_block_number;
+        self.dirty = true;
+    }
 }
 
 /// Thread-safe wrapper for UnifiedStateDB

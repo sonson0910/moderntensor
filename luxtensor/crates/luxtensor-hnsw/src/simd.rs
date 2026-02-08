@@ -21,7 +21,7 @@
 #![cfg(feature = "simd")]
 #![allow(unused_imports)]
 
-use std::simd::{i64x4, Simd, SimdInt};
+use std::simd::{i64x4, Simd, SimdInt, SimdOrd};
 
 use crate::fixed_point::{FixedPointVector, I64F32};
 
@@ -56,9 +56,15 @@ pub fn squared_distance_simd(a: &[i64], b: &[i64]) -> i64 {
         let a_vec = i64x4::from_slice(&a[offset..offset + SIMD_LANES]);
         let b_vec = i64x4::from_slice(&b[offset..offset + SIMD_LANES]);
 
-        // Compute difference and square
+        // Compute difference
         let diff = a_vec - b_vec;
-        let squared = diff * diff;
+        // SECURITY: Clamp diff to prevent overflow when squaring.
+        // Max safe value for i64 squaring without overflow: ~3.03e9 (sqrt(i64::MAX))
+        // For fixed-point I64F32, values are typically small, but we clamp for safety.
+        let max_safe = i64x4::splat(3_037_000_499); // floor(sqrt(i64::MAX))
+        let neg_max = i64x4::splat(-3_037_000_499);
+        let clamped = diff.simd_max(neg_max).simd_min(max_safe);
+        let squared = clamped * clamped;
 
         // Accumulate (saturating to prevent overflow)
         sum_vec = sum_vec.saturating_add(squared);

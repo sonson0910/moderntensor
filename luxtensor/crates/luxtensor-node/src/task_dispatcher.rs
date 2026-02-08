@@ -264,7 +264,7 @@ impl TaskDispatcher {
         // Create assignment
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock before UNIX epoch")
             .as_secs();
 
         let assignment = TaskAssignment {
@@ -353,7 +353,7 @@ impl TaskDispatcher {
     pub fn check_timeouts(&self) -> Vec<[u8; 32]> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock before UNIX epoch")
             .as_secs();
 
         let timed_out: Vec<_> = {
@@ -451,7 +451,7 @@ impl TaskDispatcher {
     ) -> TaskDispatchMessage {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock before UNIX epoch")
             .as_secs();
 
         TaskDispatchMessage::NewTask {

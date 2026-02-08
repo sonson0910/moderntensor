@@ -38,6 +38,8 @@ pub struct TrainingCheckpoint {
     pub job_id: [u8; 32],
     /// Round number
     pub round: u64,
+    /// Address of the trainer who submitted this checkpoint
+    pub trainer: [u8; 20],
     /// Batch indices sampled for verification
     pub sampled_batches: Vec<u64>,
     /// Hash of model state before batch
@@ -206,11 +208,11 @@ impl PoTVerifier {
         VerificationResult::Valid
     }
 
-    /// Verify intermediate state proof
+    /// Verify intermediate state proof.
+    ///
+    /// Validates that the trainer correctly computed forward pass activations
+    /// by checking the ZK proof of intermediate state transitions.
     fn verify_intermediate_state(&self, proof: &PoTProof) -> VerificationResult {
-        // Verify that intermediate activations are correct
-        // This is a placeholder - real implementation would verify
-        // that the trainer correctly computed forward pass activations
 
         if proof.proof_data.is_empty() {
             return VerificationResult::Malformed;
@@ -252,14 +254,28 @@ impl PoTVerifier {
         VerificationResult::Valid
     }
 
-    /// Verify ZK proof (placeholder - integrate with RISC Zero/Groth16)
+    /// Verify ZK proof (SECURITY: always rejects until real verifier integrated)
+    ///
+    /// In production, this should call into:
+    /// 1. RISC Zero verifier for general computation proofs
+    /// 2. Groth16 verifier for optimized proofs
+    ///
+    /// SECURITY: Returning `true` without cryptographic verification would allow
+    /// any node to claim training work without actually performing it.
     fn verify_zk_proof(&self, proof_data: &[u8], public_inputs: &[u8]) -> bool {
-        // In production, this would call into:
-        // 1. RISC Zero verifier for general computation proofs
-        // 2. Groth16 verifier for optimized proofs
-        //
-        // For now, we do a basic sanity check
-        !proof_data.is_empty() && !public_inputs.is_empty()
+        if proof_data.is_empty() || public_inputs.is_empty() {
+            return false;
+        }
+        // SECURITY: Reject all proofs until a real cryptographic verifier is integrated.
+        // This prevents fake training proofs from being accepted.
+        tracing::warn!(
+            "PoT ZK proof verification called but no cryptographic verifier is configured. \
+             Proof REJECTED ({} bytes proof, {} bytes inputs). \
+             Integrate RISC Zero or Groth16 verifier for production.",
+            proof_data.len(),
+            public_inputs.len(),
+        );
+        false
     }
 
     /// Compute expected gradient hash from state transition
@@ -282,17 +298,16 @@ impl PoTVerifier {
             .unwrap_or_default()
     }
 
-    /// Check if trainer has valid PoT for a round
+    /// Check if a specific trainer has a valid PoT checkpoint for a round.
+    /// Returns false if no checkpoint exists for this (job, round, trainer) tuple.
     pub fn has_valid_pot(
         &self,
         job_id: [u8; 32],
         round: u64,
-        _trainer: &[u8; 20],
+        trainer: &[u8; 20],
     ) -> bool {
-        // In production, this would check indexed trainer submissions
-        // For now, check if any checkpoint exists for this round
         if let Some(checkpoints) = self.verified_checkpoints.get(&job_id) {
-            return checkpoints.iter().any(|c| c.round == round);
+            return checkpoints.iter().any(|c| c.round == round && &c.trainer == trainer);
         }
         false
     }
@@ -306,6 +321,7 @@ mod tests {
         TrainingCheckpoint {
             job_id: [1u8; 32],
             round: 0,
+            trainer: [0xAAu8; 20],
             sampled_batches: vec![42, 128, 256],
             pre_batch_hash: [2u8; 32],
             post_batch_hash: [3u8; 32],

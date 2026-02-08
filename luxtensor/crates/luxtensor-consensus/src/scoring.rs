@@ -476,6 +476,11 @@ impl Default for ScoringManager {
 }
 
 // Helper function
+// NOTE: Scoring uses wall-clock time for local tracking only (not consensus-critical).
+// The `last_active` and `last_decay` fields are per-node observations used for
+// local score decay heuristics, not replicated consensus state. If scoring ever
+// becomes consensus-critical (e.g., used in reward calculation on-chain), this
+// must be replaced with deterministic block timestamps.
 fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

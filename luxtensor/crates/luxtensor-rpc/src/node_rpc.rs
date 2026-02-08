@@ -1,6 +1,7 @@
 // Node Tier RPC Module
 // JSON-RPC endpoints for progressive staking node management
 
+use crate::helpers::verify_caller_signature;
 use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
 use std::sync::Arc;
 use parking_lot::RwLock;
@@ -117,10 +118,45 @@ pub fn register_node_methods(
     });
 
     let reg = registry.clone();
+    // SECURITY: node_unregister now requires signature verification
+    // to prevent attackers from force-unregistering any validator node.
     io.add_sync_method("node_unregister", move |params: Params| {
-        let p: AddressParams = params.parse()?;
+        let p: SignedAddressParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
+        let timestamp: u64 = p.timestamp.parse()
+            .map_err(|_| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Invalid timestamp".to_string(),
+                data: None,
+            })?;
+
+        // Verify timestamp is recent (within 5 minutes)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature expired or future timestamp".to_string(),
+                data: None,
+            });
+        }
+
+        // Verify signature
+        let message = format!("node_unregister:{}", hex::encode(address));
+        let addr = luxtensor_core::Address::from(address);
+        let sig_valid = verify_caller_signature(&addr, &message, &p.signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, &p.signature, 1));
+
+        if sig_valid.is_err() {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature verification failed - caller does not own address".to_string(),
+                data: None,
+            });
+        }
 
         match reg.write().unregister(address) {
             Some(info) => Ok(json!({
@@ -239,6 +275,14 @@ struct UpdateStakeParams {
 #[derive(Deserialize)]
 struct AddressParams {
     address: String,
+}
+
+/// Params for signed operations requiring authentication
+#[derive(Deserialize)]
+struct SignedAddressParams {
+    address: String,
+    timestamp: String,
+    signature: String,
 }
 
 // Helper functions

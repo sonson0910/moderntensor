@@ -218,10 +218,10 @@ impl ValidatorSet {
         Ok(active[0].address)
     }
 
-    /// Add rewards to a validator
+    /// Add rewards to a validator (saturating to prevent overflow)
     pub fn add_reward(&mut self, address: &Address, amount: u128) -> Result<(), &'static str> {
         if let Some(validator) = self.validators.get_mut(address) {
-            validator.rewards += amount;
+            validator.rewards = validator.rewards.saturating_add(amount);
             Ok(())
         } else {
             Err("Validator not found")

@@ -163,19 +163,20 @@ impl SlashingManager {
     }
 
     /// Check if validator should be slashed for being offline
-    pub fn check_offline(&self, validator: &Address) -> Option<SlashingEvidence> {
+    ///
+    /// `current_height` is used as the deterministic timestamp for consensus.
+    /// SECURITY: Previously used SystemTime::now() which is non-deterministic
+    /// and could cause consensus disagreements between nodes.
+    pub fn check_offline(&self, validator: &Address, current_height: u64) -> Option<SlashingEvidence> {
         let missed = self.missed_blocks.read();
         if let Some(&count) = missed.get(validator) {
             if count >= self.config.offline_threshold {
                 return Some(SlashingEvidence {
                     validator: *validator,
                     reason: SlashReason::Offline,
-                    height: 0, // Should be set by caller
+                    height: current_height,
                     evidence_hash: None,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
+                    timestamp: current_height, // Deterministic: use block height as timestamp
                 });
             }
         }
@@ -228,10 +229,7 @@ impl SlashingManager {
                     reason: SlashReason::DoubleSigning,
                     height,
                     evidence_hash: Some(blocks[0]), // First conflicting block
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
+                    timestamp: height, // Deterministic: use block height as timestamp
                 });
             }
         }
@@ -255,15 +253,24 @@ impl SlashingManager {
                 ConsensusError::ValidatorNotFound(format!("{:?}", evidence.validator))
             })?;
 
-        // Calculate slash amount
-        let slash_amount = (validator.stake as u128 * percent as u128) / 100;
-        let slash_amount = slash_amount.max(self.config.min_slash_amount);
-        let slash_amount = slash_amount.min(validator.stake); // Can't slash more than stake
+        // 🔧 FIX: Handle zero-stake validators — still jail them even if
+        // monetary slash is zero (prevents unpunished misbehaviour)
+        let slash_amount = if validator.stake == 0 {
+            warn!("Validator {:?} has zero stake — monetary slash skipped but jail applies",
+                  evidence.validator);
+            0
+        } else {
+            let amount = (validator.stake as u128 * percent as u128) / 100;
+            let amount = amount.max(self.config.min_slash_amount);
+            amount.min(validator.stake) // Can't slash more than stake
+        };
 
-        // Apply slash
-        validator_set
-            .slash_stake(&evidence.validator, slash_amount)
-            .map_err(|e| ConsensusError::SlashingFailed(e.to_string()))?;
+        // Apply slash (only if amount > 0)
+        if slash_amount > 0 {
+            validator_set
+                .slash_stake(&evidence.validator, slash_amount)
+                .map_err(|e| ConsensusError::SlashingFailed(e.to_string()))?;
+        }
 
         // Jail validator for serious offenses
         let should_jail = matches!(
@@ -415,7 +422,7 @@ mod tests {
         }
 
         // Should not trigger slash yet (threshold is 100)
-        assert!(manager.check_offline(&validator).is_none());
+        assert!(manager.check_offline(&validator, 50).is_none());
 
         // Record more
         for _ in 0..50 {
@@ -423,7 +430,7 @@ mod tests {
         }
 
         // Now should trigger
-        assert!(manager.check_offline(&validator).is_some());
+        assert!(manager.check_offline(&validator, 100).is_some());
     }
 
     #[test]

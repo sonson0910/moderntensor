@@ -15,6 +15,7 @@ pub fn register_staking_handlers(
     io: &mut jsonrpc_core::IoHandler,
     validators: Arc<RwLock<ValidatorSet>>,
     db: Arc<BlockchainDB>,
+    chain_id: u64,
 ) {
     // Load existing validators from DB into ValidatorSet on startup
     if let Ok(stored_validators) = db.get_all_validators() {
@@ -385,10 +386,19 @@ pub fn register_staking_handlers(
     // Clone db for lockStakeSeconds handler
     let db_for_lock = db.clone();
 
-    // staking_lockStakeSeconds - Lock stake for SECONDS (for testing only)
+    // staking_lockStakeSeconds - Lock stake for specific duration in SECONDS
+    // SECURITY: Only available on dev/test chains to prevent abuse on mainnet.
     // Params: [address, amount, lock_seconds]
     // Returns: { success, unlock_timestamp }
+    let is_dev_chain = chain_id == 1 || chain_id == 31337 || chain_id == 1337;
     io.add_sync_method("staking_lockStakeSeconds", move |params: Params| {
+        if !is_dev_chain {
+            return Err(jsonrpc_core::Error {
+                code: jsonrpc_core::ErrorCode::MethodNotFound,
+                message: "staking_lockStakeSeconds is only available on dev/test chains".to_string(),
+                data: None,
+            });
+        }
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
             return Err(jsonrpc_core::Error::invalid_params(

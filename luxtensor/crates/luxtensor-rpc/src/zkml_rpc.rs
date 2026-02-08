@@ -78,10 +78,17 @@ pub struct TrustedModelInfo {
 }
 
 impl ZkmlRpcContext {
-    pub fn new() -> Self {
-        // Create prover in dev mode for now
+    /// Create a ZkmlRpcContext in **development mode** (accepts dev proofs).
+    ///
+    /// # Warning
+    /// Dev mode accepts proofs without real cryptographic verification.
+    /// Use [`production()`](Self::production) for mainnet/testnet deployments.
+    pub fn dev() -> Self {
+        tracing::warn!(
+            "ZkmlRpcContext created in DEV MODE — proofs are NOT cryptographically verified. \
+             Use ZkmlRpcContext::production() for real deployments."
+        );
         let prover = ZkProver::dev_prover();
-        // Create verifier in dev mode (allows dev proofs for testing)
         let verifier = ZkVerifier::dev_verifier();
 
         Self {
@@ -90,6 +97,14 @@ impl ZkmlRpcContext {
             proofs: Arc::new(RwLock::new(HashMap::new())),
             trusted_images: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Create a ZkmlRpcContext in **development mode** (alias for `dev()`).
+    ///
+    /// **DEPRECATED**: Use [`dev()`](Self::dev) explicitly to signal intent,
+    /// or [`production()`](Self::production) for real deployments.
+    pub fn new() -> Self {
+        Self::dev()
     }
 
     /// Create with production config (real RISC Zero proofs)
@@ -107,8 +122,9 @@ impl ZkmlRpcContext {
 }
 
 impl Default for ZkmlRpcContext {
+    /// Default uses **production mode** to prevent accidental dev-mode deployment.
     fn default() -> Self {
-        Self::new()
+        Self::production()
     }
 }
 

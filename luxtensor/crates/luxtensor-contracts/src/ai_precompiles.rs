@@ -171,7 +171,8 @@ impl AIPrecompileState {
 
     /// Generate unique request ID
     fn generate_request_id(&self, caller: &[u8; 20], model_hash: &[u8; 32]) -> [u8; 32] {
-        let mut counter = self.request_counter.write().unwrap();
+        let mut counter = self.request_counter.write()
+            .expect("AIPrecompileState::request_counter lock poisoned");
         *counter += 1;
 
         // Concatenate inputs for hashing
@@ -185,13 +186,15 @@ impl AIPrecompileState {
 
     /// Store new request
     pub fn store_request(&self, entry: AIRequestEntry) {
-        let mut requests = self.requests.write().unwrap();
+        let mut requests = self.requests.write()
+            .expect("AIPrecompileState::requests write lock poisoned");
         requests.insert(entry.request_id, entry);
     }
 
     /// Get request by ID
     pub fn get_request(&self, request_id: &[u8; 32]) -> Option<AIRequestEntry> {
-        let requests = self.requests.read().unwrap();
+        let requests = self.requests.read()
+            .expect("AIPrecompileState::requests read lock poisoned");
         requests.get(request_id).cloned()
     }
 
@@ -202,7 +205,8 @@ impl AIPrecompileState {
         fulfiller: [u8; 20],
         result: Vec<u8>,
     ) -> bool {
-        let mut requests = self.requests.write().unwrap();
+        let mut requests = self.requests.write()
+            .expect("AIPrecompileState::requests write lock poisoned");
         if let Some(entry) = requests.get_mut(request_id) {
             if entry.status == RequestStatus::Pending {
                 entry.status = RequestStatus::Fulfilled;
@@ -216,7 +220,8 @@ impl AIPrecompileState {
 
     /// Generate unique training job ID
     fn generate_job_id(&self, creator: &[u8; 20], model_id: &[u8; 32]) -> [u8; 32] {
-        let mut counter = self.training_job_counter.write().unwrap();
+        let mut counter = self.training_job_counter.write()
+            .expect("AIPrecompileState::training_job_counter lock poisoned");
         *counter += 1;
 
         let mut data = Vec::with_capacity(20 + 32 + 8);
@@ -229,19 +234,22 @@ impl AIPrecompileState {
 
     /// Store new training job
     pub fn store_training_job(&self, job: TrainingJob) {
-        let mut jobs = self.training_jobs.write().unwrap();
+        let mut jobs = self.training_jobs.write()
+            .expect("AIPrecompileState::training_jobs write lock poisoned");
         jobs.insert(job.job_id, job);
     }
 
     /// Get training job by ID
     pub fn get_training_job(&self, job_id: &[u8; 32]) -> Option<TrainingJob> {
-        let jobs = self.training_jobs.read().unwrap();
+        let jobs = self.training_jobs.read()
+            .expect("AIPrecompileState::training_jobs read lock poisoned");
         jobs.get(job_id).cloned()
     }
 
     /// List active training jobs
     pub fn list_active_training_jobs(&self) -> Vec<TrainingJob> {
-        let jobs = self.training_jobs.read().unwrap();
+        let jobs = self.training_jobs.read()
+            .expect("AIPrecompileState::training_jobs read lock poisoned");
         jobs.values()
             .filter(|j| j.status == TrainingStatus::Open || j.status == TrainingStatus::Training)
             .cloned()
@@ -1455,26 +1463,38 @@ pub fn global_search_precompile(
 // ========== HELPER FUNCTIONS ==========
 
 
-/// Placeholder for RISC Zero proof verification
+/// RISC Zero proof verification — SECURITY: rejects until real verifier integrated
+///
+/// In production, this would:
+/// 1. Parse the RISC Zero proof structure
+/// 2. Call into the RISC Zero verifier
+/// 3. Return verification result
+///
+/// SECURITY: Returning `true` without cryptographic verification would allow
+/// any caller to claim verified AI computation without actually running it.
 fn verify_risc_zero_proof(_input: &Bytes) -> bool {
-    // In production, this would:
-    // 1. Parse the RISC Zero proof structure
-    // 2. Call into the RISC Zero verifier
-    // 3. Return verification result
-
-    // For now, return true for development
-    true
+    tracing::warn!(
+        "RISC Zero proof verification: no verifier backend configured — proof REJECTED. \
+         Enable the `risc0` feature and provide a valid verifier to accept proofs."
+    );
+    false
 }
 
-/// Placeholder for Groth16 proof verification
+/// Groth16 proof verification — SECURITY: rejects until real verifier integrated
+///
+/// In production, this would:
+/// 1. Parse the Groth16 proof (A, B, C points)
+/// 2. Call bn256 pairing precompile (0x08)
+/// 3. Return verification result
+///
+/// SECURITY: Returning `true` without cryptographic verification would allow
+/// fake proofs to pass on-chain verification.
 fn verify_groth16_proof(_input: &Bytes) -> bool {
-    // In production, this would:
-    // 1. Parse the Groth16 proof (A, B, C points)
-    // 2. Call bn256 pairing precompile (0x08)
-    // 3. Return verification result
-
-    // For now, return true for development
-    true
+    tracing::warn!(
+        "Groth16 proof verification: no verifier backend configured — proof REJECTED. \
+         Enable the `groth16` feature and provide a valid verifier to accept proofs."
+    );
+    false
 }
 
 /// Check if address is an AI precompile

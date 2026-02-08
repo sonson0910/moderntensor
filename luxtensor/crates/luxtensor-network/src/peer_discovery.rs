@@ -363,27 +363,49 @@ impl PeerDiscovery {
         None
     }
 
-    /// Simple GeoIP lookup (would use maxmind in production)
+    /// Approximate GeoIP region detection.
+    ///
+    /// # Production Note
+    /// This uses a coarse first-octet heuristic that maps IP ranges to broad
+    /// regions. It is **not accurate** for individual IPs (e.g. 1.1.1.1 is
+    /// Cloudflare/Australia but maps to "us-east" here). The purpose is to
+    /// provide *diversity spread* for eclipse protection — not precise geolocation.
+    ///
+    /// For production deployments that require accurate GeoIP:
+    /// - Integrate MaxMind GeoLite2/GeoIP2 database via the `maxminddb` crate
+    /// - Configure the database path via `GEOIP_DB_PATH` environment variable
+    /// - Fall back to this heuristic when no database is available
     fn geoip_lookup(&self, ip: &IpAddr) -> Option<String> {
-        // In production, use MaxMind GeoIP database
-        // Here we do a simple heuristic based on IP ranges
-
         match ip {
             IpAddr::V4(ipv4) => {
                 let octets = ipv4.octets();
 
-                // Very simplified region detection
-                // In production, use a real GeoIP database
+                // Coarse region buckets based on first octet.
+                // IANA allocations don't cleanly map to geography, but this
+                // provides enough diversity signal to resist naive eclipse attacks
+                // where an attacker controls a single /8 prefix.
                 match octets[0] {
-                    1..=49 => Some("us-east".to_string()),
-                    50..=99 => Some("us-west".to_string()),
-                    100..=149 => Some("eu-west".to_string()),
-                    150..=199 => Some("ap-south".to_string()),
-                    200..=255 => Some("sa-east".to_string()),
+                    1..=49 => Some("region-a".to_string()),
+                    50..=99 => Some("region-b".to_string()),
+                    100..=149 => Some("region-c".to_string()),
+                    150..=199 => Some("region-d".to_string()),
+                    200..=255 => Some("region-e".to_string()),
                     _ => None,
                 }
             }
-            IpAddr::V6(_) => None, // Simplified
+            IpAddr::V6(ipv6) => {
+                // Use first 16 bits of IPv6 for rough region bucketing
+                let segments = ipv6.segments();
+                match segments[0] >> 8 {
+                    0x20 => Some("region-a".to_string()),   // 2000::/3 unicast
+                    0x24 => Some("region-b".to_string()),
+                    0x26 => Some("region-c".to_string()),
+                    0x2a => Some("region-d".to_string()),
+                    0x2c => Some("region-e".to_string()),
+                    0xfc | 0xfd => None, // ULA — not routable
+                    _ => Some("region-a".to_string()),
+                }
+            }
         }
     }
 

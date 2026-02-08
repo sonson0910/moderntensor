@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 pub const INITIAL_BLOCK_REWARD: u128 = 2_000_000_000_000_000_000;
 
 /// Halving interval in blocks
-/// With ~100 second block times: 1,051,200 blocks ≈ 3.33 years
+/// With 12-second block times: 8,760,000 blocks ≈ 3.33 years
+/// (= 1,051,200 × 100/12, adjusted from original 100s design)
 /// This gives us roughly 10 halvings over 33 years
-pub const HALVING_INTERVAL: u64 = 1_051_200;
+pub const HALVING_INTERVAL: u64 = 8_760_000;
 
 /// Minimum reward threshold (0.001 MDT) - below this, reward is 0
 pub const MINIMUM_REWARD: u128 = 1_000_000_000_000_000;
@@ -80,9 +81,11 @@ impl HalvingSchedule {
         // Cap at max halvings
         let effective_halvings = halvings.min(self.max_halvings);
 
-        // After max halvings, reward is 0
+        // 🔧 FIX: After max halvings, return min_emission (tail emission) instead of 0
+        // Previously returned 0 which diverged from EmissionController.base_emission()
+        // Tail emission ensures perpetual validator incentives for long-term network security
         if halvings > self.max_halvings {
-            return 0;
+            return self.minimum_reward;
         }
 
         // Calculate reward: initial_reward >> halvings (divide by 2^halvings)
@@ -163,7 +166,9 @@ impl HalvingSchedule {
         HalvingInfo {
             initial_reward_mdt: self.initial_reward as f64 / 1e18,
             halving_interval_blocks: self.halving_interval,
-            halving_interval_years: (self.halving_interval as f64 * 100.0) / (365.25 * 24.0 * 3600.0),
+            // 🔧 FIX: Use 12s block time (not 100s from original design)
+            // At 12s blocks: 8,760,000 blocks × 12s = 105,120,000s ≈ 3.33 years
+            halving_interval_years: (self.halving_interval as f64 * 12.0) / (365.25 * 24.0 * 3600.0),
             max_halvings: self.max_halvings,
             estimated_total_emission_mdt: self.estimate_total_emission() as f64 / 1e18,
         }

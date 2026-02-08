@@ -97,7 +97,7 @@ impl EventDecoder {
                 self.handle_unstake(block_number, timestamp, &from_address, input).await?;
             }
             "erc20_transfer" => {
-                self.handle_erc20_transfer(block_number, timestamp, &hash, input).await?;
+                self.handle_erc20_transfer(block_number, timestamp, &hash, &from_address, input).await?;
             }
             _ => {}
         }
@@ -174,6 +174,7 @@ impl EventDecoder {
         block_number: i64,
         timestamp: i64,
         tx_hash: &str,
+        from: &str,
         input: &str,
     ) -> Result<()> {
         // Parse ERC20 transfer input data
@@ -187,12 +188,11 @@ impl EventDecoder {
         let amount_hex = &input[74..138];
         let amount = self.parse_hex_amount(&format!("0x{}", amount_hex));
 
-        // Note: from_address would need to come from logs, using tx sender for now
         let transfer = TokenTransfer {
             id: 0,
             tx_hash: tx_hash.to_string(),
             block_number,
-            from_address: String::new(), // Would need event logs
+            from_address: from.to_string(), // Transaction sender
             to_address,
             amount,
             timestamp,
@@ -204,20 +204,33 @@ impl EventDecoder {
     }
 
     /// Handle stake event
+    /// Calldata layout: stake(address hotkey, uint256 amount)
+    /// selector (4 bytes) + hotkey (32 bytes, left-padded address) + amount (32 bytes)
     async fn handle_stake(
         &self,
         block_number: i64,
         timestamp: i64,
         from: &str,
-        _input: &str,
+        input: &str,
     ) -> Result<()> {
-        // In production, parse hotkey and amount from input/logs
+        // Parse hotkey and amount from calldata
+        // Minimum: 8 (selector) + 64 (address) + 64 (uint256) = 136 hex chars
+        let (hotkey, amount) = if input.len() >= 136 {
+            let hotkey = format!("0x{}", &input[32..72]); // bytes 12..32 of first param (address)
+            let amount_hex = &input[72..136];
+            let amount = self.parse_hex_amount(&format!("0x{}", amount_hex));
+            (hotkey, amount)
+        } else {
+            warn!("Stake calldata too short ({} chars), recording with partial data", input.len());
+            (from.to_string(), "0".to_string())
+        };
+
         let stake_event = StakeEvent {
             id: 0,
             block_number,
             coldkey: from.to_string(),
-            hotkey: String::new(), // Would need to parse from input
-            amount: "0".to_string(),
+            hotkey,
+            amount,
             action: "stake".to_string(),
             timestamp,
         };
@@ -228,19 +241,30 @@ impl EventDecoder {
     }
 
     /// Handle unstake event
+    /// Same calldata layout as stake: unstake(address hotkey, uint256 amount)
     async fn handle_unstake(
         &self,
         block_number: i64,
         timestamp: i64,
         from: &str,
-        _input: &str,
+        input: &str,
     ) -> Result<()> {
+        let (hotkey, amount) = if input.len() >= 136 {
+            let hotkey = format!("0x{}", &input[32..72]);
+            let amount_hex = &input[72..136];
+            let amount = self.parse_hex_amount(&format!("0x{}", amount_hex));
+            (hotkey, amount)
+        } else {
+            warn!("Unstake calldata too short ({} chars), recording with partial data", input.len());
+            (from.to_string(), "0".to_string())
+        };
+
         let stake_event = StakeEvent {
             id: 0,
             block_number,
             coldkey: from.to_string(),
-            hotkey: String::new(),
-            amount: "0".to_string(),
+            hotkey,
+            amount,
             action: "unstake".to_string(),
             timestamp,
         };

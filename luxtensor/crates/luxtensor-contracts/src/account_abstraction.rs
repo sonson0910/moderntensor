@@ -246,7 +246,8 @@ impl EntryPoint {
 
         // Check paymaster stake if used
         if user_op.has_paymaster() {
-            let paymaster = user_op.paymaster().unwrap();
+            let paymaster = user_op.paymaster()
+                .expect("paymaster checked via has_paymaster()");
             let paymasters = self.paymasters.read();
             match paymasters.get(&paymaster) {
                 Some(info) if info.stake >= MIN_PAYMASTER_STAKE => {}
@@ -313,16 +314,45 @@ impl EntryPoint {
         })
     }
 
+    /// Queue a validated user operation for inclusion in the next block.
+    /// Returns the operation hash.
+    pub fn queue_user_op(&self, user_op: UserOperation) -> Hash {
+        let ep_addr = &self.supported_entry_points[0];
+        let op_hash = user_op.hash(ep_addr, self.chain_id);
+        self.pending_ops.write().insert(op_hash, user_op);
+        op_hash
+    }
+
+    /// Drain all pending user operations for block inclusion.
+    /// Returns the ops removed from the pending pool.
+    pub fn drain_pending_ops(&self) -> Vec<UserOperation> {
+        let mut pending = self.pending_ops.write();
+        let ops: Vec<UserOperation> = pending.values().cloned().collect();
+        pending.clear();
+        ops
+    }
+
+    /// Get number of pending user operations
+    pub fn pending_count(&self) -> usize {
+        self.pending_ops.read().len()
+    }
+
     /// Handle a batch of user operations
+    ///
+    /// `block_number` and `block_hash` are provided by the block producer and
+    /// attached to every receipt so that downstream consumers can locate the
+    /// inclusion proof.
     pub fn handle_ops(
         &self,
         ops: Vec<UserOperation>,
         beneficiary: Address,
+        block_number: u64,
+        block_hash: Hash,
     ) -> Vec<Result<UserOperationReceipt, AccountAbstractionError>> {
         let mut results = Vec::new();
 
         for op in ops {
-            let result = self.handle_single_op(op, &beneficiary);
+            let result = self.handle_single_op(op, &beneficiary, block_number, block_hash);
             results.push(result);
         }
 
@@ -330,10 +360,19 @@ impl EntryPoint {
     }
 
     /// Handle a single user operation
+    ///
+    /// Executes the user operation: validates, estimates gas, updates nonce,
+    /// and records the receipt. Gas cost is computed from the conservative
+    /// estimate (verification + pre-verification + calldata cost).
+    ///
+    /// Full EVM execution of `call_data` on `sender` will be wired once
+    /// the block producer passes the shared EvmExecutor into handle_ops.
     fn handle_single_op(
         &self,
         user_op: UserOperation,
-        _beneficiary: &Address,
+        beneficiary: &Address,
+        block_number: u64,
+        block_hash: Hash,
     ) -> Result<UserOperationReceipt, AccountAbstractionError> {
         let entry_point = &self.supported_entry_points[0];
         let op_hash = user_op.hash(entry_point, self.chain_id);
@@ -341,9 +380,17 @@ impl EntryPoint {
         // Validate
         self.validate_user_op(&user_op)?;
 
-        // Execute (simplified - in production this would call the sender's contract)
-        let gas_used = user_op.call_gas_limit / 2; // Simulated gas usage
-        let gas_cost = (gas_used as u128) * (user_op.max_fee_per_gas as u128);
+        // Conservative gas estimate:
+        // verification_gas + pre_verification_gas + base call cost + calldata cost
+        let verification_gas = user_op.verification_gas_limit.min(MAX_VERIFICATION_GAS);
+        let calldata_gas = (user_op.call_data.len() as u64) * 16; // 16 gas per non-zero byte (worst case)
+        let base_execution_gas = 21_000u64; // Base transaction cost
+        let gas_used = verification_gas
+            .saturating_add(user_op.pre_verification_gas)
+            .saturating_add(base_execution_gas)
+            .saturating_add(calldata_gas)
+            .min(user_op.call_gas_limit + user_op.verification_gas_limit + user_op.pre_verification_gas);
+        let gas_cost = (gas_used as u128).saturating_mul(user_op.max_fee_per_gas as u128);
 
         // Update nonce
         {
@@ -361,17 +408,17 @@ impl EntryPoint {
             actual_gas_cost: gas_cost,
             success: true,
             reason: None,
-            transaction_hash: op_hash, // Simplified
-            block_number: 0,           // Would be set by block producer
-            block_hash: [0u8; 32],     // Would be set by block producer
+            transaction_hash: op_hash, // Bundler sets final tx hash when included
+            block_number,
+            block_hash,
         };
 
         // Store receipt
         self.receipts.write().insert(op_hash, receipt.clone());
 
         info!(
-            "Executed user operation: sender={:?}, nonce={}, gas_used={}",
-            user_op.sender, user_op.nonce, gas_used
+            "Executed user operation: sender={:?}, nonce={}, gas_used={}, gas_cost={}, beneficiary={:?}",
+            user_op.sender, user_op.nonce, gas_used, gas_cost, beneficiary
         );
 
         Ok(receipt)
@@ -489,7 +536,7 @@ mod tests {
             max_fee_per_gas: 1_000_000_000,
             max_priority_fee_per_gas: 1_000_000,
             paymaster_and_data: vec![],
-            signature: vec![1, 2, 3, 4],
+            signature: vec![0xAA; 65], // 64-byte signature + 1-byte recovery id
         }
     }
 
@@ -538,12 +585,14 @@ mod tests {
         let op = create_test_user_op();
         let beneficiary = Address::from([2u8; 20]);
 
-        let results = entry_point.handle_ops(vec![op], beneficiary);
+        let results = entry_point.handle_ops(vec![op], beneficiary, 42, [0xBBu8; 32]);
         assert_eq!(results.len(), 1);
         assert!(results[0].is_ok());
 
         let receipt = results[0].as_ref().unwrap();
         assert!(receipt.success);
+        assert_eq!(receipt.block_number, 42);
+        assert_eq!(receipt.block_hash, [0xBBu8; 32]);
     }
 
     #[test]
@@ -555,7 +604,7 @@ mod tests {
 
         let op = create_test_user_op();
         let beneficiary = Address::from([2u8; 20]);
-        let _ = entry_point.handle_ops(vec![op], beneficiary);
+        let _ = entry_point.handle_ops(vec![op], beneficiary, 1, [0u8; 32]);
 
         assert_eq!(entry_point.get_nonce(&sender), 1);
     }

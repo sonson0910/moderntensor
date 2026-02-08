@@ -8,6 +8,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tracing::info;
 
+/// Constant-time comparison to prevent timing attacks on API key validation.
+/// Compares all bytes regardless of where the first difference is.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// HTTP API server
 pub struct GraphQLServer {
     storage: Arc<Storage>,
@@ -115,7 +128,7 @@ async fn handle_connection(
             let bearer = auth_header
                 .and_then(|v| v.strip_prefix("Bearer "))
                 .unwrap_or("");
-            if bearer != expected_key {
+            if !constant_time_eq(bearer.as_bytes(), expected_key.as_bytes()) {
                 let response = json_response(401, &serde_json::json!({
                     "error": "Unauthorized: invalid or missing API key"
                 }));

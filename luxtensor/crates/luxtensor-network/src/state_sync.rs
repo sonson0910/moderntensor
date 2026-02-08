@@ -391,14 +391,24 @@ impl StateSyncManager {
     }
 
     fn verify_account_proof(&self, _response: &StateRange) -> Result<(), SyncError> {
-        // TODO: Implement Merkle proof verification
-        // For now, accept all proofs
-        Ok(())
+        // SECURITY: State sync proof verification requires integration with the
+        // Merkle Patricia Trie implementation in luxtensor-storage.
+        // Until the trie is wired into the snap-sync pivot, reject all unverified data.
+        Err(SyncError::InvalidProof(
+            "Account proof verification not yet integrated with trie — rejecting for safety. \
+             Disable verify_proofs only in trusted/test environments."
+                .to_string(),
+        ))
     }
 
     fn verify_storage_proof(&self, _address: &Address, _response: &StorageRange) -> Result<(), SyncError> {
-        // TODO: Implement Merkle proof verification
-        Ok(())
+        // SECURITY: Storage proof verification is NOT yet implemented.
+        // Reject all unverified storage data.
+        Err(SyncError::InvalidProof(
+            "Storage proof verification not yet implemented — rejecting for safety. \
+             Disable verify_proofs only in trusted/test environments."
+                .to_string(),
+        ))
     }
 
     fn calculate_state_root(&self) -> Result<Hash, SyncError> {
@@ -435,8 +445,8 @@ pub enum SyncError {
     #[error("State root mismatch: expected {expected:?}, got {got:?}")]
     StateRootMismatch { expected: Hash, got: Hash },
 
-    #[error("Invalid proof")]
-    InvalidProof,
+    #[error("Invalid proof: {0}")]
+    InvalidProof(String),
 
     #[error("Chunk request timeout")]
     Timeout,

@@ -61,10 +61,20 @@ pub const M0: usize = 32;
 pub const M: usize = 16;
 
 /// Calculate level multiplier for probability distribution
-/// This is 1/ln(M) but cannot be const due to ln() not being const fn
+/// This is 1/ln(M). Pre-computed to avoid non-deterministic f64::ln()
+/// across different platforms/compiler versions.
+///
+/// SECURITY: Using a hardcoded constant ensures deterministic layer assignment
+/// across all nodes. Different f64::ln() implementations could cause consensus
+/// disagreement on which layer a vector belongs to.
+///
+/// Value: 1.0 / ln(16) = 1.0 / 2.772588722239781 ≈ 0.36067376022224085
+pub const ML: f64 = 0.360_673_760_222_240_85;
+
+/// Backward-compatible function wrapper for ML constant
 #[inline]
 pub fn ml() -> f64 {
-    1.0 / (M as f64).ln()
+    ML
 }
 
 /// Size of the dynamic candidate list during search

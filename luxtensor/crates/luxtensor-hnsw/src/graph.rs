@@ -212,7 +212,8 @@ impl<const D: usize> HnswGraph<D> {
         // Push the node first so it has a valid index
         self.nodes.push(node);
 
-        let entry_point = self.entry_point.unwrap();
+        let entry_point = self.entry_point
+            .expect("entry_point guarded by is_empty check above");
         let mut current_node = entry_point;
 
         // Phase 1: Greedy search from top level down to node's level + 1
@@ -295,7 +296,8 @@ impl<const D: usize> HnswGraph<D> {
             return Err(HnswError::EmptyGraph);
         }
 
-        let mut current_node = self.entry_point.unwrap();
+        let mut current_node = self.entry_point
+            .expect("entry_point guarded by is_none check above");
 
         // Greedy search from top to level 1
         for lc in (1..=self.max_level).rev() {
@@ -445,8 +447,38 @@ impl<const D: usize> HnswGraph<D> {
     }
 
     /// Deserialize a graph from bytes.
+    ///
+    /// SECURITY: Applies size limits to prevent memory exhaustion from malicious data.
+    /// Maximum serialized graph size: 256 MB (prevents OOM from crafted payloads).
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        bincode::deserialize(data).map_err(|e| HnswError::DeserializationError(e.to_string()))
+        // Limit maximum deserialization size to 256 MB to prevent OOM
+        const MAX_GRAPH_SIZE: usize = 256 * 1024 * 1024;
+        if data.len() > MAX_GRAPH_SIZE {
+            return Err(HnswError::DeserializationError(
+                format!(
+                    "Graph data too large: {} bytes (max: {} bytes)",
+                    data.len(),
+                    MAX_GRAPH_SIZE,
+                ),
+            ));
+        }
+
+        let graph: Self = bincode::deserialize(data)
+            .map_err(|e| HnswError::DeserializationError(e.to_string()))?;
+
+        // Validate deserialized graph: node count must be reasonable
+        const MAX_NODES: usize = 10_000_000; // 10M nodes max
+        if graph.len() > MAX_NODES {
+            return Err(HnswError::DeserializationError(
+                format!(
+                    "Graph has too many nodes: {} (max: {})",
+                    graph.len(),
+                    MAX_NODES,
+                ),
+            ));
+        }
+
+        Ok(graph)
     }
 }
 

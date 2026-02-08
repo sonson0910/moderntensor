@@ -23,9 +23,9 @@ impl Default for EmissionConfig {
         Self {
             max_supply: 21_000_000_000_000_000_000_000_000u128, // 21 million tokens
             initial_emission: 2_000_000_000_000_000_000u128,   // 2 tokens/block
-            // 🔧 FIX: Aligned with HalvingSchedule (1,051,200 blocks ≈ 3.33 years @ 100s)
-            // Previously used 2,100,000 which was inconsistent and halved too frequently
-            halving_interval: 1_051_200,
+            // 🔧 FIX: Aligned with HalvingSchedule (8,760,000 blocks ≈ 3.33 years @ 12s)
+            // Corrected from 1,051,200 which was for 100s blocks — 8× faster halving at 12s
+            halving_interval: 8_760_000,
             // 🔧 FIX: Aligned with HalvingSchedule MINIMUM_REWARD (0.001 MDT)
             // Previously 0.1 MDT — 100x higher than halving.rs
             min_emission: 1_000_000_000_000_000u128,           // 0.001 tokens minimum
@@ -107,13 +107,18 @@ impl EmissionController {
         // Calculate how many halvings have occurred
         let halvings = block_height / self.config.halving_interval;
 
+        // 🔧 FIX: Cap at 10 halvings (aligned with HalvingSchedule::MAX_HALVINGS)
+        // Previously looped up to 64, diverging from halving.rs which caps at 10 and returns 0
+        // Now: after 10 halvings, emission settles at min_emission (tail emission) instead of 0
+        let effective_halvings = halvings.min(10);
+
         // Calculate halved emission
         let mut emission = self.config.initial_emission;
-        for _ in 0..halvings.min(64) {
+        for _ in 0..effective_halvings {
             emission = emission / 2;
         }
 
-        // Apply floor
+        // Apply floor — tail emission ensures perpetual validator incentives
         emission.max(self.config.min_emission)
     }
 

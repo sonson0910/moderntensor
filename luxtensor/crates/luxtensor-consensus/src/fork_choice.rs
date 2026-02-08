@@ -3,6 +3,7 @@ use luxtensor_core::block::Block;
 use luxtensor_core::types::{Hash, Address};
 use std::collections::{HashMap, HashSet, VecDeque};
 use parking_lot::RwLock;
+use tracing::{debug, info};
 
 /// Fork choice rule implementation (GHOST algorithm)
 /// Greedy Heaviest-Observed Sub-Tree with attestation weights
@@ -312,6 +313,99 @@ impl ForkChoice {
         let pruned_count = initial_count - blocks.len();
         Ok(pruned_count)
     }
+
+    // ========================================================================
+    // Persistence — save/load fork choice state to/from external storage
+    // ========================================================================
+
+    /// A trait-object-free persistence interface using closures.
+    /// Collects the fork choice state into serializable form.
+    pub fn export_state(&self) -> ForkChoiceSnapshot {
+        let head = *self.head.read();
+        let scores: Vec<(Hash, u64)> = self.scores.read().iter()
+            .map(|(h, s)| (*h, *s))
+            .collect();
+        let attestation_stakes: Vec<(Hash, u128)> = self.attestation_stake.read().iter()
+            .map(|(h, s)| (*h, *s))
+            .collect();
+
+        ForkChoiceSnapshot {
+            head_hash: head,
+            genesis_hash: self.genesis_hash,
+            scores,
+            attestation_stakes,
+        }
+    }
+
+    /// Restore fork choice metadata from a snapshot.
+    /// Blocks themselves must be loaded separately from block storage.
+    /// This restores only: head, scores, attestation stakes.
+    pub fn import_state(&self, snapshot: &ForkChoiceSnapshot) {
+        // Restore scores
+        {
+            let mut scores = self.scores.write();
+            for (hash, score) in &snapshot.scores {
+                scores.insert(*hash, *score);
+            }
+        }
+
+        // Restore attestation stakes
+        {
+            let mut attestation_stake = self.attestation_stake.write();
+            for (hash, stake) in &snapshot.attestation_stakes {
+                attestation_stake.insert(*hash, *stake);
+            }
+        }
+
+        // Restore head (only if the block is known)
+        {
+            let blocks = self.blocks.read();
+            if blocks.contains_key(&snapshot.head_hash) {
+                *self.head.write() = snapshot.head_hash;
+                info!("Fork choice restored head: {}", hex::encode(&snapshot.head_hash));
+            } else {
+                debug!(
+                    "Snapshot head {} not in block set, keeping current head",
+                    hex::encode(&snapshot.head_hash)
+                );
+            }
+        }
+    }
+
+    /// Load all blocks from storage and rebuild fork choice.
+    /// `block_loader` should return all stored blocks (from RocksDB).
+    pub fn rebuild_from_blocks(&self, blocks: Vec<Block>) {
+        // Sort by height to ensure parents are added before children
+        let mut sorted_blocks = blocks;
+        sorted_blocks.sort_by_key(|b| b.height());
+
+        let mut block_map = self.blocks.write();
+        let mut score_map = self.scores.write();
+
+        for block in sorted_blocks {
+            let hash = block.hash();
+            let parent = block.header().previous_hash;
+            let parent_score = score_map.get(&parent).copied().unwrap_or(0);
+            score_map.insert(hash, parent_score + 1);
+            block_map.insert(hash, block);
+        }
+
+        drop(block_map);
+        drop(score_map);
+
+        // Recompute head
+        self.update_head();
+        info!("Fork choice rebuilt. Head: {}", hex::encode(&self.get_head_hash()));
+    }
+}
+
+/// Serializable snapshot of fork choice metadata
+#[derive(Debug, Clone)]
+pub struct ForkChoiceSnapshot {
+    pub head_hash: Hash,
+    pub genesis_hash: Hash,
+    pub scores: Vec<(Hash, u64)>,
+    pub attestation_stakes: Vec<(Hash, u128)>,
 }
 
 #[cfg(test)]

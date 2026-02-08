@@ -13,6 +13,7 @@ pub mod constants;
 pub mod multisig;
 pub mod parallel;
 pub mod unified_state;
+pub mod receipt;
 
 pub use block::*;
 pub use transaction::*;

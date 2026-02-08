@@ -136,6 +136,12 @@ impl StateDB {
     pub fn account_count(&self) -> usize {
         self.cache.len()
     }
+
+    /// Iterate over all cached accounts (address, account) pairs.
+    /// Used by block production to sync state into UnifiedStateDB for RPC.
+    pub fn accounts(&self) -> impl Iterator<Item = (&Address, &Account)> {
+        self.cache.iter()
+    }
 }
 
 /// Trait abstracting RocksDB-like key-value store operations.

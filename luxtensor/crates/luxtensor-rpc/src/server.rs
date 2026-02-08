@@ -1,5 +1,6 @@
-use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{Mempool, register_eth_methods}};
+use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{Mempool, register_eth_methods, register_aa_methods, register_log_methods}};
 use crate::rate_limiter::RateLimiter;
+use crate::logs::LogStore;
 use jsonrpc_core::{IoHandler, Params, Value};
 use serde_json::json;
 use jsonrpc_http_server::{Server, ServerBuilder};
@@ -18,7 +19,7 @@ use crate::handlers::{
     register_checkpoint_handlers
 };
 use std::path::PathBuf;
-use crate::helpers::{parse_address, parse_block_number};
+use crate::helpers::{parse_address, parse_block_number, parse_block_number_with_latest};
 use crate::query_rpc::{QueryRpcContext, register_query_methods as register_query_methods_new};
 use crate::ai_rpc::{AiRpcContext, register_ai_methods as register_ai_methods_new};
 use crate::tx_rpc::{TxRpcContext, register_tx_methods};
@@ -140,6 +141,8 @@ impl RpcServer {
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
     ) -> Self {
+        // 🔧 FIX: Use a test chain_id constant instead of hardcoded 1337
+        let chain_id = 1337_u64; // Explicit: test-only default
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
         let metagraph = Arc::new(
             MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
@@ -161,17 +164,19 @@ impl RpcServer {
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
             cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(1337)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
+            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
         }
     }
 
     /// Create a new RPC server with external mempool and P2P broadcaster
     /// Use this for production multi-node setup
+    /// 🔧 FIX: Added chain_id parameter — was hardcoded to 1337
     pub fn new_with_mempool_and_broadcaster(
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
+        chain_id: u64,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
         let metagraph = Arc::new(
@@ -194,18 +199,20 @@ impl RpcServer {
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
             cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(1337)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
+            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
         }
     }
 
     /// Create a new RPC server with external shared pending_txs for unified storage
     /// Use this when you need P2P handlers to share the same TX pool as RPC
+    /// 🔧 FIX: Added chain_id parameter — was hardcoded to 1337
     pub fn new_with_shared_pending_txs(
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+        chain_id: u64,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
         let metagraph = Arc::new(
@@ -228,8 +235,8 @@ impl RpcServer {
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
             cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(1337)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(1337))),
+            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
         }
     }
 
@@ -292,12 +299,17 @@ impl RpcServer {
             for subnet in subnets {
                 if let Ok(neurons) = metagraph.get_neurons_by_subnet(subnet.id) {
                     for neuron in neurons {
+                        let trust_val = neuron.trust as f64 / 65535.0;
                         cache.insert((neuron.subnet_id, neuron.uid), NeuronInfo {
                             uid: neuron.uid,
                             address: format!("0x{}", hex::encode(neuron.hotkey)),
                             subnet_id: neuron.subnet_id,
                             stake: neuron.stake,
-                            trust: neuron.trust as f64 / 65535.0,
+                            trust: trust_val,
+                            // Consensus is derived from trust after Yuma consensus.
+                            // NeuronData currently stores trust only; when the consensus
+                            // engine produces a separate consensus score, pipe it through.
+                            consensus: trust_val,
                             rank: neuron.rank as u64,
                             incentive: neuron.incentive as f64 / 65535.0,
                             dividends: neuron.dividends as f64 / 65535.0,
@@ -327,7 +339,7 @@ impl RpcServer {
         self.register_account_methods(&mut io);
 
         // Register modular handlers (with DB persistence)
-        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone());
+        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone(), self.chain_id());
         register_subnet_handlers(&mut io, self.subnets.clone(), self.db.clone());
         register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone(), self.db.clone());
         register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
@@ -464,8 +476,18 @@ impl RpcServer {
         });
 
         // Register Ethereum-compatible methods (eth_*)
-        // Uses mempool for pending txs and unified_state for state reads
-        register_eth_methods(&mut io, self.mempool.clone(), self.unified_state.clone());
+        // Uses mempool for pending txs, unified_state for state reads, db for confirmed tx lookup
+        register_eth_methods(&mut io, self.mempool.clone(), self.unified_state.clone(), self.db.clone());
+
+        // Register log query methods (eth_getLogs, eth_newFilter, etc.)
+        let log_store = Arc::new(RwLock::new(LogStore::new(10_000))); // Keep logs for last 10K blocks
+        register_log_methods(&mut io, log_store, self.unified_state.clone());
+
+        // Register ERC-4337 Account Abstraction methods (eth_sendUserOperation, etc.)
+        let entry_point = Arc::new(RwLock::new(
+            luxtensor_contracts::EntryPoint::new(self.chain_id())
+        ));
+        register_aa_methods(&mut io, entry_point);
 
         // Register transaction methods with P2P broadcasting (eth_sendTransaction, eth_getTransactionReceipt)
         // These override the base eth_rpc implementations with broadcast support
@@ -552,13 +574,20 @@ impl RpcServer {
 
         // eth_getBlockByNumber - Get block by number
         let db_for_get_block = self.db.clone();
+        let cached_for_get_block = self.cached_block_number.clone();
+        let unified_for_get_block = self.unified_state.clone();
         io.add_sync_method("eth_getBlockByNumber", move |params: Params| {
             let parsed: Vec<serde_json::Value> = params.parse()?;
             if parsed.is_empty() {
                 return Err(jsonrpc_core::Error::invalid_params("Missing block number"));
             }
 
-            let height = parse_block_number(&parsed[0])?;
+            // Resolve "latest"/"pending" to the actual chain tip height
+            let latest = {
+                let ub = unified_for_get_block.read().block_number();
+                if ub > 0 { ub } else { cached_for_get_block.load(Ordering::Acquire) }
+            };
+            let height = parse_block_number_with_latest(&parsed[0], latest)?;
             let _include_txs = parsed
                 .get(1)
                 .and_then(|v| v.as_bool())
@@ -674,101 +703,9 @@ impl RpcServer {
             Ok(Value::String(format!("0x{:x}", balance)))
         });
 
-        let unified_state = self.unified_state.clone();
-
-        // eth_getTransactionCount - Get account nonce
-        io.add_sync_method("eth_getTransactionCount", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
-            }
-
-            let address = parse_address(&parsed[0])?;
-
-            let nonce = unified_state.read().get_nonce(&address);
-            Ok(Value::String(format!("0x{:x}", nonce)))
-        });
-
-        // eth_sendRawTransaction - Submit raw signed transaction
-        let unified_state = self.unified_state.clone();
-        let pending_txs = self.pending_txs.clone();
-        let broadcaster = self.broadcaster.clone();
-
-        io.add_sync_method("eth_sendRawTransaction", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing transaction data"));
-            }
-
-            let tx_hex = parsed[0].trim_start_matches("0x");
-            let tx_bytes = hex::decode(tx_hex)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid transaction hex"))?;
-
-            // Calculate transaction hash
-            let tx_hash = luxtensor_crypto::keccak256(&tx_bytes);
-
-            // 1. Decode the transaction (RLP decode)
-            // For now, use bincode for internal format. In production, use RLP.
-            let tx: Transaction = bincode::deserialize(&tx_bytes)
-                .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Failed to decode transaction: {}", e))
-                })?;
-
-            // 2. Verify signature
-            if tx.verify_signature().is_err() {
-                return Err(jsonrpc_core::Error::invalid_params("Invalid transaction signature"));
-            }
-
-            // 3. Check nonce
-            let state_guard = unified_state.read();
-            let expected_nonce = state_guard.get_nonce(&tx.from);
-            if tx.nonce < expected_nonce {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    format!("Nonce too low. Expected: {}, got: {}", expected_nonce, tx.nonce)
-                ));
-            }
-
-            // 4. Check balance for gas
-            let balance = state_guard.get_balance(&tx.from);
-            let gas_cost = (tx.gas_price as u128) * (tx.gas_limit as u128);
-            let required = tx.value.saturating_add(gas_cost);
-            if balance < required {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    format!("Insufficient balance. Required: {}, available: {}", required, balance)
-                ));
-            }
-            drop(state_guard);
-
-            // 5. Add to pending transactions (mempool)
-            {
-                let mut pending = pending_txs.write();
-
-                // Check for duplicate
-                if pending.contains_key(&tx_hash) {
-                    return Err(jsonrpc_core::Error::invalid_params("Transaction already pending"));
-                }
-
-                // Check mempool size limit
-                if pending.len() >= 10000 {
-                    return Err(jsonrpc_core::Error::invalid_params("Mempool full"));
-                }
-
-                pending.insert(tx_hash, tx.clone());
-                info!("Transaction added to mempool: 0x{}", hex::encode(&tx_hash));
-            }
-
-            // 6. Broadcast to P2P network and/or WebSocket subscribers
-            if let Err(e) = broadcaster.broadcast(&tx) {
-                warn!("Failed to broadcast transaction: {}", e);
-                // Note: We don't return error here since tx is already in mempool
-                // It will be included in blocks even if broadcast failed
-            } else {
-                debug!("Transaction broadcast successful via {}", broadcaster.name());
-            }
-
-            // Return the transaction hash
-            Ok(Value::String(format!("0x{}", hex::encode(tx_hash))))
-        });
+        // NOTE: eth_getTransactionCount and eth_sendRawTransaction are registered
+        // in eth_rpc::register_eth_methods() with proper RLP decoding.
+        // Do NOT duplicate them here — the eth_rpc versions are canonical.
 
         // tx_getReceipt - Get transaction receipt
         let db = self.db.clone();
@@ -793,15 +730,41 @@ impl RpcServer {
             // Query transaction from database
             match db.get_transaction(&hash) {
                 Ok(Some(tx)) => {
-                    // Build receipt
+                    // Try to get the real receipt from DB (bincode-serialized)
+                    let (status, gas_used, logs_json, contract_addr, block_height) = match db.get_receipt(&hash) {
+                        Ok(Some(receipt_bytes)) => {
+                            match bincode::deserialize::<luxtensor_core::receipt::Receipt>(&receipt_bytes) {
+                                Ok(r) => {
+                                    let status_hex = match r.status {
+                                        luxtensor_core::receipt::ExecutionStatus::Success => "0x1",
+                                        luxtensor_core::receipt::ExecutionStatus::Failed => "0x0",
+                                    };
+                                    let logs: Vec<serde_json::Value> = r.logs.iter().map(|log| {
+                                        serde_json::json!({
+                                            "address": format!("0x{}", hex::encode(log.address.as_bytes())),
+                                            "topics": log.topics.iter().map(|t| format!("0x{}", hex::encode(t))).collect::<Vec<_>>(),
+                                            "data": format!("0x{}", hex::encode(&log.data)),
+                                        })
+                                    }).collect();
+                                    let ca = r.contract_address.map(|a| format!("0x{}", hex::encode(a.as_bytes())));
+                                    (status_hex.to_string(), r.gas_used, serde_json::json!(logs), ca, r.block_height)
+                                }
+                                Err(_) => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
+                            }
+                        }
+                        _ => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
+                    };
+
                     let receipt = serde_json::json!({
                         "transactionHash": format!("0x{}", hex::encode(hash)),
-                        "status": "0x1", // Success
-                        "blockNumber": "0x0",
-                        "gasUsed": "0x5208",
-                        "cumulativeGasUsed": "0x5208",
+                        "status": status,
+                        "blockNumber": format!("0x{:x}", block_height),
+                        "gasUsed": format!("0x{:x}", gas_used),
+                        "cumulativeGasUsed": format!("0x{:x}", gas_used),
                         "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
                         "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                        "logs": logs_json,
+                        "contractAddress": contract_addr,
                     });
                     Ok(receipt)
                 }

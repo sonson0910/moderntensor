@@ -13,12 +13,27 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tracing::{debug, warn};
 
+/// Structured EVM log entry preserving topics and data from REVM execution.
+/// This avoids the information loss of flattening logs to raw bytes.
+#[derive(Debug, Clone)]
+pub struct EvmLog {
+    /// Address of the contract that emitted the log
+    pub address: Vec<u8>,
+    /// Indexed topics (topic[0] = event signature hash)
+    pub topics: Vec<[u8; 32]>,
+    /// Non-indexed ABI-encoded data
+    pub data: Vec<u8>,
+}
+
 /// EVM-based contract executor
 pub struct EvmExecutor {
     /// Account storage (address -> AccountInfo)
     accounts: Arc<RwLock<HashMap<RevmAddress, AccountInfo>>>,
     /// Contract storage (address -> key -> value)
     storage: Arc<RwLock<HashMap<RevmAddress, HashMap<U256, U256>>>>,
+    /// Recent block hashes for BLOCKHASH opcode (number -> hash)
+    /// Keeps up to 256 entries per EIP-2 specification.
+    block_hashes: Arc<RwLock<HashMap<u64, [u8; 32]>>>,
 }
 
 impl EvmExecutor {
@@ -27,6 +42,19 @@ impl EvmExecutor {
         Self {
             accounts: Arc::new(RwLock::new(HashMap::new())),
             storage: Arc::new(RwLock::new(HashMap::new())),
+            block_hashes: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Record a block hash for use by the EVM BLOCKHASH opcode.
+    /// Only the most recent 256 blocks are accessible per the EVM spec.
+    pub fn record_block_hash(&self, number: u64, hash: [u8; 32]) {
+        let mut hashes = self.block_hashes.write();
+        hashes.insert(number, hash);
+        // Prune entries older than 256 blocks
+        if number > 256 {
+            let cutoff = number - 256;
+            hashes.retain(|&k, _| k > cutoff);
         }
     }
 
@@ -40,7 +68,7 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
-    ) -> Result<(Vec<u8>, u64, Vec<u8>, Vec<u8>), ContractError> {
+    ) -> Result<(Vec<u8>, u64, Vec<EvmLog>, Vec<u8>), ContractError> {
         let deployer_addr = address_to_revm(&deployer);
 
         // Ensure deployer account exists
@@ -100,13 +128,23 @@ impl EvmExecutor {
                     gas_used
                 );
 
-                // Convert logs to bytes (simplified)
-                let logs_data = logs
+                // Convert REVM logs to structured EvmLog preserving topics
+                let evm_logs = logs
                     .iter()
-                    .flat_map(|log| log.data.data.iter().copied())
+                    .map(|log| {
+                        let mut topics = Vec::with_capacity(log.data.topics().len());
+                        for topic in log.data.topics() {
+                            topics.push(topic.0);
+                        }
+                        EvmLog {
+                            address: log.address.0.to_vec(),
+                            topics,
+                            data: log.data.data.to_vec(),
+                        }
+                    })
                     .collect();
 
-                Ok((contract_address, gas_used, logs_data, deployed_code))
+                Ok((contract_address, gas_used, evm_logs, deployed_code))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();
@@ -134,7 +172,7 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
-    ) -> Result<(Vec<u8>, u64, Vec<u8>), ContractError> {
+    ) -> Result<(Vec<u8>, u64, Vec<EvmLog>), ContractError> {
         let caller_addr = address_to_revm(&caller);
         let contract_addr = RevmAddress::from_slice(&contract_address.0);
 
@@ -193,13 +231,23 @@ impl EvmExecutor {
 
                 debug!("Contract call succeeded with {} gas", gas_used);
 
-                // Convert logs to bytes (simplified)
-                let logs_data = logs
+                // Convert REVM logs to structured EvmLog preserving topics
+                let evm_logs = logs
                     .iter()
-                    .flat_map(|log| log.data.data.iter().copied())
+                    .map(|log| {
+                        let mut topics = Vec::with_capacity(log.data.topics().len());
+                        for topic in log.data.topics() {
+                            topics.push(topic.0);
+                        }
+                        EvmLog {
+                            address: log.address.0.to_vec(),
+                            topics,
+                            data: log.data.data.to_vec(),
+                        }
+                    })
                     .collect();
 
-                Ok((return_data, gas_used, logs_data))
+                Ok((return_data, gas_used, evm_logs))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();
@@ -239,6 +287,31 @@ impl EvmExecutor {
             code: None,
         });
         account.balance = account.balance.saturating_add(U256::from(amount));
+    }
+
+    /// Set contract code for an account (used by eth_call / eth_estimateGas
+    /// to seed the executor with real state from UnifiedStateDB).
+    pub fn deploy_code(&self, address: &Address, code: Vec<u8>) {
+        let addr = address_to_revm(address);
+        let code_hash = {
+            use sha3::{Keccak256, Digest};
+            let mut hasher = Keccak256::new();
+            hasher.update(&code);
+            let result = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&result);
+            revm::primitives::B256::from(hash)
+        };
+        let bytecode = Bytecode::new_raw(Bytes::from(code));
+        let mut accounts = self.accounts.write();
+        let account = accounts.entry(addr).or_insert(AccountInfo {
+            balance: U256::ZERO,
+            nonce: 0,
+            code_hash: revm::primitives::KECCAK_EMPTY,
+            code: None,
+        });
+        account.code_hash = code_hash;
+        account.code = Some(bytecode);
     }
 
     /// Get account balance
@@ -286,6 +359,7 @@ impl Clone for EvmExecutor {
         Self {
             accounts: Arc::clone(&self.accounts),
             storage: Arc::clone(&self.storage),
+            block_hashes: Arc::clone(&self.block_hashes),
         }
     }
 }
@@ -311,8 +385,13 @@ impl Database for EvmExecutor {
             .unwrap_or(U256::ZERO))
     }
 
-    fn block_hash(&mut self, _number: u64) -> Result<revm::primitives::B256, Self::Error> {
-        Ok(revm::primitives::B256::ZERO)
+    fn block_hash(&mut self, number: u64) -> Result<revm::primitives::B256, Self::Error> {
+        let hashes = self.block_hashes.read();
+        if let Some(hash) = hashes.get(&number) {
+            Ok(revm::primitives::B256::from_slice(hash))
+        } else {
+            Ok(revm::primitives::B256::ZERO)
+        }
     }
 }
 
@@ -354,6 +433,163 @@ impl DatabaseCommit for EvmExecutor {
 /// Convert Address to RevmAddress
 fn address_to_revm(address: &Address) -> RevmAddress {
     RevmAddress::from_slice(address.as_bytes())
+}
+
+// ============================================================================
+// Persistent EVM Executor — wraps EvmExecutor with RocksDB-backed state
+// ============================================================================
+// Contract storage, account balances, and nonces survive node restarts.
+// Uses a write-back cache: in-memory reads, periodic flush to RocksDB.
+
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
+
+/// Serializable EVM account record for RocksDB storage
+#[derive(SerdeSerialize, SerdeDeserialize, Debug, Clone)]
+pub struct EvmAccountRecord {
+    pub balance: [u8; 32], // U256 as big-endian bytes (to survive serde)
+    pub nonce: u64,
+    pub code_hash: [u8; 32],
+    pub code: Option<Vec<u8>>,
+}
+
+/// Persistent EVM executor that flushes state to RocksDB after each block.
+/// Thread-safe: inner EvmExecutor uses Arc<RwLock<...>>.
+pub struct PersistentEvmExecutor {
+    /// In-memory EVM executor (the hot cache)
+    pub executor: EvmExecutor,
+    /// Flag indicating dirty state that needs flushing
+    dirty: Arc<RwLock<bool>>,
+}
+
+impl PersistentEvmExecutor {
+    /// Create a new PersistentEvmExecutor (empty state)
+    pub fn new() -> Self {
+        Self {
+            executor: EvmExecutor::new(),
+            dirty: Arc::new(RwLock::new(false)),
+        }
+    }
+
+    /// Load EVM state from RocksDB on startup.
+    /// This restores all contract accounts and storage slots from the database.
+    /// The `db` parameter should implement `EvmStateStore` (provided by BlockchainDB).
+    pub fn load_from_db(&self, db: &dyn EvmStateStore) {
+        // Load accounts
+        if let Ok(accounts) = db.load_all_evm_accounts() {
+            let mut accts = self.executor.accounts.write();
+            for (addr_bytes, record) in accounts {
+                let addr = RevmAddress::from_slice(&addr_bytes);
+                let balance = U256::from_be_bytes(record.balance);
+                let code = record.code.map(|c| Bytecode::new_raw(Bytes::from(c)));
+                accts.insert(addr, AccountInfo {
+                    balance,
+                    nonce: record.nonce,
+                    code_hash: revm::primitives::B256::from(record.code_hash),
+                    code,
+                });
+            }
+            debug!("Loaded {} EVM accounts from DB", accts.len());
+        }
+
+        // Load storage
+        if let Ok(storage_entries) = db.load_all_evm_storage() {
+            let mut storage = self.executor.storage.write();
+            for (addr_bytes, slot_bytes, value_bytes) in storage_entries {
+                let addr = RevmAddress::from_slice(&addr_bytes);
+                let slot = U256::from_be_bytes(slot_bytes);
+                let value = U256::from_be_bytes(value_bytes);
+                storage.entry(addr).or_default().insert(slot, value);
+            }
+            debug!("Loaded EVM storage for {} contracts", storage.len());
+        }
+    }
+
+    /// Flush dirty EVM state to RocksDB (called after each block execution).
+    /// Extracts current in-memory state and writes it atomically.
+    pub fn flush_to_db(&self, db: &dyn EvmStateStore) -> Result<(), String> {
+        if !*self.dirty.read() {
+            return Ok(());
+        }
+
+        let accounts_guard = self.executor.accounts.read();
+        let storage_guard = self.executor.storage.read();
+
+        // Serialize accounts
+        let mut account_records: Vec<([u8; 20], Vec<u8>)> = Vec::new();
+        for (addr, info) in accounts_guard.iter() {
+            let mut addr_bytes = [0u8; 20];
+            addr_bytes.copy_from_slice(addr.as_slice());
+
+            let record = EvmAccountRecord {
+                balance: info.balance.to_be_bytes(),
+                nonce: info.nonce,
+                code_hash: info.code_hash.0,
+                code: info.code.as_ref().map(|c| c.bytes().to_vec()),
+            };
+            let data = bincode::serialize(&record).map_err(|e| e.to_string())?;
+            account_records.push((addr_bytes, data));
+        }
+
+        // Serialize storage
+        let mut storage_entries: Vec<([u8; 20], [u8; 32], [u8; 32])> = Vec::new();
+        for (addr, slots) in storage_guard.iter() {
+            let mut addr_bytes = [0u8; 20];
+            addr_bytes.copy_from_slice(addr.as_slice());
+            for (slot, value) in slots {
+                storage_entries.push((addr_bytes, slot.to_be_bytes(), value.to_be_bytes()));
+            }
+        }
+
+        drop(accounts_guard);
+        drop(storage_guard);
+
+        db.flush_evm_state(&account_records, &storage_entries, &[])?;
+
+        *self.dirty.write() = false;
+        debug!("Flushed {} EVM accounts and {} storage slots to DB",
+            account_records.len(), storage_entries.len());
+        Ok(())
+    }
+
+    /// Mark state as dirty (called by block execution after any EVM transaction)
+    pub fn mark_dirty(&self) {
+        *self.dirty.write() = true;
+    }
+
+    /// Get a clone of the inner EvmExecutor for use in EVM execution
+    pub fn inner(&self) -> &EvmExecutor {
+        &self.executor
+    }
+}
+
+impl Clone for PersistentEvmExecutor {
+    fn clone(&self) -> Self {
+        Self {
+            executor: self.executor.clone(),
+            dirty: Arc::clone(&self.dirty),
+        }
+    }
+}
+
+impl Default for PersistentEvmExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Trait for EVM state persistence (implemented by BlockchainDB)
+pub trait EvmStateStore: Send + Sync {
+    /// Load all EVM accounts from persistent storage
+    fn load_all_evm_accounts(&self) -> Result<Vec<([u8; 20], EvmAccountRecord)>, String>;
+    /// Load all EVM storage slots from persistent storage
+    fn load_all_evm_storage(&self) -> Result<Vec<([u8; 20], [u8; 32], [u8; 32])>, String>;
+    /// Flush EVM state to persistent storage atomically
+    fn flush_evm_state(
+        &self,
+        accounts: &[([u8; 20], Vec<u8>)],
+        storage: &[([u8; 20], [u8; 32], [u8; 32])],
+        deleted: &[[u8; 20]],
+    ) -> Result<(), String>;
 }
 
 #[cfg(test)]

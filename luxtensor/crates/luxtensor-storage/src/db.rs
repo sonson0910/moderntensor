@@ -19,6 +19,11 @@ const CF_NEURONS: &str = "neurons";
 const CF_VALIDATORS: &str = "validators";
 const CF_STAKES: &str = "stakes";
 const CF_WEIGHTS: &str = "weights";
+// EVM state column families (persistent contract storage)
+const CF_EVM_ACCOUNTS: &str = "evm_accounts";
+const CF_EVM_STORAGE: &str = "evm_storage";
+// Fork choice persistence
+const CF_FORK_CHOICE: &str = "fork_choice";
 
 /// Blockchain database using RocksDB
 pub struct BlockchainDB {
@@ -39,7 +44,7 @@ impl BlockchainDB {
         opts.set_max_write_buffer_number(4);             // 4 buffers before flush
         opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB SST files
 
-        // Define column families (core + metagraph)
+        // Define column families (core + metagraph + EVM state)
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEADERS, Options::default()),
@@ -54,6 +59,11 @@ impl BlockchainDB {
             ColumnFamilyDescriptor::new(CF_VALIDATORS, Options::default()),
             ColumnFamilyDescriptor::new(CF_STAKES, Options::default()),
             ColumnFamilyDescriptor::new(CF_WEIGHTS, Options::default()),
+            // EVM persistent state (survives node restart)
+            ColumnFamilyDescriptor::new(CF_EVM_ACCOUNTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_EVM_STORAGE, Options::default()),
+            // Fork choice metadata
+            ColumnFamilyDescriptor::new(CF_FORK_CHOICE, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;
@@ -401,15 +411,181 @@ impl BlockchainDB {
 
     // ==================== PRUNING OPERATIONS ====================
 
-    /// Prune old receipts before a given block height
-    /// Returns the number of receipts pruned
-    /// Note: This is a simplified implementation - in production, receipts
-    /// would be indexed by block height for efficient pruning
-    pub fn prune_receipts_before_height(&self, _before_height: u64) -> Result<usize> {
-        // For now, return 0 as we don't have height-indexed receipts yet
-        // In production, receipts would be stored with height prefix for efficient pruning
-        // This satisfies the API contract without actual pruning
-        Ok(0)
+    /// Prune old receipts for blocks before a given height.
+    ///
+    /// Since receipts are indexed by tx_hash (not block height), this method
+    /// iterates blocks [0, before_height) and deletes receipts for each
+    /// transaction in those blocks.
+    ///
+    /// Returns the number of receipts deleted.
+    pub fn prune_receipts_before_height(&self, before_height: u64) -> Result<usize> {
+        let cf = self.db.cf_handle(CF_RECEIPTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_RECEIPTS not found".to_string())
+        })?;
+
+        let mut pruned = 0usize;
+
+        for height in 0..before_height {
+            let block = match self.get_block_by_height(height)? {
+                Some(b) => b,
+                None => continue,
+            };
+
+            for tx in &block.transactions {
+                let tx_hash = tx.hash();
+                // Only count if the receipt actually existed
+                if self.db.get_cf(cf, &tx_hash)?.is_some() {
+                    self.db.delete_cf(cf, &tx_hash)?;
+                    pruned += 1;
+                }
+            }
+        }
+
+        if pruned > 0 {
+            tracing::info!("Pruned {} receipts for blocks [0, {})", pruned, before_height);
+        }
+
+        Ok(pruned)
+    }
+
+    // ==================== EVM STATE PERSISTENCE ====================
+    // These methods allow the EvmExecutor to persist contract storage
+    // and account state to RocksDB, surviving node restarts.
+
+    /// Store an EVM account (balance, nonce, code_hash, optional code).
+    /// Key: 20-byte address. Value: bincode-serialized account record.
+    pub fn store_evm_account(&self, address: &[u8; 20], data: &[u8]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_EVM_ACCOUNTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_ACCOUNTS not found".to_string())
+        })?;
+        self.db.put_cf(cf, address, data)?;
+        Ok(())
+    }
+
+    /// Get an EVM account by address
+    pub fn get_evm_account(&self, address: &[u8; 20]) -> Result<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_EVM_ACCOUNTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_ACCOUNTS not found".to_string())
+        })?;
+        match self.db.get_cf(cf, address)? {
+            Some(bytes) => Ok(Some(bytes.to_vec())),
+            None => Ok(None),
+        }
+    }
+
+    /// Get all EVM accounts (for state loading on restart)
+    pub fn get_all_evm_accounts(&self) -> Result<Vec<([u8; 20], Vec<u8>)>> {
+        let cf = self.db.cf_handle(CF_EVM_ACCOUNTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_ACCOUNTS not found".to_string())
+        })?;
+        let mut accounts = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item?;
+            if key.len() == 20 {
+                let mut addr = [0u8; 20];
+                addr.copy_from_slice(&key);
+                accounts.push((addr, value.to_vec()));
+            }
+        }
+        Ok(accounts)
+    }
+
+    /// Store an EVM storage slot.
+    /// Key format: address(20) || slot(32) — 52 bytes total.
+    /// Value: 32-byte storage value.
+    pub fn store_evm_storage(&self, address: &[u8; 20], slot: &[u8; 32], value: &[u8; 32]) -> Result<()> {
+        let cf = self.db.cf_handle(CF_EVM_STORAGE).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_STORAGE not found".to_string())
+        })?;
+        let mut key = Vec::with_capacity(52);
+        key.extend_from_slice(address);
+        key.extend_from_slice(slot);
+        self.db.put_cf(cf, key, value)?;
+        Ok(())
+    }
+
+    /// Get an EVM storage slot value
+    pub fn get_evm_storage(&self, address: &[u8; 20], slot: &[u8; 32]) -> Result<Option<[u8; 32]>> {
+        let cf = self.db.cf_handle(CF_EVM_STORAGE).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_STORAGE not found".to_string())
+        })?;
+        let mut key = Vec::with_capacity(52);
+        key.extend_from_slice(address);
+        key.extend_from_slice(slot);
+        match self.db.get_cf(cf, key)? {
+            Some(bytes) if bytes.len() == 32 => {
+                let mut val = [0u8; 32];
+                val.copy_from_slice(&bytes);
+                Ok(Some(val))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Get all storage slots for a given EVM address
+    pub fn get_all_evm_storage_for_address(&self, address: &[u8; 20]) -> Result<Vec<([u8; 32], [u8; 32])>> {
+        let cf = self.db.cf_handle(CF_EVM_STORAGE).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_STORAGE not found".to_string())
+        })?;
+        let prefix = address.to_vec();
+        let mut slots = Vec::new();
+        for item in self.db.prefix_iterator_cf(cf, &prefix) {
+            let (key, value) = item?;
+            if key.starts_with(&prefix) && key.len() == 52 && value.len() == 32 {
+                let mut slot = [0u8; 32];
+                slot.copy_from_slice(&key[20..52]);
+                let mut val = [0u8; 32];
+                val.copy_from_slice(&value);
+                slots.push((slot, val));
+            } else if !key.starts_with(&prefix) {
+                break;
+            }
+        }
+        Ok(slots)
+    }
+
+    /// Batch-write EVM state changes (accounts + storage) atomically.
+    /// Called after each block execution to persist all EVM state changes.
+    pub fn flush_evm_state(
+        &self,
+        accounts: &[([u8; 20], Vec<u8>)],
+        storage: &[([u8; 20], [u8; 32], [u8; 32])],
+        deleted_accounts: &[[u8; 20]],
+    ) -> Result<()> {
+        let cf_accounts = self.db.cf_handle(CF_EVM_ACCOUNTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_ACCOUNTS not found".to_string())
+        })?;
+        let cf_storage = self.db.cf_handle(CF_EVM_STORAGE).ok_or_else(|| {
+            StorageError::DatabaseError("CF_EVM_STORAGE not found".to_string())
+        })?;
+
+        let mut batch = WriteBatch::default();
+
+        // Delete self-destructed accounts
+        for addr in deleted_accounts {
+            batch.delete_cf(cf_accounts, addr);
+        }
+
+        // Write accounts
+        for (addr, data) in accounts {
+            batch.put_cf(cf_accounts, addr, data);
+        }
+
+        // Write storage slots
+        for (addr, slot, value) in storage {
+            let mut key = Vec::with_capacity(52);
+            key.extend_from_slice(addr);
+            key.extend_from_slice(slot);
+
+            if value == &[0u8; 32] {
+                batch.delete_cf(cf_storage, key);
+            } else {
+                batch.put_cf(cf_storage, key, value);
+            }
+        }
+
+        self.db.write(batch)?;
+        Ok(())
     }
 }
 
@@ -592,12 +768,209 @@ impl luxtensor_core::RocksDbLike for BlockchainDB {
                     if key.starts_with(prefix) {
                         result.push((key.to_vec(), value.to_vec()));
                     } else {
-                        break; // Past the prefix range
+                        break;
                     }
                 }
                 Err(e) => return Err(e.to_string()),
             }
         }
         Ok(result)
+    }
+
+    // ========================================================================
+    // Fork Choice Persistence — stores head hash, scores, attestation stakes
+    // ========================================================================
+
+    /// Key constants for fork choice metadata
+    const FC_HEAD_KEY: &'static [u8] = b"fc_head";
+
+    /// Store the current fork choice head hash
+    pub fn store_fork_choice_head(&self, head_hash: &Hash) -> Result<()> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        self.db.put_cf(cf, Self::FC_HEAD_KEY, head_hash)?;
+        Ok(())
+    }
+
+    /// Load the stored fork choice head hash
+    pub fn load_fork_choice_head(&self) -> Result<Option<Hash>> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        match self.db.get_cf(cf, Self::FC_HEAD_KEY)? {
+            Some(bytes) if bytes.len() == 32 => {
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&bytes);
+                Ok(Some(hash))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Store a block score for fork choice (key = "score:" + block_hash)
+    pub fn store_block_score(&self, block_hash: &Hash, score: u64) -> Result<()> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        let mut key = Vec::with_capacity(38);
+        key.extend_from_slice(b"score:");
+        key.extend_from_slice(block_hash);
+        self.db.put_cf(cf, &key, &score.to_be_bytes())?;
+        Ok(())
+    }
+
+    /// Load a block score
+    pub fn load_block_score(&self, block_hash: &Hash) -> Result<Option<u64>> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        let mut key = Vec::with_capacity(38);
+        key.extend_from_slice(b"score:");
+        key.extend_from_slice(block_hash);
+        match self.db.get_cf(cf, &key)? {
+            Some(bytes) if bytes.len() == 8 => {
+                let score = u64::from_be_bytes(bytes[..8].try_into().unwrap());
+                Ok(Some(score))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Store attestation stake for a block (key = "attn:" + block_hash)
+    pub fn store_attestation_stake(&self, block_hash: &Hash, stake: u128) -> Result<()> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        let mut key = Vec::with_capacity(37);
+        key.extend_from_slice(b"attn:");
+        key.extend_from_slice(block_hash);
+        self.db.put_cf(cf, &key, &stake.to_be_bytes())?;
+        Ok(())
+    }
+
+    /// Flush all fork choice state atomically:
+    /// head hash + all block scores + attestation stakes
+    pub fn flush_fork_choice_state(
+        &self,
+        head_hash: &Hash,
+        scores: &[(Hash, u64)],
+        attestation_stakes: &[(Hash, u128)],
+    ) -> Result<()> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+
+        let mut batch = WriteBatch::default();
+
+        // Head
+        batch.put_cf(cf, Self::FC_HEAD_KEY, head_hash);
+
+        // Scores
+        for (hash, score) in scores {
+            let mut key = Vec::with_capacity(38);
+            key.extend_from_slice(b"score:");
+            key.extend_from_slice(hash);
+            batch.put_cf(cf, &key, &score.to_be_bytes());
+        }
+
+        // Attestation stakes
+        for (hash, stake) in attestation_stakes {
+            let mut key = Vec::with_capacity(37);
+            key.extend_from_slice(b"attn:");
+            key.extend_from_slice(hash);
+            batch.put_cf(cf, &key, &stake.to_be_bytes());
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
+
+    /// Load all block scores from the fork choice CF
+    pub fn load_all_block_scores(&self) -> Result<Vec<(Hash, u64)>> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        let prefix = b"score:";
+        let mut result = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward));
+        for item in iter {
+            match item {
+                Ok((key, value)) => {
+                    if !key.starts_with(prefix) { break; }
+                    if key.len() == 38 && value.len() == 8 {
+                        let mut hash = [0u8; 32];
+                        hash.copy_from_slice(&key[6..38]);
+                        let score = u64::from_be_bytes(value[..8].try_into().unwrap());
+                        result.push((hash, score));
+                    }
+                }
+                Err(e) => return Err(StorageError::DatabaseError(e.to_string())),
+            }
+        }
+        Ok(result)
+    }
+
+    /// Load all attestation stakes from the fork choice CF
+    pub fn load_all_attestation_stakes(&self) -> Result<Vec<(Hash, u128)>> {
+        let cf = self.db.cf_handle(CF_FORK_CHOICE)
+            .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
+        let prefix = b"attn:";
+        let mut result = Vec::new();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward));
+        for item in iter {
+            match item {
+                Ok((key, value)) => {
+                    if !key.starts_with(prefix) { break; }
+                    if key.len() == 37 && value.len() == 16 {
+                        let mut hash = [0u8; 32];
+                        hash.copy_from_slice(&key[5..37]);
+                        let stake = u128::from_be_bytes(value[..16].try_into().unwrap());
+                        result.push((hash, stake));
+                    }
+                }
+                Err(e) => return Err(StorageError::DatabaseError(e.to_string())),
+            }
+        }
+        Ok(result)
+    }
+}
+
+// ============================================================================
+// Implement EvmStateStore trait so BlockchainDB can persist EVM state
+// ============================================================================
+impl luxtensor_contracts::EvmStateStore for BlockchainDB {
+    fn load_all_evm_accounts(&self) -> std::result::Result<Vec<([u8; 20], luxtensor_contracts::EvmAccountRecord)>, String> {
+        let raw = self.get_all_evm_accounts().map_err(|e| e.to_string())?;
+        let mut result = Vec::with_capacity(raw.len());
+        for (addr, data) in raw {
+            let record: luxtensor_contracts::EvmAccountRecord =
+                bincode::deserialize(&data).map_err(|e| e.to_string())?;
+            result.push((addr, record));
+        }
+        Ok(result)
+    }
+
+    fn load_all_evm_storage(&self) -> std::result::Result<Vec<([u8; 20], [u8; 32], [u8; 32])>, String> {
+        // Iterate CF_EVM_STORAGE directly
+        let cf = self.db.cf_handle(CF_EVM_STORAGE)
+            .ok_or_else(|| "CF_EVM_STORAGE not found".to_string())?;
+        let mut entries = Vec::new();
+        for item in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
+            let (key, value) = item.map_err(|e| e.to_string())?;
+            if key.len() == 52 && value.len() == 32 {
+                let mut addr = [0u8; 20];
+                addr.copy_from_slice(&key[..20]);
+                let mut slot = [0u8; 32];
+                slot.copy_from_slice(&key[20..52]);
+                let mut val = [0u8; 32];
+                val.copy_from_slice(&value);
+                entries.push((addr, slot, val));
+            }
+        }
+        Ok(entries)
+    }
+
+    fn flush_evm_state(
+        &self,
+        accounts: &[([u8; 20], Vec<u8>)],
+        storage: &[([u8; 20], [u8; 32], [u8; 32])],
+        deleted: &[[u8; 20]],
+    ) -> std::result::Result<(), String> {
+        BlockchainDB::flush_evm_state(self, accounts, storage, deleted)
+            .map_err(|e| e.to_string())
     }
 }

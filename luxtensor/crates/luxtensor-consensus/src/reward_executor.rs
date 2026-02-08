@@ -99,9 +99,19 @@ impl RewardExecutor {
         delegators: &[DelegatorInfo],
         subnets: &[SubnetInfo],
     ) -> EpochResult {
-        // Calculate emission for this epoch
-        let emission_result = self.emission.write().process_block(block_height, utility);
-        let total_emission = emission_result.amount;
+        // 🔧 FIX: process_block() emits for a single block, but we call it once per epoch.
+        // To correctly emit for all blocks in the epoch, we must call it for each block height
+        // in the epoch range, accumulating the total emission.
+        let epoch_length = 32u64; // Should match ConsensusConfig.epoch_length
+        let epoch_start = block_height.saturating_sub(epoch_length);
+        let mut total_emission = 0u128;
+        {
+            let mut emission = self.emission.write();
+            for h in (epoch_start + 1)..=block_height {
+                let result = emission.process_block(h, utility);
+                total_emission = total_emission.saturating_add(result.amount);
+            }
+        }
 
         // Distribute rewards according to tokenomics v3
         let distribution = self.distributor.distribute(
@@ -148,9 +158,17 @@ impl RewardExecutor {
         delegators: &[DelegatorInfo],
         subnets: &[SubnetInfo],
     ) -> EpochResult {
-        // Calculate emission for this epoch
-        let emission_result = self.emission.write().process_block(block_height, utility);
-        let total_emission = emission_result.amount;
+        // 🔧 FIX: Accumulate emission for all blocks in the epoch, not just one
+        let epoch_length = 32u64; // Should match ConsensusConfig.epoch_length
+        let epoch_start = block_height.saturating_sub(epoch_length);
+        let mut total_emission = 0u128;
+        {
+            let mut emission = self.emission.write();
+            for h in (epoch_start + 1)..=block_height {
+                let result = emission.process_block(h, utility);
+                total_emission = total_emission.saturating_add(result.amount);
+            }
+        }
 
         // 🔧 FIX: Use DistributionConfig BPS ratios for proper allocation
         // Instead of hardcoded 55/30/15 splits, use the config for all pools
@@ -229,6 +247,7 @@ impl RewardExecutor {
             validator_rewards: validator_distribution,
             delegator_rewards: delegator_distribution,
             subnet_owner_rewards: subnet_distribution,
+            infrastructure_rewards: std::collections::HashMap::new(), // Infra distributed via DAO fallback below
             dao_allocation: dao_pool,
             community_ecosystem_allocation: community_pool,
         };
@@ -236,15 +255,19 @@ impl RewardExecutor {
         // Credit rewards to pending balances
         self.credit_rewards(&combined, epoch);
 
-        // Credit DAO allocation
-        if dao_pool > 0 {
+        // 🔧 FIX: Credit community_ecosystem + infrastructure to DAO pending rewards
+        // credit_rewards() already handles dao_allocation → dao_balance,
+        // so we only add the pools that credit_rewards() doesn't handle
+        let infra_pool = (total_emission * config.infrastructure_share_bps as u128) / 10_000;
+        let uncredited_pools = community_pool + infra_pool;
+        if uncredited_pools > 0 {
             let mut pending = self.pending_rewards.write();
             let entry = pending.entry(self.dao_address).or_insert_with(|| PendingReward {
                 amount: 0,
                 last_epoch: epoch,
                 accumulated_from_epoch: epoch,
             });
-            entry.amount = entry.amount.saturating_add(dao_pool);
+            entry.amount = entry.amount.saturating_add(uncredited_pools);
             entry.last_epoch = epoch;
         }
 
@@ -317,9 +340,27 @@ impl RewardExecutor {
             credit(*addr, *amount, RewardType::SubnetOwner);
         }
 
+        // Credit infrastructure node operators (2% pool)
+        // If no infra nodes were registered, infrastructure_rewards is empty
+        // and the pool falls through to DAO treasury below
+        for (addr, amount) in &distribution.infrastructure_rewards {
+            credit(*addr, *amount, RewardType::Mining); // Closest reward type for infra
+        }
+
         // Credit DAO treasury (with overflow protection)
         let mut dao_bal = self.dao_balance.write();
         *dao_bal = dao_bal.saturating_add(distribution.dao_allocation);
+
+        // Credit community ecosystem (10%) to DAO treasury for governance distribution
+        *dao_bal = dao_bal.saturating_add(distribution.community_ecosystem_allocation);
+
+        // Credit undistributed infrastructure pool to DAO treasury as fallback
+        let infra_distributed: u128 = distribution.infrastructure_rewards.values().sum();
+        let infra_pool_total = distribution.total_distributed * 200 / 10_000; // 2% of total
+        let infra_undistributed = infra_pool_total.saturating_sub(infra_distributed);
+        if infra_undistributed > 0 {
+            *dao_bal = dao_bal.saturating_add(infra_undistributed);
+        }
     }
 
     /// Claim pending rewards - moves from pending to available balance

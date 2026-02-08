@@ -5,8 +5,9 @@ use tracing::{info, warn, debug};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Image ID for the AI model inference guest program
-/// In production, this would be computed from the actual RISC-V ELF binary
+/// Image ID for the AI model inference guest program.
+/// In production, this MUST be set to the hash of the actual RISC-V ELF binary
+/// via `initialize()` before `process_request()` is called.
 const DEFAULT_AI_IMAGE_ID: [u8; 32] = [0xAA; 32];
 
 pub struct RequestProcessor {
@@ -17,9 +18,16 @@ pub struct RequestProcessor {
 }
 
 impl RequestProcessor {
-    /// Create a new RequestProcessor with the zkVM prover
+    /// Create a new RequestProcessor in **development mode**.
+    ///
+    /// # Warning
+    /// Dev mode uses a mock prover — proofs are NOT cryptographically valid.
+    /// Use [`with_config(ProverConfig::default())`](Self::with_config) for production.
     pub fn new() -> Self {
-        // Use dev prover for MVP, production would use ProverConfig::default()
+        tracing::warn!(
+            "RequestProcessor created in DEV MODE — proofs will not be valid. \
+             Use RequestProcessor::with_config(ProverConfig::default()) for production."
+        );
         let prover = ZkProver::dev_prover();
         let ai_image_id = ImageId::new(DEFAULT_AI_IMAGE_ID);
 
@@ -40,15 +48,27 @@ impl RequestProcessor {
         }
     }
 
-    /// Initialize the prover by registering the AI inference guest program
+    /// Initialize the prover by registering the AI inference guest program.
     ///
-    /// In production, `elf_bytes` would be the compiled RISC-V ELF binary
-    /// of the AI inference guest program.
+    /// # Arguments
+    /// * `elf_bytes` - The compiled RISC-V ELF binary of the AI inference guest program.
+    ///   **Required for production.** If `None`, initialization will fail in production mode.
     pub async fn initialize(&self, elf_bytes: Option<Vec<u8>>) -> Result<()> {
         let prover = self.prover.read().await;
 
-        // Use provided ELF or a mock for development
-        let elf = elf_bytes.unwrap_or_else(|| vec![0u8; 64]); // Mock ELF for dev
+        let elf = match elf_bytes {
+            Some(bytes) if !bytes.is_empty() => bytes,
+            _ => {
+                warn!("No ELF binary provided for AI inference guest program — \
+                       oracle will not be able to generate valid proofs. \
+                       Provide the ELF binary via initialize(Some(elf_bytes)).");
+                return Err(crate::error::OracleError::ProofGeneration(
+                    "ELF binary is required for oracle initialization. \
+                     Cannot register a mock image in production."
+                        .to_string(),
+                ));
+            }
+        };
 
         prover.register_image(self.ai_image_id, elf).await
             .map_err(|e| crate::error::OracleError::ProofGeneration(e.to_string()))?;
@@ -76,11 +96,13 @@ impl RequestProcessor {
         // Generate proof using zkVM
         let prover = self.prover.read().await;
 
-        // Check if image is registered, if not, register a mock for dev mode
+        // Verify the AI inference image is registered
         if !prover.is_image_registered(&self.ai_image_id).await {
-            warn!("AI image not registered, using dev mode mock");
-            prover.register_image(self.ai_image_id, vec![0u8; 64]).await
-                .map_err(|e| crate::error::OracleError::ProofGeneration(e.to_string()))?;
+            return Err(crate::error::OracleError::ProofGeneration(
+                "AI inference image not registered. Call initialize() with a valid ELF binary \
+                 before processing requests."
+                    .to_string(),
+            ));
         }
 
         let receipt = prover.prove(self.ai_image_id, guest_input).await

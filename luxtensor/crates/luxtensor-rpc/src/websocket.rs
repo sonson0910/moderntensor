@@ -75,7 +75,8 @@ pub struct SubscriptionParams {
 pub struct WebSocketServer {
     subscriptions: Arc<RwLock<HashMap<String, Subscription>>>,
     broadcast_tx: mpsc::UnboundedSender<BroadcastEvent>,
-    broadcast_rx: Arc<RwLock<mpsc::UnboundedReceiver<BroadcastEvent>>>,
+    /// `None` after `start()` has been called (consumed).
+    broadcast_rx: Arc<RwLock<Option<mpsc::UnboundedReceiver<BroadcastEvent>>>>,
 }
 
 /// A subscription
@@ -104,7 +105,7 @@ impl WebSocketServer {
         Self {
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
-            broadcast_rx: Arc::new(RwLock::new(broadcast_rx)),
+            broadcast_rx: Arc::new(RwLock::new(Some(broadcast_rx))),
         }
     }
 
@@ -121,13 +122,22 @@ impl WebSocketServer {
 
         info!("WebSocket RPC server listening on {}", addr);
 
-        // Spawn broadcast handler
+        // Spawn broadcast handler — take the receiver so start() cannot be called twice.
         let subscriptions = self.subscriptions.clone();
-        let mut broadcast_rx = self.broadcast_rx.write().await;
-        let broadcast_rx = std::mem::replace(
-            &mut *broadcast_rx,
-            mpsc::unbounded_channel().1, // dummy receiver
-        );
+        let mut broadcast_rx_guard = self.broadcast_rx.write().await;
+        let broadcast_rx = {
+            let taken = std::mem::take(&mut *broadcast_rx_guard);
+            match taken {
+                Some(rx) => rx,
+                None => {
+                    error!("WebSocket server already started (broadcast_rx already consumed)");
+                    return Err(RpcError::ServerError(
+                        "WebSocket server start() called more than once".to_string(),
+                    ));
+                }
+            }
+        };
+        drop(broadcast_rx_guard);
 
         tokio::spawn(async move {
             Self::handle_broadcasts(subscriptions, broadcast_rx).await;
@@ -249,7 +259,7 @@ impl WebSocketServer {
                 let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 let sub_id = format!("0x{:016x}{:016x}", timestamp, counter);
 
@@ -335,7 +345,10 @@ impl WebSocketServer {
                                 method: "eth_subscription".to_string(),
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
-                                    result: serde_json::to_value(&block).unwrap(),
+                                    result: serde_json::to_value(&block).unwrap_or_else(|e| {
+                                        log::warn!("Failed to serialize block for subscription: {}", e);
+                                        serde_json::Value::Null
+                                    }),
                                 },
                             };
 
@@ -353,7 +366,10 @@ impl WebSocketServer {
                                 method: "eth_subscription".to_string(),
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
-                                    result: serde_json::to_value(&tx.hash).unwrap(),
+                                    result: serde_json::to_value(&tx.hash).unwrap_or_else(|e| {
+                                        log::warn!("Failed to serialize tx hash for subscription: {}", e);
+                                        serde_json::Value::Null
+                                    }),
                                 },
                             };
 

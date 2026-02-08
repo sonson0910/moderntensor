@@ -115,7 +115,22 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
             .unwrap_or(10_000_000);
 
         // Get nonce from UnifiedStateDB (C1 FIX: consistent state source)
-        let current_nonce = unified_state.read().get_nonce(&Address::from(from));
+        let state_guard = unified_state.read();
+        let current_nonce = state_guard.get_nonce(&Address::from(from));
+        let chain_id = state_guard.chain_id();
+        drop(state_guard);
+
+        // Reject unsigned transactions on non-dev chains
+        // eth_sendTransaction cannot sign — use eth_sendRawTransaction for production
+        // Dev chains: 1337 (Hardhat default), 31337, 1, 5, 11155111 (Sepolia/Goerli)
+        let is_dev = matches!(chain_id, 1337 | 31337 | 1 | 5 | 11155111);
+        if !is_dev {
+            return Err(jsonrpc_core::Error {
+                code: jsonrpc_core::ErrorCode::ServerError(-32000),
+                message: "eth_sendTransaction is only available on dev chains. Use eth_sendRawTransaction with a signed transaction.".to_string(),
+                data: None,
+            });
+        }
 
         // DOUBLE-SPEND PROTECTION: Check if nonce was explicitly provided
         let provided_nonce = tx_obj.get("nonce")
@@ -206,7 +221,13 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
                 s: [0u8; 32],
                 v: 0,
             };
-            mempool_guard.queue_transaction(ready_tx);
+            if !mempool_guard.queue_transaction(ready_tx) {
+                return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::InternalError,
+                    message: "Transaction queue full".to_string(),
+                    data: None,
+                });
+            }
             info!("📦 Transaction queued for block inclusion: 0x{}", hex::encode(&tx_hash));
         }
 
@@ -320,35 +341,7 @@ fn compute_contract_address(tx: &Transaction) -> serde_json::Value {
 
 /// Deserialize stored receipt from database
 fn deserialize_receipt(receipt_bytes: &[u8]) -> Option<serde_json::Value> {
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct StoredLog {
-        address: Address,
-        topics: Vec<[u8; 32]>,
-        data: Vec<u8>,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[repr(u8)]
-    enum StoredExecutionStatus {
-        Success = 1,
-        Failed = 0,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
-    struct StoredReceipt {
-        transaction_hash: [u8; 32],
-        block_height: u64,
-        block_hash: [u8; 32],
-        transaction_index: usize,
-        from: Address,
-        to: Option<Address>,
-        gas_used: u64,
-        status: StoredExecutionStatus,
-        logs: Vec<StoredLog>,
-        contract_address: Option<Address>,
-    }
+    use luxtensor_core::receipt::{Receipt as StoredReceipt, ExecutionStatus};
 
     tracing::debug!("📥 Got receipt bytes: {} bytes", receipt_bytes.len());
 
@@ -357,6 +350,14 @@ fn deserialize_receipt(receipt_bytes: &[u8]) -> Option<serde_json::Value> {
             let contract_addr = receipt.contract_address.map(|addr|
                 format!("0x{}", hex::encode(addr.as_bytes()))
             );
+
+            let logs: Vec<serde_json::Value> = receipt.logs.iter().map(|log| {
+                json!({
+                    "address": format!("0x{}", hex::encode(log.address.as_bytes())),
+                    "topics": log.topics.iter().map(|t| format!("0x{}", hex::encode(t))).collect::<Vec<_>>(),
+                    "data": format!("0x{}", hex::encode(&log.data)),
+                })
+            }).collect();
 
             Some(json!({
                 "transactionHash": format!("0x{}", hex::encode(receipt.transaction_hash)),
@@ -369,10 +370,10 @@ fn deserialize_receipt(receipt_bytes: &[u8]) -> Option<serde_json::Value> {
                 "cumulativeGasUsed": format!("0x{:x}", receipt.gas_used),
                 "gasUsed": format!("0x{:x}", receipt.gas_used),
                 "status": match receipt.status {
-                    StoredExecutionStatus::Success => "0x1",
-                    StoredExecutionStatus::Failed => "0x0",
+                    ExecutionStatus::Success => "0x1",
+                    ExecutionStatus::Failed => "0x0",
                 },
-                "logs": []
+                "logs": logs
             }))
         }
         Err(e) => {

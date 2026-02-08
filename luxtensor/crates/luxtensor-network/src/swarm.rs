@@ -2,6 +2,7 @@
 //! This module provides actual network connectivity using libp2p Swarm
 
 use crate::error::NetworkError;
+use crate::eclipse_protection::{EclipseProtection, EclipseConfig};
 use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
 use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
 use futures::StreamExt;
@@ -74,6 +75,8 @@ pub struct SwarmP2PNode {
     sync_requests: std::collections::HashMap<PeerId, (u32, std::time::Instant)>,
     /// Peer discovery with latency-based selection
     peer_discovery: std::sync::Arc<PeerDiscovery>,
+    /// 🔧 FIX: Eclipse protection to limit connections per subnet
+    eclipse_protection: std::sync::Arc<EclipseProtection>,
 }
 
 /// Maximum sync requests per peer per minute
@@ -93,10 +96,11 @@ struct BlockchainBehaviour {
 impl SwarmP2PNode {
     /// Create a new P2P swarm node with random keypair (for backwards compatibility)
     /// Returns the node and a sender for commands (broadcast blocks/txs)
+    /// 🔧 FIX: Use bounded channel types to match with_keypair()
     pub async fn new(
         listen_port: u16,
-        event_sender: mpsc::UnboundedSender<SwarmP2PEvent>,
-    ) -> Result<(Self, mpsc::UnboundedSender<SwarmCommand>), NetworkError> {
+        event_sender: mpsc::Sender<SwarmP2PEvent>,
+    ) -> Result<(Self, mpsc::Sender<SwarmCommand>), NetworkError> {
         let keypair = Keypair::generate_ed25519();
         Self::with_keypair(listen_port, event_sender, keypair, vec![], true).await
     }
@@ -167,9 +171,9 @@ impl SwarmP2PNode {
             ..Default::default()
         };
         let peer_score_thresholds = gossipsub::PeerScoreThresholds {
-            gossip_threshold: -100.0,       // don't gossip to peers below this
-            publish_threshold: -200.0,      // don't publish to peers below this
-            graylist_threshold: -400.0,     // ignore all messages from peers below this
+            gossip_threshold: -10.0,        // 🔧 FIX: Tighter threshold (was -100)
+            publish_threshold: -30.0,       // 🔧 FIX: Tighter threshold (was -200)
+            graylist_threshold: -50.0,      // 🔧 FIX: Tighter threshold (was -400)
             opportunistic_graft_threshold: 5.0,
             ..Default::default()
         };
@@ -289,6 +293,9 @@ impl SwarmP2PNode {
         // Initialize peer discovery for auto-selecting nearest peers
         let peer_discovery = std::sync::Arc::new(PeerDiscovery::new(DiscoveryConfig::default()));
 
+        // 🔧 FIX: Initialize eclipse protection for subnet-based connection limiting
+        let eclipse_protection = std::sync::Arc::new(EclipseProtection::new(EclipseConfig::default()));
+
         Ok((Self {
             swarm,
             event_sender,
@@ -298,6 +305,7 @@ impl SwarmP2PNode {
             sync_topic,
             sync_requests: std::collections::HashMap::new(),
             peer_discovery,
+            eclipse_protection,
         }, command_tx))
     }
 
@@ -329,13 +337,38 @@ impl SwarmP2PNode {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!("🎧 Listening on {}", address);
                         }
-                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                            // 🔧 FIX: Check eclipse protection before accepting connection
+                            let remote_addr = match &endpoint {
+                                libp2p::core::ConnectedPoint::Dialer { address, .. } => address.clone(),
+                                libp2p::core::ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr.clone(),
+                            };
+                            let is_outbound = matches!(endpoint, libp2p::core::ConnectedPoint::Dialer { .. });
+
+                            // Extract IP from multiaddr for eclipse protection
+                            let ip_addr = remote_addr.iter().find_map(|proto| match proto {
+                                libp2p::multiaddr::Protocol::Ip4(ip) => Some(std::net::IpAddr::V4(ip)),
+                                libp2p::multiaddr::Protocol::Ip6(ip) => Some(std::net::IpAddr::V6(ip)),
+                                _ => None,
+                            });
+
+                            if let Some(ip) = ip_addr {
+                                if !self.eclipse_protection.should_allow_connection(&ip, is_outbound) {
+                                    warn!("🛡️ Eclipse protection: rejecting peer {} from {}", peer_id, ip);
+                                    let _ = self.swarm.disconnect_peer_id(peer_id);
+                                    continue;
+                                }
+                                self.eclipse_protection.add_peer(peer_id.to_string(), ip, is_outbound);
+                            }
+
                             info!("✅ Connected to peer: {}", peer_id);
                             if self.event_sender.try_send(SwarmP2PEvent::PeerConnected(peer_id)).is_err() {
                                 warn!("⚠️ Event channel full, dropping PeerConnected event");
                             }
                         }
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                            // 🔧 FIX: Remove peer from eclipse protection tracking
+                            self.eclipse_protection.remove_peer(&peer_id.to_string());
                             info!("❌ Disconnected from peer: {}", peer_id);
                             if self.event_sender.try_send(SwarmP2PEvent::PeerDisconnected(peer_id)).is_err() {
                                 warn!("⚠️ Event channel full, dropping PeerDisconnected event");
@@ -512,7 +545,7 @@ impl SwarmP2PNode {
                     warn!("⚠️ Event channel full, dropping NewTransaction");
                 }
             }
-            Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id }) => {
+            Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id: _ }) => {
                 // SECURITY: Rate limit sync requests per peer
                 let now = std::time::Instant::now();
                 let entry = self.sync_requests.entry(source).or_insert((0, now));
@@ -531,11 +564,11 @@ impl SwarmP2PNode {
                 }
 
                 entry.0 += 1;
-                info!("🔄 Sync request from {} for blocks {}-{}", requester_id, from_height, to_height);
+                info!("🔄 Sync request from {} for blocks {}-{}", source, from_height, to_height);
                 if self.event_sender.try_send(SwarmP2PEvent::SyncRequest {
                     from_height,
                     to_height,
-                    requester_id
+                    requester_id: source.to_string(),  // 🔧 FIX #18: Use authenticated peer ID instead of untrusted self-reported value
                 }).is_err() {
                     warn!("⚠️ Event channel full, dropping SyncRequest");
                 }
@@ -579,23 +612,35 @@ impl SwarmP2PNode {
         }
     }
 
-    /// Broadcast a transaction to the network
+    /// Broadcast a transaction to the network.
+    ///
+    /// Publishes to the dedicated transactions gossipsub topic. If no peers are subscribed
+    /// to the transactions topic, falls back to the blocks topic for maximum reachability.
     pub fn broadcast_transaction(&mut self, tx: &Transaction) -> Result<(), NetworkError> {
         let message = NetworkMessage::NewTransaction(tx.clone());
         let data = bincode::serialize(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
-        // 🔧 WORKAROUND: Use blocks topic instead of transactions topic
-        // Blocks topic has more active mesh connections, transactions topic may not have peers
-        info!("📡 SWARM: Publishing TX to blocks topic (workaround for mesh issue)");
-        match self.swarm.behaviour_mut().gossipsub.publish(self.blocks_topic.clone(), data) {
+        // Try the dedicated transactions topic first
+        match self.swarm.behaviour_mut().gossipsub.publish(self.transactions_topic.clone(), data.clone()) {
             Ok(_) => {
-                info!("📡 SWARM: TX broadcast successful via blocks topic");
+                debug!("📡 TX broadcast via transactions topic");
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {
-                warn!("⚠️ SWARM: No peers subscribed to blocks topic - TX NOT propagated!");
-                Ok(())
+                // Fallback: try blocks topic which typically has more mesh peers
+                debug!("No peers on transactions topic, falling back to blocks topic");
+                match self.swarm.behaviour_mut().gossipsub.publish(self.blocks_topic.clone(), data) {
+                    Ok(_) => {
+                        debug!("📡 TX broadcast via blocks topic (fallback)");
+                        Ok(())
+                    }
+                    Err(gossipsub::PublishError::InsufficientPeers) => {
+                        warn!("⚠️ No peers on any topic — TX NOT propagated");
+                        Ok(()) // Not fatal — peers will sync later
+                    }
+                    Err(e) => Err(NetworkError::PublishFailed(e.to_string())),
+                }
             }
             Err(e) => {
                 Err(NetworkError::PublishFailed(e.to_string()))

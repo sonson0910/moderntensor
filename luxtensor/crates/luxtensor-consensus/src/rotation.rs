@@ -5,7 +5,7 @@ use crate::error::ConsensusError;
 use crate::validator::{Validator, ValidatorSet};
 use luxtensor_core::types::Address;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 /// Validator rotation manager
@@ -14,8 +14,8 @@ pub struct ValidatorRotation {
     current_validators: ValidatorSet,
     /// Pending validators waiting to join
     pending_validators: HashMap<Address, PendingValidator>,
-    /// Validators scheduled to exit
-    exiting_validators: HashSet<Address>,
+    /// Validators scheduled to exit: address -> exit_epoch
+    exiting_validators: HashMap<Address, u64>,
     /// Rotation configuration
     config: RotationConfig,
     /// Current epoch
@@ -70,7 +70,7 @@ impl ValidatorRotation {
         Self {
             current_validators: ValidatorSet::new(),
             pending_validators: HashMap::new(),
-            exiting_validators: HashSet::new(),
+            exiting_validators: HashMap::new(),
             config,
             current_epoch: 0,
         }
@@ -81,7 +81,7 @@ impl ValidatorRotation {
         Self {
             current_validators: validators,
             pending_validators: HashMap::new(),
-            exiting_validators: HashSet::new(),
+            exiting_validators: HashMap::new(),
             config,
             current_epoch: 0,
         }
@@ -143,7 +143,7 @@ impl ValidatorRotation {
         }
 
         // Check if already scheduled to exit
-        if self.exiting_validators.contains(&address) {
+        if self.exiting_validators.contains_key(&address) {
             return Err(ConsensusError::InvalidOperation(
                 "Validator already scheduled to exit".to_string(),
             ));
@@ -157,7 +157,7 @@ impl ValidatorRotation {
             exit_epoch
         );
 
-        self.exiting_validators.insert(address);
+        self.exiting_validators.insert(address, exit_epoch);
 
         Ok(exit_epoch)
     }
@@ -223,10 +223,21 @@ impl ValidatorRotation {
     }
 
     /// Process validators scheduled for exit
+    ///
+    /// SECURITY: Only removes validators whose exit delay has elapsed.
+    /// Each validator's exit_epoch was set when they requested exit:
+    ///   exit_epoch = request_epoch + exit_delay_epochs
+    /// Only validators with exit_epoch <= new_epoch are actually removed.
     fn process_validator_exits(&mut self, new_epoch: u64) -> Vec<Address> {
         let mut exited = Vec::new();
 
-        let ready_to_exit: Vec<Address> = self.exiting_validators.iter().copied().collect();
+        // Collect validators whose exit epoch has arrived
+        let ready_to_exit: Vec<Address> = self
+            .exiting_validators
+            .iter()
+            .filter(|(_, exit_epoch)| **exit_epoch <= new_epoch)
+            .map(|(addr, _)| *addr)
+            .collect();
 
         for address in ready_to_exit {
             self.current_validators.remove_validator(&address).ok();
@@ -235,7 +246,7 @@ impl ValidatorRotation {
             info!(
                 "Exited validator {} at epoch {}",
                 hex::encode(&address),
-                new_epoch
+                new_epoch,
             );
         }
 

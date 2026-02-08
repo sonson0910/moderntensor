@@ -150,6 +150,7 @@ pub struct NeuronInfo {
     pub subnet_id: u64,
     pub stake: u128,
     pub trust: f64,
+    pub consensus: f64,
     pub rank: u64,
     pub incentive: f64,
     pub dividends: f64,

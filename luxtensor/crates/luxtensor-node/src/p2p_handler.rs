@@ -97,30 +97,11 @@ async fn handle_p2p_event(
             handle_new_transaction(tx, mempool).await?;
         }
         P2PEvent::PeerConnected(peer_id) => {
-            // Register peer with Eclipse Protection
-            // Note: We use a synthetic IP since libp2p PeerId doesn't carry IP directly
-            // In production, this should be enhanced to extract IP from observed addresses
-            let peer_id_str = peer_id.to_string();
-            let synthetic_ip: IpAddr = peer_id_to_synthetic_ip(&peer_id_str);
-            let is_outbound = false; // Assume inbound for now, could be enhanced
-
-            if eclipse_protection.should_allow_connection(&synthetic_ip, is_outbound) {
-                eclipse_protection.add_peer(peer_id_str.clone(), synthetic_ip, is_outbound);
-                info!("👋 Peer connected and registered: {} (diversity: {}%)",
-                    peer_id, eclipse_protection.calculate_diversity_score());
-            } else {
-                warn!("🛡️ Peer connection blocked by eclipse protection: {}", peer_id);
-                // Send disconnect command back to swarm
-                if let Some(tx) = sync_command_tx {
-                    if let Err(e) = tx.send(SwarmCommand::DisconnectPeer {
-                        peer_id: peer_id.to_string(),
-                    }) {
-                        warn!("Failed to send disconnect command: {}", e);
-                    } else {
-                        info!("🚫 Disconnect command sent for blocked peer: {}", peer_id);
-                    }
-                }
-            }
+            // Eclipse protection (IP check + add_peer) is handled at the swarm layer
+            // in ConnectionEstablished, where we have access to the real remote IP
+            // and connection direction. Here we just log the event.
+            info!("👋 Peer connected: {} (diversity: {}%)",
+                peer_id, eclipse_protection.calculate_diversity_score());
         }
         P2PEvent::PeerDisconnected(peer_id) => {
             // Remove peer from Eclipse Protection tracking

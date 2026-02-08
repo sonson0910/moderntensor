@@ -120,10 +120,7 @@ impl LongRangeProtection {
                 height,
                 epoch: height / 100, // Assuming 100 blocks per epoch
                 state_root, // SECURITY: Use actual state root for checkpoint validation
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
+                timestamp: height, // Deterministic: use block height instead of SystemTime::now()
             };
             let _ = self.add_checkpoint(checkpoint);
         }
@@ -226,21 +223,18 @@ impl LongRangeProtection {
     }
 
     /// Validate a checkpoint from external source (e.g., trusted node)
-    pub fn validate_external_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), &'static str> {
+    /// `current_height` is used for basic sanity checking instead of wall-clock time.
+    pub fn validate_external_checkpoint(&self, checkpoint: &Checkpoint, current_height: u64) -> Result<(), &'static str> {
         // Check height is reasonable
         let finalized = *self.finalized_height.read();
         if checkpoint.height < finalized {
             return Err("External checkpoint is below finalized height");
         }
 
-        // Check timestamp is not in the future
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        if checkpoint.timestamp > now + 60 {
-            return Err("Checkpoint timestamp is in the future");
+        // SECURITY: Use deterministic height comparison instead of SystemTime::now()
+        // Check checkpoint height is not unreasonably far ahead
+        if checkpoint.height > current_height + 1000 {
+            return Err("Checkpoint height is unreasonably far ahead of current height");
         }
 
         // Check block hash is not empty
@@ -361,7 +355,7 @@ mod tests {
             state_root: [0u8; 32],
             timestamp: 1000,
         };
-        assert!(protection.validate_external_checkpoint(&valid_cp).is_ok());
+        assert!(protection.validate_external_checkpoint(&valid_cp, 200).is_ok());
 
         // Invalid: empty block hash
         let invalid_cp = Checkpoint {
@@ -371,7 +365,7 @@ mod tests {
             state_root: [0u8; 32],
             timestamp: 1000,
         };
-        assert!(protection.validate_external_checkpoint(&invalid_cp).is_err());
+        assert!(protection.validate_external_checkpoint(&invalid_cp, 200).is_err());
     }
 
     #[test]

@@ -25,11 +25,20 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create config from environment variables
+    /// Create config from environment variables.
+    ///
+    /// **DATABASE_URL is required** — if not set, the indexer will panic at startup
+    /// rather than silently connecting with default credentials.
     pub fn from_env() -> Self {
         Self {
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/luxtensor_indexer".to_string()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                eprintln!(
+                    "FATAL: DATABASE_URL environment variable is not set.\n\
+                     The indexer requires an explicit database connection string.\n\
+                     Example: DATABASE_URL=postgres://user:pass@host/luxtensor_indexer"
+                );
+                std::process::exit(1);
+            }),
             node_ws_url: env::var("NODE_WS_URL")
                 .unwrap_or_else(|_| "ws://localhost:8546".to_string()),
             node_rpc_url: env::var("NODE_RPC_URL")

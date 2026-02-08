@@ -305,9 +305,19 @@ pub struct BloomFilter {
 
 impl BloomFilter {
     /// Create a new bloom filter
+    ///
+    /// # Panics
+    /// Panics if `expected_elements` is 0 or `false_positive_rate` is not in (0.0, 1.0).
     pub fn new(expected_elements: usize, false_positive_rate: f64) -> Self {
-        let bits_count = Self::optimal_bits(expected_elements, false_positive_rate);
-        let hash_count = Self::optimal_hashes(expected_elements, bits_count);
+        assert!(expected_elements > 0, "BloomFilter: expected_elements must be > 0");
+        assert!(
+            false_positive_rate > 0.0 && false_positive_rate < 1.0,
+            "BloomFilter: false_positive_rate must be in (0.0, 1.0), got {}",
+            false_positive_rate,
+        );
+
+        let bits_count = Self::optimal_bits(expected_elements, false_positive_rate).max(1);
+        let hash_count = Self::optimal_hashes(expected_elements, bits_count).max(1);
 
         Self {
             bits: vec![false; bits_count],
@@ -316,13 +326,19 @@ impl BloomFilter {
     }
 
     fn optimal_bits(n: usize, p: f64) -> usize {
+        if n == 0 {
+            return 1; // Safety floor
+        }
         let bits = -(n as f64 * p.ln()) / (2.0_f64.ln().powi(2));
-        bits.ceil() as usize
+        (bits.ceil() as usize).max(1)
     }
 
     fn optimal_hashes(n: usize, m: usize) -> usize {
+        if n == 0 {
+            return 1; // Safety floor — prevents division by zero
+        }
         let hashes = (m as f64 / n as f64) * 2.0_f64.ln();
-        hashes.ceil() as usize
+        (hashes.ceil() as usize).max(1)
     }
 
     fn hash(&self, item: &[u8], seed: usize) -> usize {

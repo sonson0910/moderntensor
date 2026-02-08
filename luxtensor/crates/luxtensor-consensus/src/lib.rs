@@ -25,21 +25,22 @@ pub mod liveness;
 pub mod circuit_breaker;
 pub mod randao;
 pub mod eip1559;
+pub mod economic_model;
 // NOTE: oracle.rs removed - LuxTensor uses luxtensor-oracle crate for AI inference
 // Price oracle functionality is not needed for AI blockchain
 
 pub use error::*;
 pub use validator::{Validator, ValidatorSet};
 pub use pos::{ProofOfStake, ConsensusConfig};
-pub use fork_choice::ForkChoice;
+pub use fork_choice::{ForkChoice, ForkChoiceSnapshot};
 pub use rotation::{ValidatorRotation, RotationConfig, RotationStats, EpochTransitionResult};
 pub use fork_resolution::{ForkResolver, ReorgInfo, FinalityStatus, FinalityStats};
-pub use fast_finality::{FastFinality, FastFinalityStats};
+pub use fast_finality::{FastFinality, FastFinalityStats, BftPhase, ViewChangeMessage};
 pub use slashing::{SlashingManager, SlashingConfig, SlashReason, SlashingEvidence, SlashEvent, JailStatus};
 pub use emission::{EmissionController, EmissionConfig, EmissionResult, EmissionStats, UtilityMetrics};
 pub use reward_distribution::{
     RewardDistributor, DistributionConfig, LockBonusConfig, DistributionResult,
-    MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo
+    MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo, InfrastructureNodeInfo
 };
 pub use burn_manager::{BurnManager, BurnConfig, BurnType, BurnEvent, BurnStats};
 pub use reward_executor::{
@@ -79,6 +80,13 @@ pub use circuit_breaker::{
 };
 pub use eip1559::{
     FeeMarket, Eip1559Config, FeeHistory
+};
+pub use economic_model::{
+    project_supply, analyze_equilibrium, validate_parameters, generate_report,
+    sweep_burn_rate, sweep_tx_volume,
+    AnnualSnapshot, EquilibriumResult, SensitivityPoint,
+    ProjectionConfig, TokenomicsInconsistency, Severity,
+    BLOCKS_PER_YEAR, BLOCK_TIME_SECONDS, PREMINTED_SUPPLY, EMISSION_POOL,
 };
 pub use randao::{
     RandaoMixer, RandaoConfig, ValidatorReveal, RandaoError

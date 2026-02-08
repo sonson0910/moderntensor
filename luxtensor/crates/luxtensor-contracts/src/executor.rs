@@ -5,7 +5,7 @@
 use crate::error::ContractError;
 use crate::state::ContractState;
 use crate::types::{ContractAddress, ContractCode};
-use crate::evm_executor::EvmExecutor;
+use crate::evm_executor::{EvmExecutor, EvmLog};
 use luxtensor_core::types::{Address, Hash};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -222,11 +222,11 @@ impl ContractExecutor {
 
         // Execute deployment with EVM
         let evm = self.evm.read();
-        let (returned_address, gas_used, logs_data, _deployed_code) = evm
+        let (returned_address, gas_used, evm_logs, _deployed_code) = evm
             .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
 
-        // Parse logs from EVM execution
-        let logs = self.parse_logs_from_data(&contract_address, &logs_data);
+        // Convert structured REVM logs to executor Log entries
+        let logs = Self::convert_evm_logs(&contract_address, &evm_logs);
 
         let result = ExecutionResult {
             gas_used,
@@ -266,7 +266,7 @@ impl ContractExecutor {
 
         // Execute with EVM
         let evm = self.evm.read();
-        let (return_data, gas_used, logs_data) = evm
+        let (return_data, gas_used, evm_logs) = evm
             .call(
                 context.caller,
                 context.contract_address,
@@ -278,8 +278,8 @@ impl ContractExecutor {
                 context.timestamp,
             )?;
 
-        // Parse logs from EVM execution
-        let logs = self.parse_logs_from_data(&context.contract_address, &logs_data);
+        // Convert structured REVM logs to executor Log entries
+        let logs = Self::convert_evm_logs(&context.contract_address, &evm_logs);
 
         Ok(ExecutionResult {
             gas_used,
@@ -317,7 +317,7 @@ impl ContractExecutor {
 
         // Execute with EVM (value must be 0 for static calls)
         let evm = self.evm.read();
-        let (return_data, gas_used, logs_data) = evm
+        let (return_data, gas_used, evm_logs) = evm
             .call(
                 context.caller,
                 context.contract_address,
@@ -329,8 +329,8 @@ impl ContractExecutor {
                 context.timestamp,
             )?;
 
-        // Parse logs from EVM execution (should be empty for static calls)
-        let logs = self.parse_logs_from_data(&context.contract_address, &logs_data);
+        // Convert structured REVM logs (should be empty for static calls)
+        let logs = Self::convert_evm_logs(&context.contract_address, &evm_logs);
 
         Ok(ExecutionResult {
             gas_used,
@@ -494,21 +494,40 @@ impl ContractExecutor {
         Ok(base_gas + data_gas + execution_gas)
     }
 
-    /// Parse raw logs data from EVM execution into Log structs
-    fn parse_logs_from_data(&self, contract_address: &ContractAddress, logs_data: &[u8]) -> Vec<Log> {
-        // If no logs data, return empty
-        if logs_data.is_empty() {
-            return vec![];
-        }
+    /// Convert structured REVM logs into executor Log entries.
+    /// Preserves topics (event signatures + indexed params) and log data.
+    fn convert_evm_logs(fallback_address: &ContractAddress, evm_logs: &[EvmLog]) -> Vec<Log> {
+        evm_logs
+            .iter()
+            .map(|evm_log| {
+                // Use the actual emitting contract address from REVM if available,
+                // otherwise fall back to the called contract address
+                let address = if evm_log.address.len() == 20 {
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(&evm_log.address);
+                    ContractAddress(addr)
+                } else {
+                    *fallback_address
+                };
 
-        // For now, create a single log with the raw data
-        // In production, this would decode proper EVM log format
-        // which includes topics (32 bytes each) and data
-        vec![Log {
-            address: *contract_address,
-            topics: vec![],
-            data: logs_data.to_vec(),
-        }]
+                // Convert 32-byte topic arrays to Hash type
+                let topics: Vec<Hash> = evm_log
+                    .topics
+                    .iter()
+                    .map(|t| {
+                        let mut h = [0u8; 32];
+                        h.copy_from_slice(t);
+                        h
+                    })
+                    .collect();
+
+                Log {
+                    address,
+                    topics,
+                    data: evm_log.data.clone(),
+                }
+            })
+            .collect()
     }
 }
 

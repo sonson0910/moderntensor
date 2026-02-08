@@ -7,12 +7,18 @@ use luxtensor_crypto::{keccak256, recover_public_key, address_from_public_key};
 
 /// Parse block number from JSON value
 /// Supports: "latest", "pending", "earliest", hex string, or numeric
-pub fn parse_block_number(value: &serde_json::Value) -> std::result::Result<u64, jsonrpc_core::Error> {
+///
+/// # Arguments
+/// * `value` - JSON value containing the block number tag or literal
+/// * `latest_height` - The current chain tip height used to resolve "latest" and "pending" tags
+pub fn parse_block_number_with_latest(
+    value: &serde_json::Value,
+    latest_height: u64,
+) -> std::result::Result<u64, jsonrpc_core::Error> {
     match value {
         serde_json::Value::String(s) => {
             if s == "latest" || s == "pending" {
-                // In real implementation, get latest block
-                Ok(0)
+                Ok(latest_height)
             } else if s == "earliest" {
                 Ok(0)
             } else {
@@ -28,6 +34,15 @@ pub fn parse_block_number(value: &serde_json::Value) -> std::result::Result<u64,
             "Block number must be string or number",
         )),
     }
+}
+
+/// Parse block number from JSON value.
+///
+/// **DEPRECATED**: Use [`parse_block_number_with_latest`] for correct "latest"/"pending" resolution.
+/// This function resolves "latest" to 0 (genesis), which is incorrect for most use cases.
+/// It is retained only for backward compatibility with callers that resolve the tag externally.
+pub fn parse_block_number(value: &serde_json::Value) -> std::result::Result<u64, jsonrpc_core::Error> {
+    parse_block_number_with_latest(value, 0)
 }
 
 /// Parse address from hex string (with or without 0x prefix)
@@ -142,13 +157,32 @@ mod tests {
         let val = serde_json::json!("0x10");
         assert_eq!(parse_block_number(&val).unwrap(), 16);
 
-        // "latest"
+        // "latest" with default (backward compat)
         let val = serde_json::json!("latest");
         assert_eq!(parse_block_number(&val).unwrap(), 0);
 
         // Number
         let val = serde_json::json!(42);
         assert_eq!(parse_block_number(&val).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_parse_block_number_with_latest() {
+        // "latest" resolves to the provided height
+        let val = serde_json::json!("latest");
+        assert_eq!(parse_block_number_with_latest(&val, 12345).unwrap(), 12345);
+
+        // "pending" resolves the same way
+        let val = serde_json::json!("pending");
+        assert_eq!(parse_block_number_with_latest(&val, 9999).unwrap(), 9999);
+
+        // "earliest" is always 0 regardless of latest_height
+        let val = serde_json::json!("earliest");
+        assert_eq!(parse_block_number_with_latest(&val, 12345).unwrap(), 0);
+
+        // Hex number ignores latest_height
+        let val = serde_json::json!("0xff");
+        assert_eq!(parse_block_number_with_latest(&val, 12345).unwrap(), 255);
     }
 
     #[test]

@@ -155,6 +155,7 @@ pub fn register_neuron_handlers(
             subnet_id,
             stake,
             trust: 0.0,
+            consensus: 0.0,
             rank: 0,
             incentive: 0.0,
             dividends: 0.0,

@@ -21,6 +21,7 @@ pub use types::{
     ContractAddress, ContractCode, ContractABI, FunctionSignature, EventSignature, ABIType,
 };
 pub use evm_executor::EvmExecutor;
+pub use evm_executor::{EvmLog, PersistentEvmExecutor, EvmAccountRecord, EvmStateStore};
 pub use account_abstraction::{
     UserOperation, EntryPoint, UserOperationReceipt, PaymasterInfo,
     SimulationResult, GasEstimate, AccountAbstractionError,
@@ -30,4 +31,5 @@ pub use ai_precompiles::{
     TrainingJob, TrainingStatus, gas_costs,
 };
 pub use revm_integration::precompiles;
+pub use revm_integration::{execute_ai_precompile, is_luxtensor_precompile};
 

@@ -193,13 +193,23 @@ impl CachedStateDB {
         Ok(root)
     }
 
-    /// Incremental root computation using cached account hashes
+    /// Incremental root computation using cached account hashes.
+    ///
+    /// Current implementation: delegates to full `inner.commit()` which
+    /// recomputes the entire trie.  This is correct but not yet optimized.
+    /// The statistics tracker records this path separately so operators
+    /// can gauge how often the incremental path is hit and prioritize
+    /// the optimization (recomputing only dirty branches using the
+    /// `account_hash_cache`).
+    ///
+    /// Correctness note: falling back to full commit is always safe —
+    /// the optimization would only reduce latency, not change the result.
     fn compute_incremental_root(&self, _height: u64) -> Result<Hash> {
         self.stats.write().incremental_computations += 1;
 
-        // For now, still use full computation but track as incremental
-        // In a production implementation, this would use the account hash cache
-        // to only recompute affected branches of the Merkle tree
+        // Delegate to full trie commit.
+        // Future optimization: walk only the dirty-account paths in the
+        // Merkle trie, using `self.account_hash_cache` for unchanged siblings.
         let root = self.inner.commit()?;
 
         Ok(root)

@@ -65,9 +65,9 @@ pub struct NodeConfig {
 /// - Mainnet: Will be announced before mainnet launch
 /// - Testnet: 0xDAO0000000000000000000000000000000000002
 fn default_dao_address() -> String {
-    // PLACEHOLDER - Must be configured in production config.toml
-    // This default is for development/testing only
-    "0xDAO0000000000000000000000000000000000001".to_string()
+    // Development-only default. The validate() method will reject this
+    // for non-dev chain IDs.
+    "0x0000000000000000000000000000000000000000".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +147,12 @@ pub struct RpcConfig {
     /// RPC listening port
     pub listen_port: u16,
 
+    /// WebSocket listening port (default: 8546)
+    pub ws_port: u16,
+
+    /// Enable WebSocket server
+    pub ws_enabled: bool,
+
     /// Number of worker threads
     pub threads: usize,
 
@@ -188,7 +194,7 @@ impl Default for Config {
                 min_stake: "1000000000000000000".to_string(), // 1 token (10^18)
                 max_validators: 100,
                 gas_limit: default_gas_limit(),
-                validators: vec!["validator-1".to_string(), "validator-2".to_string(), "validator-3".to_string()],
+                validators: vec![], // Must be configured explicitly via config.toml
             },
             network: NetworkConfig {
                 listen_addr: "0.0.0.0".to_string(),
@@ -208,8 +214,10 @@ impl Default for Config {
                 enabled: true,
                 listen_addr: "127.0.0.1".to_string(),
                 listen_port: 8545,
+                ws_port: 8546,
+                ws_enabled: true,
                 threads: 4,
-                cors_origins: vec!["*".to_string()],
+                cors_origins: vec!["http://localhost:*".to_string()], // SECURITY: restricted from wildcard "*"
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
@@ -238,6 +246,34 @@ impl Config {
 
     /// Validate configuration
     pub fn validate(&self) -> anyhow::Result<()> {
+        // Validate DAO address format
+        {
+            let dao = &self.node.dao_address;
+            if !dao.starts_with("0x") || dao.len() != 42 {
+                anyhow::bail!(
+                    "Invalid dao_address format: '{}'. Must be 0x-prefixed 20-byte hex address.",
+                    dao
+                );
+            }
+            // Verify it's valid hex
+            if hex::decode(dao.trim_start_matches("0x")).is_err() {
+                anyhow::bail!(
+                    "Invalid dao_address: '{}' contains non-hex characters.",
+                    dao
+                );
+            }
+            // Warn if using the zero address on non-dev chains
+            let is_zero = dao == "0x0000000000000000000000000000000000000000";
+            let is_production_chain = self.node.chain_id == 8899 || self.node.chain_id == 9999;
+            if is_zero && is_production_chain && !self.node.dev_mode {
+                anyhow::bail!(
+                    "dao_address is the zero address on chain {}. \
+                     Configure a real DAO treasury address in config.toml for production.",
+                    self.node.chain_id
+                );
+            }
+        }
+
         // Validate network config
         if self.network.listen_port == 0 {
             anyhow::bail!("Invalid network port: 0");

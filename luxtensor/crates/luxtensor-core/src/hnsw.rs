@@ -178,7 +178,8 @@ impl HnswIndex {
             return Ok(());
         }
 
-        let entry_id = self.entry_point.unwrap();
+        // Safe: entry_point checked above
+        let entry_id = self.entry_point.expect("entry_point guarded by is_none check");
         let mut current_id = entry_id;
 
         // Phase 1: Greedy search from top layer down to node_layer + 1
@@ -278,7 +279,8 @@ impl HnswIndex {
             return Ok(Vec::new());
         }
 
-        let entry_id = self.entry_point.unwrap();
+        // Safe: entry_point checked above
+        let entry_id = self.entry_point.expect("entry_point guarded by is_none check");
         let mut current_id = entry_id;
 
         for layer in (1..=self.max_layer).rev() {

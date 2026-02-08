@@ -129,15 +129,39 @@ pub fn register_staking_methods(
     });
 
     // staking_unstake - Unstake tokens (PERSISTED)
+    // SECURITY: Now requires signature verification to prevent unauthorized unstaking
     let db = metagraph_db.clone();
     io.add_sync_method("staking_unstake", move |params: Params| {
         let parsed: Vec<String> = params.parse()?;
-        if parsed.len() < 2 {
-            return Err(Error::invalid_params("Missing address or amount"));
+        if parsed.len() < 4 {
+            return Err(Error::invalid_params(
+                "Missing parameters. Required: address, amount, timestamp, signature"
+            ));
         }
 
         let address = parse_address(&parsed[0])?;
         let amount = parse_amount(&parsed[1])?;
+        let timestamp: u64 = parsed[2].parse()
+            .map_err(|_| Error::invalid_params("Invalid timestamp"))?;
+        let signature = &parsed[3];
+
+        // Security: Verify timestamp is recent (within 5 minutes)
+        let now = get_current_timestamp();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(Error::invalid_params("Signature expired or future timestamp"));
+        }
+
+        // Security: Construct message and verify signature
+        let message = format!("unstake:{}:{}", hex::encode(address), amount);
+        let addr = Address::from(address);
+        let sig_valid = verify_caller_signature(&addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, signature, 1));
+
+        if sig_valid.is_err() {
+            return Err(Error::invalid_params(
+                "Signature verification failed - caller does not own address"
+            ));
+        }
 
         let existing = db.get_stake(&address)
             .map_err(|e| internal_error(&e.to_string()))?
@@ -174,24 +198,48 @@ pub fn register_staking_methods(
             "address": format!("0x{}", hex::encode(address)),
             "unstaked": format!("0x{:x}", amount),
             "remaining": format!("0x{:x}", new_stake),
-            "message": "Unstake successful (persisted)"
+            "message": "Unstake successful (persisted, signature verified)"
         }))
     });
 
     // staking_delegate - Delegate tokens to a validator (PERSISTED)
+    // SECURITY: Now requires signature verification to prevent unauthorized delegation
     let db = metagraph_db.clone();
     io.add_sync_method("staking_delegate", move |params: Params| {
         let parsed: Vec<String> = params.parse()?;
-        if parsed.len() < 3 {
-            return Err(Error::invalid_params("Missing delegator, validator, or amount"));
+        if parsed.len() < 5 {
+            return Err(Error::invalid_params(
+                "Missing parameters. Required: delegator, validator, amount, timestamp, signature"
+            ));
         }
 
         let delegator = parse_address(&parsed[0])?;
         let validator = parse_address(&parsed[1])?;
         let amount = parse_amount(&parsed[2])?;
-        let lock_days: u32 = parsed.get(3)
+        let timestamp: u64 = parsed[3].parse()
+            .map_err(|_| Error::invalid_params("Invalid timestamp"))?;
+        let signature = &parsed[4];
+        let lock_days: u32 = parsed.get(5)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+
+        // Security: Verify timestamp is recent (within 5 minutes)
+        let now = get_current_timestamp();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(Error::invalid_params("Signature expired or future timestamp"));
+        }
+
+        // Security: Construct message and verify signature (delegator must sign)
+        let message = format!("delegate:{}:{}:{}", hex::encode(delegator), hex::encode(validator), amount);
+        let addr = Address::from(delegator);
+        let sig_valid = verify_caller_signature(&addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, signature, 1));
+
+        if sig_valid.is_err() {
+            return Err(Error::invalid_params(
+                "Signature verification failed - caller does not own delegator address"
+            ));
+        }
 
         // Verify validator exists
         let validator_stake = db.get_stake(&validator)
@@ -234,19 +282,43 @@ pub fn register_staking_methods(
             "validator": format!("0x{}", hex::encode(validator)),
             "amount": format!("0x{:x}", amount),
             "lockDays": lock_days,
-            "message": "Delegation successful (persisted)"
+            "message": "Delegation successful (persisted, signature verified)"
         }))
     });
 
     // staking_undelegate - Remove delegation (PERSISTED)
+    // SECURITY: Now requires signature verification to prevent unauthorized undelegation
     let db = metagraph_db.clone();
     io.add_sync_method("staking_undelegate", move |params: Params| {
         let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(Error::invalid_params("Missing delegator address"));
+        if parsed.len() < 3 {
+            return Err(Error::invalid_params(
+                "Missing parameters. Required: delegator, timestamp, signature"
+            ));
         }
 
         let delegator = parse_address(&parsed[0])?;
+        let timestamp: u64 = parsed[1].parse()
+            .map_err(|_| Error::invalid_params("Invalid timestamp"))?;
+        let signature = &parsed[2];
+
+        // Security: Verify timestamp is recent (within 5 minutes)
+        let now = get_current_timestamp();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(Error::invalid_params("Signature expired or future timestamp"));
+        }
+
+        // Security: Construct message and verify signature
+        let message = format!("undelegate:{}", hex::encode(delegator));
+        let addr = Address::from(delegator);
+        let sig_valid = verify_caller_signature(&addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, signature, 1));
+
+        if sig_valid.is_err() {
+            return Err(Error::invalid_params(
+                "Signature verification failed - caller does not own delegator address"
+            ));
+        }
 
         let delegation = db.get_delegation(&delegator)
             .map_err(|e| internal_error(&e.to_string()))?
@@ -269,7 +341,7 @@ pub fn register_staking_methods(
             "success": true,
             "delegator": format!("0x{}", hex::encode(delegator)),
             "returned": format!("0x{:x}", delegation.amount),
-            "message": "Undelegation successful (persisted)"
+            "message": "Undelegation successful (persisted, signature verified)"
         }))
     });
 

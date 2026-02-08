@@ -131,6 +131,18 @@ impl GenesisConfig {
             return Err(GenesisError::InvalidConfig("chain_id cannot be 0".to_string()));
         }
 
+        // Safety: reject development genesis on production chain IDs
+        if self.is_development() && (self.chain_id == 8899 || self.chain_id == 9999) {
+            return Err(GenesisError::InvalidConfig(
+                format!(
+                    "Development genesis (known test accounts) cannot be used on chain {} ({}). \
+                     Use a production genesis config for mainnet/testnet.",
+                    self.chain_id,
+                    if self.chain_id == 8899 { "Mainnet" } else { "Testnet" }
+                )
+            ));
+        }
+
         for account in &self.accounts {
             if !account.address.starts_with("0x") || account.address.len() != 42 {
                 return Err(GenesisError::InvalidConfig(

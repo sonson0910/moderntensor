@@ -13,10 +13,16 @@
 //! 2. Add the multiaddr to the appropriate network section below
 //! 3. Rebuild and release the binary
 
-use tracing::info;
+use tracing::{info, warn};
 
 /// Get seed nodes for mainnet (Chain ID: 8899)
-/// Production network - update these addresses before mainnet launch
+///
+/// # Production Deployment
+///
+/// Before mainnet launch, seed nodes must be deployed and their addresses
+/// added here. Until then, mainnet nodes MUST configure bootstrap nodes
+/// manually via config file. The node will log a warning and fall back
+/// to mDNS if no seeds and no config bootstrap nodes are available.
 ///
 /// ## Deployment Instructions:
 /// 1. Deploy 3+ seed nodes on geographically distributed servers
@@ -24,28 +30,20 @@ use tracing::info;
 /// 3. Update the addresses below with real IPs and Peer IDs
 /// 4. Rebuild and release the binary
 pub fn mainnet_seeds() -> Vec<String> {
-    vec![
-        // Seed Node 1 - Region: US-East (placeholder - update before mainnet)
-        // "/dns4/seed-us-east.luxtensor.network/tcp/30303/p2p/12D3KooWxxxxxxxxx".to_string(),
-
-        // Seed Node 2 - Region: EU-West (placeholder - update before mainnet)
-        // "/dns4/seed-eu-west.luxtensor.network/tcp/30303/p2p/12D3KooWyyyyyyyyy".to_string(),
-
-        // Seed Node 3 - Region: Asia-Pacific (placeholder - update before mainnet)
-        // "/dns4/seed-ap.luxtensor.network/tcp/30303/p2p/12D3KooWzzzzzzzzz".to_string(),
-    ]
+    // No mainnet seed nodes configured yet.
+    // Operators MUST provide bootstrap_nodes in their config.toml.
+    vec![]
 }
 
 /// Get seed nodes for testnet (Chain ID: 9999)
-/// Public testnet - update these addresses before testnet launch
+///
+/// Before testnet launch, seed nodes must be deployed and their addresses
+/// added here. Until then, testnet nodes MUST configure bootstrap nodes
+/// manually via config file.
 pub fn testnet_seeds() -> Vec<String> {
-    vec![
-        // Testnet Seed 1 (placeholder - update before testnet)
-        // "/ip4/203.0.113.10/tcp/30303/p2p/12D3KooWtest1...".to_string(),
-
-        // Testnet Seed 2 (placeholder - update before testnet)
-        // "/ip4/203.0.113.20/tcp/30303/p2p/12D3KooWtest2...".to_string(),
-    ]
+    // No testnet seed nodes configured yet.
+    // Operators MUST provide bootstrap_nodes in their config.toml.
+    vec![]
 }
 
 /// Get seed nodes for devnet/local development (Chain ID: 1, 31337, etc.)
@@ -69,8 +67,15 @@ pub fn get_seeds_for_chain(chain_id: u64) -> Vec<String> {
         _ => devnet_seeds(), // Chain ID 1, 31337, etc. = devnet
     };
 
-    if !seeds.is_empty() {
-        info!("🌐 Found {} hardcoded seed(s) for chain {}", seeds.len(), chain_id);
+    if seeds.is_empty() && (chain_id == 8899 || chain_id == 9999) {
+        warn!(
+            "⚠️  No built-in seed nodes for {} (chain {}). \
+             Nodes MUST configure bootstrap_nodes in config.toml or discovery will fail.",
+            get_network_name(chain_id),
+            chain_id
+        );
+    } else if !seeds.is_empty() {
+        info!("🌐 Found {} built-in seed(s) for chain {}", seeds.len(), chain_id);
     }
 
     seeds

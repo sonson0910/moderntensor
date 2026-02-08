@@ -1,46 +1,41 @@
 use luxtensor_core::{Transaction, Address, Account, StateDB, CoreError, Result};
 use luxtensor_crypto::keccak256;
+use luxtensor_contracts::EvmExecutor;
+use luxtensor_contracts::evm_executor::EvmLog;
 use serde::{Deserialize, Serialize};
 use sha3::{Keccak256, Digest};
 use tracing::info;
 
-/// Transaction receipt
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Receipt {
-    pub transaction_hash: [u8; 32],
-    pub block_height: u64,
-    pub block_hash: [u8; 32],
-    pub transaction_index: usize,
-    pub from: Address,
-    pub to: Option<Address>,
-    pub gas_used: u64,
-    pub status: ExecutionStatus,
-    pub logs: Vec<Log>,
-    /// Contract address if this was a contract deployment
-    pub contract_address: Option<Address>,
-}
+// Re-export shared Receipt types from luxtensor-core
+pub use luxtensor_core::receipt::{Receipt, ExecutionStatus, Log};
 
-/// Execution status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ExecutionStatus {
-    Success = 1,
-    Failed = 0,
-}
-
-/// Transaction log
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Log {
-    pub address: Address,
-    pub topics: Vec<[u8; 32]>,
-    pub data: Vec<u8>,
+/// Convert structured EVM logs from REVM into executor Log entries
+fn convert_evm_logs(evm_logs: &[EvmLog]) -> Vec<Log> {
+    evm_logs.iter().map(|log| {
+        let mut addr_bytes = [0u8; 20];
+        let len = log.address.len().min(20);
+        addr_bytes[..len].copy_from_slice(&log.address[..len]);
+        Log {
+            address: Address::from(addr_bytes),
+            topics: log.topics.clone(),
+            data: log.data.clone(),
+        }
+    }).collect()
 }
 
 /// Transaction executor
+///
+/// Holds a **shared** `EvmExecutor` instance so that contract storage,
+/// bytecode, and account balances persist across transactions within a
+/// block and across blocks (the executor is created once at node startup
+/// and lives for the lifetime of the node process).
 pub struct TransactionExecutor {
     base_gas_cost: u64,
     gas_per_byte: u64,
     /// Skip signature verification (for development only!)
     skip_signature_verification: bool,
+    /// Shared EVM executor — state persists across all transactions
+    evm: EvmExecutor,
 }
 
 impl TransactionExecutor {
@@ -50,6 +45,7 @@ impl TransactionExecutor {
             base_gas_cost: 21000,  // Base transaction cost
             gas_per_byte: 68,      // Cost per byte of data
             skip_signature_verification: false,  // PRODUCTION: always verify
+            evm: EvmExecutor::new(),
         }
     }
 
@@ -60,7 +56,13 @@ impl TransactionExecutor {
             base_gas_cost: 21000,
             gas_per_byte: 68,
             skip_signature_verification: true,
+            evm: EvmExecutor::new(),
         }
+    }
+
+    /// Get a reference to the shared EVM executor (for state inspection or persistence)
+    pub fn evm(&self) -> &EvmExecutor {
+        &self.evm
     }
 
     /// Execute a transaction and update state
@@ -116,10 +118,17 @@ impl TransactionExecutor {
             ));
         }
 
+        // Save balance before deduction for EVM state sync
+        let sender_balance_before_deduction = sender.balance;
+
         // Deduct cost from sender (already verified balance >= total_cost)
         sender.balance = sender.balance.saturating_sub(total_cost);
         sender.nonce = sender.nonce.saturating_add(1);
         state.set_account(tx.from, sender);
+
+        // 🔧 FIX: Track actual gas used (starts with basic calc, updated by EVM)
+        let mut actual_gas_used = gas_cost;
+        let mut tx_logs: Vec<Log> = Vec::new();
 
         // Transfer value to recipient if present
         let (status, contract_address) = if let Some(to_addr) = tx.to {
@@ -129,19 +138,19 @@ impl TransactionExecutor {
                 .unwrap_or(false);
 
             if has_code && !tx.data.is_empty() {
-                // Contract call — execute via EVM
-                use luxtensor_contracts::EvmExecutor;
-
+                // Contract call — execute via shared EVM executor
                 let contract_code = state.get_code(&to_addr).unwrap_or_default();
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
 
-                let evm_executor = EvmExecutor::new();
                 let contract_addr_bytes: [u8; 20] = *to_addr.as_bytes();
 
-                match evm_executor.call(
+                // Sync caller balance into EVM state before execution
+                self.evm.fund_account(&tx.from, sender_balance_before_deduction);
+
+                match self.evm.call(
                     tx.from,
                     luxtensor_contracts::ContractAddress(contract_addr_bytes),
                     contract_code,
@@ -151,7 +160,9 @@ impl TransactionExecutor {
                     block_height,
                     timestamp,
                 ) {
-                    Ok((_output, _gas_used, _logs_data)) => {
+                    Ok((_output, evm_gas_used, evm_logs)) => {
+                        actual_gas_used = evm_gas_used.max(gas_cost);
+                        tx_logs = convert_evm_logs(&evm_logs);
                         // Credit value to contract if sent
                         if tx.value > 0 {
                             let mut recipient = state.get_account(&to_addr)
@@ -181,19 +192,17 @@ impl TransactionExecutor {
                 (ExecutionStatus::Success, None)
             }
         } else {
-            // Contract deployment - CREATE operation using real EVM execution
-            use luxtensor_contracts::EvmExecutor;
-
+            // Contract deployment - CREATE operation using shared EVM executor
             // Get current timestamp
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
 
-            // Execute init code using EvmExecutor
-            let executor = EvmExecutor::new();
+            // Sync deployer balance into EVM state
+            self.evm.fund_account(&tx.from, sender_balance_before_deduction);
 
-            match executor.deploy(
+            match self.evm.deploy(
                 tx.from,
                 tx.data.clone(),  // Init code (constructor bytecode)
                 tx.value,
@@ -201,8 +210,10 @@ impl TransactionExecutor {
                 block_height,
                 timestamp,
             ) {
-                Ok((contract_address_vec, gas_used, _logs, deployed_code)) => {
-                    // 🔧 FIX: Use contract address returned by revm, not manual calculation
+                Ok((contract_address_vec, evm_gas_used, evm_logs, deployed_code)) => {
+                    actual_gas_used = evm_gas_used.max(gas_cost);
+                    tx_logs = convert_evm_logs(&evm_logs);
+                    // Use contract address returned by revm
                     let mut contract_addr_bytes = [0u8; 20];
                     if contract_address_vec.len() >= 20 {
                         contract_addr_bytes.copy_from_slice(&contract_address_vec[..20]);
@@ -218,13 +229,11 @@ impl TransactionExecutor {
                         hash
                     };
 
-                    // Use Account::contract() to store bytecode directly in StateDB
-                    // This replaces the deprecated contract_registry
                     let contract_account = Account::contract(tx.value, deployed_code.clone(), code_hash);
                     state.set_account(contract_addr, contract_account);
 
                     info!("📄 Contract deployed at 0x{} (gas used: {})",
-                          hex::encode(&contract_addr_bytes), gas_used);
+                          hex::encode(&contract_addr_bytes), evm_gas_used);
                     (ExecutionStatus::Success, Some(contract_addr))
                 }
                 Err(e) => {
@@ -232,10 +241,28 @@ impl TransactionExecutor {
                     tracing::error!("   From: 0x{}", hex::encode(tx.from.as_bytes()));
                     tracing::error!("   Data len: {} bytes", tx.data.len());
                     tracing::error!("   Gas limit: {}", tx.gas_limit);
+                    if tx.value > 0 {
+                        let mut sender_refund = state.get_account(&tx.from)
+                            .unwrap_or_else(|| Account::new());
+                        sender_refund.balance = sender_refund.balance.saturating_add(tx.value);
+                        state.set_account(tx.from, sender_refund);
+                    }
                     (ExecutionStatus::Failed, None)
                 }
             }
         };
+
+        // Gas refund: return unused gas to sender
+        // Upfront we charged gas_fee = gas_cost * gas_price, but actual may differ
+        let actual_gas_fee = (actual_gas_used as u128)
+            .saturating_mul(tx.gas_price as u128);
+        let gas_refund = gas_fee.saturating_sub(actual_gas_fee);
+        if gas_refund > 0 {
+            let mut sender_after = state.get_account(&tx.from)
+                .unwrap_or_else(|| Account::new());
+            sender_after.balance = sender_after.balance.saturating_add(gas_refund);
+            state.set_account(tx.from, sender_after);
+        }
 
         // Create receipt
         let receipt = Receipt {
@@ -245,9 +272,9 @@ impl TransactionExecutor {
             transaction_index: tx_index,
             from: tx.from,
             to: tx.to,
-            gas_used: gas_cost,
+            gas_used: actual_gas_used,
             status,
-            logs: vec![],
+            logs: tx_logs,
             contract_address,
         };
 
