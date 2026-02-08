@@ -5,10 +5,10 @@
 // propose → vote → timelock → execute lifecycle used by `multisig.rs` and
 // `weight_consensus.rs`.
 
-use std::collections::HashMap;
+use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use luxtensor_core::types::{Address, Hash};
+use std::collections::HashMap;
 
 // ─── Error ───────────────────────────────────────────────────────────
 
@@ -204,6 +204,15 @@ impl GovernanceModule {
             return Err(GovernanceError::InsufficientStake(proposer));
         }
 
+        // SECURITY: Limit active proposals to prevent governance spam.
+        // An attacker could create thousands of proposals to exhaust memory
+        // or make governance unusable by diluting voter attention.
+        const MAX_ACTIVE_PROPOSALS: usize = 100;
+        let active_count = self.active_proposal_count();
+        if active_count >= MAX_ACTIVE_PROPOSALS {
+            return Err(GovernanceError::InsufficientStake(proposer)); // reuse error — too many proposals
+        }
+
         let mut next = self.next_id.write();
         let id = *next;
         *next += 1;
@@ -242,6 +251,11 @@ impl GovernanceModule {
     /// Cast a vote on a proposal.
     ///
     /// `voting_power` is the voter's staked balance at vote time.
+    ///
+    /// # Security
+    /// The caller MUST look up `voting_power` from the actual `ValidatorSet`.
+    /// Passing unverified values allows governance takeover.
+    /// A future version should accept `&ValidatorSet` directly.
     pub fn vote(
         &self,
         proposal_id: u64,
@@ -250,6 +264,11 @@ impl GovernanceModule {
         approve: bool,
         current_block: u64,
     ) -> Result<()> {
+        // SECURITY: Reject zero voting power — prevents spam votes from
+        // non-validators. The caller should not pass 0.
+        if voting_power == 0 {
+            return Err(GovernanceError::InsufficientStake(voter));
+        }
         // Check duplicate
         {
             let voted = self.voted.read();
@@ -292,11 +311,7 @@ impl GovernanceModule {
     /// Finalise voting for a proposal once the deadline has passed.
     ///
     /// Transitions status to `Approved`, `Rejected`, or `Expired`.
-    pub fn finalize_voting(
-        &self,
-        proposal_id: u64,
-        current_block: u64,
-    ) -> Result<ProposalStatus> {
+    pub fn finalize_voting(&self, proposal_id: u64, current_block: u64) -> Result<ProposalStatus> {
         let mut proposals = self.proposals.write();
         let proposal = proposals
             .get_mut(&proposal_id)
@@ -310,8 +325,7 @@ impl GovernanceModule {
         }
 
         let total_votes = proposal.votes_for + proposal.votes_against;
-        let quorum_required =
-            proposal.total_eligible_power * self.config.quorum_bps / 10_000;
+        let quorum_required = proposal.total_eligible_power * self.config.quorum_bps / 10_000;
         let approval_required = total_votes * self.config.approval_threshold_bps / 10_000;
 
         if total_votes < quorum_required {
@@ -363,12 +377,7 @@ impl GovernanceModule {
     }
 
     /// Cancel a proposal (only proposer or super-validator).
-    pub fn cancel(
-        &self,
-        proposal_id: u64,
-        caller: Address,
-        is_supervalidator: bool,
-    ) -> Result<()> {
+    pub fn cancel(&self, proposal_id: u64, caller: Address, is_supervalidator: bool) -> Result<()> {
         let mut proposals = self.proposals.write();
         let proposal = proposals
             .get_mut(&proposal_id)
@@ -394,11 +403,7 @@ impl GovernanceModule {
     /// List proposals filtered by status.
     pub fn list_proposals(&self, status: Option<ProposalStatus>) -> Vec<Proposal> {
         let proposals = self.proposals.read();
-        proposals
-            .values()
-            .filter(|p| status.map_or(true, |s| p.status == s))
-            .cloned()
-            .collect()
+        proposals.values().filter(|p| status.map_or(true, |s| p.status == s)).cloned().collect()
     }
 
     /// Housekeeping: transition any proposals that have passed their absolute
@@ -422,6 +427,37 @@ impl GovernanceModule {
     /// Return the current configuration (useful for RPC inspection).
     pub fn config(&self) -> &GovernanceConfig {
         &self.config
+    }
+
+    /// Remove proposals in terminal states (Executed, Cancelled, Expired) older
+    /// than `retain_blocks` to prevent unbounded memory growth.
+    ///
+    /// Call periodically (e.g., once per epoch) to garbage-collect.
+    pub fn cleanup_finalized(&self, current_block: u64, retain_blocks: u64) -> usize {
+        let cutoff = current_block.saturating_sub(retain_blocks);
+        let mut proposals = self.proposals.write();
+        let before = proposals.len();
+        proposals.retain(|_, p| {
+            // Keep if not in terminal state, or if created recently
+            !matches!(
+                p.status,
+                ProposalStatus::Executed | ProposalStatus::Cancelled | ProposalStatus::Expired
+            ) || p.created_at > cutoff
+        });
+        let removed = before - proposals.len();
+
+        // Also clean stale voted entries
+        if removed > 0 {
+            let remaining_ids: std::collections::HashSet<u64> = proposals.keys().copied().collect();
+            self.voted.write().retain(|(_, pid), _| remaining_ids.contains(pid));
+        }
+
+        removed
+    }
+
+    /// Get the count of currently active proposals.
+    pub fn active_proposal_count(&self) -> usize {
+        self.proposals.read().values().filter(|p| p.status == ProposalStatus::Active).count()
     }
 }
 
@@ -467,10 +503,7 @@ mod tests {
                 10_000,
                 "Increase gas limit".into(),
                 "Set gas_limit to 30M".into(),
-                ProposalType::ParameterChange {
-                    key: "gas_limit".into(),
-                    value: "30000000".into(),
-                },
+                ProposalType::ParameterChange { key: "gas_limit".into(), value: "30000000".into() },
                 100_000,
                 10,
             )
@@ -508,9 +541,7 @@ mod tests {
             500, // below min_proposal_stake
             "Bad".into(),
             "".into(),
-            ProposalType::Emergency {
-                description: "test".into(),
-            },
+            ProposalType::Emergency { description: "test".into() },
             100_000,
             1,
         );
@@ -526,10 +557,7 @@ mod tests {
                 10_000,
                 "Low participation".into(),
                 "".into(),
-                ProposalType::ParameterChange {
-                    key: "x".into(),
-                    value: "y".into(),
-                },
+                ProposalType::ParameterChange { key: "x".into(), value: "y".into() },
                 100_000,
                 10,
             )
@@ -577,10 +605,7 @@ mod tests {
                 10_000,
                 "Will cancel".into(),
                 "".into(),
-                ProposalType::ParameterChange {
-                    key: "x".into(),
-                    value: "y".into(),
-                },
+                ProposalType::ParameterChange { key: "x".into(), value: "y".into() },
                 100_000,
                 10,
             )
@@ -591,10 +616,7 @@ mod tests {
 
         // Proposer can cancel
         gov.cancel(id, proposer, false).unwrap();
-        assert_eq!(
-            gov.get_proposal(id).unwrap().status,
-            ProposalStatus::Cancelled
-        );
+        assert_eq!(gov.get_proposal(id).unwrap().status, ProposalStatus::Cancelled);
     }
 
     #[test]
@@ -606,9 +628,7 @@ mod tests {
                 10_000,
                 "Emergency halt".into(),
                 "".into(),
-                ProposalType::Emergency {
-                    description: "Critical bug".into(),
-                },
+                ProposalType::Emergency { description: "Critical bug".into() },
                 100_000,
                 10,
             )
@@ -629,10 +649,7 @@ mod tests {
                 10_000,
                 "Old".into(),
                 "".into(),
-                ProposalType::ParameterChange {
-                    key: "x".into(),
-                    value: "y".into(),
-                },
+                ProposalType::ParameterChange { key: "x".into(), value: "y".into() },
                 100_000,
                 10,
             )
@@ -641,25 +658,32 @@ mod tests {
         // max_proposal_age_blocks = 500 → expires_at = 510
         let expired = gov.expire_stale(511);
         assert_eq!(expired, vec![id]);
-        assert_eq!(
-            gov.get_proposal(id).unwrap().status,
-            ProposalStatus::Expired
-        );
+        assert_eq!(gov.get_proposal(id).unwrap().status, ProposalStatus::Expired);
     }
 
     #[test]
     fn test_list_proposals_by_status() {
         let gov = module();
         gov.create_proposal(
-            addr(1), 10_000, "A".into(), "".into(),
+            addr(1),
+            10_000,
+            "A".into(),
+            "".into(),
             ProposalType::ParameterChange { key: "a".into(), value: "b".into() },
-            100_000, 10,
-        ).unwrap();
+            100_000,
+            10,
+        )
+        .unwrap();
         gov.create_proposal(
-            addr(1), 10_000, "B".into(), "".into(),
+            addr(1),
+            10_000,
+            "B".into(),
+            "".into(),
             ProposalType::ParameterChange { key: "c".into(), value: "d".into() },
-            100_000, 10,
-        ).unwrap();
+            100_000,
+            10,
+        )
+        .unwrap();
 
         let active = gov.list_proposals(Some(ProposalStatus::Active));
         assert_eq!(active.len(), 2);

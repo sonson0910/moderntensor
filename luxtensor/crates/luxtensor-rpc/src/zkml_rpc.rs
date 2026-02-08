@@ -80,9 +80,10 @@ pub struct TrustedModelInfo {
 impl ZkmlRpcContext {
     /// Create a ZkmlRpcContext in **development mode** (accepts dev proofs).
     ///
-    /// # Warning
+    /// # Security Warning
     /// Dev mode accepts proofs without real cryptographic verification.
-    /// Use [`production()`](Self::production) for mainnet/testnet deployments.
+    /// **MUST NOT** be used for mainnet/testnet deployments.
+    /// Use [`production()`](Self::production) instead.
     pub fn dev() -> Self {
         tracing::warn!(
             "ZkmlRpcContext created in DEV MODE — proofs are NOT cryptographically verified. \
@@ -103,6 +104,7 @@ impl ZkmlRpcContext {
     ///
     /// **DEPRECATED**: Use [`dev()`](Self::dev) explicitly to signal intent,
     /// or [`production()`](Self::production) for real deployments.
+    #[deprecated(note = "Use ZkmlRpcContext::dev() or ::production() explicitly")]
     pub fn new() -> Self {
         Self::dev()
     }

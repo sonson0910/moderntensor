@@ -72,9 +72,9 @@ ENV LUXTENSOR_CONFIG=/config/config.toml
 # Health check: query eth_blockNumber via JSON-RPC
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
     CMD curl -sf -X POST http://localhost:8545 \
-        -H 'Content-Type: application/json' \
-        -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-        || exit 1
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    || exit 1
 
 # Default command
 ENTRYPOINT ["luxtensor-node"]

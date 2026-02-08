@@ -44,10 +44,13 @@ impl Clone for KeyPair {
 
 impl KeyPair {
     /// Generate a new random key pair
+    ///
+    /// # Security
+    /// Uses `OsRng` (OS-provided CSPRNG) directly for key generation.
+    /// This is the recommended practice per all major crypto libraries.
     pub fn generate() -> Self {
         let secp = Secp256k1::new();
-        let mut rng = rand::thread_rng();
-        let (secret_key, public_key) = secp.generate_keypair(&mut rng);
+        let (secret_key, public_key) = secp.generate_keypair(&mut rand::rngs::OsRng);
 
         Self { secret_key, public_key }
     }
@@ -64,11 +67,18 @@ impl KeyPair {
 
     /// Sign a message hash
     /// Returns signature or error if message hash is invalid
+    ///
+    /// # Security
+    /// Enforces low-S normalization to prevent ECDSA signature malleability.
+    /// Without this, `(r, s)` and `(r, n-s)` are both valid signatures,
+    /// which can enable transaction malleability attacks.
     pub fn sign(&self, message_hash: &Hash) -> Result<[u8; 64]> {
         let secp = Secp256k1::new();
         let message = Message::from_digest_slice(message_hash)
             .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
-        let signature = secp.sign_ecdsa(&message, &self.secret_key);
+        let mut signature = secp.sign_ecdsa(&message, &self.secret_key);
+        // Enforce low-S to prevent signature malleability (BIP-62)
+        signature.normalize_s();
         let sig_bytes = signature.serialize_compact();
 
         let mut result = [0u8; 64];
@@ -104,6 +114,16 @@ pub fn verify_signature(
     // Parse the signature
     let sig = Signature::from_compact(signature)
         .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+
+    // Reject high-S signatures to prevent malleability (BIP-62 / EIP-2)
+    {
+        let mut normalized = sig;
+        normalized.normalize_s();
+        if normalized != sig {
+            // Signature had high-S; reject it
+            return Ok(false);
+        }
+    }
 
     // Parse the public key
     let pubkey = PublicKey::from_slice(public_key)

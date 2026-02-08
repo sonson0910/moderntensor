@@ -1036,6 +1036,7 @@ impl NodeService {
             let validator_keypair_for_block = self.validator_keypair.clone();
             let metagraph_db_clone = self.metagraph_db.clone();
             let unified_state_clone = unified_state_for_blocks.clone();
+            let randao_clone = self.randao.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -1058,6 +1059,7 @@ impl NodeService {
                     best_height_for_block_prod,  // 🔧 FIX #9: Atomic height guard
                     metagraph_db_clone,
                     unified_state_clone,  // For syncing RPC state after each block
+                    randao_clone,         // RANDAO mixer for epoch finalization
                 ).await
             });
 
@@ -1183,6 +1185,8 @@ impl NodeService {
         metagraph_db: Arc<MetagraphDB>,
         // Unified RPC state — synced after each block so eth_* RPCs return fresh data
         unified_state: Option<Arc<parking_lot::RwLock<luxtensor_core::UnifiedStateDB>>>,
+        // RANDAO mixer for epoch finalization
+        randao: Arc<RwLock<RandaoMixer>>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -1305,6 +1309,7 @@ impl NodeService {
                         validator_keypair_ref.as_ref(),
                         &best_height_guard,  // 🔧 FIX #9: Atomic height guard
                         &metagraph_db,   // For reward distribution from metagraph
+                        &randao,         // RANDAO mixer for epoch finalization
                     ).await {
                         Ok(block) => {
                             // Sync UnifiedStateDB so the RPC layer returns fresh state
@@ -1384,6 +1389,8 @@ impl NodeService {
         // 🔧 FIX #9: Atomic height guard shared with P2P handler
         best_height_guard: &std::sync::Arc<std::sync::atomic::AtomicU64>,
         metagraph_db: &Arc<MetagraphDB>,
+        // RANDAO mixer — finalized at each epoch boundary to feed PoS seed
+        randao: &Arc<RwLock<RandaoMixer>>,
     ) -> Result<Block> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -1690,6 +1697,22 @@ impl NodeService {
 
             info!("💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
                 epoch_num, result.total_emission, result.participants_rewarded, result.dao_allocation);
+
+            // Finalize RANDAO mix for this epoch and feed it into PoS seed.
+            // This provides unbiasable randomness for the next epoch's
+            // validator selection, preventing leader-prediction attacks.
+            match randao.write().finalize_epoch() {
+                Ok(mix) => {
+                    consensus.read().update_randao_mix(mix);
+                    info!("🎲 Epoch {} RANDAO mix finalized: {:?}", epoch_num, &mix[..8]);
+                }
+                Err(e) => {
+                    // Not fatal — PoS falls back to VRF-only seed when no RANDAO mix
+                    // is available (e.g. during bootstrap when no validators have
+                    // submitted commit-reveal yet).
+                    debug!("⚠️  RANDAO finalize skipped for epoch {}: {}", epoch_num, e);
+                }
+            }
         }
 
         // Record block hash for EVM BLOCKHASH opcode (up to 256 recent blocks)

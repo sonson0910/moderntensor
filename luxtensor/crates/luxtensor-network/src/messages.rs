@@ -1,8 +1,8 @@
+use bincode::Options;
 use luxtensor_core::block::{Block, BlockHeader};
 use luxtensor_core::transaction::Transaction;
 use luxtensor_core::types::Hash;
 use serde::{Deserialize, Serialize};
-use bincode::Options;
 
 /// Maximum allowed size for a single deserialized network message (4 MB)
 /// 🔧 FIX: Aligned with gossipsub max_transmit_size (4 MB) to avoid
@@ -11,11 +11,14 @@ pub const MAX_MESSAGE_SIZE: u64 = 4 * 1024 * 1024;
 
 /// Deserialize a NetworkMessage with a size limit to prevent DoS attacks.
 /// Returns an error if the data exceeds MAX_MESSAGE_SIZE.
+///
+/// SECURITY: Does NOT allow trailing bytes — valid messages must be
+/// exactly represented. Trailing bytes could be used to bypass size
+/// limits or cause message ID collisions.
 pub fn deserialize_message(data: &[u8]) -> Result<NetworkMessage, bincode::Error> {
     bincode::DefaultOptions::new()
         .with_limit(MAX_MESSAGE_SIZE)
         .with_fixint_encoding()
-        .allow_trailing_bytes()
         .deserialize(data)
 }
 
@@ -35,10 +38,7 @@ pub enum NetworkMessage {
     Block(Block),
 
     /// Request block headers starting from hash
-    GetBlockHeaders {
-        start_hash: Hash,
-        max_count: u32,
-    },
+    GetBlockHeaders { start_hash: Hash, max_count: u32 },
 
     /// Response with block headers
     BlockHeaders(Vec<BlockHeader>),
@@ -50,18 +50,10 @@ pub enum NetworkMessage {
     Blocks(Vec<Block>),
 
     /// Status message with chain info
-    Status {
-        best_hash: Hash,
-        best_height: u64,
-        genesis_hash: Hash,
-    },
+    Status { best_hash: Hash, best_height: u64, genesis_hash: Hash },
 
     /// Sync request - asking for blocks from a range
-    SyncRequest {
-        from_height: u64,
-        to_height: u64,
-        requester_id: String,
-    },
+    SyncRequest { from_height: u64, to_height: u64, requester_id: String },
 
     /// Ping message
     Ping,
@@ -116,7 +108,7 @@ mod tests {
         let deserialized: NetworkMessage = bincode::deserialize(&serialized).unwrap();
 
         match deserialized {
-            NetworkMessage::Ping => {},
+            NetworkMessage::Ping => {}
             _ => panic!("Expected Ping message"),
         }
     }
@@ -137,17 +129,14 @@ mod tests {
         match deserialized {
             NetworkMessage::Status { best_height, .. } => {
                 assert_eq!(best_height, 100);
-            },
+            }
             _ => panic!("Expected Status message"),
         }
     }
 
     #[test]
     fn test_get_block_headers() {
-        let msg = NetworkMessage::GetBlockHeaders {
-            start_hash: [1u8; 32],
-            max_count: 10,
-        };
+        let msg = NetworkMessage::GetBlockHeaders { start_hash: [1u8; 32], max_count: 10 };
 
         let serialized = bincode::serialize(&msg).unwrap();
         let deserialized: NetworkMessage = bincode::deserialize(&serialized).unwrap();
@@ -155,7 +144,7 @@ mod tests {
         match deserialized {
             NetworkMessage::GetBlockHeaders { max_count, .. } => {
                 assert_eq!(max_count, 10);
-            },
+            }
             _ => panic!("Expected GetBlockHeaders message"),
         }
     }

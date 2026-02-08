@@ -83,9 +83,7 @@ impl ChannelBroadcaster {
 
 impl TransactionBroadcaster for ChannelBroadcaster {
     fn broadcast(&self, tx: &Transaction) -> Result<(), BroadcastError> {
-        self.sender
-            .send(tx.clone())
-            .map_err(|e| BroadcastError::ChannelClosed(e.to_string()))?;
+        self.sender.send(tx.clone()).map_err(|e| BroadcastError::ChannelClosed(e.to_string()))?;
 
         info!("📤 {} broadcaster: Sent tx 0x{} to channel", self.name, hex::encode(tx.hash()));
         Ok(())
@@ -139,8 +137,12 @@ impl TransactionBroadcaster for CompositeBroadcaster {
         }
 
         if success_count > 0 {
-            debug!("Composite: {}/{} broadcasters succeeded for tx 0x{}",
-                   success_count, self.broadcasters.len(), tx_hash);
+            debug!(
+                "Composite: {}/{} broadcasters succeeded for tx 0x{}",
+                success_count,
+                self.broadcasters.len(),
+                tx_hash
+            );
             Ok(())
         } else {
             last_error.map_or(Err(BroadcastError::AllFailed), Err)
@@ -204,7 +206,7 @@ mod tests {
 
     fn create_test_tx() -> Transaction {
         Transaction {
-            chain_id: 8898,  // LuxTensor devnet chain ID for tests
+            chain_id: 8898, // LuxTensor devnet chain ID for tests
             nonce: 1,
             from: Address::zero(),
             to: Some(Address::zero()),
@@ -259,9 +261,7 @@ mod tests {
     fn test_builder() {
         let (sender, _rx) = mpsc::unbounded_channel();
 
-        let broadcaster = BroadcasterBuilder::new()
-            .with_p2p(sender)
-            .build();
+        let broadcaster = BroadcasterBuilder::new().with_p2p(sender).build();
 
         let tx = create_test_tx();
         assert!(broadcaster.broadcast(&tx).is_ok());

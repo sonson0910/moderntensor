@@ -546,6 +546,16 @@ impl SwarmP2PNode {
                 }
             }
             Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id: _ }) => {
+                // SECURITY: Validate sync range to prevent DoS.
+                // An attacker requesting from_height=0, to_height=u64::MAX would force
+                // expensive database lookups. Cap range at 1000 blocks.
+                const MAX_SYNC_RANGE: u64 = 1000;
+                if to_height.saturating_sub(from_height) > MAX_SYNC_RANGE {
+                    warn!("🚫 Rejecting oversized sync request from peer {} ({}-{}, range > {})",
+                          source, from_height, to_height, MAX_SYNC_RANGE);
+                    return;
+                }
+
                 // SECURITY: Rate limit sync requests per peer
                 let now = std::time::Instant::now();
                 let entry = self.sync_requests.entry(source).or_insert((0, now));

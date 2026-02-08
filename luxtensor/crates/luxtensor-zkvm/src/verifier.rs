@@ -3,11 +3,11 @@
 //! Provides on-chain compatible proof verification for ZK proofs.
 
 use std::time::Instant;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use crate::{
-    Result,
     types::{ImageId, ProofReceipt, ProofType, VerificationResult},
+    Result,
 };
 use luxtensor_core::Hash;
 use luxtensor_crypto::keccak256;
@@ -40,8 +40,8 @@ impl Default for VerifierConfig {
             allow_dev_proofs: false,
             require_groth16: false,
             max_proof_age_seconds: 0,
-            max_seal_size_bytes: 16 * 1024 * 1024, // 16 MB
-            min_seal_size_bytes: 16,                // minimum meaningful proof
+            max_seal_size_bytes: 2 * 1024 * 1024,  // 2 MB — realistic STARK proof upper bound
+            min_seal_size_bytes: 16,               // minimum meaningful proof
             replay_protection: true,
             replay_cache_size: 100_000,
         }
@@ -49,7 +49,12 @@ impl Default for VerifierConfig {
 }
 
 impl VerifierConfig {
-    /// Create a development configuration that allows dev proofs
+    /// Create a development configuration that allows dev proofs.
+    ///
+    /// # Security Warning
+    /// Dev mode accepts proofs without real cryptographic verification.
+    /// **MUST NOT** be used in production node configuration.
+    /// The production node in `service.rs` uses `VerifierConfig::default()`.
     pub fn dev_mode() -> Self {
         Self {
             trusted_images: Vec::new(),
@@ -128,7 +133,12 @@ impl ZkVerifier {
         Self::new(VerifierConfig::default())
     }
 
-    /// Create a development verifier that allows dev proofs
+    /// Create a development verifier that allows dev proofs.
+    ///
+    /// Create a development verifier that allows dev proofs.
+    ///
+    /// # Security Warning
+    /// **MUST NOT** be used in production. Use `default_verifier()` instead.
     pub fn dev_verifier() -> Self {
         Self::new(VerifierConfig::dev_mode())
     }
@@ -165,9 +175,15 @@ impl ZkVerifier {
             let proof_hash = keccak256(&receipt.proof.seal);
             let mut seen = self.seen_proofs.write();
             seen.insert(proof_hash);
-            // Evict oldest entries if cache is full (approximate LRU via clear)
+            // Bounded eviction: remove ~25% oldest entries when cache is full.
+            // SECURITY: Never clear() the entire set — that creates a total
+            // amnesia event allowing replay of all previously seen proofs.
             if seen.len() > self.config.replay_cache_size && self.config.replay_cache_size > 0 {
-                seen.clear(); // Simple eviction — full HashSet rebuild
+                let to_remove = seen.len() / 4;
+                let remove_keys: Vec<Hash> = seen.iter().take(to_remove).copied().collect();
+                for key in remove_keys {
+                    seen.remove(&key);
+                }
             }
         }
 
@@ -285,9 +301,7 @@ impl ZkVerifier {
         let start = Instant::now();
 
         // Compute expected seal
-        let expected_seal = keccak256(
-            &[&receipt.image_id.0[..], &receipt.journal[..]].concat()
-        );
+        let expected_seal = keccak256(&[&receipt.image_id.0[..], &receipt.journal[..]].concat());
 
         if receipt.proof.seal == expected_seal.to_vec() {
             let journal_hash = keccak256(&receipt.journal);
@@ -297,10 +311,7 @@ impl ZkVerifier {
                 start.elapsed().as_micros() as u64,
             ))
         } else {
-            Ok(VerificationResult::invalid(
-                receipt.image_id,
-                "Dev proof seal mismatch".to_string(),
-            ))
+            Ok(VerificationResult::invalid(receipt.image_id, "Dev proof seal mismatch".to_string()))
         }
     }
 
@@ -329,7 +340,11 @@ impl ZkVerifier {
     /// STARK proofs. All proofs are rejected to prevent accepting unverified work.
     /// Enable the `risc0` feature for production use.
     #[cfg(not(feature = "risc0"))]
-    fn verify_stark_structural(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
+    fn verify_stark_structural(
+        &self,
+        receipt: &ProofReceipt,
+        start: Instant,
+    ) -> Result<VerificationResult> {
         tracing::warn!(
             "STARK proof verification attempted without `risc0` feature enabled. \
              Proof REJECTED. Enable the `risc0` feature for cryptographic verification."
@@ -345,32 +360,32 @@ impl ZkVerifier {
 
     /// RISC Zero STARK verification (when feature enabled)
     #[cfg(feature = "risc0")]
-    fn verify_risc0_stark(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
+    fn verify_risc0_stark(
+        &self,
+        receipt: &ProofReceipt,
+        start: Instant,
+    ) -> Result<VerificationResult> {
         use risc0_zkvm::Receipt;
 
         // Deserialize the receipt
-        let inner: risc0_zkvm::InnerReceipt = bincode::deserialize(&receipt.proof.seal)
-            .map_err(|e| {
+        let inner: risc0_zkvm::InnerReceipt =
+            bincode::deserialize(&receipt.proof.seal).map_err(|e| {
                 VerificationResult::invalid(
                     receipt.image_id,
                     format!("Failed to deserialize STARK proof: {}", e),
                 )
             })?;
 
-        let risc0_receipt = Receipt {
-            inner,
-            journal: risc0_zkvm::Journal::new(receipt.journal.clone()),
-        };
+        let risc0_receipt =
+            Receipt { inner, journal: risc0_zkvm::Journal::new(receipt.journal.clone()) };
 
         // Verify the receipt against the image ID
-        risc0_receipt
-            .verify(receipt.image_id.0.into())
-            .map_err(|e| {
-                VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("STARK verification failed: {}", e),
-                )
-            })?;
+        risc0_receipt.verify(receipt.image_id.0.into()).map_err(|e| {
+            VerificationResult::invalid(
+                receipt.image_id,
+                format!("STARK verification failed: {}", e),
+            )
+        })?;
 
         let journal_hash = keccak256(&receipt.journal);
         Ok(VerificationResult::valid(
@@ -404,7 +419,11 @@ impl ZkVerifier {
     /// Groth16 proofs. All proofs are rejected to prevent accepting unverified work.
     /// Enable the `groth16` feature for production use.
     #[cfg(not(feature = "groth16"))]
-    fn verify_groth16_structural(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
+    fn verify_groth16_structural(
+        &self,
+        receipt: &ProofReceipt,
+        start: Instant,
+    ) -> Result<VerificationResult> {
         tracing::warn!(
             "Groth16 proof verification attempted without `groth16` feature enabled. \
              Proof REJECTED. Enable the `groth16` feature for cryptographic verification."
@@ -420,25 +439,27 @@ impl ZkVerifier {
 
     /// RISC Zero Groth16 verification (when feature enabled)
     #[cfg(feature = "groth16")]
-    fn verify_risc0_groth16(&self, receipt: &ProofReceipt, start: Instant) -> Result<VerificationResult> {
+    fn verify_risc0_groth16(
+        &self,
+        receipt: &ProofReceipt,
+        start: Instant,
+    ) -> Result<VerificationResult> {
         use risc0_groth16::Groth16Receipt;
 
-        let groth16_receipt: Groth16Receipt = bincode::deserialize(&receipt.proof.seal)
-            .map_err(|e| {
+        let groth16_receipt: Groth16Receipt =
+            bincode::deserialize(&receipt.proof.seal).map_err(|e| {
                 VerificationResult::invalid(
                     receipt.image_id,
                     format!("Failed to deserialize Groth16 proof: {}", e),
                 )
             })?;
 
-        groth16_receipt
-            .verify(&receipt.journal, receipt.image_id.0.into())
-            .map_err(|e| {
-                VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("Groth16 verification failed: {}", e),
-                )
-            })?;
+        groth16_receipt.verify(&receipt.journal, receipt.image_id.0.into()).map_err(|e| {
+            VerificationResult::invalid(
+                receipt.image_id,
+                format!("Groth16 verification failed: {}", e),
+            )
+        })?;
 
         let journal_hash = keccak256(&receipt.journal);
         Ok(VerificationResult::valid(
@@ -501,8 +522,7 @@ impl ZkVerifier {
 
     /// Check if an image ID is trusted
     pub fn is_trusted(&self, image_id: &ImageId) -> bool {
-        self.config.trusted_images.is_empty()
-            || self.config.trusted_images.contains(image_id)
+        self.config.trusted_images.is_empty() || self.config.trusted_images.contains(image_id)
     }
 
     /// Add a trusted image at runtime
@@ -573,8 +593,7 @@ mod tests {
     #[test]
     fn test_untrusted_image_rejected() {
         let trusted_id = ImageId::new([2u8; 32]);
-        let config = VerifierConfig::default()
-            .trust_image(trusted_id);
+        let config = VerifierConfig::default().trust_image(trusted_id);
         let verifier = ZkVerifier::new(config);
 
         let receipt = create_test_receipt(ProofType::Stark);
@@ -586,8 +605,7 @@ mod tests {
     #[test]
     fn test_trusted_image_accepted() {
         let image_id = ImageId::new([1u8; 32]);
-        let config = VerifierConfig::dev_mode()
-            .trust_image(image_id);
+        let config = VerifierConfig::dev_mode().trust_image(image_id);
         let verifier = ZkVerifier::new(config);
 
         let receipt = create_test_receipt(ProofType::Dev);
@@ -600,9 +618,7 @@ mod tests {
     fn test_batch_verify() {
         let verifier = ZkVerifier::dev_verifier();
 
-        let receipts: Vec<_> = (0..5)
-            .map(|_| create_test_receipt(ProofType::Dev))
-            .collect();
+        let receipts: Vec<_> = (0..5).map(|_| create_test_receipt(ProofType::Dev)).collect();
 
         let results = verifier.batch_verify(&receipts).unwrap();
         assert_eq!(results.len(), 5);

@@ -14,17 +14,17 @@
 //!
 //! Extracted from server.rs to reduce complexity and improve maintainability.
 
-use std::sync::Arc;
-use std::collections::HashMap;
-use parking_lot::RwLock;
 use jsonrpc_core::{IoHandler, Params};
+use parking_lot::RwLock;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{info, warn};
 
-use luxtensor_core::{Transaction, Hash, Address, UnifiedStateDB};
-use luxtensor_storage::BlockchainDB;
 use crate::eth_rpc::Mempool;
 use crate::TransactionBroadcaster;
+use luxtensor_core::{Address, Hash, Transaction, UnifiedStateDB};
+use luxtensor_storage::BlockchainDB;
 
 /// Context for transaction RPC handlers
 pub struct TxRpcContext {
@@ -44,13 +44,7 @@ impl TxRpcContext {
         broadcaster: Arc<dyn TransactionBroadcaster>,
         db: Arc<BlockchainDB>,
     ) -> Self {
-        Self {
-            mempool,
-            pending_txs,
-            unified_state,
-            broadcaster,
-            db,
-        }
+        Self { mempool, pending_txs, unified_state, broadcaster, db }
     }
 }
 
@@ -341,15 +335,14 @@ fn compute_contract_address(tx: &Transaction) -> serde_json::Value {
 
 /// Deserialize stored receipt from database
 fn deserialize_receipt(receipt_bytes: &[u8]) -> Option<serde_json::Value> {
-    use luxtensor_core::receipt::{Receipt as StoredReceipt, ExecutionStatus};
+    use luxtensor_core::receipt::{ExecutionStatus, Receipt as StoredReceipt};
 
     tracing::debug!("📥 Got receipt bytes: {} bytes", receipt_bytes.len());
 
     match bincode::deserialize::<StoredReceipt>(receipt_bytes) {
         Ok(receipt) => {
-            let contract_addr = receipt.contract_address.map(|addr|
-                format!("0x{}", hex::encode(addr.as_bytes()))
-            );
+            let contract_addr =
+                receipt.contract_address.map(|addr| format!("0x{}", hex::encode(addr.as_bytes())));
 
             let logs: Vec<serde_json::Value> = receipt.logs.iter().map(|log| {
                 json!({

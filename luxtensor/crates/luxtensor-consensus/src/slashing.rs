@@ -30,12 +30,12 @@ pub struct SlashingConfig {
 impl Default for SlashingConfig {
     fn default() -> Self {
         Self {
-            offline_threshold: 100,          // 100 missed blocks
-            offline_slash_percent: 1,        // 1% stake
-            double_sign_slash_percent: 10,   // 10% stake
-            invalid_block_slash_percent: 5,  // 5% stake
+            offline_threshold: 100,                      // 100 missed blocks
+            offline_slash_percent: 1,                    // 1% stake
+            double_sign_slash_percent: 10,               // 10% stake
+            invalid_block_slash_percent: 5,              // 5% stake
             min_slash_amount: 1_000_000_000_000_000_000, // 1 token
-            jail_duration: 7200,             // ~24 hours @ 12s blocks
+            jail_duration: 7200,                         // ~24 hours @ 12s blocks
         }
     }
 }
@@ -107,6 +107,13 @@ pub struct JailStatus {
     pub reason: SlashReason,
 }
 
+/// Maximum entries in double-sign evidence map before pruning old entries.
+/// Prevents unbounded memory growth from malicious evidence submission.
+const MAX_EVIDENCE_ENTRIES: usize = 10_000;
+
+/// Maximum slash events retained in history.
+const MAX_SLASH_HISTORY: usize = 50_000;
+
 /// Slashing manager
 pub struct SlashingManager {
     config: SlashingConfig,
@@ -120,7 +127,7 @@ pub struct SlashingManager {
     /// Jailed validators
     jailed: RwLock<HashMap<Address, JailStatus>>,
 
-    /// Slash history
+    /// Slash history (bounded — oldest entries pruned when exceeding MAX_SLASH_HISTORY)
     slash_history: RwLock<Vec<SlashEvent>>,
 
     /// Reference to validator set
@@ -129,10 +136,7 @@ pub struct SlashingManager {
 
 impl SlashingManager {
     /// Create new slashing manager
-    pub fn new(
-        config: SlashingConfig,
-        validator_set: Arc<RwLock<ValidatorSet>>,
-    ) -> Self {
+    pub fn new(config: SlashingConfig, validator_set: Arc<RwLock<ValidatorSet>>) -> Self {
         Self {
             config,
             missed_blocks: RwLock::new(HashMap::new()),
@@ -150,10 +154,7 @@ impl SlashingManager {
         *count += 1;
 
         if *count >= self.config.offline_threshold {
-            warn!(
-                "Validator {:?} missed {} blocks, threshold reached",
-                validator, count
-            );
+            warn!("Validator {:?} missed {} blocks, threshold reached", validator, count);
         }
     }
 
@@ -167,7 +168,11 @@ impl SlashingManager {
     /// `current_height` is used as the deterministic timestamp for consensus.
     /// SECURITY: Previously used SystemTime::now() which is non-deterministic
     /// and could cause consensus disagreements between nodes.
-    pub fn check_offline(&self, validator: &Address, current_height: u64) -> Option<SlashingEvidence> {
+    pub fn check_offline(
+        &self,
+        validator: &Address,
+        current_height: u64,
+    ) -> Option<SlashingEvidence> {
         let missed = self.missed_blocks.read();
         if let Some(&count) = missed.get(validator) {
             if count >= self.config.offline_threshold {
@@ -192,6 +197,22 @@ impl SlashingManager {
         signature_hash: Hash,
     ) {
         let mut evidence = self.double_sign_evidence.write();
+
+        // SECURITY: Prune oldest entries if evidence map exceeds bounds.
+        // An attacker could spam evidence entries to cause OOM.
+        if evidence.len() >= MAX_EVIDENCE_ENTRIES {
+            // Remove entries with the lowest heights (oldest)
+            let mut heights: Vec<u64> = evidence.keys().map(|(h, _)| *h).collect();
+            heights.sort_unstable();
+            let cutoff = heights.get(heights.len() / 2).copied().unwrap_or(0);
+            evidence.retain(|(h, _), _| *h > cutoff);
+            warn!(
+                "Double-sign evidence pruned: removed entries at height <= {}, {} remaining",
+                cutoff,
+                evidence.len()
+            );
+        }
+
         let key = (height, block_hash);
         let sigs = evidence.entry(key).or_insert_with(Vec::new);
         sigs.push((validator, signature_hash));
@@ -208,10 +229,7 @@ impl SlashingManager {
         for ((h, block_hash), sigs) in evidence.iter() {
             if *h == height {
                 for (validator, _sig_hash) in sigs {
-                    validator_blocks
-                        .entry(*validator)
-                        .or_insert_with(Vec::new)
-                        .push(*block_hash);
+                    validator_blocks.entry(*validator).or_insert_with(Vec::new).push(*block_hash);
                 }
             }
         }
@@ -221,7 +239,9 @@ impl SlashingManager {
                 // Same validator signed different blocks at same height!
                 warn!(
                     "Double signing detected! Validator {:?} signed {} blocks at height {}",
-                    validator, blocks.len(), height
+                    validator,
+                    blocks.len(),
+                    height
                 );
 
                 offenders.push(SlashingEvidence {
@@ -229,7 +249,7 @@ impl SlashingManager {
                     reason: SlashReason::DoubleSigning,
                     height,
                     evidence_hash: Some(blocks[0]), // First conflicting block
-                    timestamp: height, // Deterministic: use block height as timestamp
+                    timestamp: height,              // Deterministic: use block height as timestamp
                 });
             }
         }
@@ -247,17 +267,17 @@ impl SlashingManager {
 
         // Get validator stake
         let mut validator_set = self.validator_set.write();
-        let validator = validator_set
-            .get_validator(&evidence.validator)
-            .ok_or_else(|| {
-                ConsensusError::ValidatorNotFound(format!("{:?}", evidence.validator))
-            })?;
+        let validator = validator_set.get_validator(&evidence.validator).ok_or_else(|| {
+            ConsensusError::ValidatorNotFound(format!("{:?}", evidence.validator))
+        })?;
 
         // 🔧 FIX: Handle zero-stake validators — still jail them even if
         // monetary slash is zero (prevents unpunished misbehaviour)
         let slash_amount = if validator.stake == 0 {
-            warn!("Validator {:?} has zero stake — monetary slash skipped but jail applies",
-                  evidence.validator);
+            warn!(
+                "Validator {:?} has zero stake — monetary slash skipped but jail applies",
+                evidence.validator
+            );
             0
         } else {
             let amount = (validator.stake as u128 * percent as u128) / 100;
@@ -273,10 +293,8 @@ impl SlashingManager {
         }
 
         // Jail validator for serious offenses
-        let should_jail = matches!(
-            evidence.reason,
-            SlashReason::DoubleSigning | SlashReason::InvalidBlock
-        );
+        let should_jail =
+            matches!(evidence.reason, SlashReason::DoubleSigning | SlashReason::InvalidBlock);
 
         if should_jail {
             let jail_status = JailStatus {
@@ -301,6 +319,15 @@ impl SlashingManager {
         };
 
         self.slash_history.write().push(event.clone());
+
+        // SECURITY: Prune oldest slash history entries to prevent unbounded growth
+        {
+            let mut history = self.slash_history.write();
+            if history.len() > MAX_SLASH_HISTORY {
+                let drain_count = history.len() - MAX_SLASH_HISTORY;
+                history.drain(..drain_count);
+            }
+        }
 
         info!(
             "Slashed validator {:?}: {} tokens, jailed: {}",
@@ -378,9 +405,7 @@ impl SlashingManager {
     pub fn cleanup_old_evidence(&self, current_height: u64, max_age: u64) {
         let cutoff = current_height.saturating_sub(max_age);
 
-        self.double_sign_evidence.write().retain(|(height, _), _| {
-            *height >= cutoff
-        });
+        self.double_sign_evidence.write().retain(|(height, _), _| *height >= cutoff);
     }
 }
 
@@ -404,10 +429,7 @@ mod tests {
         };
         validator_set.write().add_validator(validator.clone()).unwrap();
 
-        let manager = SlashingManager::new(
-            SlashingConfig::default(),
-            validator_set,
-        );
+        let manager = SlashingManager::new(SlashingConfig::default(), validator_set);
 
         (manager, Address::zero())
     }

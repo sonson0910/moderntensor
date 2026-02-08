@@ -20,12 +20,8 @@
 
 use crate::keccak256;
 use k256::{
-    elliptic_curve::{
-        group::GroupEncoding,
-        ops::Reduce,
-        sec1::ToEncodedPoint,
-    },
-    ProjectivePoint, Scalar, AffinePoint,
+    elliptic_curve::{group::GroupEncoding, ops::Reduce, sec1::ToEncodedPoint},
+    AffinePoint, ProjectivePoint, Scalar,
 };
 
 /// VRF output hash type (32 bytes)
@@ -106,7 +102,8 @@ fn hash_to_curve(pk_bytes: &[u8], alpha: &[u8]) -> ProjectivePoint {
     // Prefix for domain separation
     let suite_string: &[u8] = b"ECVRF_secp256k1_SHA256_TAI";
     for ctr in 0u8..=255 {
-        let mut input = Vec::with_capacity(suite_string.len() + 1 + pk_bytes.len() + alpha.len() + 1);
+        let mut input =
+            Vec::with_capacity(suite_string.len() + 1 + pk_bytes.len() + alpha.len() + 1);
         input.extend_from_slice(suite_string);
         input.push(0x01); // hash_to_curve flag
         input.extend_from_slice(pk_bytes);
@@ -183,11 +180,7 @@ impl VrfKeypair {
         let mut public_key_compressed = [0u8; 33];
         public_key_compressed.copy_from_slice(pk_bytes_full);
 
-        Self {
-            secret_key: sk,
-            public_key,
-            public_key_compressed,
-        }
+        Self { secret_key: sk, public_key, public_key_compressed }
     }
 
     /// Get the public key (x-coordinate, 32 bytes)
@@ -342,8 +335,7 @@ fn gamma_to_output(gamma_compressed: &[u8]) -> VrfOutput {
 /// threshold is in range [0, u64::MAX]
 pub fn vrf_output_below_threshold(output: &VrfOutput, threshold: u64) -> bool {
     let output_value = u64::from_le_bytes([
-        output[0], output[1], output[2], output[3],
-        output[4], output[5], output[6], output[7],
+        output[0], output[1], output[2], output[3], output[4], output[5], output[6], output[7],
     ]);
     output_value < threshold
 }

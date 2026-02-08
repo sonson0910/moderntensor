@@ -3,13 +3,14 @@
 // Now with EVM integration using revm
 
 use crate::error::ContractError;
+use crate::evm_executor::{EvmExecutor, EvmLog};
 use crate::state::ContractState;
 use crate::types::{ContractAddress, ContractCode};
-use crate::evm_executor::{EvmExecutor, EvmLog};
+use luxtensor_core::state::StateDB;
 use luxtensor_core::types::{Address, Hash};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, info};
 
 /// Gas limits for contract operations
@@ -69,6 +70,10 @@ pub struct ContractExecutor {
     state: Arc<RwLock<ContractState>>,
     /// EVM executor
     evm: Arc<RwLock<EvmExecutor>>,
+    /// Optional StateDB for loading real on-chain balances.
+    /// When set, the EVM executor reads the caller's actual balance
+    /// instead of using the synthetic `fund_account` workaround.
+    state_db: Option<Arc<RwLock<StateDB>>>,
 }
 
 /// A deployed contract
@@ -91,7 +96,27 @@ impl ContractExecutor {
             contracts: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(ContractState::new())),
             evm: Arc::new(RwLock::new(EvmExecutor::new())),
+            state_db: None,
         }
+    }
+
+    /// Create a new contract executor backed by a real StateDB.
+    ///
+    /// When a `StateDB` is provided the executor loads the caller's actual
+    /// on-chain balance before every EVM call, eliminating the synthetic
+    /// `fund_account` workaround that was used during early development.
+    pub fn with_state_db(state_db: Arc<RwLock<StateDB>>) -> Self {
+        Self {
+            contracts: Arc::new(RwLock::new(HashMap::new())),
+            state: Arc::new(RwLock::new(ContractState::new())),
+            evm: Arc::new(RwLock::new(EvmExecutor::new())),
+            state_db: Some(state_db),
+        }
+    }
+
+    /// Attach a StateDB to an existing executor (e.g. after node startup).
+    pub fn set_state_db(&mut self, state_db: Arc<RwLock<StateDB>>) {
+        self.state_db = Some(state_db);
     }
 
     /// Transfer value between accounts (without code execution)
@@ -108,9 +133,7 @@ impl ContractExecutor {
         let mut contracts = self.contracts.write();
 
         // Get sender balance
-        let from_contract = contracts
-            .get_mut(from)
-            .ok_or(ContractError::ContractNotFound)?;
+        let from_contract = contracts.get_mut(from).ok_or(ContractError::ContractNotFound)?;
 
         if from_contract.balance < amount {
             return Err(ContractError::InsufficientBalance);
@@ -159,9 +182,7 @@ impl ContractExecutor {
         amount: u128,
     ) -> Result<(), ContractError> {
         let mut contracts = self.contracts.write();
-        let contract = contracts
-            .get_mut(address)
-            .ok_or(ContractError::ContractNotFound)?;
+        let contract = contracts.get_mut(address).ok_or(ContractError::ContractNotFound)?;
 
         if contract.balance < amount {
             return Err(ContractError::InsufficientBalance);
@@ -199,8 +220,8 @@ impl ContractExecutor {
             return Err(ContractError::InvalidCode("Empty contract code".to_string()));
         }
 
-        if code.0.len() > 24_000 {
-            // EIP-170 max code size
+        if code.0.len() > 24_576 {
+            // EIP-170 max deployed bytecode size (0x6000 = 24,576)
             return Err(ContractError::CodeSizeTooLarge);
         }
 
@@ -215,21 +236,26 @@ impl ContractExecutor {
         // Store contract
         self.contracts.write().insert(contract_address, deployed);
 
-        info!(
-            "Contract deployed at {}",
-            hex::encode(&contract_address.0)
-        );
+        info!("Contract deployed at {}", hex::encode(&contract_address.0));
 
-        // Fund deployer in EVM state so gas fees (gas_limit × gas_price) are covered
+        // SECURITY: Load the deployer's real on-chain balance into REVM state
+        // so that the EVM can enforce balance checks during execution.
+        // Falls back to synthetic funding only when no StateDB is connected
+        // (unit-test / dev mode).
         {
             let evm = self.evm.read();
-            evm.fund_account(&deployer, gas_limit as u128 + value);
+            if let Some(ref sdb) = self.state_db {
+                let balance = sdb.read().get_balance(&deployer);
+                evm.fund_account(&deployer, balance);
+            } else {
+                evm.fund_account(&deployer, gas_limit as u128 + value);
+            }
         }
 
         // Execute deployment with EVM
         let evm = self.evm.read();
-        let (returned_address, gas_used, evm_logs, _deployed_code) = evm
-            .deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
+        let (returned_address, gas_used, evm_logs, _deployed_code) =
+            evm.deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
 
         // Convert structured REVM logs to executor Log entries
         let logs = Self::convert_evm_logs(&contract_address, &evm_logs);
@@ -270,39 +296,42 @@ impl ContractExecutor {
             return Err(ContractError::GasLimitExceeded);
         }
 
-        // Fund caller in EVM state so gas fees are covered
+        // SECURITY: Load the caller's real on-chain balance into REVM state.
+        // Falls back to synthetic funding only when no StateDB is connected.
         {
             let evm_ref = self.evm.read();
-            evm_ref.fund_account(&context.caller, context.gas_limit as u128 + context.value);
+            if let Some(ref sdb) = self.state_db {
+                let balance = sdb.read().get_balance(&context.caller);
+                evm_ref.fund_account(&context.caller, balance);
+            } else {
+                evm_ref.fund_account(&context.caller, context.gas_limit as u128 + context.value);
+            }
         }
 
         // Execute with EVM
         let evm = self.evm.read();
-        let (return_data, gas_used, evm_logs) = evm
-            .call(
-                context.caller,
-                context.contract_address,
-                contract.code.0.clone(),
-                input_data.clone(),
-                context.value,
-                context.gas_limit,
-                context.block_number,
-                context.timestamp,
-            )?;
+        let (return_data, gas_used, evm_logs) = evm.call(
+            context.caller,
+            context.contract_address,
+            contract.code.0.clone(),
+            input_data.clone(),
+            context.value,
+            context.gas_limit,
+            context.block_number,
+            context.timestamp,
+        )?;
 
         // Convert structured REVM logs to executor Log entries
         let logs = Self::convert_evm_logs(&context.contract_address, &evm_logs);
 
-        Ok(ExecutionResult {
-            gas_used,
-            return_data,
-            logs,
-            success: true,
-            error: None,
-        })
+        Ok(ExecutionResult { gas_used, return_data, logs, success: true, error: None })
     }
 
     /// Static call - read-only contract call that doesn't modify state
+    ///
+    /// SECURITY: Uses `EvmExecutor::static_call()` which calls `transact()` (not
+    /// `transact_commit()`), ensuring no state changes are persisted. This is correct
+    /// for `eth_call`, `eth_estimateGas`, and any read-only simulation.
     pub fn static_call(
         &self,
         context: ExecutionContext,
@@ -327,36 +356,24 @@ impl ContractExecutor {
             return Err(ContractError::GasLimitExceeded);
         }
 
-        // Fund caller in EVM state so gas fees are covered
-        {
-            let evm_ref = self.evm.read();
-            evm_ref.fund_account(&context.caller, context.gas_limit as u128);
-        }
-
-        // Execute with EVM (value must be 0 for static calls)
+        // SECURITY: Use static_call() which does NOT commit state
+        // No need to fund_account — static_call handles this internally
+        // with a temporary executor clone
         let evm = self.evm.read();
-        let (return_data, gas_used, evm_logs) = evm
-            .call(
-                context.caller,
-                context.contract_address,
-                contract.code.0.clone(),
-                input_data.clone(),
-                0, // Static calls cannot send value
-                context.gas_limit,
-                context.block_number,
-                context.timestamp,
-            )?;
+        let (return_data, gas_used, evm_logs) = evm.static_call(
+            context.caller,
+            context.contract_address,
+            contract.code.0.clone(),
+            input_data.clone(),
+            context.gas_limit,
+            context.block_number,
+            context.timestamp,
+        )?;
 
         // Convert structured REVM logs (should be empty for static calls)
         let logs = Self::convert_evm_logs(&context.contract_address, &evm_logs);
 
-        Ok(ExecutionResult {
-            gas_used,
-            return_data,
-            logs,
-            success: true,
-            error: None,
-        })
+        Ok(ExecutionResult { gas_used, return_data, logs, success: true, error: None })
     }
 
     /// Destroy a contract and transfer its balance to a beneficiary
@@ -368,9 +385,7 @@ impl ContractExecutor {
         let mut contracts = self.contracts.write();
 
         // Get contract to destroy
-        let contract = contracts
-            .get(contract_address)
-            .ok_or(ContractError::ContractNotFound)?;
+        let contract = contracts.get(contract_address).ok_or(ContractError::ContractNotFound)?;
 
         let balance = contract.balance;
 
@@ -409,15 +424,8 @@ impl ContractExecutor {
     }
 
     /// Get contract balance
-    pub fn get_contract_balance(
-        &self,
-        address: &ContractAddress,
-    ) -> Result<u128, ContractError> {
-        self.contracts
-            .read()
-            .get(address)
-            .map(|c| c.balance)
-            .ok_or(ContractError::ContractNotFound)
+    pub fn get_contract_balance(&self, address: &ContractAddress) -> Result<u128, ContractError> {
+        self.contracts.read().get(address).map(|c| c.balance).ok_or(ContractError::ContractNotFound)
     }
 
     /// Check if contract exists
@@ -438,10 +446,7 @@ impl ContractExecutor {
         }
 
         // Fall back to state storage
-        self.state
-            .read()
-            .get_storage(contract, key)
-            .ok_or(ContractError::StorageKeyNotFound)
+        self.state.read().get_storage(contract, key).ok_or(ContractError::StorageKeyNotFound)
     }
 
     /// Set contract storage value
@@ -478,10 +483,7 @@ impl ContractExecutor {
         let contracts = self.contracts.read();
         let total_code_size: usize = contracts.values().map(|c| c.code.0.len()).sum();
 
-        ContractStats {
-            total_contracts: contracts.len(),
-            total_code_size,
-        }
+        ContractStats { total_contracts: contracts.len(), total_code_size }
     }
 
     /// List all deployed contract addresses
@@ -490,12 +492,11 @@ impl ContractExecutor {
     }
 
     /// Get deployed contract info
-    pub fn get_contract_info(&self, address: &ContractAddress) -> Result<DeployedContract, ContractError> {
-        self.contracts
-            .read()
-            .get(address)
-            .cloned()
-            .ok_or(ContractError::ContractNotFound)
+    pub fn get_contract_info(
+        &self,
+        address: &ContractAddress,
+    ) -> Result<DeployedContract, ContractError> {
+        self.contracts.read().get(address).cloned().ok_or(ContractError::ContractNotFound)
     }
 
     /// Estimate gas for contract call
@@ -539,11 +540,7 @@ impl ContractExecutor {
                     })
                     .collect();
 
-                Log {
-                    address,
-                    topics,
-                    data: evm_log.data.clone(),
-                }
+                Log { address, topics, data: evm_log.data.clone() }
             })
             .collect()
     }
@@ -637,9 +634,7 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, 0, 1_000_000, 1).unwrap();
 
         let context = ExecutionContext {
             caller: deployer,
@@ -665,9 +660,7 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, 0, 1_000_000, 1).unwrap();
 
         let key = [1u8; 32];
         let value = [2u8; 32];
@@ -697,9 +690,7 @@ mod tests {
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
         let value = 1_000_000u128;
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, value, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, value, 1_000_000, 1).unwrap();
 
         let balance = executor.get_contract_balance(&address).unwrap();
         assert_eq!(balance, value);
@@ -714,12 +705,8 @@ mod tests {
         let code1 = ContractCode(vec![0x60; 100]);
         let code2 = ContractCode(vec![0x60; 200]);
 
-        executor
-            .deploy_contract(code1, deployer, 0, 1_000_000, 1)
-            .unwrap();
-        executor
-            .deploy_contract(code2, deployer, 0, 1_000_000, 2)
-            .unwrap();
+        executor.deploy_contract(code1, deployer, 0, 1_000_000, 1).unwrap();
+        executor.deploy_contract(code2, deployer, 0, 1_000_000, 2).unwrap();
 
         let stats = executor.get_stats();
         assert_eq!(stats.total_contracts, 2);
@@ -733,12 +720,9 @@ mod tests {
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
         // Deploy two contracts with initial balance
-        let (addr1, _) = executor
-            .deploy_contract(code.clone(), deployer, 1000, 1_000_000, 1)
-            .unwrap();
-        let (addr2, _) = executor
-            .deploy_contract(code, deployer, 500, 1_000_000, 2)
-            .unwrap();
+        let (addr1, _) =
+            executor.deploy_contract(code.clone(), deployer, 1000, 1_000_000, 1).unwrap();
+        let (addr2, _) = executor.deploy_contract(code, deployer, 500, 1_000_000, 2).unwrap();
 
         // Transfer from addr1 to addr2
         executor.transfer(&addr1, &addr2, 300).unwrap();
@@ -753,12 +737,9 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (addr1, _) = executor
-            .deploy_contract(code.clone(), deployer, 100, 1_000_000, 1)
-            .unwrap();
-        let (addr2, _) = executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 2)
-            .unwrap();
+        let (addr1, _) =
+            executor.deploy_contract(code.clone(), deployer, 100, 1_000_000, 1).unwrap();
+        let (addr2, _) = executor.deploy_contract(code, deployer, 0, 1_000_000, 2).unwrap();
 
         // Try to transfer more than available
         let result = executor.transfer(&addr1, &addr2, 200);
@@ -771,9 +752,7 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, 1000, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, 1000, 1_000_000, 1).unwrap();
 
         // Add balance
         executor.add_balance(&address, 500).unwrap();
@@ -794,9 +773,7 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, 0, 1_000_000, 1).unwrap();
 
         let context = ExecutionContext {
             caller: deployer,
@@ -823,12 +800,9 @@ mod tests {
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
         // Deploy two contracts
-        let (addr1, _) = executor
-            .deploy_contract(code.clone(), deployer, 1000, 1_000_000, 1)
-            .unwrap();
-        let (addr2, _) = executor
-            .deploy_contract(code, deployer, 500, 1_000_000, 2)
-            .unwrap();
+        let (addr1, _) =
+            executor.deploy_contract(code.clone(), deployer, 1000, 1_000_000, 1).unwrap();
+        let (addr2, _) = executor.deploy_contract(code, deployer, 500, 1_000_000, 2).unwrap();
 
         // Destroy addr1 and transfer balance to addr2
         executor.destroy_contract(&addr1, &addr2).unwrap();
@@ -850,15 +824,9 @@ mod tests {
         assert_eq!(executor.list_contracts().len(), 0);
 
         // Deploy some contracts
-        executor
-            .deploy_contract(code.clone(), deployer, 0, 1_000_000, 1)
-            .unwrap();
-        executor
-            .deploy_contract(code.clone(), deployer, 0, 1_000_000, 2)
-            .unwrap();
-        executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 3)
-            .unwrap();
+        executor.deploy_contract(code.clone(), deployer, 0, 1_000_000, 1).unwrap();
+        executor.deploy_contract(code.clone(), deployer, 0, 1_000_000, 2).unwrap();
+        executor.deploy_contract(code, deployer, 0, 1_000_000, 3).unwrap();
 
         assert_eq!(executor.list_contracts().len(), 3);
     }
@@ -869,9 +837,8 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code.clone(), deployer, 1000, 1_000_000, 5)
-            .unwrap();
+        let (address, _) =
+            executor.deploy_contract(code.clone(), deployer, 1000, 1_000_000, 5).unwrap();
 
         let info = executor.get_contract_info(&address).unwrap();
         assert_eq!(info.code, code);
@@ -886,9 +853,7 @@ mod tests {
         let deployer = create_test_address(1);
         let code = ContractCode(vec![0x60, 0x60, 0x60, 0x40]);
 
-        let (address, _) = executor
-            .deploy_contract(code, deployer, 0, 1_000_000, 1)
-            .unwrap();
+        let (address, _) = executor.deploy_contract(code, deployer, 0, 1_000_000, 1).unwrap();
 
         let context = ExecutionContext {
             caller: deployer,

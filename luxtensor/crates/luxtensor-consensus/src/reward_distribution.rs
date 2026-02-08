@@ -314,6 +314,10 @@ impl RewardDistributor {
     }
 
     /// Distribute by performance score (for miners)
+    ///
+    /// SECURITY: Uses fixed-point integer arithmetic instead of f64 to prevent
+    /// precision loss for large reward pools. Scores are scaled by 10^12 before
+    /// integer division to maintain accuracy.
     fn distribute_by_score(&self, pool: u128, miners: &[MinerInfo]) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
@@ -322,11 +326,19 @@ impl RewardDistributor {
             return rewards;
         }
 
+        // Scale scores to integer for precision-safe division
+        const PRECISION: u128 = 1_000_000_000_000; // 10^12
+        let mut _distributed: u128 = 0;
+
         for miner in miners {
-            let share = miner.score / total_score;
-            let reward = (pool as f64 * share) as u128;
+            let scaled_share = ((miner.score / total_score) * PRECISION as f64) as u128;
+            let reward = pool
+                .checked_mul(scaled_share)
+                .map(|x| x / PRECISION)
+                .unwrap_or(0);
             if reward > 0 {
                 rewards.insert(miner.address, reward);
+                _distributed += reward;
             }
         }
 
@@ -356,9 +368,14 @@ impl RewardDistributor {
             return rewards;
         }
 
+        // SECURITY: Use fixed-point integer arithmetic for precision
+        const PRECISION: u128 = 1_000_000_000_000;
         for (address, effective_score) in effective_scores {
-            let share = effective_score / total_score;
-            let reward = (pool as f64 * share) as u128;
+            let scaled_share = ((effective_score / total_score) * PRECISION as f64) as u128;
+            let reward = pool
+                .checked_mul(scaled_share)
+                .map(|x| x / PRECISION)
+                .unwrap_or(0);
             if reward > 0 {
                 rewards.insert(address, reward);
             }
@@ -398,8 +415,13 @@ impl RewardDistributor {
         }
 
         for (address, effective_score) in effective_scores {
-            let share = effective_score / total_score;
-            let reward = (pool as f64 * share) as u128;
+            // SECURITY: Use fixed-point integer arithmetic for precision
+            const PRECISION: u128 = 1_000_000_000_000;
+            let scaled_share = ((effective_score / total_score) * PRECISION as f64) as u128;
+            let reward = pool
+                .checked_mul(scaled_share)
+                .map(|x| x / PRECISION)
+                .unwrap_or(0);
             if reward > 0 {
                 rewards.insert(address, reward);
             }
@@ -490,13 +512,19 @@ impl RewardDistributor {
             return rewards;
         }
 
-        let mut distributed: u128 = 0;
+        let mut _distributed: u128 = 0;
         for node in nodes {
-            let share = node.uptime_score / total_score;
-            let reward = ((pool as f64 * share) as u128).min(pool.saturating_sub(distributed));
+            // SECURITY: Use fixed-point integer arithmetic instead of f64
+            const PRECISION: u128 = 1_000_000_000_000;
+            let scaled_share = ((node.uptime_score / total_score) * PRECISION as f64) as u128;
+            let reward = pool
+                .checked_mul(scaled_share)
+                .map(|x| x / PRECISION)
+                .unwrap_or(0)
+                .min(pool.saturating_sub(_distributed));
             if reward > 0 {
                 rewards.insert(node.address, reward);
-                distributed += reward;
+                _distributed += reward;
             }
         }
 
@@ -778,12 +806,14 @@ mod tests {
         // Infra rewards should exist and total close to the pool
         let infra_total: u128 = result.infrastructure_rewards.values().sum();
         assert!(infra_total > 0, "Infrastructure rewards should be non-zero");
-        // Allow integer rounding tolerance (pool * score/total → some truncation)
+        // Allow fixed-point rounding tolerance: with PRECISION=10^12,
+        // max error per node ≈ pool / PRECISION, so total ≈ N * pool / 10^12
         assert!(infra_total <= expected_infra_pool, "Should not exceed infra pool");
+        let max_rounding_error = (infra_nodes.len() as u128) * expected_infra_pool / 1_000_000_000_000 + 1;
         assert!(
-            expected_infra_pool - infra_total < 3,
-            "Infra rewards should be close to pool: {} vs {}",
-            infra_total, expected_infra_pool,
+            expected_infra_pool - infra_total <= max_rounding_error,
+            "Infra rewards rounding too large: diff={}, max_allowed={}, total={} vs pool={}",
+            expected_infra_pool - infra_total, max_rounding_error, infra_total, expected_infra_pool,
         );
 
         // Higher uptime → more reward

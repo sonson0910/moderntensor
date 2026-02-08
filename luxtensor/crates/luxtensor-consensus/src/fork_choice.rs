@@ -3,7 +3,12 @@ use luxtensor_core::block::Block;
 use luxtensor_core::types::{Hash, Address};
 use std::collections::{HashMap, HashSet, VecDeque};
 use parking_lot::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+/// Maximum number of blocks kept in fork choice memory.
+/// Beyond this, oldest non-canonical blocks are automatically pruned.
+/// 10,000 blocks × ~2KB per block ≈ 20 MB memory cap.
+const MAX_TRACKED_BLOCKS: usize = 10_000;
 
 /// Fork choice rule implementation (GHOST algorithm)
 /// Greedy Heaviest-Observed Sub-Tree with attestation weights
@@ -82,6 +87,19 @@ impl ForkChoice {
             let mut scores = self.scores.write();
             blocks.insert(block_hash, block);
             scores.insert(block_hash, score);
+        }
+
+        // SECURITY: Auto-prune if we exceed memory cap to prevent unbounded growth.
+        // An attacker sending many fork blocks could cause OOM without this.
+        let block_count = self.blocks.read().len();
+        if block_count > MAX_TRACKED_BLOCKS {
+            let head_height = self.get_head().map(|b| b.height()).unwrap_or(0);
+            let keep_depth = MAX_TRACKED_BLOCKS as u64 / 2;
+            if head_height > keep_depth {
+                if let Err(e) = self.prune(keep_depth) {
+                    warn!("Auto-prune failed: {}", e);
+                }
+            }
         }
 
         // Update head if necessary

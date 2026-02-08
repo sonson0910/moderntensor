@@ -39,10 +39,10 @@ impl Default for WeightConsensusConfig {
             // 5 validators require at least 4 votes at 67% threshold.
             min_validators: 5,
             approval_threshold_percent: 67, // 2/3 majority
-            proposal_timeout: 200,           // ~40 minutes
-            proposal_cooldown: 50,           // ~10 minutes
+            proposal_timeout: 200,          // ~40 minutes
+            proposal_cooldown: 50,          // ~10 minutes
             slash_rejected_proposals: false,
-            proposer_reward_bps: 10,         // 0.1% bonus
+            proposer_reward_bps: 10, // 0.1% bonus
         }
     }
 }
@@ -69,6 +69,8 @@ pub struct ProposalVote {
     pub approve: bool,
     pub block: u64,
     pub signature: Option<Hash>,
+    /// Stake of the voter at the time of voting (for weighted calculations)
+    pub stake: u128,
 }
 
 /// A weight proposal from a validator
@@ -133,12 +135,29 @@ impl WeightProposal {
         self.votes.iter().filter(|v| !v.approve).count()
     }
 
-    /// Calculate approval percentage (0-100)
+    /// Calculate approval percentage by head-count (0-100)
+    ///
+    /// Each vote counts equally regardless of stake. Used as a secondary
+    /// check alongside stake-weighted approval.
     pub fn approval_percentage(&self) -> u8 {
         if self.votes.is_empty() {
             return 0;
         }
         ((self.approval_count() * 100) / self.votes.len()) as u8
+    }
+
+    /// Calculate stake-weighted approval percentage (0-100)
+    ///
+    /// SECURITY: Primary consensus metric — weights each vote by the voter's
+    /// stake at the time of voting. This prevents a coalition of low-stake
+    /// validators from overriding high-stake validators.
+    pub fn stake_weighted_approval(&self) -> u8 {
+        let total_stake: u128 = self.votes.iter().map(|v| v.stake).sum();
+        if total_stake == 0 {
+            return 0;
+        }
+        let approval_stake: u128 = self.votes.iter().filter(|v| v.approve).map(|v| v.stake).sum();
+        ((approval_stake * 100) / total_stake) as u8
     }
 
     /// Check if voter has already voted
@@ -185,7 +204,6 @@ pub fn compute_proposal_id(
     hash.copy_from_slice(&result);
     hash
 }
-
 
 /// Result of a consensus check
 #[derive(Debug, Clone, PartialEq)]
@@ -260,32 +278,33 @@ impl WeightConsensusManager {
         let proposal_id = proposal.id;
 
         // Store proposal
-        self.proposals
-            .write()
-            .entry(subnet_uid)
-            .or_insert_with(Vec::new)
-            .push(proposal);
+        self.proposals.write().entry(subnet_uid).or_insert_with(Vec::new).push(proposal);
 
         // Update last proposal time
         self.last_proposal.write().insert(proposer, current_block);
 
-        info!(
-            "New weight proposal {:?} for subnet {} by {:?}",
-            proposal_id, subnet_uid, proposer
-        );
+        info!("New weight proposal {:?} for subnet {} by {:?}", proposal_id, subnet_uid, proposer);
 
         Ok(proposal_id)
     }
 
     /// Vote on a proposal
-    /// Refactored: Validation logic extracted to helper method for lower complexity
+    ///
+    /// SECURITY: `voter_stake` MUST be looked up from the `ValidatorSet` by the caller.
+    /// Passing user-supplied stake values would allow vote weight manipulation.
     pub fn vote(
         &self,
         proposal_id: Hash,
         voter: Address,
         approve: bool,
         current_block: u64,
+        voter_stake: u128,
     ) -> Result<ConsensusResult, ConsensusError> {
+        // SECURITY: Reject zero-stake voters (not a real validator)
+        if voter_stake == 0 {
+            return Err(ConsensusError::InsufficientValidators);
+        }
+
         let mut proposals = self.proposals.write();
 
         // Find proposal
@@ -294,12 +313,13 @@ impl WeightConsensusManager {
         // Validate vote eligibility (extracted for lower complexity)
         Self::validate_vote_eligibility(proposal, &voter, current_block)?;
 
-        // Record vote
+        // Record vote with stake for weighted approval calculation
         proposal.votes.push(ProposalVote {
             voter,
             approve,
             block: current_block,
             signature: None,
+            stake: voter_stake,
         });
 
         // Check and update consensus status
@@ -357,7 +377,6 @@ impl WeightConsensusManager {
         Ok(())
     }
 
-
     /// Check if proposal has reached consensus
     pub fn check_consensus(&self, proposal_id: Hash) -> Result<ConsensusResult, ConsensusError> {
         let proposals = self.proposals.read();
@@ -374,15 +393,16 @@ impl WeightConsensusManager {
     fn check_consensus_internal(&self, proposal: &WeightProposal) -> ConsensusResult {
         let approval_count = proposal.approval_count();
         let total_votes = proposal.votes.len();
-        let approval_percentage = proposal.approval_percentage();
+        let approval_percentage = proposal.stake_weighted_approval();
 
         // Need at least min_validators - 1 votes (excluding proposer)
         let min_votes = self.config.min_validators.saturating_sub(1);
         let enough_votes = total_votes >= min_votes;
 
-        // Check threshold
-        let reached = enough_votes
-            && approval_percentage >= self.config.approval_threshold_percent;
+        // SECURITY: Use stake-weighted approval for consensus threshold
+        // This prevents a coalition of low-stake validators from overriding
+        // high-stake validators who have more at risk.
+        let reached = enough_votes && approval_percentage >= self.config.approval_threshold_percent;
 
         ConsensusResult {
             reached,
@@ -424,22 +444,14 @@ impl WeightConsensusManager {
             proposal.weights.clone(),
         ));
 
-        info!(
-            "Proposal {:?} finalized, applying {} weights",
-            proposal_id,
-            proposal.weights.len()
-        );
+        info!("Proposal {:?} finalized, applying {} weights", proposal_id, proposal.weights.len());
 
         Ok(proposal.weights.clone())
     }
 
     /// Get active proposals for subnet
     pub fn get_proposals(&self, subnet_uid: u64) -> Vec<WeightProposal> {
-        self.proposals
-            .read()
-            .get(&subnet_uid)
-            .cloned()
-            .unwrap_or_default()
+        self.proposals.read().get(&subnet_uid).cloned().unwrap_or_default()
     }
 
     /// Get pending proposals for subnet
@@ -452,12 +464,7 @@ impl WeightConsensusManager {
 
     /// Get proposal by ID
     pub fn get_proposal(&self, proposal_id: Hash) -> Option<WeightProposal> {
-        self.proposals
-            .read()
-            .values()
-            .flat_map(|v| v.iter())
-            .find(|p| p.id == proposal_id)
-            .cloned()
+        self.proposals.read().values().flat_map(|v| v.iter()).find(|p| p.id == proposal_id).cloned()
     }
 
     /// Clean up expired proposals
@@ -544,14 +551,12 @@ mod tests {
         let weights = vec![(0, 500u16), (1, 500u16)];
 
         // Propose
-        let proposal_id = manager
-            .propose_weights(1, proposer, weights, 0, 3)
-            .unwrap();
+        let proposal_id = manager.propose_weights(1, proposer, weights, 0, 3).unwrap();
 
-        // Vote
-        let result = manager.vote(proposal_id, voter, true, 5).unwrap();
+        // Vote (with stake=1000 simulating a validator with 1000 stake)
+        let result = manager.vote(proposal_id, voter, true, 5, 1000).unwrap();
 
-        // Should reach consensus (1 vote, 100% approval)
+        // Should reach consensus (1 vote, 100% stake-weighted approval)
         assert!(result.reached);
         assert_eq!(result.approval_count, 1);
     }
@@ -567,9 +572,7 @@ mod tests {
         let weights = vec![(0, 500u16)];
 
         // First proposal
-        manager
-            .propose_weights(1, proposer, weights.clone(), 0, 5)
-            .unwrap();
+        manager.propose_weights(1, proposer, weights.clone(), 0, 5).unwrap();
 
         // Second proposal too soon
         assert_eq!(
@@ -588,13 +591,11 @@ mod tests {
         let proposer = test_address(1);
         let weights = vec![(0, 500u16)];
 
-        let proposal_id = manager
-            .propose_weights(1, proposer, weights, 0, 5)
-            .unwrap();
+        let proposal_id = manager.propose_weights(1, proposer, weights, 0, 5).unwrap();
 
         // Proposer tries to vote
         assert_eq!(
-            manager.vote(proposal_id, proposer, true, 5),
+            manager.vote(proposal_id, proposer, true, 5, 1000),
             Err(ConsensusError::CannotVoteOwnProposal)
         );
     }
@@ -610,13 +611,11 @@ mod tests {
         let voter = test_address(2);
         let weights = vec![(0, 500u16)];
 
-        let proposal_id = manager
-            .propose_weights(1, proposer, weights, 0, 5)
-            .unwrap();
+        let proposal_id = manager.propose_weights(1, proposer, weights, 0, 5).unwrap();
 
         // Vote after expiry
         assert_eq!(
-            manager.vote(proposal_id, voter, true, 100),
+            manager.vote(proposal_id, voter, true, 100, 1000),
             Err(ConsensusError::ProposalExpired)
         );
     }
@@ -633,12 +632,10 @@ mod tests {
         let voter = test_address(2);
         let weights = vec![(0, 500u16), (1, 500u16)];
 
-        let proposal_id = manager
-            .propose_weights(1, proposer, weights.clone(), 0, 3)
-            .unwrap();
+        let proposal_id = manager.propose_weights(1, proposer, weights.clone(), 0, 3).unwrap();
 
-        // Vote to approve
-        manager.vote(proposal_id, voter, true, 5).unwrap();
+        // Vote to approve (stake=1000)
+        manager.vote(proposal_id, voter, true, 5, 1000).unwrap();
 
         // Finalize
         let final_weights = manager.finalize_proposal(proposal_id, 10).unwrap();

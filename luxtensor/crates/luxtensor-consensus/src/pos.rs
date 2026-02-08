@@ -41,6 +41,9 @@ pub struct ProofOfStake {
     current_epoch: RwLock<u64>,
     /// Last finalized block hash for VRF seed entropy
     last_block_hash: RwLock<Hash>,
+    /// RANDAO mix from commit-reveal (provides unbiasable randomness)
+    /// When set, this is mixed into the seed computation for stronger security.
+    randao_mix: RwLock<Option<Hash>>,
 }
 
 impl ProofOfStake {
@@ -51,6 +54,7 @@ impl ProofOfStake {
             config,
             current_epoch: RwLock::new(0),
             last_block_hash: RwLock::new([0u8; 32]),
+            randao_mix: RwLock::new(None),
         }
     }
 
@@ -61,12 +65,20 @@ impl ProofOfStake {
             config,
             current_epoch: RwLock::new(0),
             last_block_hash: RwLock::new([0u8; 32]),
+            randao_mix: RwLock::new(None),
         }
     }
 
     /// Update last block hash (call after block finalization)
     pub fn update_last_block_hash(&self, hash: Hash) {
         *self.last_block_hash.write() = hash;
+    }
+
+    /// Update RANDAO mix from the RandaoMixer after epoch finalization.
+    /// This adds unbiasable randomness to validator selection,
+    /// preventing a validators from predicting future selections.
+    pub fn update_randao_mix(&self, mix: Hash) {
+        *self.randao_mix.write() = Some(mix);
     }
 
     /// Select a validator for a given slot using VRF-based selection
@@ -97,16 +109,26 @@ impl ProofOfStake {
         Ok(())
     }
 
-    /// Compute the randomness seed for validator selection at a given slot
-    /// Uses epoch + slot + last_block_hash for unpredictable entropy
+    /// Compute the randomness seed for validator selection at a given slot.
+    ///
+    /// SECURITY: Uses epoch + slot + last_block_hash + RANDAO mix (when available).
+    /// The RANDAO mix comes from the commit-reveal scheme in `RandaoMixer`,
+    /// which makes the seed unbiasable by any single validator.
+    /// Without RANDAO, the seed is computed from keccak256(epoch || slot || block_hash)
+    /// which a block producer can bias by withholding blocks.
     pub fn compute_seed(&self, slot: u64) -> Hash {
         let epoch = slot / self.config.epoch_length;
         let last_hash = *self.last_block_hash.read();
+        let randao = *self.randao_mix.read();
 
-        let mut data = Vec::with_capacity(48);
+        let mut data = Vec::with_capacity(80);
         data.extend_from_slice(&epoch.to_le_bytes());
         data.extend_from_slice(&slot.to_le_bytes());
-        data.extend_from_slice(&last_hash); // Added for entropy
+        data.extend_from_slice(&last_hash);
+        // Mix in RANDAO output when available (unbiasable)
+        if let Some(mix) = randao {
+            data.extend_from_slice(&mix);
+        }
         keccak256(&data)
     }
 
@@ -148,7 +170,7 @@ impl ProofOfStake {
         crate::halving::HalvingInfo {
             initial_reward_mdt: schedule.initial_reward as f64 / 1e18,
             halving_interval_blocks: schedule.halving_interval,
-            halving_interval_years: (schedule.halving_interval as f64 * 100.0) / (365.25 * 24.0 * 3600.0),
+            halving_interval_years: (schedule.halving_interval as f64 * 12.0) / (365.25 * 24.0 * 3600.0),
             max_halvings: schedule.max_halvings,
             estimated_total_emission_mdt: schedule.estimate_total_emission() as f64 / 1e18,
         }

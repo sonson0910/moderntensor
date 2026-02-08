@@ -58,6 +58,9 @@ impl Validator {
 pub struct ValidatorSet {
     validators: HashMap<Address, Validator>,
     total_stake: u128,
+    /// Minimum stake required for a validator to participate in consensus.
+    /// Default: 0 (for backward compatibility). Set via `with_min_stake()`.
+    min_stake: u128,
 }
 
 impl ValidatorSet {
@@ -65,6 +68,16 @@ impl ValidatorSet {
         Self {
             validators: HashMap::new(),
             total_stake: 0,
+            min_stake: 0,
+        }
+    }
+
+    /// Create a new ValidatorSet with a minimum stake requirement.
+    pub fn with_min_stake(min_stake: u128) -> Self {
+        Self {
+            validators: HashMap::new(),
+            total_stake: 0,
+            min_stake,
         }
     }
 
@@ -94,10 +107,20 @@ impl ValidatorSet {
     }
 
     /// Update validator stake
+    ///
+    /// SECURITY: Enforces minimum stake — validators with negligible stake
+    /// must not participate in consensus. To fully exit, use the rotation
+    /// system which enforces unbonding period.
     pub fn update_stake(&mut self, address: &Address, new_stake: u128) -> Result<(), &'static str> {
+        if new_stake > 0 && new_stake < self.min_stake {
+            return Err("Stake below minimum—fully unstake via validator rotation instead");
+        }
         if let Some(validator) = self.validators.get_mut(address) {
             self.total_stake = self.total_stake.saturating_sub(validator.stake).saturating_add(new_stake);
             validator.stake = new_stake;
+            if new_stake == 0 {
+                validator.active = false; // Auto-deactivate on zero stake
+            }
             Ok(())
         } else {
             Err("Validator not found")

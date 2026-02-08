@@ -22,6 +22,20 @@ impl MerkleTree {
         Self { _leaves: leaves, nodes }
     }
 
+    /// Hash a leaf with 0x00 domain separator.
+    ///
+    /// SECURITY: Leaf hashes must be prefixed with 0x00 to distinguish them
+    /// from internal node hashes (prefixed 0x01). Without this, an attacker
+    /// can construct a 65-byte "leaf" that, when hashed, collides with an
+    /// internal node hash `0x01 || left || right` — enabling second-preimage
+    /// attacks that forge Merkle proofs.
+    pub fn hash_leaf(data: &[u8]) -> Hash {
+        let mut combined = Vec::with_capacity(1 + data.len());
+        combined.push(0x00); // Leaf domain separator
+        combined.extend_from_slice(data);
+        keccak256(&combined)
+    }
+
     /// Get the root hash
     pub fn root(&self) -> Hash {
         if self.nodes.is_empty() {

@@ -3,6 +3,7 @@
 use crate::error::ContractError;
 use crate::types::ContractAddress;
 use luxtensor_core::types::{Address, Hash};
+use parking_lot::RwLock;
 use revm::primitives::{
     AccountInfo, Address as RevmAddress, Bytecode, Bytes, ExecutionResult as RevmExecutionResult,
     Output, TransactTo, U256,
@@ -10,7 +11,6 @@ use revm::primitives::{
 use revm::{Database, DatabaseCommit, Evm};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::{debug, warn};
 
 /// Structured EVM log entry preserving topics and data from REVM execution.
@@ -90,6 +90,10 @@ impl EvmExecutor {
                 tx.gas_limit = gas_limit;
                 tx.gas_price = U256::from(1);
             })
+            .modify_cfg_env(|cfg| {
+                // SECURITY: Set chain_id for cross-chain replay protection (EIP-155)
+                cfg.chain_id = 8899; // LuxTensor Mainnet
+            })
             .build();
 
         // Execute transaction
@@ -102,12 +106,7 @@ impl EvmExecutor {
         tracing::info!("🔍 EVM Deploy raw result: {:?}", result);
 
         match result {
-            RevmExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
+            RevmExecutionResult::Success { output, gas_used, logs, .. } => {
                 let (contract_address, deployed_code) = match output {
                     Output::Create(bytes, Some(addr)) => (addr.0 .0.to_vec(), bytes.to_vec()),
                     Output::Create(_bytes, None) => {
@@ -153,10 +152,7 @@ impl EvmExecutor {
             }
             RevmExecutionResult::Halt { reason, gas_used: _ } => {
                 warn!("Contract deployment halted: {:?}", reason);
-                Err(ContractError::ExecutionFailed(format!(
-                    "Halted: {:?}",
-                    reason
-                )))
+                Err(ContractError::ExecutionFailed(format!("Halted: {:?}", reason)))
             }
         }
     }
@@ -180,17 +176,22 @@ impl EvmExecutor {
         self.ensure_account(&caller_addr);
 
         // Set up contract account with code
+        // SECURITY: Use entry().or_insert() to preserve existing account state
+        // (balance, nonce) across multiple calls within the same block.
+        // Previously, `accounts.insert()` overwrote the entire AccountInfo,
+        // destroying accumulated balance and resetting nonce to 0.
         {
             let mut accounts = self.accounts.write();
-            accounts.insert(
-                contract_addr,
-                AccountInfo {
-                    balance: U256::from(value),
-                    nonce: 0,
-                    code_hash: revm::primitives::KECCAK_EMPTY,
-                    code: Some(Bytecode::new_raw(Bytes::from(contract_code))),
-                },
-            );
+            let account = accounts.entry(contract_addr).or_insert_with(|| AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: revm::primitives::KECCAK_EMPTY,
+                code: None,
+            });
+            // Always update code, but preserve balance and nonce
+            account.code = Some(Bytecode::new_raw(Bytes::from(contract_code)));
+            // Add transferred value to existing balance
+            account.balance = account.balance.saturating_add(U256::from(value));
         }
 
         // Create EVM instance
@@ -209,6 +210,10 @@ impl EvmExecutor {
                 tx.gas_limit = gas_limit;
                 tx.gas_price = U256::from(1);
             })
+            .modify_cfg_env(|cfg| {
+                // SECURITY: Set chain_id for cross-chain replay protection (EIP-155)
+                cfg.chain_id = 8899; // LuxTensor Mainnet
+            })
             .build();
 
         // Execute transaction
@@ -218,12 +223,7 @@ impl EvmExecutor {
         })?;
 
         match result {
-            RevmExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
+            RevmExecutionResult::Success { output, gas_used, logs, .. } => {
                 let return_data = match output {
                     Output::Call(bytes) => bytes.to_vec(),
                     _ => vec![],
@@ -256,10 +256,7 @@ impl EvmExecutor {
             }
             RevmExecutionResult::Halt { reason, gas_used: _ } => {
                 warn!("Contract call halted: {:?}", reason);
-                Err(ContractError::ExecutionFailed(format!(
-                    "Halted: {:?}",
-                    reason
-                )))
+                Err(ContractError::ExecutionFailed(format!("Halted: {:?}", reason)))
             }
         }
     }
@@ -294,7 +291,7 @@ impl EvmExecutor {
     pub fn deploy_code(&self, address: &Address, code: Vec<u8>) {
         let addr = address_to_revm(address);
         let code_hash = {
-            use sha3::{Keccak256, Digest};
+            use sha3::{Digest, Keccak256};
             let mut hasher = Keccak256::new();
             hasher.update(&code);
             let result = hasher.finalize();
@@ -340,6 +337,116 @@ impl EvmExecutor {
         Some(result)
     }
 
+    /// Execute a read-only (static) contract call that does NOT commit state changes.
+    ///
+    /// SECURITY: Unlike `call()`, this uses `transact()` instead of `transact_commit()`,
+    /// meaning no state changes (balance, storage, nonce) are persisted. This is essential
+    /// for `eth_call` / `eth_estimateGas` RPCs and any read-only query.
+    pub fn static_call(
+        &self,
+        caller: Address,
+        contract_address: ContractAddress,
+        contract_code: Vec<u8>,
+        input_data: Vec<u8>,
+        gas_limit: u64,
+        block_number: u64,
+        timestamp: u64,
+    ) -> Result<(Vec<u8>, u64, Vec<EvmLog>), ContractError> {
+        let caller_addr = address_to_revm(&caller);
+        let contract_addr = RevmAddress::from_slice(&contract_address.0);
+
+        // Create a temporary clone to avoid mutating the real state
+        let temp_executor = self.clone();
+
+        // Ensure caller account exists in the temporary state
+        temp_executor.ensure_account(&caller_addr);
+
+        // Fund caller temporarily so gas fees are covered in the simulated execution
+        {
+            let mut accounts = temp_executor.accounts.write();
+            let account = accounts.entry(caller_addr).or_insert(AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: revm::primitives::KECCAK_EMPTY,
+                code: None,
+            });
+            account.balance = U256::from(gas_limit);
+        }
+
+        // Set up contract account with code in the temporary state
+        {
+            let mut accounts = temp_executor.accounts.write();
+            let account = accounts.entry(contract_addr).or_insert_with(|| AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: revm::primitives::KECCAK_EMPTY,
+                code: None,
+            });
+            account.code = Some(Bytecode::new_raw(Bytes::from(contract_code)));
+        }
+
+        // Build EVM with the TEMPORARY executor (not the real one)
+        let mut evm = Evm::builder()
+            .with_db(temp_executor)
+            .modify_block_env(|b| {
+                b.number = U256::from(block_number);
+                b.timestamp = U256::from(timestamp);
+                b.gas_limit = U256::from(gas_limit);
+            })
+            .modify_tx_env(|tx| {
+                tx.caller = caller_addr;
+                tx.transact_to = TransactTo::Call(contract_addr);
+                tx.data = Bytes::from(input_data);
+                tx.value = U256::ZERO; // Static calls cannot send value
+                tx.gas_limit = gas_limit;
+                tx.gas_price = U256::from(1);
+            })
+            .modify_cfg_env(|cfg| {
+                cfg.chain_id = 8899;
+            })
+            .build();
+
+        // SECURITY: Use transact() instead of transact_commit()
+        // transact() returns the result WITHOUT committing state changes
+        let result = evm.transact().map_err(|e| {
+            warn!("EVM static call error: {:?}", e);
+            ContractError::ExecutionFailed(format!("EVM static call error: {:?}", e))
+        })?;
+
+        match result.result {
+            RevmExecutionResult::Success { output, gas_used, logs, .. } => {
+                let return_data = match output {
+                    Output::Call(bytes) => bytes.to_vec(),
+                    _ => vec![],
+                };
+
+                let evm_logs = logs
+                    .iter()
+                    .map(|log| {
+                        let mut topics = Vec::with_capacity(log.data.topics().len());
+                        for topic in log.data.topics() {
+                            topics.push(topic.0);
+                        }
+                        EvmLog {
+                            address: log.address.0.to_vec(),
+                            topics,
+                            data: log.data.data.to_vec(),
+                        }
+                    })
+                    .collect();
+
+                Ok((return_data, gas_used, evm_logs))
+            }
+            RevmExecutionResult::Revert { gas_used: _, output } => {
+                let reason = String::from_utf8_lossy(&output).to_string();
+                Err(ContractError::ExecutionReverted(reason))
+            }
+            RevmExecutionResult::Halt { reason, gas_used: _ } => {
+                Err(ContractError::ExecutionFailed(format!("Halted: {:?}", reason)))
+            }
+        }
+    }
+
     /// Set storage value for a contract
     pub fn set_storage(&self, address: &ContractAddress, key: Hash, value: Hash) {
         let contract_addr = RevmAddress::from_slice(&address.0);
@@ -347,10 +454,7 @@ impl EvmExecutor {
         let value_u256 = U256::from_be_bytes(value);
 
         let mut storage = self.storage.write();
-        storage
-            .entry(contract_addr)
-            .or_insert_with(HashMap::new)
-            .insert(key_u256, value_u256);
+        storage.entry(contract_addr).or_insert_with(HashMap::new).insert(key_u256, value_u256);
     }
 }
 
@@ -372,17 +476,17 @@ impl Database for EvmExecutor {
         Ok(self.accounts.read().get(&address).cloned())
     }
 
-    fn code_by_hash(&mut self, _code_hash: revm::primitives::B256) -> Result<Bytecode, Self::Error> {
+    fn code_by_hash(
+        &mut self,
+        _code_hash: revm::primitives::B256,
+    ) -> Result<Bytecode, Self::Error> {
         // Code is stored directly in AccountInfo
         Ok(Bytecode::default())
     }
 
     fn storage(&mut self, address: RevmAddress, index: U256) -> Result<U256, Self::Error> {
         let storage = self.storage.read();
-        Ok(storage
-            .get(&address)
-            .and_then(|s| s.get(&index).copied())
-            .unwrap_or(U256::ZERO))
+        Ok(storage.get(&address).and_then(|s| s.get(&index).copied()).unwrap_or(U256::ZERO))
     }
 
     fn block_hash(&mut self, number: u64) -> Result<revm::primitives::B256, Self::Error> {
@@ -464,10 +568,7 @@ pub struct PersistentEvmExecutor {
 impl PersistentEvmExecutor {
     /// Create a new PersistentEvmExecutor (empty state)
     pub fn new() -> Self {
-        Self {
-            executor: EvmExecutor::new(),
-            dirty: Arc::new(RwLock::new(false)),
-        }
+        Self { executor: EvmExecutor::new(), dirty: Arc::new(RwLock::new(false)) }
     }
 
     /// Load EVM state from RocksDB on startup.
@@ -481,12 +582,15 @@ impl PersistentEvmExecutor {
                 let addr = RevmAddress::from_slice(&addr_bytes);
                 let balance = U256::from_be_bytes(record.balance);
                 let code = record.code.map(|c| Bytecode::new_raw(Bytes::from(c)));
-                accts.insert(addr, AccountInfo {
-                    balance,
-                    nonce: record.nonce,
-                    code_hash: revm::primitives::B256::from(record.code_hash),
-                    code,
-                });
+                accts.insert(
+                    addr,
+                    AccountInfo {
+                        balance,
+                        nonce: record.nonce,
+                        code_hash: revm::primitives::B256::from(record.code_hash),
+                        code,
+                    },
+                );
             }
             debug!("Loaded {} EVM accounts from DB", accts.len());
         }
@@ -546,8 +650,11 @@ impl PersistentEvmExecutor {
         db.flush_evm_state(&account_records, &storage_entries, &[])?;
 
         *self.dirty.write() = false;
-        debug!("Flushed {} EVM accounts and {} storage slots to DB",
-            account_records.len(), storage_entries.len());
+        debug!(
+            "Flushed {} EVM accounts and {} storage slots to DB",
+            account_records.len(),
+            storage_entries.len()
+        );
         Ok(())
     }
 
@@ -564,10 +671,7 @@ impl PersistentEvmExecutor {
 
 impl Clone for PersistentEvmExecutor {
     fn clone(&self) -> Self {
-        Self {
-            executor: self.executor.clone(),
-            dirty: Arc::clone(&self.dirty),
-        }
+        Self { executor: self.executor.clone(), dirty: Arc::clone(&self.dirty) }
     }
 }
 

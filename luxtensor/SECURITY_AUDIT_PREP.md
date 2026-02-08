@@ -1,7 +1,7 @@
 # LuxTensor Security Audit Preparation
 
-> **Status**: Pre-audit checklist — last updated for v0.4.0  
-> **Target**: External security audit engagement  
+> **Status**: Pre-audit checklist — last updated for v0.4.0
+> **Target**: External security audit engagement
 > **Coverage**: All 16 crates (~63 000 LOC Rust, ~12 000 LOC Python SDK)
 
 ---
@@ -26,7 +26,7 @@
 
 ### Chain IDs (Unified)
 - Mainnet: **8899**
-- Testnet: **9999**  
+- Testnet: **9999**
 - Devnet:  **8898**
 
 ---

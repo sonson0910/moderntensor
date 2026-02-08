@@ -10,8 +10,8 @@
 // This module provides the *interface* and verification logic only.
 // Actual bridge relayer / smart contract deployment is out of scope.
 
-use serde::{Deserialize, Serialize};
 use crate::types::{Address, Hash};
+use serde::{Deserialize, Serialize};
 
 // ─── Error ───────────────────────────────────────────────────────────
 
@@ -159,7 +159,7 @@ impl Default for BridgeConfig {
         Self {
             min_attestations: 3,
             min_transfer_amount: 1_000_000_000_000_000, // 0.001 MDT
-            max_message_age_blocks: 50_400,              // ~7 days
+            max_message_age_blocks: 50_400,             // ~7 days
             relayers: Vec::new(),
             paused: false,
         }
@@ -171,7 +171,7 @@ impl Default for BridgeConfig {
 /// Core bridge interface.
 ///
 /// Implementations may talk to smart contracts, relay services, or
-/// be used for testing / simulation. 
+/// be used for testing / simulation.
 pub trait Bridge {
     /// Initiate an outbound transfer (lock on LuxTensor).
     fn initiate_transfer(
@@ -194,8 +194,8 @@ pub trait Bridge {
 
 // ─── In-Memory Implementation ────────────────────────────────────────
 
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 
 /// Simple in-memory bridge for testing and validation.
 pub struct InMemoryBridge {
@@ -206,21 +206,46 @@ pub struct InMemoryBridge {
 
 impl InMemoryBridge {
     pub fn new(config: BridgeConfig) -> Self {
-        Self {
-            config,
-            messages: RwLock::new(HashMap::new()),
-            nonce: RwLock::new(1),
-        }
+        Self { config, messages: RwLock::new(HashMap::new()), nonce: RwLock::new(1) }
     }
 
     /// Verify that a proof has enough valid relayer attestations.
+    ///
+    /// SECURITY: Deduplicates by relayer address — the same relayer cannot
+    /// contribute more than one attestation to the threshold count.
+    /// Without dedup, an attacker controlling a single relayer could submit
+    /// N copies of the same attestation to bypass the M-of-N threshold.
+    ///
+    /// Each attestation is verified by recovering the ECDSA signer address
+    /// from the signature and checking it matches the declared relayer.
     fn verify_attestations(&self, proof: &BridgeProof) -> Result<()> {
+        use std::collections::HashSet;
+        let mut seen_relayers = HashSet::new();
         let valid_count = proof
             .attestations
             .iter()
             .filter(|a| {
-                a.message_hash == proof.message.message_hash
-                    && self.config.relayers.contains(&a.relayer)
+                // 1. Message hash must match
+                if a.message_hash != proof.message.message_hash {
+                    return false;
+                }
+                // 2. Relayer must be in the allowed set
+                if !self.config.relayers.contains(&a.relayer) {
+                    return false;
+                }
+                // 3. Signature must be exactly 65 bytes (r[32] + s[32] + v[1])
+                if a.signature.len() != 65 {
+                    return false;
+                }
+                // 4. Dedup: same relayer can only attest once
+                if !seen_relayers.insert(a.relayer) {
+                    return false;
+                }
+                // 5. ECDSA: recover signer address and verify it matches a.relayer
+                match luxtensor_crypto::recover_address(&a.message_hash, &a.signature) {
+                    Ok(recovered) => recovered == *a.relayer.as_bytes(),
+                    Err(_) => false,
+                }
             })
             .count();
 
@@ -234,9 +259,25 @@ impl InMemoryBridge {
     }
 
     /// Compute a deterministic message hash.
-    fn compute_hash(nonce: u64, sender: &Address, recipient: &Address, amount: u64) -> Hash {
+    ///
+    /// SECURITY: Includes domain separator, chain IDs, and direction to prevent
+    /// cross-route replay attacks. Without these, an outbound message on route
+    /// A→B could be replayed on route A→C.
+    fn compute_hash(
+        nonce: u64,
+        sender: &Address,
+        recipient: &Address,
+        amount: u64,
+        source_chain: ChainId,
+        target_chain: ChainId,
+        direction: BridgeDirection,
+    ) -> Hash {
         use sha3::{Digest, Keccak256};
         let mut hasher = Keccak256::new();
+        hasher.update(b"LUXTENSOR_BRIDGE_MSG_V1"); // Domain separator
+        hasher.update(source_chain.as_u64().to_le_bytes());
+        hasher.update(target_chain.as_u64().to_le_bytes());
+        hasher.update([direction as u8]);
         hasher.update(nonce.to_le_bytes());
         hasher.update(sender);
         hasher.update(recipient);
@@ -281,7 +322,15 @@ impl Bridge for InMemoryBridge {
         let n = *nonce;
         *nonce += 1;
 
-        let message_hash = Self::compute_hash(n, &sender, &recipient, amount);
+        let message_hash = Self::compute_hash(
+            n,
+            &sender,
+            &recipient,
+            amount,
+            ChainId::LuxTensorMainnet,
+            target_chain,
+            BridgeDirection::Outbound,
+        );
 
         let msg = BridgeMessage {
             message_hash,
@@ -347,6 +396,7 @@ impl Bridge for InMemoryBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use luxtensor_crypto::KeyPair;
 
     fn addr(b: u8) -> Address {
         let mut a = [0u8; 20];
@@ -354,32 +404,65 @@ mod tests {
         Address::new(a)
     }
 
-    fn relayer_set() -> Vec<Address> {
-        vec![addr(100), addr(101), addr(102)]
+    /// Generate a deterministic relayer keypair and matching Address.
+    fn relayer_keypair(seed: u8) -> (KeyPair, Address) {
+        // Deterministic 32-byte secret (non-zero, valid for secp256k1)
+        let mut secret = [0u8; 32];
+        secret[31] = seed;
+        secret[0] = 0x01; // ensure non-zero scalar
+        let kp = KeyPair::from_secret(&secret).expect("valid secret");
+        let addr = Address::new(kp.address());
+        (kp, addr)
     }
 
-    fn test_bridge() -> InMemoryBridge {
-        InMemoryBridge::new(BridgeConfig {
-            min_attestations: 2,
-            min_transfer_amount: 1_000,
-            max_message_age_blocks: 1_000,
-            relayers: relayer_set(),
-            paused: false,
-        })
+    /// Sign a message hash with the relayer keypair, returning a 65-byte r‖s‖v
+    /// signature that `recover_address` can verify.
+    fn sign_attestation(kp: &KeyPair, message_hash: &Hash) -> Vec<u8> {
+        let sig_64 = kp.sign(message_hash).expect("signing");
+        // Try recovery ids 0 and 1 to find which one recovers to our address
+        let expected_addr = kp.address();
+        for v in 0u8..=1u8 {
+            let mut sig65 = Vec::with_capacity(65);
+            sig65.extend_from_slice(&sig_64);
+            sig65.push(v);
+            if let Ok(recovered) = luxtensor_crypto::recover_address(message_hash, &sig65) {
+                if recovered == expected_addr {
+                    return sig65;
+                }
+            }
+        }
+        panic!("Could not find recovery id for signature");
     }
 
-    fn make_attestation(message_hash: Hash, relayer: Address) -> RelayerAttestation {
+    fn make_attestation(message_hash: Hash, kp: &KeyPair, relayer: Address) -> RelayerAttestation {
         RelayerAttestation {
             message_hash,
             relayer,
-            signature: vec![0u8; 65], // placeholder
+            signature: sign_attestation(kp, &message_hash),
             attested_at: 100,
         }
     }
 
+    fn relayer_set_with_keys() -> Vec<(KeyPair, Address)> {
+        vec![relayer_keypair(100), relayer_keypair(101), relayer_keypair(102)]
+    }
+
+    fn test_bridge_with_keys() -> (InMemoryBridge, Vec<(KeyPair, Address)>) {
+        let keys = relayer_set_with_keys();
+        let relayer_addrs: Vec<Address> = keys.iter().map(|(_, a)| *a).collect();
+        let bridge = InMemoryBridge::new(BridgeConfig {
+            min_attestations: 2,
+            min_transfer_amount: 1_000,
+            max_message_age_blocks: 1_000,
+            relayers: relayer_addrs,
+            paused: false,
+        });
+        (bridge, keys)
+    }
+
     #[test]
     fn test_outbound_transfer() {
-        let bridge = test_bridge();
+        let (bridge, _keys) = test_bridge_with_keys();
         let msg = bridge
             .initiate_transfer(
                 addr(1),
@@ -404,31 +487,41 @@ mod tests {
 
     #[test]
     fn test_below_minimum() {
-        let bridge = test_bridge();
-        let result = bridge.initiate_transfer(
-            addr(1), addr(2), 500, ChainId::Ethereum, Vec::new(), 100, 0,
-        );
+        let (bridge, _keys) = test_bridge_with_keys();
+        let result =
+            bridge.initiate_transfer(addr(1), addr(2), 500, ChainId::Ethereum, Vec::new(), 100, 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_paused_bridge() {
-        let bridge = InMemoryBridge::new(BridgeConfig {
-            paused: true,
-            ..BridgeConfig::default()
-        });
+        let bridge = InMemoryBridge::new(BridgeConfig { paused: true, ..BridgeConfig::default() });
         let result = bridge.initiate_transfer(
-            addr(1), addr(2), 1_000_000, ChainId::Ethereum, Vec::new(), 100, 0,
+            addr(1),
+            addr(2),
+            1_000_000,
+            ChainId::Ethereum,
+            Vec::new(),
+            100,
+            0,
         );
         assert!(matches!(result, Err(BridgeError::Paused)));
     }
 
     #[test]
     fn test_inbound_with_proof() {
-        let bridge = test_bridge();
+        let (bridge, keys) = test_bridge_with_keys();
 
         // Create an inbound message
-        let message_hash = InMemoryBridge::compute_hash(1, &addr(10), &addr(11), 50_000);
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+        );
         let msg = BridgeMessage {
             message_hash,
             nonce: 1,
@@ -448,8 +541,8 @@ mod tests {
             message: msg,
             merkle_proof: vec![[0u8; 32]],
             attestations: vec![
-                make_attestation(message_hash, addr(100)),
-                make_attestation(message_hash, addr(101)),
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
+                make_attestation(message_hash, &keys[1].0, keys[1].1),
             ],
         };
 
@@ -459,9 +552,17 @@ mod tests {
 
     #[test]
     fn test_insufficient_attestations() {
-        let bridge = test_bridge();
+        let (bridge, keys) = test_bridge_with_keys();
 
-        let message_hash = InMemoryBridge::compute_hash(1, &addr(10), &addr(11), 50_000);
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+        );
         let msg = BridgeMessage {
             message_hash,
             nonce: 1,
@@ -481,7 +582,7 @@ mod tests {
             message: msg,
             merkle_proof: vec![],
             attestations: vec![
-                make_attestation(message_hash, addr(100)),
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
                 // Only 1 valid attestation, need 2
             ],
         };
@@ -491,9 +592,17 @@ mod tests {
 
     #[test]
     fn test_expired_message() {
-        let bridge = test_bridge();
+        let (bridge, keys) = test_bridge_with_keys();
 
-        let message_hash = InMemoryBridge::compute_hash(1, &addr(10), &addr(11), 50_000);
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+        );
         let msg = BridgeMessage {
             message_hash,
             nonce: 1,
@@ -513,8 +622,8 @@ mod tests {
             message: msg,
             merkle_proof: vec![],
             attestations: vec![
-                make_attestation(message_hash, addr(100)),
-                make_attestation(message_hash, addr(101)),
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
+                make_attestation(message_hash, &keys[1].0, keys[1].1),
             ],
         };
 
@@ -532,8 +641,16 @@ mod tests {
 
     #[test]
     fn test_double_execution_prevented() {
-        let bridge = test_bridge();
-        let message_hash = InMemoryBridge::compute_hash(1, &addr(10), &addr(11), 50_000);
+        let (bridge, keys) = test_bridge_with_keys();
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+        );
         let msg = BridgeMessage {
             message_hash,
             nonce: 1,
@@ -553,8 +670,8 @@ mod tests {
             message: msg.clone(),
             merkle_proof: vec![],
             attestations: vec![
-                make_attestation(message_hash, addr(100)),
-                make_attestation(message_hash, addr(101)),
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
+                make_attestation(message_hash, &keys[1].0, keys[1].1),
             ],
         };
 
@@ -562,9 +679,6 @@ mod tests {
         bridge.submit_proof(proof.clone(), 200).unwrap();
 
         // Second execution fails
-        assert!(matches!(
-            bridge.submit_proof(proof, 200),
-            Err(BridgeError::AlreadyProcessed(_))
-        ));
+        assert!(matches!(bridge.submit_proof(proof, 200), Err(BridgeError::AlreadyProcessed(_))));
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use crate::{Account, Address, Hash, Result};
 use crate::hnsw::HnswVectorStore;
+use crate::{Account, Address, Hash, Result};
+use std::collections::HashMap;
 
 /// Key prefix for state accounts in RocksDB
 const STATE_ACCOUNT_PREFIX: &[u8] = b"state:account:";
@@ -35,22 +35,17 @@ impl StateDB {
 
     /// Get account balance
     pub fn get_balance(&self, address: &Address) -> u128 {
-        self.get_account(address)
-            .map(|acc| acc.balance)
-            .unwrap_or(0)
+        self.get_account(address).map(|acc| acc.balance).unwrap_or(0)
     }
 
     /// Get account nonce
     pub fn get_nonce(&self, address: &Address) -> u64 {
-        self.get_account(address)
-            .map(|acc| acc.nonce)
-            .unwrap_or(0)
+        self.get_account(address).map(|acc| acc.nonce).unwrap_or(0)
     }
 
     /// Get contract bytecode from account
     pub fn get_code(&self, address: &Address) -> Option<Vec<u8>> {
-        self.get_account(address)
-            .and_then(|acc| acc.code.clone())
+        self.get_account(address).and_then(|acc| acc.code.clone())
     }
 
     /// Calculate state root using Merkle Tree (Hybrid: Account Tree + Vector Tree)
@@ -70,7 +65,8 @@ impl StateDB {
                 let account_bytes = bincode::serialize(account)
                     .map_err(|e| crate::CoreError::SerializationError(e.to_string()))?;
                 data.extend_from_slice(&account_bytes);
-                leaf_hashes.push(luxtensor_crypto::keccak256(&data));
+                // SECURITY: Use hash_leaf (0x00 prefix) to prevent second-preimage attacks
+                leaf_hashes.push(luxtensor_crypto::MerkleTree::hash_leaf(&data));
             }
             luxtensor_crypto::MerkleTree::new(leaf_hashes).root()
         };
@@ -102,8 +98,9 @@ impl StateDB {
             key.extend_from_slice(address.as_bytes());
             let value = bincode::serialize(account)
                 .map_err(|e| crate::CoreError::SerializationError(e.to_string()))?;
-            db.put(&key, &value)
-                .map_err(|e| crate::CoreError::SerializationError(format!("RocksDB put failed: {}", e)))?;
+            db.put(&key, &value).map_err(|e| {
+                crate::CoreError::SerializationError(format!("RocksDB put failed: {}", e))
+            })?;
             count += 1;
         }
         Ok(count)
@@ -115,8 +112,9 @@ impl StateDB {
     /// Scans all keys with prefix `state:account:` and deserializes.
     pub fn load_from_db(&mut self, db: &impl RocksDbLike) -> Result<usize> {
         let mut count = 0usize;
-        let entries = db.prefix_scan(STATE_ACCOUNT_PREFIX)
-            .map_err(|e| crate::CoreError::SerializationError(format!("RocksDB scan failed: {}", e)))?;
+        let entries = db.prefix_scan(STATE_ACCOUNT_PREFIX).map_err(|e| {
+            crate::CoreError::SerializationError(format!("RocksDB scan failed: {}", e))
+        })?;
 
         for (key, value) in entries {
             if key.len() == STATE_ACCOUNT_PREFIX.len() + 20 {

@@ -16,7 +16,7 @@ use crate::error::ConsensusError;
 use crate::validator::ValidatorSet;
 use luxtensor_core::types::{Address, Hash};
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, info};
 
 // ============================================================================
@@ -69,8 +69,10 @@ struct HeightState {
     current_view: u64,
     /// Current BFT phase
     phase: BftPhase,
-    /// When we started waiting for the current view's proposal
-    proposal_deadline: Option<Instant>,
+    /// Block height at which the proposal deadline expires (deterministic)
+    /// SECURITY: Uses block height instead of Instant::now() for determinism.
+    /// All honest nodes compute the same deadline given the same inputs.
+    proposal_deadline_height: Option<u64>,
     /// The block hash proposed in the current view (if any)
     proposed_block: Option<Hash>,
 }
@@ -92,8 +94,11 @@ pub struct FastFinality {
     height_states: HashMap<u64, HeightState>,
     /// View-change votes: (height, view) → ViewChangeState
     view_change_votes: HashMap<(u64, u64), ViewChangeState>,
-    /// Block proposal timeout duration
+    /// Block proposal timeout duration (kept for API compatibility)
     proposal_timeout: Duration,
+    /// Proposal timeout in blocks (SECURITY: deterministic across all nodes)
+    /// Default: 3 blocks (~36s at 12s/block)
+    proposal_timeout_blocks: u64,
     /// Maximum view number before giving up (prevents infinite view-changes)
     max_view: u64,
 }
@@ -126,6 +131,7 @@ impl FastFinality {
             height_states: HashMap::new(),
             view_change_votes: HashMap::new(),
             proposal_timeout: Duration::from_secs(10),
+            proposal_timeout_blocks: 3, // ~36s at 12s/block
             max_view: 10,
         })
     }
@@ -303,7 +309,12 @@ impl FastFinality {
     // View-Change Protocol Methods (Phase 9)
     // ========================================================================
 
-    /// Set the proposal timeout duration
+    /// Set the proposal timeout in blocks (deterministic)
+    pub fn set_proposal_timeout_blocks(&mut self, blocks: u64) {
+        self.proposal_timeout_blocks = blocks;
+    }
+
+    /// Set the proposal timeout duration (kept for API compatibility)
     pub fn set_proposal_timeout(&mut self, timeout: Duration) {
         self.proposal_timeout = timeout;
     }
@@ -314,7 +325,11 @@ impl FastFinality {
     }
 
     /// Begin tracking a new height. Called when the node expects a block at
-    /// the given height. Starts the proposal timeout timer.
+    /// the given height. Sets a block-height-based deadline for determinism.
+    ///
+    /// SECURITY: Uses `current_network_height + proposal_timeout_blocks` instead
+    /// of `Instant::now()`. This ensures all honest nodes agree on when the
+    /// timeout expires, preventing non-deterministic view-change disagreements.
     pub fn begin_height(&mut self, height: u64) {
         if self.height_states.contains_key(&height) {
             return; // Already tracking
@@ -322,10 +337,11 @@ impl FastFinality {
         self.height_states.insert(height, HeightState {
             current_view: 0,
             phase: BftPhase::WaitingForProposal,
-            proposal_deadline: Some(Instant::now() + self.proposal_timeout),
+            proposal_deadline_height: Some(height + self.proposal_timeout_blocks),
             proposed_block: None,
         });
-        debug!("BFT: begin tracking height {} view 0", height);
+        debug!("BFT: begin tracking height {} view 0, deadline at height {}",
+            height, height + self.proposal_timeout_blocks);
     }
 
     /// Notify that a block has been proposed at the given height.
@@ -334,7 +350,7 @@ impl FastFinality {
         let state = self.height_states.entry(height).or_insert_with(|| HeightState {
             current_view: 0,
             phase: BftPhase::WaitingForProposal,
-            proposal_deadline: Some(Instant::now() + self.proposal_timeout),
+            proposal_deadline_height: Some(height + self.proposal_timeout_blocks),
             proposed_block: None,
         });
 
@@ -344,27 +360,49 @@ impl FastFinality {
 
         state.phase = BftPhase::CollectingSignatures;
         state.proposed_block = Some(block_hash);
-        state.proposal_deadline = None; // Cancel timeout since we got a proposal
+        state.proposal_deadline_height = None; // Cancel timeout since we got a proposal
         debug!("BFT: block proposed at height {} view {}: {}",
             height, state.current_view, hex::encode(&block_hash));
     }
 
     /// Check if the proposal timeout has expired for any tracked height.
     /// Returns a list of (height, suggested_new_view) pairs that need view-change.
-    pub fn check_timeouts(&self) -> Vec<(u64, u64)> {
-        let now = Instant::now();
+    ///
+    /// SECURITY: Uses block-height-based deadlines instead of Instant::now().
+    /// `current_network_height` should be the latest confirmed chain height.
+    pub fn check_timeouts(&self, current_network_height: u64) -> Vec<(u64, u64)> {
         let mut timed_out = Vec::new();
 
         for (&height, state) in &self.height_states {
             if state.phase == BftPhase::Finalized {
                 continue;
             }
-            if let Some(deadline) = state.proposal_deadline {
-                if now >= deadline {
+            if let Some(deadline_height) = state.proposal_deadline_height {
+                if current_network_height >= deadline_height {
                     let next_view = state.current_view + 1;
                     if next_view <= self.max_view {
                         timed_out.push((height, next_view));
                     }
+                }
+            }
+        }
+        timed_out
+    }
+
+    /// Legacy check_timeouts without network height (for backward compatibility)
+    /// DEPRECATED: Use check_timeouts(current_network_height) instead
+    pub fn check_timeouts_legacy(&self) -> Vec<(u64, u64)> {
+        // Fallback: treat all deadline heights as expired
+        // This is safe because it only triggers view-changes more eagerly
+        let mut timed_out = Vec::new();
+        for (&height, state) in &self.height_states {
+            if state.phase == BftPhase::Finalized {
+                continue;
+            }
+            if state.proposal_deadline_height.is_some() {
+                let next_view = state.current_view + 1;
+                if next_view <= self.max_view {
+                    timed_out.push((height, next_view));
                 }
             }
         }
@@ -439,13 +477,14 @@ impl FastFinality {
             let height_state = self.height_states.entry(height).or_insert_with(|| HeightState {
                 current_view: 0,
                 phase: BftPhase::WaitingForProposal,
-                proposal_deadline: None,
+                proposal_deadline_height: None,
                 proposed_block: None,
             });
 
             height_state.current_view = new_view;
             height_state.phase = BftPhase::WaitingForProposal;
-            height_state.proposal_deadline = Some(Instant::now() + self.proposal_timeout);
+            // SECURITY: Use height-based deadline for determinism
+            height_state.proposal_deadline_height = Some(height + self.proposal_timeout_blocks);
             height_state.proposed_block = None;
 
             info!(
@@ -489,7 +528,7 @@ impl FastFinality {
     pub fn mark_height_finalized(&mut self, height: u64) {
         if let Some(state) = self.height_states.get_mut(&height) {
             state.phase = BftPhase::Finalized;
-            state.proposal_deadline = None;
+            state.proposal_deadline_height = None;
         }
     }
 
