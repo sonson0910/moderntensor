@@ -44,6 +44,12 @@ impl From<[u8; 20]> for Address {
     }
 }
 
+impl From<luxtensor_crypto::CryptoAddress> for Address {
+    fn from(addr: luxtensor_crypto::CryptoAddress) -> Self {
+        Self(addr.into_bytes())
+    }
+}
+
 impl AsRef<[u8]> for Address {
     fn as_ref(&self) -> &[u8] {
         &self.0

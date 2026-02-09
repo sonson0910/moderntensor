@@ -1,4 +1,10 @@
 {
     "postman.settings.dotenv-detection-notification-visibility": false,
-    "python.analysis.typeCheckingMode": "basic"
+    "python.analysis.typeCheckingMode": "basic",
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 audit_scan\\.py 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

@@ -19,7 +19,7 @@ sha3 = "0.10"
 k256 = { workspace = true }
 sha2 = { workspace = true }
 subtle = "2"
-alloy-rlp = { workspace = true }  # Constant-time comparison for cryptographic security
+alloy-rlp = { workspace = true }  # RLP encoding for Ethereum transaction format
 lazy_static = "1.4"
 
 # WebSocket support
@@ -39,4 +39,3 @@ tokio = { workspace = true }
 tempfile = "3.8"
 rocksdb = { workspace = true }
 proptest = { workspace = true }
-k256 = "0.13"

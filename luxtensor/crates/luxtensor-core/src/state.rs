@@ -140,6 +140,31 @@ impl StateDB {
     pub fn accounts(&self) -> impl Iterator<Item = (&Address, &Account)> {
         self.cache.iter()
     }
+
+    /// Create a shallow snapshot of the account state for isolated TX execution.
+    /// The snapshot shares no references with the original, so it can be mutated
+    /// independently without holding any lock on the source StateDB.
+    pub fn snapshot_accounts(&self) -> HashMap<Address, Account> {
+        self.cache.clone()
+    }
+
+    /// Merge a modified account map back into this StateDB.
+    /// Only accounts present in `modified` are overwritten.
+    pub fn merge_accounts(&mut self, modified: HashMap<Address, Account>) {
+        for (addr, acct) in modified {
+            self.cache.insert(addr, acct);
+        }
+    }
+
+    /// Create a StateDB from a pre-existing account map (for snapshot-based execution).
+    /// Uses a default (empty) vector store since TX execution only touches accounts.
+    pub fn from_accounts(accounts: HashMap<Address, Account>) -> Self {
+        Self {
+            cache: accounts,
+            // Default dimension 768 (same as StateDB::new)
+            vector_store: HnswVectorStore::new(768),
+        }
+    }
 }
 
 /// Trait abstracting RocksDB-like key-value store operations.

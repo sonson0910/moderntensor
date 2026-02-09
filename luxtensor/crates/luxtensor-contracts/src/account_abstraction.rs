@@ -286,7 +286,7 @@ impl EntryPoint {
                 match luxtensor_crypto::address_from_public_key(&recovered_pubkey) {
                     Ok(recovered_addr) => {
                         // Compare recovered address with sender
-                        recovered_addr == *user_op.sender.as_bytes()
+                        recovered_addr.as_bytes() == user_op.sender.as_bytes()
                     }
                     Err(_) => false,
                 }

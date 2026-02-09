@@ -114,6 +114,9 @@ pub struct BridgeMessage {
     pub source_block: u64,
     /// Timestamp of the source transaction.
     pub source_timestamp: u64,
+    /// State root of the source chain at `source_block`.
+    /// A zero root signals attestation-only mode (no Merkle verification).
+    pub source_state_root: Hash,
     pub status: BridgeMessageStatus,
 }
 
@@ -202,11 +205,17 @@ pub struct InMemoryBridge {
     config: BridgeConfig,
     messages: RwLock<HashMap<Hash, BridgeMessage>>,
     nonce: RwLock<u64>,
+    inbound_nonce: RwLock<u64>,
 }
 
 impl InMemoryBridge {
     pub fn new(config: BridgeConfig) -> Self {
-        Self { config, messages: RwLock::new(HashMap::new()), nonce: RwLock::new(1) }
+        Self {
+            config,
+            messages: RwLock::new(HashMap::new()),
+            nonce: RwLock::new(1),
+            inbound_nonce: RwLock::new(1),
+        }
     }
 
     /// Verify that a proof has enough valid relayer attestations.
@@ -243,7 +252,7 @@ impl InMemoryBridge {
                 }
                 // 5. ECDSA: recover signer address and verify it matches a.relayer
                 match luxtensor_crypto::recover_address(&a.message_hash, &a.signature) {
-                    Ok(recovered) => recovered == *a.relayer.as_bytes(),
+                    Ok(recovered) => recovered.as_bytes() == a.relayer.as_bytes(),
                     Err(_) => false,
                 }
             })
@@ -271,6 +280,7 @@ impl InMemoryBridge {
         source_chain: ChainId,
         target_chain: ChainId,
         direction: BridgeDirection,
+        data: &[u8],
     ) -> Hash {
         use sha3::{Digest, Keccak256};
         let mut hasher = Keccak256::new();
@@ -282,6 +292,8 @@ impl InMemoryBridge {
         hasher.update(sender);
         hasher.update(recipient);
         hasher.update(amount.to_le_bytes());
+        hasher.update(&(data.len() as u64).to_le_bytes());
+        hasher.update(data);
         hasher.finalize().into()
     }
 
@@ -298,6 +310,38 @@ impl InMemoryBridge {
             .cloned()
             .collect()
     }
+}
+
+/// Verify a Merkle inclusion proof for a bridge message.
+///
+/// The proof demonstrates that `message_hash` is included in the Merkle tree
+/// with root `expected_root`. Each element in `proof` is a sibling hash that,
+/// combined with the current hash, produces the next level's hash.
+///
+/// Uses the same keccak256 hash function as the rest of the chain.
+fn verify_merkle_proof(message_hash: &Hash, proof: &[Hash], expected_root: &Hash) -> bool {
+    if proof.is_empty() {
+        // Single-element tree: message_hash should equal root
+        return message_hash == expected_root;
+    }
+
+    let mut current = *message_hash;
+    for sibling in proof {
+        // Canonical ordering: smaller hash first to ensure determinism
+        let combined = if current <= *sibling {
+            let mut data = [0u8; 64];
+            data[..32].copy_from_slice(&current);
+            data[32..].copy_from_slice(sibling);
+            data
+        } else {
+            let mut data = [0u8; 64];
+            data[..32].copy_from_slice(sibling);
+            data[32..].copy_from_slice(&current);
+            data
+        };
+        current = luxtensor_crypto::keccak256(&combined);
+    }
+    current == *expected_root
 }
 
 impl Bridge for InMemoryBridge {
@@ -330,6 +374,7 @@ impl Bridge for InMemoryBridge {
             ChainId::LuxTensorMainnet,
             target_chain,
             BridgeDirection::Outbound,
+            &data,
         );
 
         let msg = BridgeMessage {
@@ -344,6 +389,7 @@ impl Bridge for InMemoryBridge {
             data,
             source_block: current_block,
             source_timestamp: current_timestamp,
+            source_state_root: [0u8; 32],
             status: BridgeMessageStatus::Pending,
         };
 
@@ -371,6 +417,52 @@ impl Bridge for InMemoryBridge {
             return Err(BridgeError::InvalidProof("message expired".into()));
         }
 
+        // C-1: Recompute message hash from fields and verify integrity
+        let expected_hash = Self::compute_hash(
+            proof.message.nonce,
+            &proof.message.sender,
+            &proof.message.recipient,
+            proof.message.amount,
+            proof.message.source_chain,
+            proof.message.target_chain,
+            proof.message.direction,
+            &proof.message.data,
+        );
+        if expected_hash != proof.message.message_hash {
+            return Err(BridgeError::InvalidProof(
+                "message hash does not match message fields".into(),
+            ));
+        }
+
+        // Verify Merkle inclusion proof against source chain state root.
+        // A zero state root signals attestation-only mode for backward
+        // compatibility; once the source chain light client is fully integrated,
+        // this fallback can be removed.
+        let zero_root: Hash = [0u8; 32];
+        if proof.message.source_state_root != zero_root {
+            if !verify_merkle_proof(
+                &proof.message.message_hash,
+                &proof.merkle_proof,
+                &proof.message.source_state_root,
+            ) {
+                return Err(BridgeError::InvalidProof(
+                    "Merkle proof verification failed: message not included in source state"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // H-3: Validate inbound nonce (sequential ordering)
+        {
+            let expected = *self.inbound_nonce.read();
+            if proof.message.nonce != expected {
+                return Err(BridgeError::NonceMismatch {
+                    expected,
+                    got: proof.message.nonce,
+                });
+            }
+        }
+
         // Verify attestations
         self.verify_attestations(&proof)?;
 
@@ -379,6 +471,10 @@ impl Bridge for InMemoryBridge {
         msg.status = BridgeMessageStatus::Executed;
         msg.direction = BridgeDirection::Inbound;
         self.messages.write().insert(msg.message_hash, msg.clone());
+
+        // H-3: Increment inbound nonce after successful execution
+        *self.inbound_nonce.write() += 1;
+
         Ok(msg)
     }
 
@@ -411,7 +507,7 @@ mod tests {
         secret[31] = seed;
         secret[0] = 0x01; // ensure non-zero scalar
         let kp = KeyPair::from_secret(&secret).expect("valid secret");
-        let addr = Address::new(kp.address());
+        let addr = Address::from(kp.address());
         (kp, addr)
     }
 
@@ -521,6 +617,7 @@ mod tests {
             ChainId::Ethereum,
             ChainId::LuxTensorMainnet,
             BridgeDirection::Inbound,
+            &[],
         );
         let msg = BridgeMessage {
             message_hash,
@@ -534,6 +631,7 @@ mod tests {
             data: Vec::new(),
             source_block: 100,
             source_timestamp: 1_700_000_000,
+            source_state_root: [0u8; 32],
             status: BridgeMessageStatus::Pending,
         };
 
@@ -562,6 +660,7 @@ mod tests {
             ChainId::Ethereum,
             ChainId::LuxTensorMainnet,
             BridgeDirection::Inbound,
+            &[],
         );
         let msg = BridgeMessage {
             message_hash,
@@ -575,6 +674,7 @@ mod tests {
             data: Vec::new(),
             source_block: 100,
             source_timestamp: 0,
+            source_state_root: [0u8; 32],
             status: BridgeMessageStatus::Pending,
         };
 
@@ -602,6 +702,7 @@ mod tests {
             ChainId::Ethereum,
             ChainId::LuxTensorMainnet,
             BridgeDirection::Inbound,
+            &[],
         );
         let msg = BridgeMessage {
             message_hash,
@@ -615,6 +716,7 @@ mod tests {
             data: Vec::new(),
             source_block: 100,
             source_timestamp: 0,
+            source_state_root: [0u8; 32],
             status: BridgeMessageStatus::Pending,
         };
 
@@ -650,6 +752,7 @@ mod tests {
             ChainId::Ethereum,
             ChainId::LuxTensorMainnet,
             BridgeDirection::Inbound,
+            &[],
         );
         let msg = BridgeMessage {
             message_hash,
@@ -663,6 +766,7 @@ mod tests {
             data: Vec::new(),
             source_block: 100,
             source_timestamp: 0,
+            source_state_root: [0u8; 32],
             status: BridgeMessageStatus::Pending,
         };
 
@@ -680,5 +784,128 @@ mod tests {
 
         // Second execution fails
         assert!(matches!(bridge.submit_proof(proof, 200), Err(BridgeError::AlreadyProcessed(_))));
+    }
+
+    #[test]
+    fn test_merkle_proof_verification() {
+        use luxtensor_crypto::keccak256;
+
+        // Single element tree: message_hash equals root
+        let leaf = keccak256(b"test message");
+        assert!(verify_merkle_proof(&leaf, &[], &leaf));
+
+        // Two-element tree
+        let leaf_a = keccak256(b"message_a");
+        let leaf_b = keccak256(b"message_b");
+        let (first, second) = if leaf_a <= leaf_b {
+            (leaf_a, leaf_b)
+        } else {
+            (leaf_b, leaf_a)
+        };
+        let mut combined = [0u8; 64];
+        combined[..32].copy_from_slice(&first);
+        combined[32..].copy_from_slice(&second);
+        let root = keccak256(&combined);
+
+        assert!(verify_merkle_proof(&leaf_a, &[leaf_b], &root));
+        assert!(verify_merkle_proof(&leaf_b, &[leaf_a], &root));
+
+        // Invalid proof: wrong root
+        let wrong_root = [0u8; 32];
+        assert!(!verify_merkle_proof(&leaf_a, &[leaf_b], &wrong_root));
+    }
+
+    #[test]
+    fn test_submit_proof_with_merkle_verification() {
+        let (bridge, keys) = test_bridge_with_keys();
+
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+            &[],
+        );
+
+        // Build a valid single-leaf Merkle tree (leaf == root)
+        let source_state_root = message_hash;
+
+        let msg = BridgeMessage {
+            message_hash,
+            nonce: 1,
+            direction: BridgeDirection::Inbound,
+            source_chain: ChainId::Ethereum,
+            target_chain: ChainId::LuxTensorMainnet,
+            sender: addr(10),
+            recipient: addr(11),
+            amount: 50_000,
+            data: Vec::new(),
+            source_block: 100,
+            source_timestamp: 1_700_000_000,
+            source_state_root,
+            status: BridgeMessageStatus::Pending,
+        };
+
+        let proof = BridgeProof {
+            message: msg,
+            merkle_proof: vec![],  // empty proof ⇒ leaf must equal root
+            attestations: vec![
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
+                make_attestation(message_hash, &keys[1].0, keys[1].1),
+            ],
+        };
+
+        let result = bridge.submit_proof(proof, 200).unwrap();
+        assert_eq!(result.status, BridgeMessageStatus::Executed);
+    }
+
+    #[test]
+    fn test_submit_proof_invalid_merkle() {
+        let (bridge, keys) = test_bridge_with_keys();
+
+        let message_hash = InMemoryBridge::compute_hash(
+            1,
+            &addr(10),
+            &addr(11),
+            50_000,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+            &[],
+        );
+
+        // Non-zero state root with a proof that does NOT match
+        let bad_state_root = [0xFFu8; 32];
+
+        let msg = BridgeMessage {
+            message_hash,
+            nonce: 1,
+            direction: BridgeDirection::Inbound,
+            source_chain: ChainId::Ethereum,
+            target_chain: ChainId::LuxTensorMainnet,
+            sender: addr(10),
+            recipient: addr(11),
+            amount: 50_000,
+            data: Vec::new(),
+            source_block: 100,
+            source_timestamp: 1_700_000_000,
+            source_state_root: bad_state_root,
+            status: BridgeMessageStatus::Pending,
+        };
+
+        let proof = BridgeProof {
+            message: msg,
+            merkle_proof: vec![[0xABu8; 32]],
+            attestations: vec![
+                make_attestation(message_hash, &keys[0].0, keys[0].1),
+                make_attestation(message_hash, &keys[1].0, keys[1].1),
+            ],
+        };
+
+        let result = bridge.submit_proof(proof, 200);
+        assert!(matches!(result, Err(BridgeError::InvalidProof(_))));
     }
 }

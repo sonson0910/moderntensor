@@ -23,6 +23,9 @@ fn convert_evm_logs(evm_logs: &[EvmLog]) -> Vec<Log> {
     }).collect()
 }
 
+/// Minimum gas price to prevent zero-fee spam (1 Gwei equivalent)
+const MIN_GAS_PRICE: u64 = 1;
+
 /// Transaction executor
 ///
 /// Holds a **shared** `EvmExecutor` instance so that contract storage,
@@ -50,7 +53,7 @@ impl TransactionExecutor {
             base_gas_cost: 21000,  // Base transaction cost
             gas_per_byte: 68,      // Cost per byte of data
             skip_signature_verification: false,  // PRODUCTION: always verify
-            evm: EvmExecutor::new(),
+            evm: EvmExecutor::new(chain_id),
         }
     }
 
@@ -63,7 +66,7 @@ impl TransactionExecutor {
             base_gas_cost: 21000,
             gas_per_byte: 68,
             skip_signature_verification: true,
-            evm: EvmExecutor::new(),
+            evm: EvmExecutor::new(chain_id),
         }
     }
 
@@ -85,6 +88,7 @@ impl TransactionExecutor {
         block_height: u64,
         block_hash: [u8; 32],
         tx_index: usize,
+        block_timestamp: u64,
     ) -> Result<Receipt> {
         // SECURITY: Validate chain_id — reject cross-chain replay attacks
         if tx.chain_id != self.chain_id {
@@ -92,6 +96,16 @@ impl TransactionExecutor {
                 format!(
                     "Chain ID mismatch: tx has {}, node expects {}",
                     tx.chain_id, self.chain_id
+                )
+            ));
+        }
+
+        // SECURITY: Enforce minimum gas price to prevent zero-fee spam
+        if tx.gas_price < MIN_GAS_PRICE {
+            return Err(CoreError::InvalidTransaction(
+                format!(
+                    "Gas price too low: {} < minimum {}",
+                    tx.gas_price, MIN_GAS_PRICE
                 )
             ));
         }
@@ -162,10 +176,7 @@ impl TransactionExecutor {
             if has_code && !tx.data.is_empty() {
                 // Contract call — execute via shared EVM executor
                 let contract_code = state.get_code(&to_addr).unwrap_or_default();
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                let timestamp = block_timestamp;
 
                 let contract_addr_bytes: [u8; 20] = *to_addr.as_bytes();
 
@@ -181,6 +192,7 @@ impl TransactionExecutor {
                     tx.gas_limit,
                     block_height,
                     timestamp,
+                    tx.gas_price as u128,
                 ) {
                     Ok((_output, evm_gas_used, evm_logs)) => {
                         actual_gas_used = evm_gas_used.max(gas_cost);
@@ -215,11 +227,8 @@ impl TransactionExecutor {
             }
         } else {
             // Contract deployment - CREATE operation using shared EVM executor
-            // Get current timestamp
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            // Use block timestamp for deterministic execution
+            let timestamp = block_timestamp;
 
             // Sync deployer balance into EVM state
             self.evm.fund_account(&tx.from, sender_balance_before_deduction);
@@ -231,6 +240,7 @@ impl TransactionExecutor {
                 tx.gas_limit,
                 block_height,
                 timestamp,
+                tx.gas_price as u128,
             ) {
                 Ok((contract_address_vec, evm_gas_used, evm_logs, deployed_code)) => {
                     actual_gas_used = evm_gas_used.max(gas_cost);
@@ -320,10 +330,11 @@ impl TransactionExecutor {
         state: &mut StateDB,
         block_height: u64,
         block_hash: [u8; 32],
+        block_timestamp: u64,
     ) -> Vec<Result<Receipt>> {
         transactions.iter()
             .enumerate()
-            .map(|(idx, tx)| self.execute(tx, state, block_height, block_hash, idx))
+            .map(|(idx, tx)| self.execute(tx, state, block_height, block_hash, idx, block_timestamp))
             .collect()
     }
 }
@@ -430,6 +441,7 @@ mod tests {
             1,
             [1u8; 32],
             0,
+            1000,
         );
 
         // For now, signature verification may fail without proper signing
@@ -458,6 +470,7 @@ mod tests {
             1,
             [1u8; 32],
             0,
+            1000,
         );
 
         // Should fail due to insufficient balance or signature issue
@@ -481,7 +494,7 @@ mod tests {
             create_signed_transaction(&keypair, 1, Some(Address::zero()), 2000),
         ];
 
-        let results = executor.execute_batch(&txs, &mut state, 1, [1u8; 32]);
+        let results = executor.execute_batch(&txs, &mut state, 1, [1u8; 32], 1000);
         assert_eq!(results.len(), 2);
     }
 

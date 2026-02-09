@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-/// Total supply: 21,000,000 MDT (18 decimals)
-pub const TOTAL_SUPPLY: u128 = 21_000_000_000_000_000_000_000_000;
-pub const DECIMALS: u8 = 18;
+// Re-export canonical tokenomics constants from luxtensor-core (single source of truth)
+pub use luxtensor_core::constants::tokenomics::{TOTAL_SUPPLY, DECIMALS, ONE_TOKEN};
 
 /// Token allocation categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -303,7 +302,7 @@ impl TokenAllocation {
         entries.iter()
             .filter(|e| e.beneficiary == beneficiary)
             .map(|e| {
-                let days = ((current_timestamp - e.tge_timestamp) / 86400) as u32;
+                let days = ((current_timestamp.saturating_sub(e.tge_timestamp)) / 86400) as u32;
                 e.category.vesting().vested_amount(e.total_amount, days)
             })
             .sum()
@@ -325,7 +324,11 @@ impl TokenAllocation {
             return Err("Emission pool exhausted");
         }
         *pool = pool.saturating_sub(amount);
-        *self.total_minted.write() = self.total_minted.read().saturating_add(amount);
+        // FIX: Read through the write guard to avoid self-deadlock.
+        // Previously: `self.total_minted.read()` while holding `.write()` — guaranteed
+        // deadlock with parking_lot's non-reentrant RwLock.
+        let mut minted = self.total_minted.write();
+        *minted = minted.saturating_add(amount);
         Ok(amount)
     }
 
@@ -335,12 +338,19 @@ impl TokenAllocation {
     }
 
     /// Get allocation stats
+    ///
+    /// 🔧 FIX MC-5: Acquire all read guards up front to get a consistent
+    /// snapshot. Previously `minted`, `total_minted`, and `emission_pool`
+    /// were read under separate locks, so a concurrent mint between reads
+    /// could return mismatched totals.
     pub fn stats(&self) -> AllocationStats {
         let minted = self.minted.read();
+        let total_minted = self.total_minted.read();
+        let emission_pool = self.emission_pool.read();
         AllocationStats {
             total_supply: TOTAL_SUPPLY,
-            total_pre_minted: *self.total_minted.read(),
-            emission_remaining: *self.emission_pool.read(),
+            total_pre_minted: *total_minted,
+            emission_remaining: *emission_pool,
             allocations: minted.iter().map(|(k, v)| (*k, *v)).collect(),
         }
     }

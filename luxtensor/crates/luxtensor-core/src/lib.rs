@@ -16,10 +16,10 @@ pub mod transaction;
 pub mod types;
 pub mod unified_state;
 
-pub use account::*;
-pub use block::*;
-pub use constants::*;
-pub use error::*;
+pub use account::{Account, BalanceError};
+pub use block::{Block, BlockHeader};
+pub use constants::{addresses, chain_id, consensus, network, tokenomics, transaction as transaction_constants};
+pub use error::{CoreError, Result};
 pub use parallel::{
     optimal_thread_count, parallel_batch_distances, parallel_process,
     parallel_process_with_failures, parallel_try_process, parallel_verify_batch, ParallelConfig,
@@ -29,8 +29,11 @@ pub use performance::{
     BatchProcessor, BloomFilter, CacheStats, ConcurrentCache, LruCache, MetricSummary,
     PerformanceMetrics,
 };
-pub use state::*;
-pub use subnet::*;
-pub use transaction::*;
-pub use types::*;
+pub use state::{RocksDbLike, StateDB};
+pub use subnet::{
+    EmissionShare, ProtocolGuardrails, RootConfig, RootValidatorInfo, SubnetConfig, SubnetInfo,
+    SubnetRegistrationResult, SubnetType, SubnetWeights,
+};
+pub use transaction::Transaction;
+pub use types::{Address, Hash};
 pub use unified_state::{ContractInfo, StorageSlot, UnifiedStateDB};

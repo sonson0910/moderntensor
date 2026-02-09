@@ -21,10 +21,10 @@ pub mod chain_id {
 pub mod addresses {
     /// DAO Treasury address for reward distribution (mainnet)
     /// This receives a portion of block rewards for ecosystem development
-    pub const DAO_TREASURY_MAINNET: &str = "0xDAO0000000000000000000000000000000000001";
+    pub const DAO_TREASURY_MAINNET: &str = "0xDA00000000000000000000000000000000000001";
 
     /// DAO Treasury address (testnet)
-    pub const DAO_TREASURY_TESTNET: &str = "0xDAO0000000000000000000000000000000000002";
+    pub const DAO_TREASURY_TESTNET: &str = "0xDA00000000000000000000000000000000000002";
 
     /// System address for protocol operations
     pub const SYSTEM_ADDRESS: &str = "0x0000000000000000000000000000000000000000";

@@ -21,6 +21,10 @@ pub struct Config {
 
     /// Logging configuration
     pub logging: LoggingConfig,
+
+    /// Mempool configuration
+    #[serde(default)]
+    pub mempool: MempoolConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +179,29 @@ pub struct LoggingConfig {
     pub json_format: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MempoolConfig {
+    /// Maximum number of transactions in the mempool
+    pub max_size: usize,
+    /// Maximum transactions per sender
+    pub max_per_sender: usize,
+    /// Minimum gas price (in base units)
+    pub min_gas_price: u128,
+    /// Maximum transaction size in bytes
+    pub max_tx_size: usize,
+}
+
+impl Default for MempoolConfig {
+    fn default() -> Self {
+        Self {
+            max_size: 10_000,
+            max_per_sender: 16,
+            min_gas_price: 1_000_000_000,
+            max_tx_size: 131_072, // 128 KB
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -186,12 +213,12 @@ impl Default for Config {
                 validator_key_path: None,
                 validator_id: None,
                 dao_address: default_dao_address(),
-                dev_mode: false,  // Production mode by default
+                dev_mode: false, // Production mode by default
             },
             consensus: ConsensusConfig {
-                block_time: 3,
+                block_time: 12,
                 epoch_length: 100,
-                min_stake: "1000000000000000000".to_string(), // 1 token (10^18)
+                min_stake: "1000000000000000000000000".to_string(), // 1M tokens (10^24)
                 max_validators: 100,
                 gas_limit: default_gas_limit(),
                 validators: vec![], // Must be configured explicitly via config.toml
@@ -202,7 +229,7 @@ impl Default for Config {
                 bootstrap_nodes: vec![],
                 max_peers: 50,
                 enable_mdns: true,
-                node_key_path: None,  // Will use ./node.key in data_dir
+                node_key_path: None, // Will use ./node.key in data_dir
             },
             storage: StorageConfig {
                 db_path: PathBuf::from("./data/db"),
@@ -225,6 +252,7 @@ impl Default for Config {
                 log_file: None,
                 json_format: false,
             },
+            mempool: MempoolConfig::default(),
         }
     }
 }
@@ -257,10 +285,7 @@ impl Config {
             }
             // Verify it's valid hex
             if hex::decode(dao.trim_start_matches("0x")).is_err() {
-                anyhow::bail!(
-                    "Invalid dao_address: '{}' contains non-hex characters.",
-                    dao
-                );
+                anyhow::bail!("Invalid dao_address: '{}' contains non-hex characters.", dao);
             }
             // Warn if using the zero address on non-dev chains
             let is_zero = dao == "0x0000000000000000000000000000000000000000";
@@ -288,6 +313,10 @@ impl Config {
             anyhow::bail!("Invalid RPC port: 0");
         }
 
+        if self.rpc.enabled && self.rpc.threads == 0 {
+            anyhow::bail!("RPC threads must be greater than 0");
+        }
+
         // Validate consensus config
         if self.consensus.block_time == 0 {
             anyhow::bail!("Block time must be greater than 0");
@@ -297,9 +326,25 @@ impl Config {
             anyhow::bail!("Epoch length must be greater than 0");
         }
 
+        if self.consensus.max_validators == 0 {
+            anyhow::bail!("max_validators must be greater than 0");
+        }
+
+        // Validate min_stake is a valid u128 numeric value
+        if self.consensus.min_stake.parse::<u128>().is_err() {
+            anyhow::bail!(
+                "Invalid min_stake: '{}'. Must be a numeric value (u128) representing base units.",
+                self.consensus.min_stake
+            );
+        }
+
         // Validate storage config
         if self.storage.cache_size == 0 {
             anyhow::bail!("Cache size must be greater than 0");
+        }
+
+        if self.storage.max_open_files <= 0 {
+            anyhow::bail!("max_open_files must be greater than 0");
         }
 
         // Validate logging config

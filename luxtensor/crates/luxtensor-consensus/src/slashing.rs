@@ -351,9 +351,11 @@ impl SlashingManager {
     }
 
     /// Process unjailing (called each block)
+    ///
+    /// LOCK ORDER: validator_set → jailed (matches slash() to prevent ABBA deadlock)
     pub fn process_unjail(&self, current_height: u64) -> Vec<Address> {
-        let mut jailed = self.jailed.write();
         let mut validator_set = self.validator_set.write();
+        let mut jailed = self.jailed.write();
 
         let mut unjailed = Vec::new();
 

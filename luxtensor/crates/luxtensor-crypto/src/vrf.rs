@@ -23,6 +23,7 @@ use k256::{
     elliptic_curve::{group::GroupEncoding, ops::Reduce, sec1::ToEncodedPoint},
     AffinePoint, ProjectivePoint, Scalar,
 };
+use zeroize::Zeroize;
 
 /// VRF output hash type (32 bytes)
 pub type VrfOutput = [u8; 32];
@@ -98,7 +99,8 @@ impl Drop for VrfKeypair {
 
 /// Hash-to-curve: deterministically map arbitrary bytes to a secp256k1 point.
 /// Uses try-and-increment (TAI) per RFC 9381 §5.4.1.
-fn hash_to_curve(pk_bytes: &[u8], alpha: &[u8]) -> ProjectivePoint {
+/// Returns an error if no valid curve point is found after 256 attempts.
+fn hash_to_curve(pk_bytes: &[u8], alpha: &[u8]) -> Result<ProjectivePoint, VrfError> {
     // Prefix for domain separation
     let suite_string: &[u8] = b"ECVRF_secp256k1_SHA256_TAI";
     for ctr in 0u8..=255 {
@@ -118,13 +120,12 @@ fn hash_to_curve(pk_bytes: &[u8], alpha: &[u8]) -> ProjectivePoint {
 
         let ct_opt = AffinePoint::from_bytes(&compressed.into());
         if bool::from(ct_opt.is_some()) {
-            return ProjectivePoint::from(ct_opt.unwrap());
+            let pt: AffinePoint = ct_opt.unwrap();
+            return Ok(ProjectivePoint::from(pt));
         }
     }
-    // Fallback: use generator * hash (should never reach here in practice)
-    let hash = keccak256(alpha);
-    let scalar = <Scalar as Reduce<k256::U256>>::reduce_bytes(&hash.into());
-    ProjectivePoint::GENERATOR * scalar
+    // SECURITY: Return error instead of biased GENERATOR * scalar fallback
+    Err(VrfError::HashToCurveFailed)
 }
 
 /// Compute Fiat-Shamir challenge: c = keccak256(pk || gamma || k*G || k*H) truncated to 16 bytes
@@ -190,21 +191,25 @@ impl VrfKeypair {
 
     /// Prove: Generate EC-VRF proof for a given input alpha.
     /// Returns (output, proof) where output = keccak256(gamma_compressed).
-    pub fn prove(&self, alpha: &[u8]) -> (VrfOutput, VrfProof) {
+    pub fn prove(&self, alpha: &[u8]) -> Result<(VrfOutput, VrfProof), VrfError> {
         // Step 1: H = hash_to_curve(pk, alpha)
-        let h = hash_to_curve(&self.public_key_compressed, alpha);
+        let h = hash_to_curve(&self.public_key_compressed, alpha)?;
 
         // Step 2: Gamma = sk * H
         let gamma = h * self.secret_key;
 
         // Step 3: Choose random nonce k (deterministic: k = H(sk || alpha || "nonce"))
         let mut k_input = Vec::with_capacity(64 + alpha.len());
-        let sk_bytes: [u8; 32] = self.secret_key.to_bytes().into();
+        let mut sk_bytes: [u8; 32] = self.secret_key.to_bytes().into();
         k_input.extend_from_slice(&sk_bytes);
         k_input.extend_from_slice(alpha);
         k_input.extend_from_slice(b"ECVRF_nonce");
         let k_hash = keccak256(&k_input);
         let k = <Scalar as Reduce<k256::U256>>::reduce_bytes(&k_hash.into());
+
+        // SECURITY: Zeroize secret key material from heap
+        sk_bytes.zeroize();
+        k_input.zeroize();
 
         // Step 4: U = k * G, V = k * H
         let u = ProjectivePoint::GENERATOR * k;
@@ -229,7 +234,7 @@ impl VrfKeypair {
         let s_bytes: [u8; 32] = s.to_bytes().into();
 
         let proof = VrfProof::new_ec(gamma_compressed, c_bytes, s_bytes);
-        (output, proof)
+        Ok((output, proof))
     }
 }
 
@@ -265,10 +270,12 @@ pub fn vrf_verify(
         compressed_pk[1..33].copy_from_slice(public_key);
 
         let opt = AffinePoint::from_bytes(&compressed_pk.into());
-        if !bool::from(opt.is_some()) {
+        let pk_point = if bool::from(opt.is_some()) {
+            let pt: AffinePoint = opt.unwrap();
+            ProjectivePoint::from(pt)
+        } else {
             continue;
-        }
-        let pk_point = ProjectivePoint::from(opt.unwrap());
+        };
 
         // Reconstruct the full compressed public key
         let pk_affine = pk_point.to_affine();
@@ -281,10 +288,12 @@ pub fn vrf_verify(
         let gamma = {
             let gc = &proof.gamma_compressed;
             let gopt = AffinePoint::from_bytes(&(*gc).into());
-            if !bool::from(gopt.is_some()) {
+            if bool::from(gopt.is_some()) {
+                let pt: AffinePoint = gopt.unwrap();
+                ProjectivePoint::from(pt)
+            } else {
                 return Err(VrfError::InvalidProof);
             }
-            ProjectivePoint::from(gopt.unwrap())
         };
 
         // Decode c and s as scalars
@@ -292,7 +301,7 @@ pub fn vrf_verify(
         let s = <Scalar as Reduce<k256::U256>>::reduce_bytes(&proof.s.into());
 
         // H = hash_to_curve(pk, alpha)
-        let h = hash_to_curve(&pk_full, alpha);
+        let h = hash_to_curve(&pk_full, alpha)?;
 
         // U = s*G + c*Y
         let u = ProjectivePoint::GENERATOR * s + pk_point * c;
@@ -359,6 +368,8 @@ pub enum VrfError {
     VerificationFailed,
     /// Invalid public key
     InvalidPublicKey,
+    /// Hash-to-curve failed after exhausting all 256 TAI counter attempts
+    HashToCurveFailed,
 }
 
 impl std::fmt::Display for VrfError {
@@ -367,6 +378,7 @@ impl std::fmt::Display for VrfError {
             VrfError::InvalidProof => write!(f, "Invalid VRF proof"),
             VrfError::VerificationFailed => write!(f, "VRF verification failed"),
             VrfError::InvalidPublicKey => write!(f, "Invalid public key"),
+            VrfError::HashToCurveFailed => write!(f, "Hash-to-curve failed after 256 attempts"),
         }
     }
 }
@@ -397,8 +409,8 @@ mod tests {
         let keypair = VrfKeypair::from_seed(&seed);
         let input = b"slot_123_epoch_456";
 
-        let (output1, proof1) = keypair.prove(input);
-        let (output2, proof2) = keypair.prove(input);
+        let (output1, proof1) = keypair.prove(input).unwrap();
+        let (output2, proof2) = keypair.prove(input).unwrap();
 
         // Same input = same output and proof (deterministic nonce)
         assert_eq!(output1, output2);
@@ -410,8 +422,8 @@ mod tests {
         let seed = [42u8; 32];
         let keypair = VrfKeypair::from_seed(&seed);
 
-        let (output1, _) = keypair.prove(b"input_1");
-        let (output2, _) = keypair.prove(b"input_2");
+        let (output1, _) = keypair.prove(b"input_1").unwrap();
+        let (output2, _) = keypair.prove(b"input_2").unwrap();
 
         // Different inputs = different outputs
         assert_ne!(output1, output2);
@@ -423,7 +435,7 @@ mod tests {
         let keypair = VrfKeypair::from_seed(&seed);
         let input = b"test_input";
 
-        let (output, proof) = keypair.prove(input);
+        let (output, proof) = keypair.prove(input).unwrap();
         let verified_output = vrf_verify(&keypair.public_key, input, &proof).unwrap();
 
         assert_eq!(output, verified_output);
@@ -434,7 +446,7 @@ mod tests {
         let seed = [42u8; 32];
         let keypair = VrfKeypair::from_seed(&seed);
 
-        let (_output, proof) = keypair.prove(b"correct_input");
+        let (_output, proof) = keypair.prove(b"correct_input").unwrap();
         let result = vrf_verify(&keypair.public_key, b"wrong_input", &proof);
 
         assert!(result.is_err());
@@ -445,7 +457,7 @@ mod tests {
         let keypair1 = VrfKeypair::from_seed(&[42u8; 32]);
         let keypair2 = VrfKeypair::from_seed(&[43u8; 32]);
 
-        let (_output, proof) = keypair1.prove(b"test");
+        let (_output, proof) = keypair1.prove(b"test").unwrap();
         let result = vrf_verify(&keypair2.public_key, b"test", &proof);
 
         assert!(result.is_err());

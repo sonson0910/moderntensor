@@ -5,6 +5,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{warn, info, debug};
 
+/// Default maximum pending transactions per sender (DoS protection)
+const DEFAULT_MAX_PER_SENDER: usize = 16;
+/// Default minimum gas price in wei (1 Gwei)
+const DEFAULT_MIN_GAS_PRICE: u64 = 1_000_000_000;
+/// Default maximum transaction size in bytes (128 KB)
+const DEFAULT_MAX_TX_SIZE: usize = 128 * 1024;
+/// Default transaction expiration duration in seconds (30 minutes)
+const DEFAULT_TX_EXPIRATION_SECS: u64 = 30 * 60;
+
 /// Transaction with timestamp for expiration tracking
 struct TimedTransaction {
     tx: Transaction,
@@ -38,11 +47,11 @@ impl Mempool {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
             max_size,
-            max_per_sender: 16,                    // DoS: Max 16 pending tx per sender
-            min_gas_price: 1_000_000_000,          // DoS: Min 1 gwei gas price
-            max_tx_size: 128 * 1024,               // DoS: Max 128KB per transaction
-            validate_signatures: true,              // PRODUCTION: always validate
-            tx_expiration: Duration::from_secs(30 * 60), // 30 minutes
+            max_per_sender: DEFAULT_MAX_PER_SENDER,
+            min_gas_price: DEFAULT_MIN_GAS_PRICE,
+            max_tx_size: DEFAULT_MAX_TX_SIZE,
+            validate_signatures: true,
+            tx_expiration: Duration::from_secs(DEFAULT_TX_EXPIRATION_SECS),
             chain_id,
         }
     }
@@ -63,7 +72,7 @@ impl Mempool {
             min_gas_price,
             max_tx_size,
             validate_signatures: true,
-            tx_expiration: Duration::from_secs(30 * 60),
+            tx_expiration: Duration::from_secs(DEFAULT_TX_EXPIRATION_SECS),
             chain_id,
         }
     }

@@ -1,8 +1,8 @@
 use crate::error::ConsensusError;
 use luxtensor_core::block::Block;
-use luxtensor_core::types::{Hash, Address};
-use std::collections::{HashMap, HashSet, VecDeque};
+use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
+use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::{debug, info, warn};
 
 /// Maximum number of blocks kept in fork choice memory.
@@ -52,42 +52,37 @@ impl ForkChoice {
         let block_hash = block.hash();
         let parent_hash = block.header().previous_hash;
 
+        // H-5 FIX: Acquire write guards up-front and hold them for the
+        // entire method body.  This eliminates the TOCTOU window where
+        // two concurrent add_block() calls with the same block could
+        // both pass the duplicate check.
+        let mut blocks = self.blocks.write();
+        let mut scores = self.scores.write();
+
         // Check if we already have this block
-        {
-            let blocks = self.blocks.read();
-            if blocks.contains_key(&block_hash) {
-                return Err(ConsensusError::DuplicateBlock(block_hash));
-            }
+        if blocks.contains_key(&block_hash) {
+            return Err(ConsensusError::DuplicateBlock(block_hash));
         }
 
         // Verify parent exists
-        {
-            let blocks = self.blocks.read();
-            if !blocks.contains_key(&parent_hash) && parent_hash != [0u8; 32] {
-                return Err(ConsensusError::OrphanBlock {
-                    block: block_hash,
-                    parent: parent_hash,
-                });
-            }
+        if !blocks.contains_key(&parent_hash) && parent_hash != [0u8; 32] {
+            return Err(ConsensusError::OrphanBlock { block: block_hash, parent: parent_hash });
         }
 
         // Calculate score for new block (parent score + 1)
-        let score = {
-            let scores = self.scores.read();
-            if parent_hash == [0u8; 32] {
-                1 // Genesis block
-            } else {
-                scores.get(&parent_hash).copied().unwrap_or(0) + 1
-            }
+        let score = if parent_hash == [0u8; 32] {
+            1 // Genesis block
+        } else {
+            scores.get(&parent_hash).copied().unwrap_or(0) + 1
         };
 
         // Add block and score
-        {
-            let mut blocks = self.blocks.write();
-            let mut scores = self.scores.write();
-            blocks.insert(block_hash, block);
-            scores.insert(block_hash, score);
-        }
+        blocks.insert(block_hash, block);
+        scores.insert(block_hash, score);
+
+        // Drop write guards before calling methods that also acquire locks
+        drop(blocks);
+        drop(scores);
 
         // SECURITY: Auto-prune if we exceed memory cap to prevent unbounded growth.
         // An attacker sending many fork blocks could cause OOM without this.
@@ -113,10 +108,7 @@ impl ForkChoice {
         let head_hash = *self.head.read();
         let blocks = self.blocks.read();
 
-        blocks
-            .get(&head_hash)
-            .cloned()
-            .ok_or(ConsensusError::BlockNotFound(head_hash))
+        blocks.get(&head_hash).cloned().ok_or(ConsensusError::BlockNotFound(head_hash))
     }
 
     /// Get the head hash
@@ -127,10 +119,7 @@ impl ForkChoice {
     /// Get a block by hash
     pub fn get_block(&self, hash: &Hash) -> Result<Block, ConsensusError> {
         let blocks = self.blocks.read();
-        blocks
-            .get(hash)
-            .cloned()
-            .ok_or(ConsensusError::BlockNotFound(*hash))
+        blocks.get(hash).cloned().ok_or(ConsensusError::BlockNotFound(*hash))
     }
 
     /// Get the canonical chain from genesis to head
@@ -224,13 +213,14 @@ impl ForkChoice {
     /// Combined score = depth * DEPTH_WEIGHT + attestation_stake / STAKE_DIVISOR
     fn update_head_with_attestations(&self) {
         const DEPTH_WEIGHT: u128 = 1_000_000_000_000; // 1e12 - prioritize depth heavily
-        const STAKE_DIVISOR: u128 = 1_000_000_000;    // Convert stake to reasonable range
+        const STAKE_DIVISOR: u128 = 1_000_000_000; // Convert stake to reasonable range
 
         let scores = self.scores.read();
         let attestation_stake = self.attestation_stake.read();
 
         // Find block with highest combined score
-        let best = scores.iter()
+        let best = scores
+            .iter()
             .map(|(hash, &depth)| {
                 let attn_weight = attestation_stake.get(hash).copied().unwrap_or(0);
                 // Combined: depth dominates, but attestations break ties
@@ -283,11 +273,7 @@ impl ForkChoice {
     /// Get all blocks at a specific height
     pub fn get_blocks_at_height(&self, height: u64) -> Vec<Block> {
         let blocks = self.blocks.read();
-        blocks
-            .values()
-            .filter(|block| block.height() == height)
-            .cloned()
-            .collect()
+        blocks.values().filter(|block| block.height() == height).cloned().collect()
     }
 
     /// Prune old blocks (keep only canonical chain + recent forks)
@@ -340,12 +326,9 @@ impl ForkChoice {
     /// Collects the fork choice state into serializable form.
     pub fn export_state(&self) -> ForkChoiceSnapshot {
         let head = *self.head.read();
-        let scores: Vec<(Hash, u64)> = self.scores.read().iter()
-            .map(|(h, s)| (*h, *s))
-            .collect();
-        let attestation_stakes: Vec<(Hash, u128)> = self.attestation_stake.read().iter()
-            .map(|(h, s)| (*h, *s))
-            .collect();
+        let scores: Vec<(Hash, u64)> = self.scores.read().iter().map(|(h, s)| (*h, *s)).collect();
+        let attestation_stakes: Vec<(Hash, u128)> =
+            self.attestation_stake.read().iter().map(|(h, s)| (*h, *s)).collect();
 
         ForkChoiceSnapshot {
             head_hash: head,
@@ -433,18 +416,18 @@ mod tests {
 
     fn create_test_block(height: u64, previous_hash: Hash) -> Block {
         let header = BlockHeader::new(
-            1,                           // version
+            1, // version
             height,
-            1000 + height,               // timestamp
+            1000 + height, // timestamp
             previous_hash,
-            [0u8; 32],                   // state_root
-            [0u8; 32],                   // txs_root
-            [0u8; 32],                   // receipts_root
-            [0u8; 32],                   // validator (32 bytes)
-            [0u8; 64],                   // signature
-            0,                           // gas_used
-            1000000,                     // gas_limit
-            vec![],                      // extra_data
+            [0u8; 32], // state_root
+            [0u8; 32], // txs_root
+            [0u8; 32], // receipts_root
+            [0u8; 32], // validator (32 bytes)
+            [0u8; 64], // signature
+            0,         // gas_used
+            1000000,   // gas_limit
+            vec![],    // extra_data
         );
         Block::new(header, vec![])
     }

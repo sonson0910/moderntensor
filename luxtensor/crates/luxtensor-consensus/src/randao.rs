@@ -6,7 +6,7 @@
 
 use luxtensor_core::types::{Hash, Address};
 use luxtensor_crypto::keccak256;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for RANDAO mixing
@@ -49,6 +49,9 @@ pub struct ValidatorReveal {
 /// validators from choosing reveals after seeing others' values.
 pub struct RandaoMixer {
     config: RandaoConfig,
+    /// Serialises the entire mix_reveal() method to prevent TOCTOU races
+    /// across the individual RwLocks (H-4 fix).
+    mix_lock: Mutex<()>,
     /// Current cumulative mix
     current_mix: RwLock<Hash>,
     /// Reveals collected in current epoch
@@ -68,6 +71,7 @@ impl RandaoMixer {
     pub fn new(config: RandaoConfig, initial_seed: Hash) -> Self {
         Self {
             config,
+            mix_lock: Mutex::new(()),
             current_mix: RwLock::new(initial_seed),
             current_epoch_reveals: RwLock::new(Vec::new()),
             revealed_validators: RwLock::new(HashSet::new()),
@@ -137,6 +141,11 @@ impl RandaoMixer {
         reveal: Hash,
         block_number: u64,
     ) -> Result<(), RandaoError> {
+        // H-4 FIX: Acquire method-level lock to serialise the entire
+        // mix_reveal() call, preventing TOCTOU races across the
+        // individual RwLocks.
+        let _guard = self.mix_lock.lock();
+
         // Check if validator already revealed this epoch
         {
             let revealed = self.revealed_validators.read();

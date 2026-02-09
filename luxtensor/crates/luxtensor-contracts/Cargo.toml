@@ -24,6 +24,7 @@ bincode = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
+luxtensor-storage = { path = "../luxtensor-storage" }
 
 [dev-dependencies]
 proptest = { workspace = true }

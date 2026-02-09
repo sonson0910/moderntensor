@@ -33,7 +33,7 @@ pub use burn_manager::{BurnConfig, BurnEvent, BurnManager, BurnStats, BurnType};
 pub use emission::{
     EmissionConfig, EmissionController, EmissionResult, EmissionStats, UtilityMetrics,
 };
-pub use error::*;
+pub use error::{ConsensusError, Result};
 pub use fast_finality::{BftPhase, FastFinality, FastFinalityStats, ViewChangeMessage};
 pub use fork_choice::{ForkChoice, ForkChoiceSnapshot};
 pub use fork_resolution::{FinalityStats, FinalityStatus, ForkResolver, ReorgInfo};

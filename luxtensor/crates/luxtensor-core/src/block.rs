@@ -1,5 +1,7 @@
+use crate::constants::consensus::{BLOCK_GAS_LIMIT, MAX_TXS_PER_BLOCK};
 use crate::{Hash, Transaction};
 use luxtensor_crypto::keccak256;
+use luxtensor_crypto::signature::verify_signature;
 use serde::{Deserialize, Serialize};
 
 /// Block header
@@ -100,12 +102,6 @@ pub struct Block {
     pub transactions: Vec<Transaction>,
 }
 
-/// Network-wide block gas limit (30M gas per Ethereum Mainnet convention)
-pub const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-
-/// Maximum transactions per block
-pub const MAX_TXS_PER_BLOCK: usize = 1_000;
-
 impl Block {
     pub fn new(header: BlockHeader, transactions: Vec<Transaction>) -> Self {
         Self { header, transactions }
@@ -188,6 +184,55 @@ impl Block {
                     i
                 )));
             }
+        }
+
+        Ok(())
+    }
+
+    /// Validate block structure **and** verify the block signature against the
+    /// validator's public key.
+    ///
+    /// This performs every check from [`Block::validate`] and additionally:
+    ///
+    /// 1. Ensures the header signature is exactly 64 bytes.
+    /// 2. Computes the block header hash (which excludes the signature field).
+    /// 3. Verifies the ECDSA signature over that hash using `validator_pubkey`.
+    ///
+    /// # Arguments
+    /// * `validator_pubkey` — The full secp256k1 public key (33-byte compressed
+    ///   or 65-byte uncompressed) of the validator that signed this block.
+    ///
+    /// # Errors
+    /// Returns [`CoreError::InvalidBlock`] if the signature is missing, has an
+    /// incorrect length, or does not match the block hash and public key.
+    pub fn validate_with_signature(&self, validator_pubkey: &[u8]) -> crate::Result<()> {
+        // Run all existing structural validations first
+        self.validate()?;
+
+        // SECURITY: Verify the block signature against the header hash
+        let sig_bytes: [u8; 64] = self
+            .header
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| {
+                crate::CoreError::InvalidBlock(format!(
+                    "invalid signature length: expected 64, got {}",
+                    self.header.signature.len()
+                ))
+            })?;
+
+        let block_hash = self.header.hash();
+
+        let valid = verify_signature(&block_hash, &sig_bytes, validator_pubkey).map_err(|e| {
+            crate::CoreError::InvalidBlock(format!("signature verification error: {e}"))
+        })?;
+
+        if !valid {
+            return Err(crate::CoreError::InvalidBlock(
+                "block signature verification failed: signature does not match validator public key"
+                    .to_string(),
+            ));
         }
 
         Ok(())

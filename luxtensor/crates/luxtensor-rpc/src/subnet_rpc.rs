@@ -187,11 +187,16 @@ pub fn register_subnet_methods(io: &mut IoHandler, root_subnet: RootSubnet) {
     // subnet_getEmissions
     let subnet_state = root_subnet.clone();
     io.add_sync_method("subnet_getEmissions", move |params: Params| {
+        // Empty params is valid (uses default emission); parse errors should propagate
         let p: Vec<serde_json::Value> = params.parse().unwrap_or_default();
-        let total_emission = p.get(0).and_then(|v| v.as_str()).and_then(|s| {
-            let s = s.strip_prefix("0x").unwrap_or(s);
-            u128::from_str_radix(s, 16).ok()
-        }).unwrap_or(1_000_000_000_000_000_000_000u128);
+        let total_emission = match p.get(0).and_then(|v| v.as_str()) {
+            Some(s) => {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u128::from_str_radix(s, 16)
+                    .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid hex emission value: {}", e)))?
+            }
+            None => 1_000_000_000_000_000_000_000u128, // default 1000 MDT
+        };
         let state = subnet_state.read();
         let emissions: Vec<Value> = state.get_emission_distribution(total_emission).iter().map(|e| json!({
             "netuid": e.netuid,

@@ -328,7 +328,12 @@ impl RpcServer {
     }
 
     /// Start the RPC server on the given address
-    pub fn start(self, addr: &str) -> Result<Server> {
+    ///
+    /// # Arguments
+    /// * `addr` - Address to bind (e.g. "127.0.0.1:8545")
+    /// * `threads` - Number of worker threads for the HTTP server
+    /// * `cors_origins` - CORS allowed origins (e.g. ["http://localhost:*"])
+    pub fn start(self, addr: &str, threads: usize, cors_origins: &[String]) -> Result<Server> {
         let mut io = IoHandler::new();
 
         // Register blockchain query methods
@@ -501,9 +506,21 @@ impl RpcServer {
         register_tx_methods(&tx_ctx, &mut io);
 
         // Start HTTP server with optimized settings
-        let server = ServerBuilder::new(io)
-            .threads(64)  // Optimal for most machines (64 threads)
-            .max_request_body_size(2 * 1024 * 1024) // 2 MB max request (reduced from 16 MB)
+        let thread_count = if threads > 0 { threads } else { 4 };
+        let mut builder = ServerBuilder::new(io)
+            .threads(thread_count)
+            .max_request_body_size(2 * 1024 * 1024); // 2 MB max request (reduced from 16 MB)
+
+        // Apply CORS origins from config
+        if !cors_origins.is_empty() {
+            builder = builder.cors(jsonrpc_http_server::DomainsValidation::AllowOnly(
+                cors_origins.iter().map(|s| {
+                    jsonrpc_http_server::AccessControlAllowOrigin::Value(s.clone().into())
+                }).collect(),
+            ));
+        }
+
+        let server = builder
             .start_http(&addr.parse().map_err(|e: std::net::AddrParseError| {
                 RpcError::ServerError(e.to_string())
             })?)

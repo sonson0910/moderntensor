@@ -66,12 +66,12 @@ mod ecdsa_tests {
         let address = keypair.address();
 
         // Address should be 20 bytes
-        assert_eq!(address.len(), 20, "Address should be 20 bytes");
+        assert_eq!(address.as_bytes().len(), 20, "Address should be 20 bytes");
 
         // Address should be derived from last 20 bytes of keccak256(public_key)
         let public_key = keypair.public_key_bytes();
         let hash = &keccak256(&public_key[1..])[12..]; // Skip first byte (0x04) and take last 20 bytes
-        assert_eq!(address, hash, "Address derivation should match Ethereum");
+        assert_eq!(address.as_bytes(), hash, "Address derivation should match Ethereum");
     }
 
     /// Test signature with known private key (test vector)

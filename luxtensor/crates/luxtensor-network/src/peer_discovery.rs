@@ -113,6 +113,10 @@ impl PeerDiscovery {
         if peers.len() >= self.config.max_tracked_peers {
             // Remove oldest peer if at capacity
             self.remove_oldest_peer(&mut peers);
+            // If still at capacity after removal, skip the new peer
+            if peers.len() >= self.config.max_tracked_peers {
+                return;
+            }
         }
 
         let rpc_endpoint = self.extract_rpc_endpoint(&addresses);
@@ -148,8 +152,9 @@ impl PeerDiscovery {
 
     /// Update latency measurement for a peer
     pub fn update_latency(&self, peer_id: &str, latency_ms: f64) {
-        // Update latency history for EWMA
-        {
+        // Update latency history and compute EWMA inside the same write lock
+        // to avoid TOCTOU race between separate read/write acquisitions.
+        let ewma_latency = {
             let mut history = self.latency_history.write();
             let peer_history = history.entry(peer_id.to_string()).or_insert_with(Vec::new);
             peer_history.push(latency_ms);
@@ -157,16 +162,7 @@ impl PeerDiscovery {
             if peer_history.len() > 10 {
                 peer_history.remove(0);
             }
-        }
-
-        // Calculate EWMA latency
-        let ewma_latency = {
-            let history = self.latency_history.read();
-            if let Some(peer_history) = history.get(peer_id) {
-                self.calculate_ewma(peer_history)
-            } else {
-                latency_ms
-            }
+            self.calculate_ewma(peer_history)
         };
 
         // Update peer

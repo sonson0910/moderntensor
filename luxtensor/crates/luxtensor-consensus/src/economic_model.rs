@@ -12,10 +12,11 @@
 // This is a read-only analysis/simulation layer.
 
 use super::burn_manager::BurnConfig;
-use super::emission::EmissionConfig;
 use super::eip1559::Eip1559Config;
+use super::emission::EmissionConfig;
 use super::halving::HalvingSchedule;
 use super::reward_distribution::DistributionConfig;
+use luxtensor_core::constants::tokenomics::{ONE_TOKEN, TOTAL_SUPPLY};
 
 /// Block time in seconds (12s target, matching Ethereum post-merge)
 pub const BLOCK_TIME_SECONDS: u64 = 12;
@@ -25,13 +26,12 @@ pub const BLOCKS_PER_YEAR: u64 = 2_629_800;
 
 /// Pre-minted supply at TGE (55% of 21M = 11.55M MDT)
 /// Includes: Team 10%, Private 8%, IDO 5%, DAO 10%, Liquidity 5%, Foundation 5%, Ecosystem 12%
-pub const PREMINTED_SUPPLY: u128 = 11_550_000_000_000_000_000_000_000;
+/// Derived from canonical TOTAL_SUPPLY in luxtensor-core
+pub const PREMINTED_SUPPLY: u128 = TOTAL_SUPPLY * 55 / 100;
 
 /// Emission pool (45% of 21M = 9.45M MDT)
-pub const EMISSION_POOL: u128 = 9_450_000_000_000_000_000_000_000;
-
-/// 1 MDT in smallest unit (18 decimals)
-const ONE_MDT: u128 = 1_000_000_000_000_000_000;
+/// Derived from canonical TOTAL_SUPPLY in luxtensor-core
+pub const EMISSION_POOL: u128 = TOTAL_SUPPLY * 45 / 100;
 
 // ─────────────────────────────────────────────────────────────
 // Supply Projection
@@ -95,9 +95,9 @@ impl Default for ProjectionConfig {
             avg_gas_fee_wei: 2_000_000_000, // 2 gwei average effective gas price
             avg_block_utilization: 0.5,
             annual_subnet_registrations: 100,
-            avg_subnet_reg_fee: 1000 * ONE_MDT, // 1000 MDT
+            avg_subnet_reg_fee: 1000 * ONE_TOKEN, // 1000 MDT
             annual_slashing_events: 10,
-            avg_slash_amount: 500 * ONE_MDT, // 500 MDT
+            avg_slash_amount: 500 * ONE_TOKEN, // 500 MDT
         }
     }
 }
@@ -138,8 +138,7 @@ pub fn project_supply(
         let weight = emission_cfg.utility_weight as f64 / 100.0;
         let adjustment = 1.0 + (utility_factor - 1.0) * weight;
 
-        let adjusted_emission_per_block =
-            (base_emission as f64 * adjustment) as u128;
+        let adjusted_emission_per_block = (base_emission as f64 * adjustment) as u128;
         let annual_gross_emission =
             adjusted_emission_per_block.saturating_mul(BLOCKS_PER_YEAR as u128);
 
@@ -421,10 +420,7 @@ pub fn validate_parameters(
         issues.push(TokenomicsInconsistency {
             severity: Severity::Critical,
             module: "reward_distribution",
-            description: format!(
-                "Distribution shares sum to {} BPS, expected 10,000",
-                dist_total
-            ),
+            description: format!("Distribution shares sum to {} BPS, expected 10,000", dist_total),
         });
     }
 
@@ -473,8 +469,8 @@ pub fn validate_parameters(
             description: format!(
                 "Estimated total emission ({:.2} MDT) exceeds emission pool ({:.2} MDT). \
                  Halving schedule will mint more than the 45% allocation allows.",
-                estimated_total as f64 / ONE_MDT as f64,
-                EMISSION_POOL as f64 / ONE_MDT as f64,
+                estimated_total as f64 / ONE_TOKEN as f64,
+                EMISSION_POOL as f64 / ONE_TOKEN as f64,
             ),
         });
     } else {
@@ -487,8 +483,8 @@ pub fn validate_parameters(
                     "Emission pool utilization is only {:.1}% ({:.2}M / {:.2}M MDT). \
                      Consider increasing initial_reward or halving_interval to use more of the allocation.",
                     utilization,
-                    estimated_total as f64 / ONE_MDT as f64 / 1_000_000.0,
-                    EMISSION_POOL as f64 / ONE_MDT as f64 / 1_000_000.0,
+                    estimated_total as f64 / ONE_TOKEN as f64 / 1_000_000.0,
+                    EMISSION_POOL as f64 / ONE_TOKEN as f64 / 1_000_000.0,
                 ),
             });
         }
@@ -593,7 +589,7 @@ pub fn generate_report(
     report.push_str(&format!("  Blocks/Year:          {}\n", BLOCKS_PER_YEAR));
     report.push_str(&format!(
         "  Initial Emission:     {:.3} MDT/block\n",
-        emission_cfg.initial_emission as f64 / ONE_MDT as f64
+        emission_cfg.initial_emission as f64 / ONE_TOKEN as f64
     ));
     report.push_str(&format!(
         "  Halving Interval:     {} blocks ({:.1} years)\n",
@@ -603,7 +599,7 @@ pub fn generate_report(
     report.push_str(&format!("  Max Halvings:         {}\n", halving.max_halvings));
     report.push_str(&format!(
         "  Min Emission:         {:.6} MDT/block\n",
-        emission_cfg.min_emission as f64 / ONE_MDT as f64
+        emission_cfg.min_emission as f64 / ONE_TOKEN as f64
     ));
     report.push_str(&format!("  Utility Weight:       {}%\n\n", emission_cfg.utility_weight));
 
@@ -618,11 +614,11 @@ pub fn generate_report(
         let era_start_year = era as f64 * halving.halving_interval as f64 / BLOCKS_PER_YEAR as f64;
         let era_end_year =
             (era + 1) as f64 * halving.halving_interval as f64 / BLOCKS_PER_YEAR as f64;
-        let annual = reward as f64 * BLOCKS_PER_YEAR as f64 / ONE_MDT as f64;
+        let annual = reward as f64 * BLOCKS_PER_YEAR as f64 / ONE_TOKEN as f64;
         report.push_str(&format!(
             "  {:>3}   {:.6} MDT   Year {:.1} – {:.1}   {:>12.0} MDT\n",
             era,
-            reward as f64 / ONE_MDT as f64,
+            reward as f64 / ONE_TOKEN as f64,
             era_start_year,
             era_end_year,
             annual,
@@ -652,7 +648,7 @@ pub fn generate_report(
     // ── Supply Projection ──
     report.push_str("── Supply Projection (Key Years) ──\n");
     report.push_str(
-        "  Year   Circulating (MDT)    Inflation    Emission/block       Net Emission    Halving\n"
+        "  Year   Circulating (MDT)    Inflation    Emission/block       Net Emission    Halving\n",
     );
     let key_years: Vec<u32> = vec![0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 35, 39];
     for &y in &key_years {
@@ -661,10 +657,10 @@ pub fn generate_report(
             report.push_str(&format!(
                 "  {:>4}   {:>16.0}    {:>+7.2}%    {:.6} MDT     {:>+14.0}   {}\n",
                 snap.year,
-                snap.circulating_supply as f64 / ONE_MDT as f64,
+                snap.circulating_supply as f64 / ONE_TOKEN as f64,
                 snap.inflation_rate_pct,
-                snap.base_emission_per_block as f64 / ONE_MDT as f64,
-                snap.annual_net_emission as f64 / ONE_MDT as f64,
+                snap.base_emission_per_block as f64 / ONE_TOKEN as f64,
+                snap.annual_net_emission as f64 / ONE_TOKEN as f64,
                 halving_marker,
             ));
         }
@@ -674,14 +670,11 @@ pub fn generate_report(
     // ── Equilibrium ──
     report.push_str("── Equilibrium Analysis ──\n");
     if let Some(year) = equilibrium.equilibrium_year {
-        report.push_str(&format!(
-            "  Net-zero inflation reached at:  Year {}\n",
-            year
-        ));
+        report.push_str(&format!("  Net-zero inflation reached at:  Year {}\n", year));
         if let Some(supply) = equilibrium.equilibrium_supply {
             report.push_str(&format!(
                 "  Supply at equilibrium:          {:.0} MDT\n",
-                supply as f64 / ONE_MDT as f64
+                supply as f64 / ONE_TOKEN as f64
             ));
         }
     } else {
@@ -689,7 +682,7 @@ pub fn generate_report(
     }
     report.push_str(&format!(
         "  Peak circulating supply:        {:.0} MDT (Year {})\n",
-        equilibrium.peak_supply as f64 / ONE_MDT as f64,
+        equilibrium.peak_supply as f64 / ONE_TOKEN as f64,
         equilibrium.peak_year
     ));
     if let Some(y) = equilibrium.sub_2pct_inflation_year {
@@ -741,7 +734,8 @@ pub fn generate_report(
 mod tests {
     use super::*;
 
-    fn default_configs() -> (EmissionConfig, BurnConfig, HalvingSchedule, DistributionConfig, Eip1559Config) {
+    fn default_configs(
+    ) -> (EmissionConfig, BurnConfig, HalvingSchedule, DistributionConfig, Eip1559Config) {
         (
             EmissionConfig::default(),
             BurnConfig::default(),
@@ -771,7 +765,8 @@ mod tests {
                 assert!(
                     snapshots[i].circulating_supply >= snapshots[i - 1].circulating_supply,
                     "Supply should increase year {} → {}: {} → {}",
-                    i - 1, i,
+                    i - 1,
+                    i,
                     snapshots[i - 1].circulating_supply,
                     snapshots[i].circulating_supply,
                 );
@@ -822,7 +817,8 @@ mod tests {
         assert!(
             year5_emission < year0_emission,
             "Year 5 emission should be less than year 0: {} vs {}",
-            year5_emission, year0_emission,
+            year5_emission,
+            year0_emission,
         );
     }
 
@@ -841,7 +837,8 @@ mod tests {
         assert!(
             year20_inflation < year1_inflation,
             "Inflation should decrease: year 1 = {:.2}%, year 20 = {:.2}%",
-            year1_inflation, year20_inflation,
+            year1_inflation,
+            year20_inflation,
         );
     }
 
@@ -898,7 +895,8 @@ mod tests {
         // Default params should be consistent — no critical issues
         let critical = issues.iter().filter(|i| i.severity == Severity::Critical).count();
         assert_eq!(
-            critical, 0,
+            critical,
+            0,
             "Default parameters should have 0 critical issues, found: {:?}",
             issues.iter().filter(|i| i.severity == Severity::Critical).collect::<Vec<_>>()
         );
@@ -935,9 +933,9 @@ mod tests {
 
         let issues = validate_parameters(&emission, &dist, &burn, &halving, &fee);
 
-        let has_sum_error = issues.iter().any(|i| {
-            i.severity == Severity::Critical && i.description.contains("sum to")
-        });
+        let has_sum_error = issues
+            .iter()
+            .any(|i| i.severity == Severity::Critical && i.description.contains("sum to"));
         assert!(has_sum_error, "Should detect distribution shares not summing to 10,000");
     }
 
@@ -952,9 +950,9 @@ mod tests {
 
         let issues = validate_parameters(&emission, &dist, &burn, &halving, &fee);
 
-        let has_fee_error = issues.iter().any(|i| {
-            i.severity == Severity::Critical && i.description.contains("min_base_fee")
-        });
+        let has_fee_error = issues
+            .iter()
+            .any(|i| i.severity == Severity::Critical && i.description.contains("min_base_fee"));
         assert!(has_fee_error, "Should detect min > max base fee");
     }
 
@@ -963,12 +961,7 @@ mod tests {
         let (emission, _, halving, _, _) = default_configs();
         let proj = ProjectionConfig { years: 15, ..Default::default() };
 
-        let results = sweep_burn_rate(
-            &emission,
-            &halving,
-            &proj,
-            &[0, 2500, 5000, 7500, 10000],
-        );
+        let results = sweep_burn_rate(&emission, &halving, &proj, &[0, 2500, 5000, 7500, 10000]);
 
         assert_eq!(results.len(), 5);
 
@@ -978,7 +971,8 @@ mod tests {
         assert!(
             supply_100 < supply_0,
             "100% burn should yield lower supply than 0%: {} vs {}",
-            supply_100, supply_0,
+            supply_100,
+            supply_0,
         );
     }
 
@@ -987,13 +981,7 @@ mod tests {
         let (emission, burn, halving, _, _) = default_configs();
         let proj = ProjectionConfig { years: 15, ..Default::default() };
 
-        let results = sweep_tx_volume(
-            &emission,
-            &burn,
-            &halving,
-            &proj,
-            &[10, 50, 100, 500],
-        );
+        let results = sweep_tx_volume(&emission, &burn, &halving, &proj, &[10, 50, 100, 500]);
 
         assert_eq!(results.len(), 4);
 
@@ -1003,7 +991,8 @@ mod tests {
         assert!(
             supply_high <= supply_low,
             "High volume should burn more: {} vs {}",
-            supply_high, supply_low,
+            supply_high,
+            supply_low,
         );
     }
 
@@ -1069,7 +1058,9 @@ mod tests {
         assert!(
             pct_change < 5.0,
             "Supply should stabilize: year 35 = {}, year 39 = {}, change = {:.2}%",
-            supply_35, supply_39, pct_change,
+            supply_35,
+            supply_39,
+            pct_change,
         );
     }
 }

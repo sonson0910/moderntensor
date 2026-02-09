@@ -3,6 +3,21 @@ use crate::mempool::Mempool;
 use crate::executor::{TransactionExecutor, calculate_receipts_root};
 use crate::task_dispatcher::{TaskDispatcher, DispatcherConfig, DispatchService};
 
+/// Maximum allowed clock drift (in seconds) for future block timestamps.
+const MAX_BLOCK_CLOCK_DRIFT_SECS: u64 = 30;
+
+/// How often (in blocks) to run receipt pruning.
+const PRUNING_INTERVAL: u64 = 1000;
+
+/// Number of recent blocks whose receipts are kept during pruning.
+const KEEP_RECEIPTS_BLOCKS: u64 = 10000;
+
+/// Maximum gas limit per block
+const BLOCK_GAS_LIMIT: u64 = 30_000_000;
+
+/// Maximum number of transactions per block
+const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
+
 /// Round-robin leader selection (fallback for bootstrap when PoS has no stake data)
 fn is_leader_for_slot(validator_id: &str, slot: u64, validators: &[String]) -> bool {
     if validators.is_empty() { return true; }
@@ -11,7 +26,7 @@ fn is_leader_for_slot(validator_id: &str, slot: u64, validators: &[String]) -> b
 }
 
 use futures::FutureExt;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo, TokenAllocation, NodeRegistry};
 use luxtensor_consensus::fast_finality::FastFinality;
 use luxtensor_consensus::fork_choice::ForkChoice;
@@ -53,7 +68,7 @@ fn parse_address_from_hex(addr_str: &str) -> Result<[u8; 20]> {
     if addr_str.len() != 40 {
         return Err(anyhow::anyhow!("Invalid address length"));
     }
-    let bytes = hex::decode(addr_str)?;
+    let bytes = hex::decode(addr_str).context(format!("Failed to decode hex address: {}", addr_str))?;
     let mut addr = [0u8; 20];
     addr.copy_from_slice(&bytes);
     Ok(addr)
@@ -158,8 +173,10 @@ impl NodeService {
         config.validate()?;
 
         // Create data directory if it doesn't exist
-        std::fs::create_dir_all(&config.node.data_dir)?;
-        std::fs::create_dir_all(&config.storage.db_path)?;
+        std::fs::create_dir_all(&config.node.data_dir)
+            .context(format!("Failed to create data directory: {:?}", config.node.data_dir))?;
+        std::fs::create_dir_all(&config.storage.db_path)
+            .context(format!("Failed to create storage directory: {:?}", config.storage.db_path))?;
 
         // Initialize storage
         info!("📦 Initializing storage...");
@@ -199,8 +216,9 @@ impl NodeService {
         info!("⚖️  Initializing consensus...");
         let consensus_config = ConsensusConfig {
             slot_duration: config.consensus.block_time,
-            min_stake: config.consensus.min_stake.parse().unwrap_or(1_000_000_000_000_000_000),
-            block_reward: 1_000_000_000_000_000_000, // 1 token reward
+            min_stake: config.consensus.min_stake.parse()
+                .expect("min_stake must be a valid u128 integer"),
+            block_reward: luxtensor_core::constants::tokenomics::INITIAL_BLOCK_REWARD,
             epoch_length: config.consensus.epoch_length,
             ..Default::default()
         };
@@ -212,8 +230,8 @@ impl NodeService {
 
         // Initialize mempool
         info!("📝 Initializing transaction mempool...");
-        let mempool = Arc::new(Mempool::new(10000, config.node.chain_id)); // Max 10k transactions
-        info!("  ✓ Mempool initialized (max size: 10000, chain_id: {})", config.node.chain_id);
+        let mempool = Arc::new(Mempool::new(config.mempool.max_size, config.node.chain_id));
+        info!("  ✓ Mempool initialized (max size: {}, chain_id: {})", config.mempool.max_size, config.node.chain_id);
 
         // Check if genesis block exists, create if not
         if storage.get_block_by_height(0)?.is_none() {
@@ -281,7 +299,8 @@ impl NodeService {
         info!("  ✓ Eclipse protection initialized");
 
         // Initialize long-range attack protection
-        let genesis_hash = storage.get_block_by_height(0)?
+        let genesis_hash = storage.get_block_by_height(0)
+            .context("Failed to load genesis block for long-range protection")?
             .map(|b| b.hash())
             .unwrap_or([0u8; 32]);
         let long_range_protection = Arc::new(LongRangeProtection::new(
@@ -310,15 +329,18 @@ impl NodeService {
         info!("  ✓ Fast finality initialized (threshold: 67%)");
 
         // Initialize ForkChoice (GHOST algorithm for canonical chain selection)
-        let genesis_block = storage.get_block_by_height(0)?
+        let genesis_block = storage.get_block_by_height(0)
+            .context("Failed to read genesis block for fork choice initialization")?
             .ok_or_else(|| anyhow::anyhow!("Genesis block required for fork choice"))?;
         let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
         info!("  ✓ Fork choice (GHOST) initialized");
 
         // Initialize Metagraph DB for AI subnet/neuron metadata
         let metagraph_path = config.node.data_dir.join("metagraph");
-        std::fs::create_dir_all(&metagraph_path)?;
-        let metagraph_db = Arc::new(MetagraphDB::open(&metagraph_path)?);
+        std::fs::create_dir_all(&metagraph_path)
+            .context(format!("Failed to create metagraph directory: {:?}", metagraph_path))?;
+        let metagraph_db = Arc::new(MetagraphDB::open(&metagraph_path)
+            .context(format!("Failed to open metagraph DB at {:?}", metagraph_path))?);
         info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
 
         // Initialize AI Task Dispatcher for DePIN workload distribution
@@ -561,7 +583,6 @@ impl NodeService {
                 let eclipse_protection_for_p2p = self.eclipse_protection.clone(); // Eclipse attack protection
                 let long_range_protection_for_p2p = self.long_range_protection.clone(); // Long-range attack protection
                 let liveness_monitor_for_p2p = self.liveness_monitor.clone(); // Liveness monitoring
-                let health_monitor_for_p2p = self.health_monitor.clone(); // Health monitoring
                 let fast_finality_for_p2p = self.fast_finality.clone(); // Fast finality
                 let fork_choice_for_p2p = self.fork_choice.clone(); // Fork choice
                 let mempool_for_p2p = self.mempool.clone(); // Mempool for P2P txs
@@ -639,6 +660,13 @@ impl NodeService {
                                             height, &prev_block.hash()[..4], &block.header.previous_hash[..4]);
                                         continue;
                                     }
+
+                                    // 2b. SECURITY: Validate timestamp monotonicity against parent
+                                    if block.header.timestamp < prev_block.header.timestamp {
+                                        warn!("🚫 Block #{} rejected: timestamp regression ({} < parent {})",
+                                            height, block.header.timestamp, prev_block.header.timestamp);
+                                        continue;
+                                    }
                                 }
 
                                 // 3. Validate block signature (if validator field is set)
@@ -655,9 +683,9 @@ impl NodeService {
                                     if sig_backup.len() >= 64 {
                                         match luxtensor_crypto::recover_address(&header_hash, &sig_backup) {
                                             Ok(recovered_addr) => {
-                                                if recovered_addr != validator_addr {
+                                                if recovered_addr.as_bytes() != validator_addr {
                                                     warn!("🚫 Block #{} rejected: invalid validator signature (recovered {:?} != expected {:?})",
-                                                        height, &recovered_addr[..4], &validator_addr[..4]);
+                                                        height, &recovered_addr.as_bytes()[..4], &validator_addr[..4]);
                                                     continue;
                                                 }
                                             }
@@ -688,9 +716,15 @@ impl NodeService {
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .map(|d| d.as_secs())
                                     .unwrap_or(0);
-                                if block.header.timestamp > now + 30 {
+                                if block.header.timestamp > now + MAX_BLOCK_CLOCK_DRIFT_SECS {
                                     warn!("🚫 Block #{} rejected: timestamp {} is too far in the future (now={})",
                                         height, block.header.timestamp, now);
+                                    continue;
+                                }
+
+                                // 6. Full structural validation via Block::validate()
+                                if let Err(e) = block.validate() {
+                                    warn!("🚫 Block #{} rejected: validate() failed: {}", height, e);
                                     continue;
                                 }
 
@@ -731,7 +765,7 @@ impl NodeService {
                                     {
                                         let mut state = state_db_for_p2p.write();
                                         for (tx_index, tx) in block.transactions.iter().enumerate() {
-                                            if let Err(e) = executor_for_p2p.execute(tx, &mut state, height, block_hash, tx_index) {
+                                            if let Err(e) = executor_for_p2p.execute(tx, &mut state, height, block_hash, tx_index, block.header.timestamp) {
                                                 debug!("P2P block #{} tx {} execution failed: {} (may be expected for already-applied state)", height, tx_index, e);
                                             }
                                         }
@@ -965,10 +999,12 @@ impl NodeService {
             unified_state_for_blocks = Some(rpc_server.unified_state());
 
             let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
+            let rpc_threads = self.config.rpc.threads;
+            let rpc_cors_origins = self.config.rpc.cors_origins.clone();
 
             let task = tokio::spawn(async move {
                 info!("  ✓ RPC server listening on {}", addr);
-                match rpc_server.start(&addr) {
+                match rpc_server.start(&addr, rpc_threads, &rpc_cors_origins) {
                     Ok(_server) => {
                         info!("RPC server started successfully");
                         // Keep server running
@@ -1031,7 +1067,7 @@ impl NodeService {
             let broadcast_tx = self.broadcast_tx.clone();
             let chain_id = self.config.node.chain_id as u64;
             // Get our validator address for PoS leader election
-            let our_validator_address: Option<[u8; 20]> = self.validator_keypair.as_ref().map(|kp| kp.address());
+            let our_validator_address = self.validator_keypair.as_ref().map(|kp| kp.address());
             // 🔧 FIX: Clone keypair for the block production closure
             let validator_keypair_for_block = self.validator_keypair.clone();
             let metagraph_db_clone = self.metagraph_db.clone();
@@ -1177,7 +1213,7 @@ impl NodeService {
         genesis_timestamp: u64,
         broadcast_tx: Option<mpsc::Sender<SwarmCommand>>,
         chain_id: u64,
-        our_validator_address: Option<[u8; 20]>,
+        our_validator_address: Option<luxtensor_crypto::CryptoAddress>,
         // 🔧 FIX: Accept validator keypair for block signing
         validator_keypair_for_block: Option<KeyPair>,
         // 🔧 FIX #9: Atomic height guard shared with P2P handler
@@ -1192,6 +1228,9 @@ impl NodeService {
         let mut slot_counter: u64 = 0;
         // 🔧 FIX: Store keypair reference for repeated use across slots
         let validator_keypair_ref = validator_keypair_for_block;
+        // 🔧 FIX MC-6: Accumulate TX count across the entire epoch instead of
+        // using only the last block's count at the epoch boundary.
+        let mut epoch_tx_accumulator: u64 = 0;
 
         loop {
             tokio::select! {
@@ -1310,8 +1349,12 @@ impl NodeService {
                         &best_height_guard,  // 🔧 FIX #9: Atomic height guard
                         &metagraph_db,   // For reward distribution from metagraph
                         &randao,         // RANDAO mixer for epoch finalization
+                        epoch_tx_accumulator, // 🔧 FIX MC-6: pass accumulated count
                     ).await {
                         Ok(block) => {
+                            // 🔧 FIX MC-6: Accumulate TX count for the whole epoch
+                            epoch_tx_accumulator += block.transactions.len() as u64;
+
                             // Sync UnifiedStateDB so the RPC layer returns fresh state
                             if let Some(ref us) = unified_state {
                                 let state_read = state_db.read();
@@ -1344,10 +1387,7 @@ impl NodeService {
                                 }
                             }
 
-                            // Auto-pruning: clean up old receipts every 1000 blocks
-                            const PRUNING_INTERVAL: u64 = 1000;
-                            const KEEP_RECEIPTS_BLOCKS: u64 = 10000; // Keep last 10K blocks of receipts
-
+                            // Auto-pruning: clean up old receipts periodically
                             if current_height > KEEP_RECEIPTS_BLOCKS && current_height % PRUNING_INTERVAL == 0 {
                                 let prune_before = current_height.saturating_sub(KEEP_RECEIPTS_BLOCKS);
                                 match storage.prune_receipts_before_height(prune_before) {
@@ -1391,6 +1431,8 @@ impl NodeService {
         metagraph_db: &Arc<MetagraphDB>,
         // RANDAO mixer — finalized at each epoch boundary to feed PoS seed
         randao: &Arc<RwLock<RandaoMixer>>,
+        // 🔧 FIX MC-6: Accumulated TX count from prior blocks in this epoch
+        epoch_tx_count: u64,
     ) -> Result<Block> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -1409,19 +1451,25 @@ impl NodeService {
         }
 
         // Get previous block
-        let previous_block = storage.get_block_by_height(height)?
-            .ok_or_else(|| anyhow::anyhow!("Previous block not found"))?;
+        let previous_block = storage.get_block_by_height(height)
+            .context(format!("Failed to read block at height {} from storage", height))?
+            .ok_or_else(|| anyhow::anyhow!("Previous block not found at height {}", height))?;
 
-        // Get transactions from mempool (up to 1000 per block)
-        let transactions = mempool.get_transactions_for_block(1000);
+        // 🔧 FIX MC-2: Capture timestamp once and reuse for both preliminary and final
+        // headers. Previously SystemTime::now() was called twice, which could yield
+        // different seconds across the two headers (race / clock skew).
+        let block_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        // Get transactions from mempool
+        let transactions = mempool.get_transactions_for_block(MAX_TRANSACTIONS_PER_BLOCK);
 
         // Create preliminary header to get block hash
         let preliminary_header = luxtensor_core::BlockHeader {
             version: 1,
             height: new_height,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            timestamp: block_timestamp,
             previous_hash: previous_block.hash(),
             state_root: [0u8; 32], // Will be updated after execution
             txs_root: [0u8; 32],
@@ -1429,22 +1477,27 @@ impl NodeService {
             validator: [0u8; 32],
             signature: vec![0u8; 64],
             gas_used: 0,
-            // 🔧 FIX: Use consistent gas_limit (30M) matching config default
-            gas_limit: 30_000_000,
+            gas_limit: BLOCK_GAS_LIMIT,
             extra_data: vec![],
         };
 
         let preliminary_block = Block::new(preliminary_header.clone(), transactions.clone());
         let block_hash = preliminary_block.hash();
 
-        // Execute transactions
-        let mut state = state_db.write();
+        // Execute transactions against a snapshot (M-4 FIX: no lock held during execution)
+        let accounts_snapshot = {
+            let state = state_db.read();
+            state.snapshot_accounts()
+        };
+
+        // Execute TXs on a temporary StateDB — no lock needed
+        let mut temp_state = StateDB::from_accounts(accounts_snapshot);
         let mut valid_transactions = Vec::new();
         let mut valid_receipts = Vec::new();
         let mut total_gas = 0u64;
 
         for (tx_index, tx) in transactions.into_iter().enumerate() {
-            match executor.execute(&tx, &mut state, new_height, block_hash, tx_index) {
+            match executor.execute(&tx, &mut temp_state, new_height, block_hash, tx_index, block_timestamp) {
                 Ok(receipt) => {
                     total_gas += receipt.gas_used;
                     valid_receipts.push(receipt);
@@ -1469,14 +1522,21 @@ impl NodeService {
         // Calculate receipts root
         let receipts_root = calculate_receipts_root(&valid_receipts);
 
-        // Calculate state root
-        let state_root = state.commit()?;
-
-        // 🔧 FIX: Persist state to RocksDB for crash recovery
-        if let Err(e) = state.flush_to_db(storage.as_ref()) {
-            warn!("Failed to persist state to disk: {} (state is in-memory only)", e);
-        }
-        drop(state); // Release lock
+        // Short write lock: merge results, commit, and flush (<10ms)
+        let state_root = {
+            let mut state = state_db.write();
+            state.merge_accounts(temp_state.snapshot_accounts());
+            let root = state.commit()?;
+            if let Err(e) = state.flush_to_db(storage.as_ref()) {
+                warn!("Failed to persist state to disk: {} (state is in-memory only)", e);
+            }
+            root
+        };
+        // FIXED (M-4): Block production now uses clone-then-commit pattern.
+        // Read lock is held only briefly to snapshot accounts, TX execution runs
+        // against an unlocked temporary StateDB, and write lock is held only for
+        // the final merge + commit + flush (<10ms). RPC reads are no longer blocked
+        // during block production.
 
 
         // Create new block header with signing
@@ -1484,9 +1544,7 @@ impl NodeService {
         let mut unsigned_header = luxtensor_core::BlockHeader {
             version: 1,
             height: new_height,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            timestamp: block_timestamp, // 🔧 FIX MC-2: Reuse single timestamp
             previous_hash: previous_block.hash(),
             state_root,
             txs_root,
@@ -1494,8 +1552,7 @@ impl NodeService {
             validator: [0u8; 32],
             signature: vec![],  // Empty for signing
             gas_used: total_gas,
-            // 🔧 FIX: Use consistent gas_limit (30M) matching config default
-            gas_limit: 30_000_000,
+            gas_limit: BLOCK_GAS_LIMIT,
             extra_data: vec![],
         };
 
@@ -1504,7 +1561,7 @@ impl NodeService {
             // Get public key bytes (padded to 32 bytes for now)
             let address = keypair.address();
             let mut validator = [0u8; 32];
-            validator[12..32].copy_from_slice(&address);
+            validator[12..32].copy_from_slice(address.as_bytes());
 
             // Sign the unsigned header hash
             let header_hash = unsigned_header.hash();
@@ -1540,7 +1597,8 @@ impl NodeService {
         let block = Block::new(header.clone(), valid_transactions.clone());
 
         // Store block
-        storage.store_block(&block)?;
+        storage.store_block(&block)
+            .context(format!("Failed to store block at height {}", header.height))?;
 
         // Update consensus with the new block hash for VRF entropy
         consensus.read().update_last_block_hash(block.hash());
@@ -1596,8 +1654,7 @@ impl NodeService {
 
             // Create utility metrics for this epoch
             // Calculate actual block utilization based on gas used vs gas limit
-            let gas_limit = 30_000_000u64; // Block gas limit
-            let actual_utilization = ((total_gas as f64 / gas_limit as f64) * 100.0) as u32;
+            let actual_utilization = ((total_gas as f64 / BLOCK_GAS_LIMIT as f64) * 100.0) as u32;
 
             // Query metagraph for active validators and neurons
             let metagraph_validators = metagraph_db.get_all_validators().unwrap_or_default();
@@ -1611,7 +1668,8 @@ impl NodeService {
             let utility = UtilityMetrics {
                 active_validators: active_validator_count.max(1) as u64,
                 active_subnets: metagraph_subnets.len().max(1) as u64,
-                epoch_transactions: valid_transactions.len() as u64,
+                // 🔧 FIX MC-6: Use accumulated epoch TX count (prior blocks + this block)
+                epoch_transactions: epoch_tx_count + valid_transactions.len() as u64,
                 epoch_ai_tasks: 0, // Tracked via MetagraphDB AI task store
                 block_utilization: actual_utilization.min(100) as u8,
             };
@@ -1713,6 +1771,7 @@ impl NodeService {
                     debug!("⚠️  RANDAO finalize skipped for epoch {}: {}", epoch_num, e);
                 }
             }
+
         }
 
         // Record block hash for EVM BLOCKHASH opcode (up to 256 recent blocks)

@@ -2,6 +2,52 @@ use crate::{keccak256, CryptoError, Hash, Result};
 use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
 use zeroize::Zeroize;
 
+/// A 20-byte Ethereum-style address derived from a public key.
+/// This provides type safety over raw `[u8; 20]` arrays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CryptoAddress([u8; 20]);
+
+impl CryptoAddress {
+    /// Create a new `CryptoAddress` from a 20-byte array.
+    pub fn new(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+
+    /// Return a reference to the underlying 20-byte array.
+    pub fn as_bytes(&self) -> &[u8; 20] {
+        &self.0
+    }
+
+    /// Consume self and return the underlying 20-byte array.
+    pub fn into_bytes(self) -> [u8; 20] {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for CryptoAddress {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<[u8; 20]> for CryptoAddress {
+    fn from(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<CryptoAddress> for [u8; 20] {
+    fn from(addr: CryptoAddress) -> Self {
+        addr.0
+    }
+}
+
+impl std::fmt::Display for CryptoAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "0x{}", hex::encode(self.0))
+    }
+}
+
 /// Key pair for signing and verification
 ///
 /// # Security
@@ -92,14 +138,14 @@ impl KeyPair {
     }
 
     /// Derive address from public key (Ethereum-style)
-    pub fn address(&self) -> [u8; 20] {
+    pub fn address(&self) -> CryptoAddress {
         let pubkey_bytes = self.public_key.serialize_uncompressed();
         // Skip first byte (0x04 prefix)
         let hash = keccak256(&pubkey_bytes[1..]);
         // Take last 20 bytes
         let mut address = [0u8; 20];
         address.copy_from_slice(&hash[12..]);
-        address
+        CryptoAddress(address)
     }
 }
 
@@ -178,7 +224,7 @@ pub fn recover_public_key(
 /// successfully recovers.  The signature must be exactly 64 bytes (r‖s)
 /// or 65 bytes (r‖s‖v) — if 65 bytes, the last byte is used as the
 /// recovery id directly.
-pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<[u8; 20]> {
+pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAddress> {
     let (sig_bytes, recovery_ids): ([u8; 64], Vec<u8>) = if signature.len() == 65 {
         let mut sig = [0u8; 64];
         sig.copy_from_slice(&signature[..64]);
@@ -206,7 +252,7 @@ pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<[u8; 20]
 }
 
 /// Derive address from public key bytes
-pub fn address_from_public_key(public_key: &[u8]) -> Result<[u8; 20]> {
+pub fn address_from_public_key(public_key: &[u8]) -> Result<CryptoAddress> {
     if public_key.len() != 65 || public_key[0] != 0x04 {
         return Err(CryptoError::InvalidPublicKey);
     }
@@ -218,7 +264,7 @@ pub fn address_from_public_key(public_key: &[u8]) -> Result<[u8; 20]> {
     let mut address = [0u8; 20];
     address.copy_from_slice(&hash[12..]);
 
-    Ok(address)
+    Ok(CryptoAddress(address))
 }
 
 #[cfg(test)]
@@ -229,7 +275,7 @@ mod tests {
     fn test_keypair_generation() {
         let keypair = KeyPair::generate();
         let address = keypair.address();
-        assert_eq!(address.len(), 20);
+        assert_eq!(address.as_bytes().len(), 20);
     }
 
     #[test]
@@ -237,7 +283,7 @@ mod tests {
         let secret = [1u8; 32];
         let keypair = KeyPair::from_secret(&secret).unwrap();
         let address = keypair.address();
-        assert_eq!(address.len(), 20);
+        assert_eq!(address.as_bytes().len(), 20);
     }
 
     #[test]

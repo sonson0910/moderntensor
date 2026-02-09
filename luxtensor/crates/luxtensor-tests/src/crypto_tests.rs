@@ -34,7 +34,7 @@ mod keypair_tests {
         let address = keypair.address();
 
         // Address should be 20 bytes
-        assert_eq!(address.len(), 20);
+        assert_eq!(address.as_bytes().len(), 20);
     }
 
     #[test]
@@ -97,7 +97,7 @@ mod keypair_tests {
 
         let kp = keypair.unwrap();
         let address = kp.address();
-        assert_eq!(address.len(), 20);
+        assert_eq!(address.as_bytes().len(), 20);
     }
 
     #[test]

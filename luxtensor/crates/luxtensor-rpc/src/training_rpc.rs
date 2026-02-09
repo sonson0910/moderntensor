@@ -259,6 +259,7 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
 
     // training_listJobs - List all jobs with optional status filter
     io.add_sync_method("training_listJobs", move |params: Params| {
+        // Empty params = list all jobs; explicit params = filter by status
         let parsed: Vec<String> = params.parse().unwrap_or_default();
         let status_filter = parsed.first().map(|s| s.as_str());
 

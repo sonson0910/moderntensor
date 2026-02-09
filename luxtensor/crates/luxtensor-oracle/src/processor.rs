@@ -160,6 +160,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires zkVM ELF binary and risc0-zkvm setup"]
     async fn test_process_request() {
         let processor = RequestProcessor::new();
 
@@ -183,6 +184,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires zkVM ELF binary and risc0-zkvm setup"]
     async fn test_prover_stats() {
         let processor = RequestProcessor::new();
         processor.initialize(None).await.unwrap();

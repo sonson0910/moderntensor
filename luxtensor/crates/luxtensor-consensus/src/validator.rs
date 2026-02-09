@@ -91,7 +91,8 @@ impl ValidatorSet {
             return Err("Validator stake must be greater than 0");
         }
 
-        self.total_stake += validator.stake;
+        self.total_stake = self.total_stake.checked_add(validator.stake)
+            .ok_or("total_stake overflow when adding validator")?;
         self.validators.insert(validator.address, validator);
         Ok(())
     }
@@ -133,6 +134,11 @@ impl ValidatorSet {
             let slash_amount = amount.min(validator.stake);
             validator.stake = validator.stake.saturating_sub(slash_amount);
             self.total_stake = self.total_stake.saturating_sub(slash_amount);
+            // 🔧 FIX MC-7: Deactivate validator when fully slashed to prevent a
+            // zero-stake "ghost" validator from being selected for consensus.
+            if validator.stake == 0 {
+                validator.active = false;
+            }
             Ok(slash_amount)
         } else {
             Err("Validator not found")

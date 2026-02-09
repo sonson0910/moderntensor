@@ -103,13 +103,15 @@ impl FeeMarket {
         let new_base_fee = if parent_gas_used > target {
             // Block was more than target, increase base fee
             let gas_used_delta = (parent_gas_used - target) as u128;
-            let base_fee_delta = self.base_fee * gas_used_delta / target as u128 / denominator;
+            let base_fee_delta = self.base_fee.checked_mul(gas_used_delta)
+                .unwrap_or(u128::MAX) / target as u128 / denominator;
             // Ensure minimum increase of 1 wei if there's any overflow
             self.base_fee.saturating_add(base_fee_delta.max(1))
         } else {
             // Block was less than target, decrease base fee
             let gas_used_delta = (target - parent_gas_used) as u128;
-            let base_fee_delta = self.base_fee * gas_used_delta / target as u128 / denominator;
+            let base_fee_delta = self.base_fee.checked_mul(gas_used_delta)
+                .unwrap_or(u128::MAX) / target as u128 / denominator;
             self.base_fee.saturating_sub(base_fee_delta)
         };
 

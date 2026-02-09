@@ -82,9 +82,18 @@ impl ProofOfStake {
     }
 
     /// Select a validator for a given slot using VRF-based selection
+    ///
+    /// 🔧 FIX MC-1: Read all shared state (last_block_hash, randao_mix, validator_set)
+    /// atomically before computing the seed. Previously these were read under separate
+    /// locks, allowing a race during epoch transitions where the seed could be computed
+    /// with a stale hash but a fresh RANDAO mix (or vice versa).
     pub fn select_validator(&self, slot: u64) -> Result<Address, ConsensusError> {
-        let seed = self.compute_seed(slot);
+        // Acquire all read guards before any computation to get a consistent snapshot
+        let last_hash = *self.last_block_hash.read();
+        let randao = *self.randao_mix.read();
         let validator_set = self.validator_set.read();
+
+        let seed = self.compute_seed_with(slot, last_hash, randao);
 
         validator_set
             .select_by_seed(&seed)
@@ -117,9 +126,16 @@ impl ProofOfStake {
     /// Without RANDAO, the seed is computed from keccak256(epoch || slot || block_hash)
     /// which a block producer can bias by withholding blocks.
     pub fn compute_seed(&self, slot: u64) -> Hash {
-        let epoch = slot / self.config.epoch_length;
         let last_hash = *self.last_block_hash.read();
         let randao = *self.randao_mix.read();
+        self.compute_seed_with(slot, last_hash, randao)
+    }
+
+    /// Pure computation of seed from pre-read values.
+    /// 🔧 FIX MC-1: Extracted so that `select_validator` can pass already-acquired
+    /// snapshots, avoiding separate lock acquisitions that could race.
+    fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>) -> Hash {
+        let epoch = slot / self.config.epoch_length;
 
         let mut data = Vec::with_capacity(80);
         data.extend_from_slice(&epoch.to_le_bytes());

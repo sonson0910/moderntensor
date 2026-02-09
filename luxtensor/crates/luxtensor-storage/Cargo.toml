@@ -21,7 +21,6 @@ tar = "0.4"
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
-luxtensor-contracts = { path = "../luxtensor-contracts" }
 
 [dev-dependencies]
 tempfile = "3.8"

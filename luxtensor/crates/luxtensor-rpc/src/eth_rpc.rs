@@ -833,7 +833,8 @@ pub fn register_eth_methods(
         let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("0x");
         let value_str = call_obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
 
-        let from_addr = hex_to_address(from_str).unwrap_or([0u8; 20]);
+        let from_addr = hex_to_address(from_str)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params(format!("Invalid 'from' address format: {}", from_str)))?;
         let data = {
             let s = data_hex.strip_prefix("0x").unwrap_or(data_hex);
             hex::decode(s).unwrap_or_default()
@@ -865,7 +866,7 @@ pub fn register_eth_methods(
 
                 if let Some(contract_code) = code {
                     // Create executor seeded with state from UnifiedStateDB
-                    let executor = luxtensor_contracts::EvmExecutor::new();
+                    let executor = luxtensor_contracts::EvmExecutor::default();
                     // Fund the caller and deploy code so the EVM sees the correct state
                     {
                         let state_r = state_for_estimate.read();
@@ -893,6 +894,7 @@ pub fn register_eth_methods(
                         30_000_000, // High gas limit for estimation
                         block_number,
                         timestamp,
+                        1, // gas_price for estimation
                     ) {
                         Ok((_output, gas_used, _logs)) => {
                             // Add 15% safety margin (Geth-style)
@@ -1062,7 +1064,7 @@ pub fn register_eth_methods(
         drop(state_guard);
 
         // Execute call using EvmExecutor seeded with real state
-        let executor = luxtensor_contracts::EvmExecutor::new();
+        let executor = luxtensor_contracts::EvmExecutor::default();
         // Fund caller and deploy target code so the EVM operates on correct state
         executor.fund_account(
             &luxtensor_core::Address::from(from_addr),
@@ -1089,6 +1091,7 @@ pub fn register_eth_methods(
             1_000_000, // Gas limit for eth_call
             block_number,
             timestamp,
+            1, // gas_price for eth_call
         ) {
             Ok((output, _gas_used, _logs)) => {
                 Ok(json!(format!("0x{}", hex::encode(output))))

@@ -5,6 +5,7 @@
 // propose → vote → timelock → execute lifecycle used by `multisig.rs` and
 // `weight_consensus.rs`.
 
+use crate::validator::ValidatorSet;
 use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ pub enum GovernanceError {
     QuorumNotReached(u64, u64, u64),
 
     #[error("proposal {0} was rejected ({1} against >= {2} for)")]
-    Rejected(u64, u64, u64),
+    Rejected(u64, u128, u128),
 
     #[error("proposal {0} is still in timelock (until block {1})")]
     TimelockActive(u64, u64),
@@ -50,6 +51,9 @@ pub enum GovernanceError {
 
     #[error("only the proposer or a supervalidator can cancel")]
     UnauthorizedCancel,
+
+    #[error("too many active proposals ({max} max)")]
+    TooManyActiveProposals { max: usize },
 }
 
 pub type Result<T> = std::result::Result<T, GovernanceError>;
@@ -95,7 +99,7 @@ pub enum ProposalStatus {
 pub struct Vote {
     pub voter: Address,
     /// Stake-weighted voting power at the time of voting.
-    pub power: u64,
+    pub power: u128,
     pub approve: bool,
     pub cast_at_block: u64,
 }
@@ -117,9 +121,9 @@ pub struct Proposal {
     pub execute_after: u64,
     /// Absolute deadline — proposal expires if not executed by this height.
     pub expires_at: u64,
-    pub votes_for: u64,
-    pub votes_against: u64,
-    pub total_eligible_power: u64,
+    pub votes_for: u128,
+    pub votes_against: u128,
+    pub total_eligible_power: u128,
     pub votes: Vec<Vote>,
     /// Optional execution tx hash (set after execution).
     pub execution_hash: Option<Hash>,
@@ -131,7 +135,7 @@ pub struct Proposal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceConfig {
     /// Minimum stake (in base units) required to submit a proposal.
-    pub min_proposal_stake: u64,
+    pub min_proposal_stake: u128,
     /// Voting period length in blocks.  Default: 50_400 (~7 days @ 12 s).
     pub voting_period_blocks: u64,
     /// Normal timelock in blocks.  Default: 14_400 (~48 h).
@@ -193,11 +197,11 @@ impl GovernanceModule {
     pub fn create_proposal(
         &self,
         proposer: Address,
-        proposer_stake: u64,
+        proposer_stake: u128,
         title: String,
         description: String,
         proposal_type: ProposalType,
-        total_eligible_power: u64,
+        total_eligible_power: u128,
         current_block: u64,
     ) -> Result<u64> {
         if proposer_stake < self.config.min_proposal_stake {
@@ -210,7 +214,7 @@ impl GovernanceModule {
         const MAX_ACTIVE_PROPOSALS: usize = 100;
         let active_count = self.active_proposal_count();
         if active_count >= MAX_ACTIVE_PROPOSALS {
-            return Err(GovernanceError::InsufficientStake(proposer)); // reuse error — too many proposals
+            return Err(GovernanceError::TooManyActiveProposals { max: MAX_ACTIVE_PROPOSALS });
         }
 
         let mut next = self.next_id.write();
@@ -250,31 +254,41 @@ impl GovernanceModule {
 
     /// Cast a vote on a proposal.
     ///
-    /// `voting_power` is the voter's staked balance at vote time.
+    /// The voter's stake is looked up from the provided `ValidatorSet` to
+    /// prevent callers from passing inflated voting power.
     ///
     /// # Security
-    /// The caller MUST look up `voting_power` from the actual `ValidatorSet`.
-    /// Passing unverified values allows governance takeover.
-    /// A future version should accept `&ValidatorSet` directly.
+    /// This method never trusts caller-supplied power values. The stake is
+    /// read directly from the authoritative `ValidatorSet`. Voters with
+    /// zero stake (non-validators) are rejected.
     pub fn vote(
         &self,
         proposal_id: u64,
         voter: Address,
-        voting_power: u64,
+        validator_set: &ValidatorSet,
         approve: bool,
         current_block: u64,
     ) -> Result<()> {
-        // SECURITY: Reject zero voting power — prevents spam votes from
-        // non-validators. The caller should not pass 0.
+        // SECURITY: Look up actual stake from ValidatorSet — never trust
+        // caller-supplied voting power (H-2 governance takeover fix).
+        let voting_power = validator_set
+            .get_validator(&voter)
+            .map(|v| v.stake)
+            .unwrap_or(0);
+
         if voting_power == 0 {
-            return Err(GovernanceError::InsufficientStake(voter));
+            return Err(GovernanceError::NotAValidator(voter));
         }
-        // Check duplicate
-        {
-            let voted = self.voted.read();
-            if voted.contains_key(&(voter, proposal_id)) {
-                return Err(GovernanceError::AlreadyVoted(voter, proposal_id));
-            }
+
+        // H-6 FIX: Acquire voted as a *write* guard up-front and hold it
+        // for the entire method.  This eliminates the TOCTOU window where
+        // two concurrent vote() calls from the same voter could both pass
+        // the duplicate check.
+        let mut voted = self.voted.write();
+
+        // Check duplicate using the write guard
+        if voted.contains_key(&(voter, proposal_id)) {
+            return Err(GovernanceError::AlreadyVoted(voter, proposal_id));
         }
 
         let mut proposals = self.proposals.write();
@@ -291,9 +305,9 @@ impl GovernanceModule {
 
         // Record vote
         if approve {
-            proposal.votes_for += voting_power;
+            proposal.votes_for = proposal.votes_for.saturating_add(voting_power);
         } else {
-            proposal.votes_against += voting_power;
+            proposal.votes_against = proposal.votes_against.saturating_add(voting_power);
         }
 
         proposal.votes.push(Vote {
@@ -303,8 +317,8 @@ impl GovernanceModule {
             cast_at_block: current_block,
         });
 
-        drop(proposals);
-        self.voted.write().insert((voter, proposal_id), true);
+        // Insert into voted using the same write guard — no TOCTOU gap
+        voted.insert((voter, proposal_id), true);
         Ok(())
     }
 
@@ -324,9 +338,13 @@ impl GovernanceModule {
             return Err(GovernanceError::VotingNotEnded(proposal_id));
         }
 
-        let total_votes = proposal.votes_for + proposal.votes_against;
-        let quorum_required = proposal.total_eligible_power * self.config.quorum_bps / 10_000;
-        let approval_required = total_votes * self.config.approval_threshold_bps / 10_000;
+        let total_votes = proposal.votes_for.saturating_add(proposal.votes_against);
+        let quorum_required = proposal.total_eligible_power
+            .checked_mul(self.config.quorum_bps as u128)
+            .unwrap_or(u128::MAX) / 10_000;
+        let approval_required = total_votes
+            .checked_mul(self.config.approval_threshold_bps as u128)
+            .unwrap_or(u128::MAX) / 10_000;
 
         if total_votes < quorum_required {
             proposal.status = ProposalStatus::Expired;
@@ -466,6 +484,7 @@ impl GovernanceModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validator::Validator;
 
     fn addr(b: u8) -> Address {
         let mut a = [0u8; 20];
@@ -491,6 +510,15 @@ mod tests {
         })
     }
 
+    /// Build a ValidatorSet with the given (address_byte, stake) pairs.
+    fn make_validators(entries: &[(u8, u128)]) -> ValidatorSet {
+        let mut vs = ValidatorSet::new();
+        for &(b, stake) in entries {
+            vs.add_validator(Validator::new(addr(b), stake, [b; 32])).unwrap();
+        }
+        vs
+    }
+
     #[test]
     fn test_full_lifecycle() {
         let gov = module();
@@ -514,11 +542,12 @@ mod tests {
         assert_eq!(p.status, ProposalStatus::Active);
 
         // Vote with >33% quorum and >50% approval
-        gov.vote(id, addr(2), 40_000, true, 50).unwrap();
-        gov.vote(id, addr(3), 10_000, false, 60).unwrap();
+        let vs = make_validators(&[(2, 40_000), (3, 10_000)]);
+        gov.vote(id, addr(2), &vs, true, 50).unwrap();
+        gov.vote(id, addr(3), &vs, false, 60).unwrap();
 
         // Cannot vote twice
-        assert!(gov.vote(id, addr(2), 40_000, true, 70).is_err());
+        assert!(gov.vote(id, addr(2), &vs, true, 70).is_err());
 
         // Finalize after deadline (block 110 > voting_deadline 110)
         let status = gov.finalize_voting(id, 111).unwrap();
@@ -564,7 +593,8 @@ mod tests {
             .unwrap();
 
         // Only 5% of eligible power votes
-        gov.vote(id, addr(2), 5_000, true, 50).unwrap();
+        let vs = make_validators(&[(2, 5_000)]);
+        gov.vote(id, addr(2), &vs, true, 50).unwrap();
 
         let status = gov.finalize_voting(id, 111).unwrap();
         assert_eq!(status, ProposalStatus::Expired);
@@ -588,8 +618,9 @@ mod tests {
             )
             .unwrap();
 
-        gov.vote(id, addr(2), 20_000, false, 50).unwrap();
-        gov.vote(id, addr(3), 15_000, true, 60).unwrap();
+        let vs = make_validators(&[(2, 20_000), (3, 15_000)]);
+        gov.vote(id, addr(2), &vs, false, 50).unwrap();
+        gov.vote(id, addr(3), &vs, true, 60).unwrap();
 
         let status = gov.finalize_voting(id, 111).unwrap();
         assert_eq!(status, ProposalStatus::Rejected);

@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use crate::{Hash, Address, Result};
+use crate::{Address, Hash, Result};
 use luxtensor_crypto::keccak256;
+use serde::{Deserialize, Serialize};
 
 /// Transaction structure with chain_id for replay protection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +98,7 @@ impl Transaction {
 
     /// Verify transaction signature
     pub fn verify_signature(&self) -> Result<()> {
-        use luxtensor_crypto::{verify_signature, address_from_public_key, recover_public_key};
+        use luxtensor_crypto::{address_from_public_key, recover_public_key, verify_signature};
 
         // Get signing message
         let message = self.signing_message();
@@ -114,11 +114,11 @@ impl Transaction {
             .map_err(|_| crate::CoreError::InvalidSignature)?;
 
         // Derive address from public key
-        let recovered_address = address_from_public_key(&public_key)
-            .map_err(|_| crate::CoreError::InvalidSignature)?;
+        let recovered_address =
+            address_from_public_key(&public_key).map_err(|_| crate::CoreError::InvalidSignature)?;
 
         // Verify the recovered address matches the from address
-        if recovered_address != *self.from.as_bytes() {
+        if recovered_address.as_bytes() != self.from.as_bytes() {
             return Err(crate::CoreError::InvalidSignature);
         }
 

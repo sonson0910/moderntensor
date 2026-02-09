@@ -95,7 +95,7 @@ impl ContractExecutor {
         Self {
             contracts: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(ContractState::new())),
-            evm: Arc::new(RwLock::new(EvmExecutor::new())),
+            evm: Arc::new(RwLock::new(EvmExecutor::default())),
             state_db: None,
         }
     }
@@ -109,7 +109,7 @@ impl ContractExecutor {
         Self {
             contracts: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(ContractState::new())),
-            evm: Arc::new(RwLock::new(EvmExecutor::new())),
+            evm: Arc::new(RwLock::new(EvmExecutor::default())),
             state_db: Some(state_db),
         }
     }
@@ -255,7 +255,7 @@ impl ContractExecutor {
         // Execute deployment with EVM
         let evm = self.evm.read();
         let (returned_address, gas_used, evm_logs, _deployed_code) =
-            evm.deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number)?;
+            evm.deploy(deployer, code.0.clone(), value, gas_limit, block_number, block_number, 1)?;
 
         // Convert structured REVM logs to executor Log entries
         let logs = Self::convert_evm_logs(&contract_address, &evm_logs);
@@ -319,6 +319,7 @@ impl ContractExecutor {
             context.gas_limit,
             context.block_number,
             context.timestamp,
+            context.gas_price,
         )?;
 
         // Convert structured REVM logs to executor Log entries
@@ -368,6 +369,7 @@ impl ContractExecutor {
             context.gas_limit,
             context.block_number,
             context.timestamp,
+            context.gas_price,
         )?;
 
         // Convert structured REVM logs (should be empty for static calls)

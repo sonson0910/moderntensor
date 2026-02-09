@@ -138,7 +138,7 @@ pub fn verify_caller_signature(
         ))?;
 
     // Compare addresses
-    if recovered_address != *claimed_address.as_bytes() {
+    if recovered_address.as_bytes() != claimed_address.as_bytes() {
         return Err(jsonrpc_core::Error::invalid_params(
             "Signature does not match claimed address"
         ));

@@ -24,6 +24,13 @@ const CF_EVM_ACCOUNTS: &str = "evm_accounts";
 const CF_EVM_STORAGE: &str = "evm_storage";
 // Fork choice persistence
 const CF_FORK_CHOICE: &str = "fork_choice";
+// Metadata column family for schema versioning
+const CF_METADATA: &str = "metadata";
+
+/// Key used to store schema version in the metadata column family
+const SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
+/// Current schema version — increment when making incompatible DB changes
+const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// Blockchain database using RocksDB
 pub struct BlockchainDB {
@@ -64,9 +71,40 @@ impl BlockchainDB {
             ColumnFamilyDescriptor::new(CF_EVM_STORAGE, Options::default()),
             // Fork choice metadata
             ColumnFamilyDescriptor::new(CF_FORK_CHOICE, Options::default()),
+            // Schema versioning metadata
+            ColumnFamilyDescriptor::new(CF_METADATA, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;
+
+        // --- Schema version check / initialization ---
+        {
+            let cf_meta = db
+                .cf_handle(CF_METADATA)
+                .ok_or_else(|| StorageError::DatabaseError("CF_METADATA not found".to_string()))?;
+
+            match db.get_cf(cf_meta, SCHEMA_VERSION_KEY)? {
+                Some(bytes) => {
+                    let raw = <[u8; 4]>::try_from(bytes.as_ref())
+                        .map_err(|_| {
+                            StorageError::DatabaseError(
+                                "Invalid schema_version value in DB".to_string(),
+                            )
+                        })?;
+                    let found = u32::from_le_bytes(raw);
+                    if found != CURRENT_SCHEMA_VERSION {
+                        return Err(StorageError::SchemaMismatch {
+                            found,
+                            expected: CURRENT_SCHEMA_VERSION,
+                        });
+                    }
+                }
+                None => {
+                    // Fresh database — write current schema version
+                    db.put_cf(cf_meta, SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION.to_le_bytes())?;
+                }
+            }
+        }
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -74,6 +112,30 @@ impl BlockchainDB {
     /// Get the inner DB reference for state database
     pub fn inner_db(&self) -> Arc<DB> {
         self.db.clone()
+    }
+
+    /// Returns the schema version stored in this database.
+    pub fn schema_version(&self) -> Result<u32> {
+        let cf_meta = self
+            .db
+            .cf_handle(CF_METADATA)
+            .ok_or_else(|| StorageError::DatabaseError("CF_METADATA not found".to_string()))?;
+
+        match self.db.get_cf(cf_meta, SCHEMA_VERSION_KEY)? {
+            Some(bytes) => {
+                let raw = <[u8; 4]>::try_from(bytes.as_ref())
+                    .map_err(|_| {
+                        StorageError::DatabaseError(
+                            "Invalid schema_version value in DB".to_string(),
+                        )
+                    })?;
+                let version = u32::from_le_bytes(raw);
+                Ok(version)
+            }
+            None => Err(StorageError::DatabaseError(
+                "schema_version key missing from metadata".to_string(),
+            )),
+        }
     }
 
     /// Store a block and index its transactions
@@ -935,12 +997,12 @@ impl BlockchainDB {
 // ============================================================================
 // Implement EvmStateStore trait so BlockchainDB can persist EVM state
 // ============================================================================
-impl luxtensor_contracts::EvmStateStore for BlockchainDB {
-    fn load_all_evm_accounts(&self) -> std::result::Result<Vec<([u8; 20], luxtensor_contracts::EvmAccountRecord)>, String> {
+impl crate::evm_store::EvmStateStore for BlockchainDB {
+    fn load_all_evm_accounts(&self) -> std::result::Result<Vec<([u8; 20], crate::evm_store::EvmAccountRecord)>, String> {
         let raw = self.get_all_evm_accounts().map_err(|e| e.to_string())?;
         let mut result = Vec::with_capacity(raw.len());
         for (addr, data) in raw {
-            let record: luxtensor_contracts::EvmAccountRecord =
+            let record: crate::evm_store::EvmAccountRecord =
                 bincode::deserialize(&data).map_err(|e| e.to_string())?;
             result.push((addr, record));
         }

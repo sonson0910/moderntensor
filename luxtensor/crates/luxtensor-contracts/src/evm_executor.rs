@@ -27,6 +27,8 @@ pub struct EvmLog {
 
 /// EVM-based contract executor
 pub struct EvmExecutor {
+    /// Chain ID for EIP-155 cross-chain replay protection.
+    chain_id: u64,
     /// Account storage (address -> AccountInfo)
     accounts: Arc<RwLock<HashMap<RevmAddress, AccountInfo>>>,
     /// Contract storage (address -> key -> value)
@@ -36,10 +38,18 @@ pub struct EvmExecutor {
     block_hashes: Arc<RwLock<HashMap<u64, [u8; 32]>>>,
 }
 
+impl Default for EvmExecutor {
+    /// Default executor uses LuxTensor Mainnet chain_id (8899)
+    fn default() -> Self {
+        Self::new(8899) // LuxTensor Mainnet
+    }
+}
+
 impl EvmExecutor {
-    /// Create new EVM executor
-    pub fn new() -> Self {
+    /// Create new EVM executor with the given chain ID for EIP-155 replay protection.
+    pub fn new(chain_id: u64) -> Self {
         Self {
+            chain_id,
             accounts: Arc::new(RwLock::new(HashMap::new())),
             storage: Arc::new(RwLock::new(HashMap::new())),
             block_hashes: Arc::new(RwLock::new(HashMap::new())),
@@ -68,6 +78,7 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
+        gas_price: u128,
     ) -> Result<(Vec<u8>, u64, Vec<EvmLog>, Vec<u8>), ContractError> {
         let deployer_addr = address_to_revm(&deployer);
 
@@ -88,11 +99,11 @@ impl EvmExecutor {
                 tx.data = Bytes::from(code);
                 tx.value = U256::from(value);
                 tx.gas_limit = gas_limit;
-                tx.gas_price = U256::from(1);
+                tx.gas_price = U256::from(gas_price);
             })
             .modify_cfg_env(|cfg| {
                 // SECURITY: Set chain_id for cross-chain replay protection (EIP-155)
-                cfg.chain_id = 8899; // LuxTensor Mainnet
+                cfg.chain_id = self.chain_id;
             })
             .build();
 
@@ -168,6 +179,7 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
+        gas_price: u128,
     ) -> Result<(Vec<u8>, u64, Vec<EvmLog>), ContractError> {
         let caller_addr = address_to_revm(&caller);
         let contract_addr = RevmAddress::from_slice(&contract_address.0);
@@ -208,11 +220,11 @@ impl EvmExecutor {
                 tx.data = Bytes::from(input_data);
                 tx.value = U256::from(value);
                 tx.gas_limit = gas_limit;
-                tx.gas_price = U256::from(1);
+                tx.gas_price = U256::from(gas_price);
             })
             .modify_cfg_env(|cfg| {
                 // SECURITY: Set chain_id for cross-chain replay protection (EIP-155)
-                cfg.chain_id = 8899; // LuxTensor Mainnet
+                cfg.chain_id = self.chain_id;
             })
             .build();
 
@@ -274,6 +286,13 @@ impl EvmExecutor {
     }
 
     /// Fund an account with specific balance
+    ///
+    /// # Security
+    /// This is an internal method used to sync on-chain balances into the EVM
+    /// state before execution. It MUST NOT be exposed to external callers or
+    /// used to create funds out of thin air. Only call with balances already
+    /// validated against the canonical StateDB.
+    #[doc(hidden)]
     pub fn fund_account(&self, address: &Address, amount: u128) {
         let addr = address_to_revm(address);
         let mut accounts = self.accounts.write();
@@ -351,12 +370,17 @@ impl EvmExecutor {
         gas_limit: u64,
         block_number: u64,
         timestamp: u64,
+        gas_price: u128,
     ) -> Result<(Vec<u8>, u64, Vec<EvmLog>), ContractError> {
         let caller_addr = address_to_revm(&caller);
         let contract_addr = RevmAddress::from_slice(&contract_address.0);
 
-        // Create a temporary clone to avoid mutating the real state
-        let temp_executor = self.clone();
+        // SECURITY (C-10): Deep-clone so the temporary executor owns
+        // independent copies of accounts/storage/block_hashes.  A plain
+        // `clone()` only clones the Arc pointers, so writes on the temp
+        // executor (ensure_account, fund caller, set code) would pollute
+        // the real persistent state.
+        let temp_executor = self.deep_clone();
 
         // Ensure caller account exists in the temporary state
         temp_executor.ensure_account(&caller_addr);
@@ -399,10 +423,10 @@ impl EvmExecutor {
                 tx.data = Bytes::from(input_data);
                 tx.value = U256::ZERO; // Static calls cannot send value
                 tx.gas_limit = gas_limit;
-                tx.gas_price = U256::from(1);
+                tx.gas_price = U256::from(gas_price);
             })
             .modify_cfg_env(|cfg| {
-                cfg.chain_id = 8899;
+                cfg.chain_id = self.chain_id;
             })
             .build();
 
@@ -461,9 +485,35 @@ impl EvmExecutor {
 impl Clone for EvmExecutor {
     fn clone(&self) -> Self {
         Self {
+            chain_id: self.chain_id,
             accounts: Arc::clone(&self.accounts),
             storage: Arc::clone(&self.storage),
             block_hashes: Arc::clone(&self.block_hashes),
+        }
+    }
+}
+
+impl EvmExecutor {
+    /// Create an independent deep copy of this executor.
+    ///
+    /// Unlike `clone()` which shares the underlying state via `Arc`,
+    /// this method copies all inner `HashMap` data into **new**
+    /// `Arc<RwLock<…>>` wrappers, so mutations on the copy never
+    /// affect the original. Used by `static_call()` to prevent
+    /// read-only queries from polluting persistent state (C-10).
+    /// 🔧 FIX MC-3: Acquire all three read guards before cloning to get an
+    /// atomic snapshot. Previously each `.read().clone()` was independent,
+    /// so a concurrent write between the first and third clone could produce
+    /// an internally-inconsistent copy.
+    fn deep_clone(&self) -> Self {
+        let accounts = self.accounts.read();
+        let storage = self.storage.read();
+        let block_hashes = self.block_hashes.read();
+        Self {
+            chain_id: self.chain_id,
+            accounts: Arc::new(RwLock::new(accounts.clone())),
+            storage: Arc::new(RwLock::new(storage.clone())),
+            block_hashes: Arc::new(RwLock::new(block_hashes.clone())),
         }
     }
 }
@@ -545,16 +595,8 @@ fn address_to_revm(address: &Address) -> RevmAddress {
 // Contract storage, account balances, and nonces survive node restarts.
 // Uses a write-back cache: in-memory reads, periodic flush to RocksDB.
 
-use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
-
-/// Serializable EVM account record for RocksDB storage
-#[derive(SerdeSerialize, SerdeDeserialize, Debug, Clone)]
-pub struct EvmAccountRecord {
-    pub balance: [u8; 32], // U256 as big-endian bytes (to survive serde)
-    pub nonce: u64,
-    pub code_hash: [u8; 32],
-    pub code: Option<Vec<u8>>,
-}
+// Re-export EvmAccountRecord from the storage crate (canonical definition)
+pub use luxtensor_storage::evm_store::EvmAccountRecord;
 
 /// Persistent EVM executor that flushes state to RocksDB after each block.
 /// Thread-safe: inner EvmExecutor uses Arc<RwLock<...>>.
@@ -566,9 +608,9 @@ pub struct PersistentEvmExecutor {
 }
 
 impl PersistentEvmExecutor {
-    /// Create a new PersistentEvmExecutor (empty state)
-    pub fn new() -> Self {
-        Self { executor: EvmExecutor::new(), dirty: Arc::new(RwLock::new(false)) }
+    /// Create a new PersistentEvmExecutor with the given chain ID.
+    pub fn new(chain_id: u64) -> Self {
+        Self { executor: EvmExecutor::new(chain_id), dirty: Arc::new(RwLock::new(false)) }
     }
 
     /// Load EVM state from RocksDB on startup.
@@ -611,7 +653,10 @@ impl PersistentEvmExecutor {
     /// Flush dirty EVM state to RocksDB (called after each block execution).
     /// Extracts current in-memory state and writes it atomically.
     pub fn flush_to_db(&self, db: &dyn EvmStateStore) -> Result<(), String> {
-        if !*self.dirty.read() {
+        // SECURITY: Acquire write lock on dirty flag from the start to prevent
+        // TOCTOU race between checking and clearing the flag.
+        let mut dirty_guard = self.dirty.write();
+        if !*dirty_guard {
             return Ok(());
         }
 
@@ -649,7 +694,7 @@ impl PersistentEvmExecutor {
 
         db.flush_evm_state(&account_records, &storage_entries, &[])?;
 
-        *self.dirty.write() = false;
+        *dirty_guard = false;
         debug!(
             "Flushed {} EVM accounts and {} storage slots to DB",
             account_records.len(),
@@ -677,24 +722,12 @@ impl Clone for PersistentEvmExecutor {
 
 impl Default for PersistentEvmExecutor {
     fn default() -> Self {
-        Self::new()
+        Self::new(8899) // LuxTensor Mainnet
     }
 }
 
-/// Trait for EVM state persistence (implemented by BlockchainDB)
-pub trait EvmStateStore: Send + Sync {
-    /// Load all EVM accounts from persistent storage
-    fn load_all_evm_accounts(&self) -> Result<Vec<([u8; 20], EvmAccountRecord)>, String>;
-    /// Load all EVM storage slots from persistent storage
-    fn load_all_evm_storage(&self) -> Result<Vec<([u8; 20], [u8; 32], [u8; 32])>, String>;
-    /// Flush EVM state to persistent storage atomically
-    fn flush_evm_state(
-        &self,
-        accounts: &[([u8; 20], Vec<u8>)],
-        storage: &[([u8; 20], [u8; 32], [u8; 32])],
-        deleted: &[[u8; 20]],
-    ) -> Result<(), String>;
-}
+// Re-export EvmStateStore from the storage crate (canonical definition)
+pub use luxtensor_storage::evm_store::EvmStateStore;
 
 #[cfg(test)]
 mod tests {
@@ -702,19 +735,19 @@ mod tests {
 
     #[test]
     fn test_evm_executor_creation() {
-        let executor = EvmExecutor::new();
+        let executor = EvmExecutor::new(8899);
         assert_eq!(executor.accounts.read().len(), 0);
     }
 
     #[test]
     fn test_simple_deployment() {
-        let executor = EvmExecutor::new();
+        let executor = EvmExecutor::new(8899);
         let deployer = Address::from([1u8; 20]);
 
         // Simple contract bytecode (just returns)
         let code = vec![0x60, 0x00, 0x60, 0x00, 0xf3]; // PUSH1 0, PUSH1 0, RETURN
 
-        let result = executor.deploy(deployer, code, 0, 1_000_000, 1, 1000);
+        let result = executor.deploy(deployer, code, 0, 1_000_000, 1, 1000, 1);
         // May fail without proper bytecode, but should not panic
         assert!(result.is_ok() || result.is_err());
     }

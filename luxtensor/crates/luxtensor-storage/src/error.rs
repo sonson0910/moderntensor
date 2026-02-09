@@ -4,25 +4,28 @@ use thiserror::Error;
 pub enum StorageError {
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Block not found: {0:?}")]
     BlockNotFound([u8; 32]),
-    
+
     #[error("Transaction not found: {0:?}")]
     TransactionNotFound([u8; 32]),
-    
+
     #[error("Account not found: {0:?}")]
     AccountNotFound([u8; 20]),
-    
+
     #[error("Invalid trie node")]
     InvalidTrieNode,
-    
+
     #[error("Invalid proof")]
     InvalidProof,
-    
+
+    #[error("Schema version mismatch: database has version {found}, but expected version {expected}. A migration is required.")]
+    SchemaMismatch { found: u32, expected: u32 },
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
