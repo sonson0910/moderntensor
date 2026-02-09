@@ -88,9 +88,9 @@
 
 | Metric | Value |
 |--------|-------|
-| Block Time | 6 seconds |
-| TPS | 1,000+ |
-| Finality | ~12 seconds |
+| Block Time | 12 seconds |
+| TPS | 1,000–5,000 |
+| Finality | ~24 seconds |
 | Code Lines | 60,000+ |
 | AI Precompiles | 7 (0x22-0x28) |
 | Status | **~95% Complete** |
@@ -136,7 +136,7 @@
 | **Vector Search** | HNSW O(log N) | ❌ None |
 | Burn Mechanisms | 4 types | None |
 | Entry Barrier | 0 MDT | 1000+ TAO |
-| TPS | 1,000+ | ~100 |
+| TPS | 1,000–5,000 | ~100 |
 
 **Result: 72-99% less inflation with superior technology**
 
@@ -167,7 +167,7 @@
 
 ### Completed ✅ (~95% Complete)
 
-- [x] Custom L1 Blockchain (Rust) - 60,000+ lines
+- [x] Custom L1 Blockchain (Rust) - 63,000+ lines across Rust blockchain + Python SDK
 - [x] PoS Consensus Engine + Proof of Intelligence
 - [x] **Native AI Primitives (0x22-0x28)**
 - [x] **HNSW Semantic Layer** - O(log N) vector search
@@ -183,7 +183,7 @@
 ### Upcoming 📅
 
 - Mainnet: Q2 2026
-- TGE: May 2026
+- TGE: Q3 2026
 - First 3 Subnets: June 2026
 
 ---

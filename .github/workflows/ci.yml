@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Rust: build & test the Luxtensor blockchain
+  # ──────────────────────────────────────────────
+  rust:
+    name: Rust – build & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: luxtensor
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            luxtensor/target
+          key: rust-${{ runner.os }}-${{ hashFiles('luxtensor/Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Test
+        run: cargo test --workspace
+
+  # ──────────────────────────────────────────────
+  # Rust lint: clippy + fmt
+  # ──────────────────────────────────────────────
+  rust-lint:
+    name: Rust – clippy & fmt
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: luxtensor
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            luxtensor/target
+          key: rust-${{ runner.os }}-${{ hashFiles('luxtensor/Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  # ──────────────────────────────────────────────
+  # Python SDK: install, lint, test
+  # ──────────────────────────────────────────────
+  python:
+    name: Python SDK – test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install SDK in editable mode with dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  # ──────────────────────────────────────────────
+  # Python lint: ruff
+  # ──────────────────────────────────────────────
+  python-lint:
+    name: Python – ruff & black
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black
+
+      - name: Ruff check
+        run: ruff check sdk/ tests/
+
+      - name: Black check
+        run: black --check sdk/ tests/

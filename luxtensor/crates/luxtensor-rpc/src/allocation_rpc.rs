@@ -67,7 +67,7 @@ pub fn register_allocation_methods(
         let current_timestamp = p.timestamp.unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs()
         });
 
@@ -89,7 +89,7 @@ pub fn register_allocation_methods(
         let current_timestamp = p.timestamp.unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs()
         });
 
@@ -111,7 +111,7 @@ pub fn register_allocation_methods(
         let current_timestamp = p.timestamp.unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs()
         });
 

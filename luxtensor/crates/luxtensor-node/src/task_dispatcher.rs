@@ -82,17 +82,9 @@ pub enum TaskDispatchMessage {
         deadline: u64,
     },
     /// Miner claims a task
-    ClaimTask {
-        task_id: [u8; 32],
-        miner: [u8; 20],
-        signature: Vec<u8>,
-    },
+    ClaimTask { task_id: [u8; 32], miner: [u8; 20], signature: Vec<u8> },
     /// Task assigned to miner (from dispatcher)
-    TaskAssigned {
-        task_id: [u8; 32],
-        miner: [u8; 20],
-        deadline: u64,
-    },
+    TaskAssigned { task_id: [u8; 32], miner: [u8; 20], deadline: u64 },
     /// Miner submits result
     SubmitResult {
         task_id: [u8; 32],
@@ -101,11 +93,7 @@ pub enum TaskDispatchMessage {
         proof: Option<Vec<u8>>,
     },
     /// Task completed confirmation
-    TaskCompleted {
-        task_id: [u8; 32],
-        worker: [u8; 20],
-        reward: u128,
-    },
+    TaskCompleted { task_id: [u8; 32], worker: [u8; 20], reward: u128 },
 }
 
 // ============================================================
@@ -180,18 +168,18 @@ impl TaskDispatcher {
     }
 
     /// Convenience method to enqueue with just ID (creates minimal task info)
-    pub fn enqueue_task_id(&self, task_id: [u8; 32], model_hash: String, input_hash: [u8; 32], reward: u128) {
+    pub fn enqueue_task_id(
+        &self,
+        task_id: [u8; 32],
+        model_hash: String,
+        input_hash: [u8; 32],
+        reward: u128,
+    ) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.enqueue_task(PendingTask {
-            task_id,
-            model_hash,
-            input_hash,
-            reward,
-            created_at: now,
-        });
+        self.enqueue_task(PendingTask { task_id, model_hash, input_hash, reward, created_at: now });
     }
 
     /// Register or update a miner
@@ -264,7 +252,7 @@ impl TaskDispatcher {
         // Create assignment
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
         let assignment = TaskAssignment {
@@ -289,11 +277,7 @@ impl TaskDispatcher {
             assignments.insert(task_id, assignment.clone());
         }
 
-        info!(
-            "Task assigned: 0x{} -> 0x{}",
-            hex::encode(&task_id[..8]),
-            hex::encode(&miner[..8])
-        );
+        info!("Task assigned: 0x{} -> 0x{}", hex::encode(&task_id[..8]), hex::encode(&miner[..8]));
 
         Ok(assignment)
     }
@@ -333,8 +317,7 @@ impl TaskDispatcher {
             if let Some(info) = miners.get_mut(&assignment.assigned_to) {
                 info.current_tasks = info.current_tasks.saturating_sub(1);
                 // Update average execution time
-                info.avg_execution_time =
-                    (info.avg_execution_time + execution_time_ms) / 2;
+                info.avg_execution_time = (info.avg_execution_time + execution_time_ms) / 2;
             }
         }
 
@@ -353,16 +336,12 @@ impl TaskDispatcher {
     pub fn check_timeouts(&self) -> Vec<[u8; 32]> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
         let timed_out: Vec<_> = {
             let assignments = self.assignments.read();
-            assignments
-                .iter()
-                .filter(|(_, a)| a.deadline < now)
-                .map(|(id, _)| *id)
-                .collect()
+            assignments.iter().filter(|(_, a)| a.deadline < now).map(|(id, _)| *id).collect()
         };
 
         for task_id in &timed_out {
@@ -451,7 +430,7 @@ impl TaskDispatcher {
     ) -> TaskDispatchMessage {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
         TaskDispatchMessage::NewTask {
@@ -479,11 +458,7 @@ pub struct DispatchService {
 impl DispatchService {
     /// Create a new dispatch service without P2P integration
     pub fn new(dispatcher: Arc<TaskDispatcher>) -> Self {
-        Self {
-            dispatcher,
-            running: Arc::new(RwLock::new(false)),
-            command_tx: None,
-        }
+        Self { dispatcher, running: Arc::new(RwLock::new(false)), command_tx: None }
     }
 
     /// Create a new dispatch service with P2P broadcast capability
@@ -491,11 +466,7 @@ impl DispatchService {
         dispatcher: Arc<TaskDispatcher>,
         command_tx: tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>,
     ) -> Self {
-        Self {
-            dispatcher,
-            running: Arc::new(RwLock::new(false)),
-            command_tx: Some(command_tx),
-        }
+        Self { dispatcher, running: Arc::new(RwLock::new(false)), command_tx: Some(command_tx) }
     }
 
     /// Start the dispatch service
@@ -518,7 +489,8 @@ impl DispatchService {
             // Broadcast pending tasks to miners via P2P
             if let Some(ref tx) = self.command_tx {
                 let pending_tasks = self.dispatcher.get_pending_tasks();
-                for task in pending_tasks.iter().take(5) { // Limit broadcast batch
+                for task in pending_tasks.iter().take(5) {
+                    // Limit broadcast batch
                     let deadline = task.created_at + self.dispatcher.config.task_timeout;
                     use luxtensor_network::SwarmCommand;
                     if let Err(e) = tx.try_send(SwarmCommand::BroadcastTaskDispatch {
@@ -528,7 +500,11 @@ impl DispatchService {
                         reward: task.reward,
                         deadline,
                     }) {
-                        warn!("Failed to broadcast task 0x{}: {}", hex::encode(&task.task_id[..8]), e);
+                        warn!(
+                            "Failed to broadcast task 0x{}: {}",
+                            hex::encode(&task.task_id[..8]),
+                            e
+                        );
                     } else {
                         debug!("📡 Broadcast task 0x{} to miners", hex::encode(&task.task_id[..8]));
                     }

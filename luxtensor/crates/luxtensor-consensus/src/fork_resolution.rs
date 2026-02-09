@@ -72,19 +72,28 @@ impl ForkResolver {
             }
 
             // Check if any finalized blocks would be affected
-            for block in &current_chain[(ancestor_height as usize + 1)..] {
-                if self.is_finalized(&block.hash()) {
-                    return Err(ConsensusError::ForkChoice(
-                        "Cannot reorg finalized blocks".to_string(),
-                    ));
+            let start_idx = (ancestor_height as usize).saturating_add(1);
+            if start_idx < current_chain.len() {
+                for block in &current_chain[start_idx..] {
+                    if self.is_finalized(&block.hash()) {
+                        return Err(ConsensusError::ForkChoice(
+                            "Cannot reorg finalized blocks".to_string(),
+                        ));
+                    }
                 }
             }
 
             // Calculate blocks to remove and add
-            let blocks_to_remove: Vec<Block> = current_chain
-                [(ancestor_height as usize + 1)..]
-                .to_vec();
-            let blocks_to_add: Vec<Block> = new_chain[(ancestor_height as usize + 1)..].to_vec();
+            let blocks_to_remove: Vec<Block> = if start_idx < current_chain.len() {
+                current_chain[start_idx..].to_vec()
+            } else {
+                Vec::new()
+            };
+            let blocks_to_add: Vec<Block> = if start_idx < new_chain.len() {
+                new_chain[start_idx..].to_vec()
+            } else {
+                Vec::new()
+            };
 
             // If nothing to remove or add, no reorg needed
             if blocks_to_remove.is_empty() && blocks_to_add.is_empty() {

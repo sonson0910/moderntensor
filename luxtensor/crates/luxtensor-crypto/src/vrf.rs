@@ -351,12 +351,22 @@ pub fn vrf_output_below_threshold(output: &VrfOutput, threshold: u64) -> bool {
 
 /// Calculate selection threshold based on validator stake
 /// Returns threshold such that probability of selection = stake / total_stake
+///
+/// Uses split-multiplication to avoid u128 overflow:
+/// threshold = stake * u64::MAX / total_stake
+///           = (stake / total_stake) * u64::MAX + (stake % total_stake) * u64::MAX / total_stake
 pub fn calculate_selection_threshold(stake: u128, total_stake: u128) -> u64 {
     if total_stake == 0 {
         return 0;
     }
-    let threshold = (stake as u128 * u64::MAX as u128) / total_stake;
-    threshold.min(u64::MAX as u128) as u64
+    // Split to avoid overflow: (a/b)*M + (a%b)*M/b
+    let quotient = stake / total_stake;
+    let remainder = stake % total_stake;
+    let max_val = u64::MAX as u128;
+    let result = quotient
+        .saturating_mul(max_val)
+        .saturating_add((remainder.saturating_mul(max_val)) / total_stake);
+    result.min(max_val) as u64
 }
 
 /// VRF errors

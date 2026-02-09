@@ -214,15 +214,17 @@ fn to_minimal_be(val: u64) -> Vec<u8> {
 }
 
 /// Decode an RLP item as u64
-fn rlp_item_to_u64(item: &[u8]) -> u64 {
+fn rlp_item_to_u64(item: &[u8]) -> Result<u64, String> {
     if item.is_empty() {
-        return 0;
+        return Ok(0);
+    }
+    if item.len() > 8 {
+        return Err(format!("RLP integer exceeds u64 range ({} bytes)", item.len()));
     }
     let mut buf = [0u8; 8];
     let start = 8usize.saturating_sub(item.len());
-    let take = item.len().min(8);
-    buf[start..].copy_from_slice(&item[..take]);
-    u64::from_be_bytes(buf)
+    buf[start..].copy_from_slice(item);
+    Ok(u64::from_be_bytes(buf))
 }
 
 /// Decode an RLP item as u128
@@ -238,16 +240,17 @@ fn rlp_item_to_u128(item: &[u8]) -> u128 {
 }
 
 /// Parse an RLP item into a 20-byte address (or None if empty = contract creation)
-fn rlp_item_to_address(item: &[u8]) -> Option<Address> {
+/// Returns Err for non-empty items that are not exactly 20 bytes
+fn rlp_item_to_address(item: &[u8]) -> Result<Option<Address>, String> {
     if item.is_empty() {
-        return None; // contract creation
+        return Ok(None); // contract creation
     }
     if item.len() != 20 {
-        return None; // invalid
+        return Err(format!("Invalid address length: {} (expected 20)", item.len()));
     }
     let mut addr = [0u8; 20];
     addr.copy_from_slice(item);
-    Some(addr)
+    Ok(Some(addr))
 }
 
 /// Parse RLP item into [u8; 32] left-padded
@@ -323,13 +326,13 @@ fn decode_legacy_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
         return Err(format!("Legacy TX needs 9 RLP items, got {}", items.len()));
     }
 
-    let nonce = rlp_item_to_u64(&items[0]);
-    let gas_price = rlp_item_to_u64(&items[1]);
-    let gas_limit = rlp_item_to_u64(&items[2]);
-    let to = rlp_item_to_address(&items[3]);
+    let nonce = rlp_item_to_u64(&items[0])?;
+    let gas_price = rlp_item_to_u64(&items[1])?;
+    let gas_limit = rlp_item_to_u64(&items[2])?;
+    let to = rlp_item_to_address(&items[3])?;
     let value = rlp_item_to_u128(&items[4]);
     let data = items[5].clone();
-    let v_raw = rlp_item_to_u64(&items[6]);
+    let v_raw = rlp_item_to_u64(&items[6])?;
     let r = rlp_item_to_32(&items[7]);
     let s = rlp_item_to_32(&items[8]);
 
@@ -421,15 +424,15 @@ fn decode_eip2930_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
         return Err(format!("EIP-2930 TX needs 11 RLP items, got {}", items.len()));
     }
 
-    let chain_id = rlp_item_to_u64(&items[0]);
-    let nonce = rlp_item_to_u64(&items[1]);
-    let gas_price = rlp_item_to_u64(&items[2]);
-    let gas_limit = rlp_item_to_u64(&items[3]);
-    let to = rlp_item_to_address(&items[4]);
+    let chain_id = rlp_item_to_u64(&items[0])?;
+    let nonce = rlp_item_to_u64(&items[1])?;
+    let gas_price = rlp_item_to_u64(&items[2])?;
+    let gas_limit = rlp_item_to_u64(&items[3])?;
+    let to = rlp_item_to_address(&items[4])?;
     let value = rlp_item_to_u128(&items[5]);
     let data = items[6].clone();
     // items[7] = accessList (ignored for our purposes)
-    let recovery_id = rlp_item_to_u64(&items[8]) as u8;
+    let recovery_id = rlp_item_to_u64(&items[8])? as u8;
     let r = rlp_item_to_32(&items[9]);
     let s = rlp_item_to_32(&items[10]);
 
@@ -496,16 +499,16 @@ fn decode_eip1559_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
         return Err(format!("EIP-1559 TX needs 12 RLP items, got {}", items.len()));
     }
 
-    let chain_id = rlp_item_to_u64(&items[0]);
-    let nonce = rlp_item_to_u64(&items[1]);
-    let max_priority_fee = rlp_item_to_u64(&items[2]);
-    let max_fee = rlp_item_to_u64(&items[3]);
-    let gas_limit = rlp_item_to_u64(&items[4]);
-    let to = rlp_item_to_address(&items[5]);
+    let chain_id = rlp_item_to_u64(&items[0])?;
+    let nonce = rlp_item_to_u64(&items[1])?;
+    let max_priority_fee = rlp_item_to_u64(&items[2])?;
+    let max_fee = rlp_item_to_u64(&items[3])?;
+    let gas_limit = rlp_item_to_u64(&items[4])?;
+    let to = rlp_item_to_address(&items[5])?;
     let value = rlp_item_to_u128(&items[6]);
     let data = items[7].clone();
     // items[8] = accessList (ignored)
-    let recovery_id = rlp_item_to_u64(&items[9]) as u8;
+    let recovery_id = rlp_item_to_u64(&items[9])? as u8;
     let r = rlp_item_to_32(&items[10]);
     let s = rlp_item_to_32(&items[11]);
 
@@ -1390,12 +1393,13 @@ pub fn register_eth_methods(
     let dev_state = unified_state.clone();
     io.add_sync_method("dev_faucet", move |params: Params| {
         // Guard: only allow faucet on dev/test chain IDs
-        // Chain ID 8898 = LuxTensor devnet, 1337 = local dev, 31337 = Hardhat
+        // Chain ID 8898 = LuxTensor devnet, 9999 = LuxTensor testnet, 1337 = local dev, 31337 = Hardhat
         let chain_id = dev_state.read().chain_id();
-        if chain_id != 8898 && chain_id != 1337 && chain_id != 31337 {
+        let allowed_chains: [u64; 4] = [8898, 9999, 1337, 31337];
+        if !allowed_chains.contains(&chain_id) {
             return Err(RpcError {
                 code: ErrorCode::MethodNotFound,
-                message: "dev_faucet is only available on dev/test networks (chain_id 8898, 1337, 31337)".to_string(),
+                message: "dev_faucet is only available on dev/test networks (chain_id 8898, 9999, 1337, 31337)".to_string(),
                 data: None,
             });
         }
@@ -1613,6 +1617,269 @@ pub fn register_eth_methods(
             "baseFeePerGas": format!("0x{:x}", 1_000_000_000u64)
         }))
     });
+
+    // ========================================================================
+    // eth_feeHistory — EIP-1559 fee history (critical for MetaMask)
+    // ========================================================================
+    let db_for_fee = db.clone();
+    let unified_for_fee = unified_state.clone();
+    io.add_sync_method("eth_feeHistory", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+
+        // Parse block_count (first param)
+        let block_count = p.get(0)
+            .and_then(|v| {
+                if let Some(n) = v.as_u64() {
+                    Some(n)
+                } else if let Some(s) = v.as_str() {
+                    let s = s.strip_prefix("0x").unwrap_or(s);
+                    u64::from_str_radix(s, 16).ok()
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing or invalid block_count".to_string(),
+                data: None,
+            })?;
+
+        // Clamp block_count to 1024 (Ethereum standard limit)
+        let block_count = block_count.min(1024);
+        if block_count == 0 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "block_count must be > 0".to_string(),
+                data: None,
+            });
+        }
+
+        // Parse newest_block (second param)
+        let newest_block_tag = p.get(1)
+            .and_then(|v| v.as_str())
+            .unwrap_or("latest");
+
+        let state_guard = unified_for_fee.read();
+        let current_block = state_guard.block_number();
+        drop(state_guard);
+
+        let newest_block = match newest_block_tag {
+            "latest" | "pending" => current_block,
+            "earliest" => 0,
+            s => {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u64::from_str_radix(s, 16).unwrap_or(current_block)
+            }
+        };
+
+        // reward_percentiles (third param) — optional array of floats
+        let _reward_percentiles: Vec<f64> = p.get(2)
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_f64())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Calculate the oldest block we'll report
+        let oldest_block = newest_block.saturating_sub(block_count - 1);
+
+        let mut base_fee_per_gas: Vec<String> = Vec::new();
+        let mut gas_used_ratio: Vec<f64> = Vec::new();
+        let mut reward: Vec<Vec<String>> = Vec::new();
+
+        // Use FeeMarket for base fee calculations
+        use luxtensor_consensus::FeeMarket;
+        let market = FeeMarket::new();
+        let default_base_fee = market.current_base_fee();
+
+        // Iterate from oldest_block to newest_block
+        for height in oldest_block..=newest_block {
+            if let Ok(Some(block)) = db_for_fee.get_block_by_height(height) {
+                let gas_used = block.header.gas_used;
+                let gas_limit = block.header.gas_limit;
+                let ratio = if gas_limit > 0 {
+                    gas_used as f64 / gas_limit as f64
+                } else {
+                    0.0
+                };
+                gas_used_ratio.push(ratio);
+                // Use default_base_fee since we don't persist per-block base fee
+                base_fee_per_gas.push(format!("0x{:x}", default_base_fee));
+                // Reward: empty inner array per block (we don't track per-tx priority fees)
+                reward.push(_reward_percentiles.iter().map(|_| "0x0".to_string()).collect());
+            } else {
+                // Block not found in DB, use defaults
+                gas_used_ratio.push(0.0);
+                base_fee_per_gas.push(format!("0x{:x}", default_base_fee));
+                reward.push(_reward_percentiles.iter().map(|_| "0x0".to_string()).collect());
+            }
+        }
+
+        // EIP-1559 spec: baseFeePerGas has block_count + 1 entries
+        // (includes the predicted next base fee)
+        base_fee_per_gas.push(format!("0x{:x}", default_base_fee));
+
+        info!("eth_feeHistory: block_count={}, oldest=0x{:x}, newest=0x{:x}",
+            block_count, oldest_block, newest_block);
+
+        Ok(json!({
+            "oldestBlock": format!("0x{:x}", oldest_block),
+            "baseFeePerGas": base_fee_per_gas,
+            "gasUsedRatio": gas_used_ratio,
+            "reward": if _reward_percentiles.is_empty() { None } else { Some(reward) }
+        }))
+    });
+
+    // ========================================================================
+    // eth_getBlockByHash — Standard block lookup by hash
+    // ========================================================================
+    let db_for_bbh = db.clone();
+    let unified_for_bbh = unified_state.clone();
+    io.add_sync_method("eth_getBlockByHash", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+
+        let hash_str = p.get(0)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing block hash".to_string(),
+                data: None,
+            })?;
+
+        let hash_str = hash_str.strip_prefix("0x").unwrap_or(hash_str);
+        let hash_bytes = hex::decode(hash_str).map_err(|_| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Invalid hex hash".to_string(),
+            data: None,
+        })?;
+
+        if hash_bytes.len() != 32 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Hash must be 32 bytes".to_string(),
+                data: None,
+            });
+        }
+
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hash_bytes);
+
+        let full_transactions = p.get(1)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Look up block by hash in DB
+        match db_for_bbh.get_block(&hash) {
+            Ok(Some(block)) => {
+                let block_hash = block.hash();
+                let chain_id = unified_for_bbh.read().chain_id();
+
+                let transactions = if full_transactions {
+                    // Return full transaction objects
+                    block.transactions.iter().enumerate().map(|(idx, tx)| {
+                        json!({
+                            "hash": format!("0x{}", hex::encode(tx.hash())),
+                            "nonce": format!("0x{:x}", tx.nonce),
+                            "blockHash": format!("0x{}", hex::encode(block_hash)),
+                            "blockNumber": format!("0x{:x}", block.header.height),
+                            "transactionIndex": format!("0x{:x}", idx),
+                            "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+                            "to": tx.to.as_ref().map(|a| format!("0x{}", hex::encode(a.as_bytes()))),
+                            "value": format!("0x{:x}", tx.value),
+                            "gas": format!("0x{:x}", tx.gas_limit),
+                            "gasPrice": format!("0x{:x}", tx.gas_price),
+                            "input": format!("0x{}", hex::encode(&tx.data)),
+                            "v": format!("0x{:x}", tx.v as u64),
+                            "r": format!("0x{}", hex::encode(tx.r)),
+                            "s": format!("0x{}", hex::encode(tx.s)),
+                            "chainId": format!("0x{:x}", chain_id),
+                            "type": "0x0"
+                        })
+                    }).collect::<Vec<_>>()
+                } else {
+                    // Return only transaction hashes
+                    block.transactions.iter().map(|tx| {
+                        json!(format!("0x{}", hex::encode(tx.hash())))
+                    }).collect::<Vec<_>>()
+                };
+
+                info!("eth_getBlockByHash: found block height={} txs={}",
+                    block.header.height, block.transactions.len());
+
+                Ok(json!({
+                    "number": format!("0x{:x}", block.header.height),
+                    "hash": format!("0x{}", hex::encode(block_hash)),
+                    "parentHash": format!("0x{}", hex::encode(block.header.previous_hash)),
+                    "nonce": "0x0000000000000000",
+                    "sha3Uncles": format!("0x{}", hex::encode([0u8; 32])),
+                    "logsBloom": format!("0x{}", hex::encode([0u8; 256])),
+                    "transactionsRoot": format!("0x{}", hex::encode(block.header.txs_root)),
+                    "stateRoot": format!("0x{}", hex::encode(block.header.state_root)),
+                    "receiptsRoot": format!("0x{}", hex::encode(block.header.receipts_root)),
+                    "miner": format!("0x{}", hex::encode(&block.header.validator[..20])),
+                    "difficulty": "0x0",
+                    "totalDifficulty": "0x0",
+                    "extraData": format!("0x{}", hex::encode(&block.header.extra_data)),
+                    "size": "0x0",
+                    "gasLimit": format!("0x{:x}", block.header.gas_limit),
+                    "gasUsed": format!("0x{:x}", block.header.gas_used),
+                    "timestamp": format!("0x{:x}", block.header.timestamp),
+                    "transactions": transactions,
+                    "uncles": [],
+                    "baseFeePerGas": format!("0x{:x}", 1_000_000_000u64)
+                }))
+            }
+            Ok(None) => Ok(json!(null)),
+            Err(e) => {
+                tracing::warn!("eth_getBlockByHash DB error: {:?}", e);
+                Ok(json!(null))
+            }
+        }
+    });
+
+    // ========================================================================
+    // eth_getBlockTransactionCountByNumber — Transaction count in a block
+    // ========================================================================
+    let db_for_txcount = db.clone();
+    let unified_for_txcount = unified_state.clone();
+    io.add_sync_method("eth_getBlockTransactionCountByNumber", move |params: Params| {
+        let p: Vec<serde_json::Value> = params.parse()?;
+
+        let block_tag = p.get(0)
+            .and_then(|v| v.as_str())
+            .unwrap_or("latest");
+
+        let state_guard = unified_for_txcount.read();
+        let current_block = state_guard.block_number();
+        drop(state_guard);
+
+        let block_number = match block_tag {
+            "latest" | "pending" => current_block,
+            "earliest" => 0,
+            s => {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u64::from_str_radix(s, 16).unwrap_or(current_block)
+            }
+        };
+
+        match db_for_txcount.get_block_by_height(block_number) {
+            Ok(Some(block)) => {
+                let count = block.transactions.len();
+                info!("eth_getBlockTransactionCountByNumber: block={} count={}", block_number, count);
+                Ok(json!(format!("0x{:x}", count)))
+            }
+            Ok(None) => {
+                // Block not found — return 0 (matches common Ethereum node behavior)
+                Ok(json!("0x0"))
+            }
+            Err(e) => {
+                tracing::warn!("eth_getBlockTransactionCountByNumber DB error: {:?}", e);
+                Ok(json!("0x0"))
+            }
+        }
+    });
 }
 
 /// Register eth_getLogs and filter-related RPC methods
@@ -1739,6 +2006,40 @@ pub fn register_log_methods(
 
         let removed = store.read().uninstall_filter(filter_id);
         Ok(json!(removed))
+    });
+
+    // ========================================================================
+    // eth_newBlockFilter — Create a filter for new blocks
+    // ========================================================================
+    let store_for_bf = log_store.clone();
+    let state_for_bf = unified_state.clone();
+    io.add_sync_method("eth_newBlockFilter", move |_params: Params| {
+        let current_block = state_for_bf.read().block_number();
+        // Create a log filter that tracks new blocks (empty filter = all logs)
+        let filter = crate::logs::LogFilter {
+            from_block: Some(current_block + 1),
+            ..Default::default()
+        };
+        let filter_id = store_for_bf.read().new_filter(filter, current_block);
+        info!("eth_newBlockFilter: created filter_id={} at block={}", filter_id, current_block);
+        Ok(json!(filter_id))
+    });
+
+    // ========================================================================
+    // eth_newPendingTransactionFilter — Create a filter for pending txs
+    // ========================================================================
+    let store_for_ptf = log_store.clone();
+    let state_for_ptf = unified_state.clone();
+    io.add_sync_method("eth_newPendingTransactionFilter", move |_params: Params| {
+        let current_block = state_for_ptf.read().block_number();
+        // Create a filter tracking from current block onward
+        let filter = crate::logs::LogFilter {
+            from_block: Some(current_block),
+            ..Default::default()
+        };
+        let filter_id = store_for_ptf.read().new_filter(filter, current_block);
+        info!("eth_newPendingTransactionFilter: created filter_id={} at block={}", filter_id, current_block);
+        Ok(json!(filter_id))
     });
 
     info!("Registered eth_getLogs and filter methods");
@@ -2155,7 +2456,7 @@ mod tests {
         for val in [0u64, 1, 127, 128, 255, 256, 65535, u64::MAX] {
             let encoded = rlp_encode_u64(val);
             let (decoded_bytes, _) = rlp_decode_item(&encoded).unwrap();
-            let decoded_val = rlp_item_to_u64(&decoded_bytes);
+            let decoded_val = rlp_item_to_u64(&decoded_bytes).unwrap();
             assert_eq!(decoded_val, val, "Failed roundtrip for {}", val);
         }
     }
@@ -2183,7 +2484,7 @@ mod tests {
         let payload = &encoded[payload_offset..payload_offset + payload_len];
         let decoded = rlp_decode_list(payload).unwrap();
         assert_eq!(decoded.len(), 3);
-        assert_eq!(rlp_item_to_u64(&decoded[0]), 42);
+        assert_eq!(rlp_item_to_u64(&decoded[0]).unwrap(), 42);
         assert_eq!(decoded[1], b"hello".to_vec());
         assert_eq!(decoded[2], Vec::<u8>::new());
     }
@@ -2317,19 +2618,19 @@ mod tests {
 
     #[test]
     fn test_rlp_address_parsing_edge_cases() {
-        assert_eq!(rlp_item_to_address(&[]), None);
-        assert_eq!(rlp_item_to_address(&[1, 2, 3]), None); // too short
-        assert_eq!(rlp_item_to_address(&[0u8; 21]), None); // too long
-        let addr = rlp_item_to_address(&[0xAB; 20]);
+        assert_eq!(rlp_item_to_address(&[]).unwrap(), None);
+        assert!(rlp_item_to_address(&[1, 2, 3]).is_err()); // too short
+        assert!(rlp_item_to_address(&[0u8; 21]).is_err()); // too long
+        let addr = rlp_item_to_address(&[0xAB; 20]).unwrap();
         assert!(addr.is_some());
         assert_eq!(addr.unwrap(), [0xAB; 20]);
     }
 
     #[test]
     fn test_rlp_item_to_u64_edge_cases() {
-        assert_eq!(rlp_item_to_u64(&[]), 0);
-        assert_eq!(rlp_item_to_u64(&[0xFF; 9]), rlp_item_to_u64(&[0xFF; 8])); // truncates
-        assert_eq!(rlp_item_to_u64(&[1]), 1);
+        assert_eq!(rlp_item_to_u64(&[]).unwrap(), 0);
+        assert!(rlp_item_to_u64(&[0xFF; 9]).is_err()); // rejects > 8 bytes
+        assert_eq!(rlp_item_to_u64(&[1]).unwrap(), 1);
     }
 
     #[test]
@@ -2429,7 +2730,7 @@ mod tests {
             fn fuzz_rlp_u64_roundtrip(val in any::<u64>()) {
                 let encoded = rlp_encode_u64(val);
                 let (decoded_bytes, _) = rlp_decode_item(&encoded).unwrap();
-                let decoded = rlp_item_to_u64(&decoded_bytes);
+                let decoded = rlp_item_to_u64(&decoded_bytes).unwrap();
                 prop_assert_eq!(decoded, val);
             }
 

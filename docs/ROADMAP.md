@@ -44,8 +44,8 @@ ModernTensor is building the world's most sustainable and efficient decentralize
 
 | Milestone | Timeline | Description |
 |-----------|----------|-------------|
-| Mainnet Launch | April 2026 | Production network go-live |
-| Token Generation Event (TGE) | May 2026 | Public token availability |
+| Mainnet Launch | Q2 2026 | Production network go-live |
+| Token Generation Event (TGE) | Q3 2026 | Public token availability |
 | First 3 Subnets | June 2026 | Text, Image, Code AI subnets |
 | Validator Onboarding | Q2 2026 | 50+ initial validators |
 | Exchange Listings | Q2 2026 | Major CEX/DEX listings |
@@ -97,13 +97,13 @@ ModernTensor creates a self-reinforcing ecosystem where all participants benefit
 
 ---
 
-### 2. Validators (30% Rewards)
+### 2. Validators (28% Rewards)
 
 **Role:** Ensure Quality & Security
 
 | Benefit | Description |
 |---------|-------------|
-| Base Rewards | 30% of epoch emission |
+| Base Rewards | 28% of epoch emission |
 | Governance Power | Proposal voting rights |
 | Slashing Protection | Insurance mechanisms |
 | Delegator Attraction | Earn from delegated stake |
@@ -142,7 +142,7 @@ ModernTensor creates a self-reinforcing ecosystem where all participants benefit
 **Why Invest:**
 
 - **Lower inflation** than Bittensor (72-93% less)
-- **5 burn mechanisms** create scarcity
+- **4 burn mechanisms** create scarcity
 - **Vesting protects price** - no dumping
 - **Clear roadmap** to mainnet and beyond
 
@@ -182,11 +182,13 @@ ModernTensor creates a self-reinforcing ecosystem where all participants benefit
 
 | Allocation | Percentage | Amount | Vesting |
 |------------|------------|--------|---------|
-| **Emission Rewards** | 50% | 10,500,000 MDT | 10+ years |
-| **Team & Development** | 15% | 3,150,000 MDT | 4-year cliff, 2-year linear |
-| **Ecosystem/DAO** | 15% | 3,150,000 MDT | DAO controlled |
-| **Investors** | 10% | 2,100,000 MDT | 1-year cliff, 3-year linear |
-| **Community Sale** | 5% | 1,050,000 MDT | Immediate |
+| **Emission Rewards** | 45% | 9,450,000 MDT | 10+ years |
+| **Ecosystem Grants** | 12% | 2,520,000 MDT | DAO controlled |
+| **Team & Development** | 10% | 2,100,000 MDT | 1-year cliff, 4-year vest |
+| **DAO Treasury** | 10% | 2,100,000 MDT | Multi-sig controlled |
+| **Private Sale** | 8% | 1,680,000 MDT | 1-year cliff, 2-year vest |
+| **IDO** | 5% | 1,050,000 MDT | 25% TGE, 6-month vest |
+| **Liquidity** | 5% | 1,050,000 MDT | DEX/CEX liquidity |
 | **Foundation Reserve** | 5% | 1,050,000 MDT | Multi-sig controlled |
 
 ### Vesting Protections
@@ -200,11 +202,11 @@ ModernTensor creates a self-reinforcing ecosystem where all participants benefit
 | Metric | Bittensor | ModernTensor | Advantage |
 |--------|-----------|--------------|-----------|
 | Daily Emission | 7,200 TAO (fixed) | 0-2,876 MDT (adaptive) | **72-99% less inflation** |
-| Burn Mechanisms | 0 | 5 types | **Deflationary** |
+| Burn Mechanisms | 0 | 4 types | **Deflationary** |
 | DAO Treasury | 0% | 10% | **Sustainable development** |
-| Delegator Rewards | 0% | 5% | **Passive income option** |
+| Delegator Rewards | 0% | 12% | **Passive income option** |
 | Trust Scaling | No | Yes (2x) | **Rewards loyalty** |
-| TPS | ~100 | 5,000+ | **50x faster** |
+| TPS | ~100 | 1,000–5,000 | **10-50x faster** |
 
 ---
 

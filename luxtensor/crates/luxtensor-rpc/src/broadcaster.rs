@@ -187,7 +187,7 @@ impl BroadcasterBuilder {
     pub fn build(self) -> Arc<dyn TransactionBroadcaster> {
         match self.broadcasters.len() {
             0 => Arc::new(NoOpBroadcaster),
-            1 => self.broadcasters.into_iter().next().expect("len == 1 checked"),
+            1 => self.broadcasters.into_iter().next().unwrap_or_else(|| Arc::new(NoOpBroadcaster)),
             _ => Arc::new(CompositeBroadcaster::new(self.broadcasters)),
         }
     }

@@ -41,18 +41,21 @@
 // Enable portable_simd when simd feature is active (requires nightly)
 #![cfg_attr(feature = "simd", feature(portable_simd))]
 
-pub mod fixed_point;
 pub mod deterministic_rng;
-pub mod graph;
 pub mod error;
+pub mod fixed_point;
+pub mod graph;
 
 #[cfg(feature = "simd")]
 pub mod simd;
 
-pub use fixed_point::FixedPointVector;
+#[cfg(test)]
+mod stress_tests;
+
 pub use deterministic_rng::DeterministicRng;
-pub use graph::HnswGraph;
 pub use error::{HnswError, Result};
+pub use fixed_point::FixedPointVector;
+pub use graph::HnswGraph;
 
 /// Maximum number of connections per node at layer 0
 pub const M0: usize = 32;

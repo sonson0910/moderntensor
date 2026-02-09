@@ -2,8 +2,8 @@
 // Distribution: Miners 35%, Validators 28%, Infrastructure 2%, Delegators 12%, Subnet 8%, DAO 5%, Community 10%
 // Enhanced: Logarithmic stake curve for whale protection
 
-use std::collections::HashMap;
 use super::node_tier::logarithmic_stake;
+use std::collections::HashMap;
 
 /// Distribution configuration for reward allocation (Model C v2 - Community Focus)
 /// All shares are in basis points (BPS): 10_000 BPS = 100%.
@@ -29,12 +29,12 @@ pub struct DistributionConfig {
 impl Default for DistributionConfig {
     fn default() -> Self {
         Self {
-            miner_share_bps: 3500,           // 35%
-            validator_share_bps: 2800,       // 28%
-            infrastructure_share_bps: 200,   // 2%
-            delegator_share_bps: 1200,       // 12%
-            subnet_owner_share_bps: 800,     // 8%
-            dao_share_bps: 500,              // 5%
+            miner_share_bps: 3500,               // 35%
+            validator_share_bps: 2800,           // 28%
+            infrastructure_share_bps: 200,       // 2%
+            delegator_share_bps: 1200,           // 12%
+            subnet_owner_share_bps: 800,         // 8%
+            dao_share_bps: 500,                  // 5%
             community_ecosystem_share_bps: 1000, // 10%
         }
     }
@@ -43,9 +43,13 @@ impl Default for DistributionConfig {
 impl DistributionConfig {
     /// Validate that shares sum to 10_000 BPS (100%)
     pub fn validate(&self) -> Result<(), &'static str> {
-        let total = self.miner_share_bps + self.validator_share_bps + self.infrastructure_share_bps +
-                    self.delegator_share_bps + self.subnet_owner_share_bps + self.dao_share_bps +
-                    self.community_ecosystem_share_bps;
+        let total = self.miner_share_bps
+            + self.validator_share_bps
+            + self.infrastructure_share_bps
+            + self.delegator_share_bps
+            + self.subnet_owner_share_bps
+            + self.dao_share_bps
+            + self.community_ecosystem_share_bps;
         if total != 10_000 {
             return Err("Distribution shares must sum to 10_000 BPS (100%)");
         }
@@ -102,7 +106,7 @@ impl LockBonusConfig {
 #[derive(Debug, Clone)]
 pub struct MinerInfo {
     pub address: [u8; 20],
-    pub score: f64,  // 0.0 - 1.0
+    pub score: f64, // 0.0 - 1.0
     /// Whether miner has GPU capability
     ///
     /// **DEPRECATED:** This field uses self-declaration which is exploitable.
@@ -242,7 +246,11 @@ pub struct RewardDistributor {
 
 impl RewardDistributor {
     /// Create new reward distributor
-    pub fn new(config: DistributionConfig, lock_bonus: LockBonusConfig, dao_address: [u8; 20]) -> Self {
+    pub fn new(
+        config: DistributionConfig,
+        lock_bonus: LockBonusConfig,
+        dao_address: [u8; 20],
+    ) -> Self {
         Self { config, lock_bonus, dao_address }
     }
 
@@ -270,7 +278,15 @@ impl RewardDistributor {
         delegators: &[DelegatorInfo],
         subnets: &[SubnetInfo],
     ) -> DistributionResult {
-        self.distribute_with_infra(epoch, total_emission, miners, validators, delegators, subnets, &[])
+        self.distribute_with_infra(
+            epoch,
+            total_emission,
+            miners,
+            validators,
+            delegators,
+            subnets,
+            &[],
+        )
     }
 
     /// Distribute rewards including infrastructure node operators
@@ -291,7 +307,8 @@ impl RewardDistributor {
         let delegator_pool = total_emission * self.config.delegator_share_bps as u128 / 10_000;
         let subnet_pool = total_emission * self.config.subnet_owner_share_bps as u128 / 10_000;
         let dao_allocation = total_emission * self.config.dao_share_bps as u128 / 10_000;
-        let community_ecosystem_allocation = total_emission * self.config.community_ecosystem_share_bps as u128 / 10_000;
+        let community_ecosystem_allocation =
+            total_emission * self.config.community_ecosystem_share_bps as u128 / 10_000;
 
         // Distribute to each group
         let miner_rewards = self.distribute_by_score(miner_pool, miners);
@@ -302,7 +319,13 @@ impl RewardDistributor {
 
         DistributionResult {
             epoch,
-            total_distributed: miner_pool + validator_pool + infra_pool + delegator_pool + subnet_pool + dao_allocation + community_ecosystem_allocation,
+            total_distributed: miner_pool
+                + validator_pool
+                + infra_pool
+                + delegator_pool
+                + subnet_pool
+                + dao_allocation
+                + community_ecosystem_allocation,
             miner_rewards,
             validator_rewards,
             delegator_rewards,
@@ -326,18 +349,29 @@ impl RewardDistributor {
             return rewards;
         }
 
-        // Scale scores to integer for precision-safe division
+        // SECURITY: Scale scores to integer for precision-safe division
+        // Each score is scaled by 10^12 relative to total, then used for pro-rata
         const PRECISION: u128 = 1_000_000_000_000; // 10^12
         let mut _distributed: u128 = 0;
 
-        for miner in miners {
-            let scaled_share = ((miner.score / total_score) * PRECISION as f64) as u128;
-            let reward = pool
-                .checked_mul(scaled_share)
-                .map(|x| x / PRECISION)
-                .unwrap_or(0);
+        // Convert scores to scaled integer shares to avoid f64→u128 cast precision loss
+        let scaled_scores: Vec<([u8; 20], u128)> = miners
+            .iter()
+            .map(|m| {
+                // Scale: (score * PRECISION) / total_score — both f64, result fits u128
+                let share = if total_score > 0.0 {
+                    ((m.score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+                } else {
+                    0
+                };
+                (m.address, share)
+            })
+            .collect();
+
+        for (address, scaled_share) in scaled_scores {
+            let reward = pool.checked_mul(scaled_share).map(|x| x / PRECISION).unwrap_or(0);
             if reward > 0 {
-                rewards.insert(miner.address, reward);
+                rewards.insert(address, reward);
                 _distributed += reward;
             }
         }
@@ -356,7 +390,8 @@ impl RewardDistributor {
         let mut rewards = HashMap::new();
 
         // Calculate effective scores with GPU bonus
-        let effective_scores: Vec<([u8; 20], f64)> = miners.iter()
+        let effective_scores: Vec<([u8; 20], f64)> = miners
+            .iter()
             .map(|m| {
                 let bonus = if m.has_gpu { gpu_bonus_rate } else { 1.0 };
                 (m.address, m.score * bonus)
@@ -371,11 +406,12 @@ impl RewardDistributor {
         // SECURITY: Use fixed-point integer arithmetic for precision
         const PRECISION: u128 = 1_000_000_000_000;
         for (address, effective_score) in effective_scores {
-            let scaled_share = ((effective_score / total_score) * PRECISION as f64) as u128;
-            let reward = pool
-                .checked_mul(scaled_share)
-                .map(|x| x / PRECISION)
-                .unwrap_or(0);
+            let scaled_share = if total_score > 0.0 {
+                ((effective_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+            } else {
+                0
+            };
+            let reward = pool.checked_mul(scaled_share).map(|x| x / PRECISION).unwrap_or(0);
             if reward > 0 {
                 rewards.insert(address, reward);
             }
@@ -396,12 +432,13 @@ impl RewardDistributor {
         &self,
         pool: u128,
         miners: &[MinerEpochStats],
-        gpu_bonus_rate: f64,  // max bonus rate (e.g., 1.4 = 40% max)
+        gpu_bonus_rate: f64, // max bonus rate (e.g., 1.4 = 40% max)
     ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
         // Calculate effective scores with dynamic GPU bonus
-        let effective_scores: Vec<([u8; 20], f64)> = miners.iter()
+        let effective_scores: Vec<([u8; 20], f64)> = miners
+            .iter()
             .map(|m| {
                 // GPU bonus scales with task completion ratio
                 let bonus = m.effective_gpu_bonus(gpu_bonus_rate);
@@ -417,11 +454,12 @@ impl RewardDistributor {
         for (address, effective_score) in effective_scores {
             // SECURITY: Use fixed-point integer arithmetic for precision
             const PRECISION: u128 = 1_000_000_000_000;
-            let scaled_share = ((effective_score / total_score) * PRECISION as f64) as u128;
-            let reward = pool
-                .checked_mul(scaled_share)
-                .map(|x| x / PRECISION)
-                .unwrap_or(0);
+            let scaled_share = if total_score > 0.0 {
+                ((effective_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+            } else {
+                0
+            };
+            let reward = pool.checked_mul(scaled_share).map(|x| x / PRECISION).unwrap_or(0);
             if reward > 0 {
                 rewards.insert(address, reward);
             }
@@ -431,13 +469,16 @@ impl RewardDistributor {
     }
 
     /// Distribute by stake with logarithmic curve for whale protection
-    fn distribute_by_stake(&self, pool: u128, validators: &[ValidatorInfo]) -> HashMap<[u8; 20], u128> {
+    fn distribute_by_stake(
+        &self,
+        pool: u128,
+        validators: &[ValidatorInfo],
+    ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
         // Calculate effective stake using logarithmic curve
-        let effective_stakes: Vec<([u8; 20], u128)> = validators.iter()
-            .map(|v| (v.address, logarithmic_stake(v.stake)))
-            .collect();
+        let effective_stakes: Vec<([u8; 20], u128)> =
+            validators.iter().map(|v| (v.address, logarithmic_stake(v.stake))).collect();
 
         let total_effective: u128 = effective_stakes.iter().map(|(_, e)| e).sum();
         if total_effective == 0 {
@@ -446,10 +487,8 @@ impl RewardDistributor {
 
         for (address, effective) in effective_stakes {
             // Use u128 arithmetic to avoid overflow
-            let share = (pool as u128)
-                .checked_mul(effective)
-                .map(|x| x / total_effective)
-                .unwrap_or(0);
+            let share =
+                (pool as u128).checked_mul(effective).map(|x| x / total_effective).unwrap_or(0);
             if share > 0 {
                 rewards.insert(address, share);
             }
@@ -459,17 +498,24 @@ impl RewardDistributor {
     }
 
     /// Distribute to delegators with lock bonus and logarithmic stake curve
-    fn distribute_to_delegators(&self, pool: u128, delegators: &[DelegatorInfo]) -> HashMap<[u8; 20], u128> {
+    fn distribute_to_delegators(
+        &self,
+        pool: u128,
+        delegators: &[DelegatorInfo],
+    ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
         // Calculate weighted stake: logarithmic_stake * (1 + lock_bonus_bps/10000)
-        let weighted_stakes: Vec<(_, u128)> = delegators.iter().map(|d| {
-            let bonus_bps = self.lock_bonus.get_bonus_bps(d.lock_days);
-            let effective = logarithmic_stake(d.stake);
-            // Integer-safe: effective * (10_000 + bonus_bps) / 10_000
-            let weight = effective * (10_000 + bonus_bps as u128) / 10_000;
-            (d.address, weight)
-        }).collect();
+        let weighted_stakes: Vec<(_, u128)> = delegators
+            .iter()
+            .map(|d| {
+                let bonus_bps = self.lock_bonus.get_bonus_bps(d.lock_days);
+                let effective = logarithmic_stake(d.stake);
+                // Integer-safe: effective * (10_000 + bonus_bps) / 10_000
+                let weight = effective * (10_000 + bonus_bps as u128) / 10_000;
+                (d.address, weight)
+            })
+            .collect();
 
         let total_weighted: u128 = weighted_stakes.iter().map(|(_, w)| w).sum();
         if total_weighted == 0 {
@@ -477,10 +523,7 @@ impl RewardDistributor {
         }
 
         for (address, weight) in weighted_stakes {
-            let share = (pool as u128)
-                .checked_mul(weight)
-                .map(|x| x / total_weighted)
-                .unwrap_or(0);
+            let share = (pool as u128).checked_mul(weight).map(|x| x / total_weighted).unwrap_or(0);
             if share > 0 {
                 rewards.insert(address, share);
             }
@@ -488,7 +531,6 @@ impl RewardDistributor {
 
         rewards
     }
-
 
     /// Distribute to infrastructure (full-node) operators by uptime score
     ///
@@ -516,7 +558,11 @@ impl RewardDistributor {
         for node in nodes {
             // SECURITY: Use fixed-point integer arithmetic instead of f64
             const PRECISION: u128 = 1_000_000_000_000;
-            let scaled_share = ((node.uptime_score / total_score) * PRECISION as f64) as u128;
+            let scaled_share = if total_score > 0.0 {
+                ((node.uptime_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+            } else {
+                0
+            };
             let reward = pool
                 .checked_mul(scaled_share)
                 .map(|x| x / PRECISION)
@@ -625,21 +671,19 @@ mod tests {
             DelegatorInfo { address: test_address(21), stake: 100, lock_days: 365 },
         ];
 
-        let subnets = vec![
-            SubnetInfo { owner: test_address(30), emission_weight: 50 },
-        ];
+        let subnets = vec![SubnetInfo { owner: test_address(30), emission_weight: 50 }];
 
-        let result = distributor.distribute(1, total_emission, &miners, &validators, &delegators, &subnets);
+        let result =
+            distributor.distribute(1, total_emission, &miners, &validators, &delegators, &subnets);
 
         // Check total distributed
-        let total_rewards: u128 =
-            result.miner_rewards.values().sum::<u128>() +
-            result.validator_rewards.values().sum::<u128>() +
-            result.delegator_rewards.values().sum::<u128>() +
-            result.subnet_owner_rewards.values().sum::<u128>() +
-            result.infrastructure_rewards.values().sum::<u128>() +
-            result.dao_allocation +
-            result.community_ecosystem_allocation;
+        let total_rewards: u128 = result.miner_rewards.values().sum::<u128>()
+            + result.validator_rewards.values().sum::<u128>()
+            + result.delegator_rewards.values().sum::<u128>()
+            + result.subnet_owner_rewards.values().sum::<u128>()
+            + result.infrastructure_rewards.values().sum::<u128>()
+            + result.dao_allocation
+            + result.community_ecosystem_allocation;
 
         // Should be close to total_emission (may have rounding)
         assert!(total_rewards > 0);
@@ -656,7 +700,12 @@ mod tests {
         // Check delegator with lock gets more than one without
         let d20_reward = *result.delegator_rewards.get(&test_address(20)).unwrap_or(&0);
         let d21_reward = *result.delegator_rewards.get(&test_address(21)).unwrap_or(&0);
-        assert!(d21_reward > d20_reward, "Locked delegator should get more: {} vs {}", d21_reward, d20_reward);
+        assert!(
+            d21_reward > d20_reward,
+            "Locked delegator should get more: {} vs {}",
+            d21_reward,
+            d20_reward
+        );
     }
 
     #[test]
@@ -668,7 +717,7 @@ mod tests {
 
         // Two miners with same score, one has GPU
         let miners = vec![
-            MinerInfo::new(test_address(1), 0.5),     // CPU only
+            MinerInfo::new(test_address(1), 0.5),      // CPU only
             MinerInfo::with_gpu(test_address(2), 0.5), // Has GPU
         ];
 
@@ -682,12 +731,21 @@ mod tests {
         let rewards_with_bonus = distributor.distribute_by_score_with_gpu(pool, &miners, 1.2);
         let cpu_reward = *rewards_with_bonus.get(&test_address(1)).unwrap();
         let gpu_reward = *rewards_with_bonus.get(&test_address(2)).unwrap();
-        assert!(gpu_reward > cpu_reward, "GPU miner should get more: {} vs {}", gpu_reward, cpu_reward);
+        assert!(
+            gpu_reward > cpu_reward,
+            "GPU miner should get more: {} vs {}",
+            gpu_reward,
+            cpu_reward
+        );
 
         // GPU should get ~54.5% (0.5*1.2 / (0.5 + 0.5*1.2) = 0.6/1.1)
         // CPU should get ~45.5% (0.5 / 1.1)
         let gpu_share = gpu_reward as f64 / pool as f64;
-        assert!(gpu_share > 0.54 && gpu_share < 0.56, "GPU share should be ~54.5%, got {}", gpu_share);
+        assert!(
+            gpu_share > 0.54 && gpu_share < 0.56,
+            "GPU share should be ~54.5%, got {}",
+            gpu_share
+        );
     }
 
     #[test]
@@ -734,8 +792,8 @@ mod tests {
         // Miner 1: No GPU tasks completed (0/10)
         // Miner 2: All GPU tasks completed (10/10)
         let miners = vec![
-            MinerEpochStats::with_tasks(test_address(1), 0.5, 10, 0, 10),   // CPU only
-            MinerEpochStats::with_tasks(test_address(2), 0.5, 0, 10, 10),   // Full GPU
+            MinerEpochStats::with_tasks(test_address(1), 0.5, 10, 0, 10), // CPU only
+            MinerEpochStats::with_tasks(test_address(2), 0.5, 0, 10, 10), // Full GPU
         ];
 
         // With 40% max GPU bonus (rate = 1.4)
@@ -750,7 +808,11 @@ mod tests {
         // Total: 1.2
         // GPU share: 0.7/1.2 = 58.33%
         let gpu_share = gpu_reward as f64 / pool as f64;
-        assert!(gpu_share > 0.58 && gpu_share < 0.59, "GPU share should be ~58.3%, got {}", gpu_share);
+        assert!(
+            gpu_share > 0.58 && gpu_share < 0.59,
+            "GPU share should be ~58.3%, got {}",
+            gpu_share
+        );
     }
 
     #[test]
@@ -762,8 +824,8 @@ mod tests {
 
         // 50% GPU completion should get 50% of max bonus
         let miners = vec![
-            MinerEpochStats::with_tasks(test_address(1), 0.5, 10, 0, 0),    // No GPU assigned
-            MinerEpochStats::with_tasks(test_address(2), 0.5, 0, 5, 10),    // 50% GPU completion
+            MinerEpochStats::with_tasks(test_address(1), 0.5, 10, 0, 0), // No GPU assigned
+            MinerEpochStats::with_tasks(test_address(2), 0.5, 0, 5, 10), // 50% GPU completion
         ];
 
         let rewards = distributor.distribute_by_epoch_stats(pool, &miners, 1.4);
@@ -789,7 +851,8 @@ mod tests {
 
         let miners = vec![MinerInfo::new(test_address(1), 0.5)];
         let validators = vec![ValidatorInfo { address: test_address(10), stake: 100 }];
-        let delegators = vec![DelegatorInfo { address: test_address(20), stake: 100, lock_days: 0 }];
+        let delegators =
+            vec![DelegatorInfo { address: test_address(20), stake: 100, lock_days: 0 }];
         let subnets = vec![SubnetInfo { owner: test_address(30), emission_weight: 50 }];
         let infra_nodes = vec![
             InfrastructureNodeInfo { address: test_address(40), uptime_score: 0.99 },
@@ -797,7 +860,13 @@ mod tests {
         ];
 
         let result = distributor.distribute_with_infra(
-            1, total_emission, &miners, &validators, &delegators, &subnets, &infra_nodes,
+            1,
+            total_emission,
+            &miners,
+            &validators,
+            &delegators,
+            &subnets,
+            &infra_nodes,
         );
 
         // Infrastructure pool = 200 BPS = 2%
@@ -809,11 +878,15 @@ mod tests {
         // Allow fixed-point rounding tolerance: with PRECISION=10^12,
         // max error per node ≈ pool / PRECISION, so total ≈ N * pool / 10^12
         assert!(infra_total <= expected_infra_pool, "Should not exceed infra pool");
-        let max_rounding_error = (infra_nodes.len() as u128) * expected_infra_pool / 1_000_000_000_000 + 1;
+        let max_rounding_error =
+            (infra_nodes.len() as u128) * expected_infra_pool / 1_000_000_000_000 + 1;
         assert!(
             expected_infra_pool - infra_total <= max_rounding_error,
             "Infra rewards rounding too large: diff={}, max_allowed={}, total={} vs pool={}",
-            expected_infra_pool - infra_total, max_rounding_error, infra_total, expected_infra_pool,
+            expected_infra_pool - infra_total,
+            max_rounding_error,
+            infra_total,
+            expected_infra_pool,
         );
 
         // Higher uptime → more reward
@@ -835,7 +908,8 @@ mod tests {
         let delegators = vec![];
         let subnets = vec![];
 
-        let result = distributor.distribute(1, total_emission, &miners, &validators, &delegators, &subnets);
+        let result =
+            distributor.distribute(1, total_emission, &miners, &validators, &delegators, &subnets);
 
         // Infrastructure rewards should be empty (no infra nodes passed)
         assert!(result.infrastructure_rewards.is_empty());

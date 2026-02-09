@@ -445,7 +445,7 @@ impl ScoringManager {
                 crate::reward_distribution::MinerEpochStats::with_tasks(
                     *addr,
                     m.score as f64 / self.config.max_score as f64,  // Normalize to 0.0-1.0
-                    (m.tasks_completed - m.gpu_tasks_completed as u64) as u32,  // CPU tasks
+                    (m.tasks_completed.saturating_sub(m.gpu_tasks_completed as u64)) as u32,  // CPU tasks
                     m.gpu_tasks_completed,
                     m.gpu_tasks_assigned,
                 )

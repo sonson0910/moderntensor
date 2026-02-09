@@ -35,6 +35,10 @@ harness = false
 name = "stress_tests"
 harness = false
 
+[[bench]]
+name = "tps_benchmark"
+harness = false
+
 [[test]]
 name = "integration_tests"
 path = "integration_tests.rs"

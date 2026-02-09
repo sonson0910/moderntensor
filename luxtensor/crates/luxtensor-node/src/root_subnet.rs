@@ -251,8 +251,11 @@ impl RootSubnetState {
             let addr_hex = hex::encode(validator.address);
             if let Some(weights) = self.weight_matrix.get(&addr_hex) {
                 for (netuid, weight_bps) in &weights.weights {
-                    let weighted_vote = validator.stake * (*weight_bps as u128);
-                    *shares.entry(*netuid).or_insert(0) += weighted_vote;
+                    let weighted_vote = validator.stake
+                        .checked_mul(*weight_bps as u128)
+                        .unwrap_or(u128::MAX);
+                    let entry = shares.entry(*netuid).or_insert(0);
+                    *entry = entry.checked_add(weighted_vote).unwrap_or(u128::MAX);
                 }
             }
         }
@@ -269,12 +272,21 @@ impl RootSubnetState {
     }
 
     /// Get emission distribution for all subnets
+    /// Uses integer-only arithmetic to prevent f64 precision loss in token amounts
     pub fn get_emission_distribution(&self, total_emission: u128) -> Vec<EmissionShare> {
+        let total_bps: u128 = self.emission_shares.values().map(|v| *v as u128).sum();
+        if total_bps == 0 {
+            return Vec::new();
+        }
         self.emission_shares
             .iter()
             .map(|(netuid, share_bps)| {
-                let share = *share_bps as f64 / 10000.0;
-                let amount = (total_emission as f64 * share) as u128;
+                let share = *share_bps as f64 / 10000.0; // display-only
+                // Integer arithmetic: total_emission * share_bps / total_bps
+                let amount = total_emission
+                    .checked_mul(*share_bps as u128)
+                    .unwrap_or(u128::MAX)
+                    / total_bps;
                 EmissionShare::new(*netuid, share, amount)
             })
             .collect()

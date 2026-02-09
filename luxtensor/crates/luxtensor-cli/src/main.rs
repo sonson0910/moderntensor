@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand, Args};
 use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -38,6 +39,27 @@ enum Commands {
     /// Query blockchain state
     #[command(subcommand)]
     Query(QueryCommands),
+
+    /// Send a transaction
+    #[command(name = "send-tx")]
+    SendTx(SendTxArgs),
+
+    /// Stake tokens to become a validator
+    Stake(StakeArgs),
+
+    /// Unstake tokens
+    Unstake(UnstakeArgs),
+
+    /// Delegate stake to a validator
+    Delegate(DelegateArgs),
+
+    /// Import private key to a keystore file
+    #[command(name = "import-key")]
+    ImportKey(ImportKeyArgs),
+
+    /// Export private key from keystore
+    #[command(name = "export-key")]
+    ExportKey(ExportKeyArgs),
 }
 
 #[derive(Subcommand)]
@@ -87,6 +109,116 @@ struct ConfigGenArgs {
     bootstrap: Option<String>,
 }
 
+#[derive(Args)]
+struct SendTxArgs {
+    /// RPC endpoint URL
+    #[arg(long)]
+    rpc_url: String,
+
+    /// Sender's private key (hex)
+    #[arg(long)]
+    from: String,
+
+    /// Destination address (0x...)
+    #[arg(long)]
+    to: String,
+
+    /// Amount in wei
+    #[arg(long)]
+    value: String,
+
+    /// Gas price in wei (optional, fetched from node if omitted)
+    #[arg(long)]
+    gas_price: Option<String>,
+
+    /// Gas limit (default: 21000)
+    #[arg(long)]
+    gas_limit: Option<u64>,
+
+    /// Chain ID (default: 8898)
+    #[arg(long)]
+    chain_id: Option<u64>,
+
+    /// Hex-encoded calldata (optional)
+    #[arg(long)]
+    data: Option<String>,
+}
+
+#[derive(Args)]
+struct StakeArgs {
+    /// RPC endpoint URL
+    #[arg(long)]
+    rpc_url: String,
+
+    /// Staker's private key (hex)
+    #[arg(long)]
+    from: String,
+
+    /// Amount of MDT to stake
+    #[arg(long)]
+    amount: String,
+}
+
+#[derive(Args)]
+struct UnstakeArgs {
+    /// RPC endpoint URL
+    #[arg(long)]
+    rpc_url: String,
+
+    /// Staker's private key (hex)
+    #[arg(long)]
+    from: String,
+
+    /// Amount of MDT to unstake
+    #[arg(long)]
+    amount: String,
+}
+
+#[derive(Args)]
+struct DelegateArgs {
+    /// RPC endpoint URL
+    #[arg(long)]
+    rpc_url: String,
+
+    /// Delegator's private key (hex)
+    #[arg(long)]
+    from: String,
+
+    /// Validator address to delegate to (0x...)
+    #[arg(long)]
+    validator: String,
+
+    /// Amount of MDT to delegate
+    #[arg(long)]
+    amount: String,
+}
+
+#[derive(Args)]
+struct ImportKeyArgs {
+    /// Private key hex to import
+    #[arg(long)]
+    private_key: String,
+
+    /// Output keystore file path
+    #[arg(long)]
+    output: PathBuf,
+
+    /// Encryption password (will prompt if omitted)
+    #[arg(long)]
+    password: Option<String>,
+}
+
+#[derive(Args)]
+struct ExportKeyArgs {
+    /// Path to the keystore JSON file
+    #[arg(long)]
+    keystore: PathBuf,
+
+    /// Password to decrypt the keystore
+    #[arg(long)]
+    password: String,
+}
+
 #[derive(Subcommand)]
 enum QueryCommands {
     /// Get account balance
@@ -134,26 +266,36 @@ async fn main() -> Result<()> {
             println!("\n⚠️  IMPORTANT: Save your private key securely!");
         }
 
-        Commands::Status { rpc } => {
-            match rpc_call(&rpc, "system_syncState", vec![]).await {
-                Ok(result) => {
-                    println!("📊 Node Status:");
-                    if let Some(height) = result.get("current_height") {
-                        println!("   Height: {}", height);
-                    }
-                    println!("   Status: Connected");
+        Commands::Status { rpc } => match rpc_call(&rpc, "system_syncState", vec![]).await {
+            Ok(result) => {
+                println!("📊 Node Status:");
+                if let Some(height) = result.get("current_height") {
+                    println!("   Height: {}", height);
                 }
-                Err(e) => {
-                    println!("❌ Failed to connect to {}: {}", rpc, e);
-                }
+                println!("   Status: Connected");
             }
-        }
+            Err(e) => {
+                println!("❌ Failed to connect to {}: {}", rpc, e);
+            }
+        },
 
         Commands::Admin(admin) => handle_admin(admin).await?,
 
         Commands::ConfigGen(args) => generate_config(args)?,
 
         Commands::Query(query) => handle_query(query).await?,
+
+        Commands::SendTx(args) => handle_send_tx(args).await?,
+
+        Commands::Stake(args) => handle_stake(args).await?,
+
+        Commands::Unstake(args) => handle_unstake(args).await?,
+
+        Commands::Delegate(args) => handle_delegate(args).await?,
+
+        Commands::ImportKey(args) => handle_import_key(args)?,
+
+        Commands::ExportKey(args) => handle_export_key(args)?,
     }
 
     Ok(())
@@ -191,10 +333,12 @@ async fn handle_admin(cmd: AdminCommands) -> Result<()> {
 async fn handle_query(cmd: QueryCommands) -> Result<()> {
     match cmd {
         QueryCommands::Balance { address, rpc } => {
-            let result = rpc_call(&rpc, "eth_getBalance", vec![
-                serde_json::json!(address),
-                serde_json::json!("latest"),
-            ]).await?;
+            let result = rpc_call(
+                &rpc,
+                "eth_getBalance",
+                vec![serde_json::json!(address), serde_json::json!("latest")],
+            )
+            .await?;
             println!("💰 Balance: {} wei", result);
         }
         QueryCommands::Block { number, rpc } => {
@@ -203,18 +347,25 @@ async fn handle_query(cmd: QueryCommands) -> Result<()> {
             } else {
                 serde_json::json!(format!("0x{:x}", number.parse::<u64>().unwrap_or(0)))
             };
-            let result = rpc_call(&rpc, "eth_getBlockByNumber", vec![block_num, serde_json::json!(false)]).await?;
+            let result =
+                rpc_call(&rpc, "eth_getBlockByNumber", vec![block_num, serde_json::json!(false)])
+                    .await?;
             println!("📦 Block: {}", serde_json::to_string_pretty(&result)?);
         }
         QueryCommands::Tx { hash, rpc } => {
-            let result = rpc_call(&rpc, "eth_getTransactionByHash", vec![serde_json::json!(hash)]).await?;
+            let result =
+                rpc_call(&rpc, "eth_getTransactionByHash", vec![serde_json::json!(hash)]).await?;
             println!("📄 Transaction: {}", serde_json::to_string_pretty(&result)?);
         }
     }
     Ok(())
 }
 
-async fn rpc_call(rpc: &str, method: &str, params: Vec<serde_json::Value>) -> Result<serde_json::Value> {
+async fn rpc_call(
+    rpc: &str,
+    method: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<serde_json::Value> {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -223,13 +374,7 @@ async fn rpc_call(rpc: &str, method: &str, params: Vec<serde_json::Value>) -> Re
         "id": 1
     });
 
-    let resp: serde_json::Value = client
-        .post(rpc)
-        .json(&body)
-        .send()
-        .await?
-        .json()
-        .await?;
+    let resp: serde_json::Value = client.post(rpc).json(&body).send().await?.json().await?;
 
     if let Some(error) = resp.get("error") {
         anyhow::bail!("RPC error: {}", error);
@@ -243,10 +388,13 @@ fn generate_config(args: ConfigGenArgs) -> Result<()> {
     let p2p_port = 30303 + port_offset;
     let rpc_port = 8545 + port_offset;
 
-    let bootstrap = args.bootstrap.map(|b| format!("bootstrap_nodes = [\"{}\"]", b))
+    let bootstrap = args
+        .bootstrap
+        .map(|b| format!("bootstrap_nodes = [\"{}\"]", b))
         .unwrap_or_else(|| "bootstrap_nodes = []".to_string());
 
-    let config = format!(r#"# LuxTensor Node Configuration
+    let config = format!(
+        r#"# LuxTensor Node Configuration
 # Generated by: luxtensor config-gen
 
 [node]
@@ -300,6 +448,460 @@ log_file = "./node.log"
     println!("✅ Config generated: {}", args.output.display());
     println!("   P2P Port: {}", p2p_port);
     println!("   RPC Port: {}", rpc_port);
+
+    Ok(())
+}
+
+// ============================================================
+// RLP encoding helpers
+// ============================================================
+
+/// Trim leading zero bytes from a byte slice.
+fn trim_leading_zeros(data: &[u8]) -> &[u8] {
+    let start = data.iter().position(|&b| b != 0).unwrap_or(data.len());
+    &data[start..]
+}
+
+/// Convert u64 to big-endian bytes with leading zeros trimmed.
+fn u64_to_be_trimmed(val: u64) -> Vec<u8> {
+    if val == 0 {
+        return vec![];
+    }
+    trim_leading_zeros(&val.to_be_bytes()).to_vec()
+}
+
+/// RLP encode a byte string.
+fn rlp_encode_bytes(data: &[u8]) -> Vec<u8> {
+    if data.len() == 1 && data[0] < 0x80 {
+        return data.to_vec();
+    }
+    if data.is_empty() {
+        return vec![0x80];
+    }
+    if data.len() <= 55 {
+        let mut out = vec![0x80 + data.len() as u8];
+        out.extend_from_slice(data);
+        out
+    } else {
+        let len_bytes = u64_to_be_trimmed(data.len() as u64);
+        let mut out = vec![0xb7 + len_bytes.len() as u8];
+        out.extend_from_slice(&len_bytes);
+        out.extend_from_slice(data);
+        out
+    }
+}
+
+/// RLP encode a u64 integer value.
+fn rlp_encode_u64(val: u64) -> Vec<u8> {
+    if val == 0 {
+        return vec![0x80];
+    }
+    rlp_encode_bytes(&u64_to_be_trimmed(val))
+}
+
+/// RLP encode a list of already-encoded items.
+fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for item in items {
+        payload.extend_from_slice(item);
+    }
+    if payload.len() <= 55 {
+        let mut out = vec![0xc0 + payload.len() as u8];
+        out.extend_from_slice(&payload);
+        out
+    } else {
+        let len_bytes = u64_to_be_trimmed(payload.len() as u64);
+        let mut out = vec![0xf7 + len_bytes.len() as u8];
+        out.extend_from_slice(&len_bytes);
+        out.extend_from_slice(&payload);
+        out
+    }
+}
+
+// ============================================================
+// Parsing helpers
+// ============================================================
+
+/// Parse a hex-encoded private key string into 32 bytes.
+fn parse_private_key(hex_str: &str) -> Result<[u8; 32]> {
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes =
+        hex::decode(hex_str).map_err(|e| anyhow::anyhow!("Invalid private key hex: {}", e))?;
+    if bytes.len() != 32 {
+        anyhow::bail!("Private key must be 32 bytes, got {}", bytes.len());
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+/// Parse a hex-encoded u64 value (e.g., "0x5" or "0x1a2b").
+fn parse_hex_u64(s: &str) -> Result<u64> {
+    let s = s.trim_matches('"');
+    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    if s.is_empty() {
+        return Ok(0);
+    }
+    Ok(u64::from_str_radix(s, 16)?)
+}
+
+/// Parse a wei amount from a decimal or hex string into trimmed big-endian bytes.
+fn parse_wei_amount(s: &str) -> Result<Vec<u8>> {
+    if let Some(hex_str) = s.strip_prefix("0x") {
+        let bytes = hex::decode(hex_str)?;
+        Ok(trim_leading_zeros(&bytes).to_vec())
+    } else {
+        let val: u128 = s.parse().map_err(|e| anyhow::anyhow!("Invalid amount '{}': {}", s, e))?;
+        if val == 0 {
+            return Ok(vec![]);
+        }
+        Ok(trim_leading_zeros(&val.to_be_bytes()).to_vec())
+    }
+}
+
+/// Derive a 32-byte encryption key from password + salt using iterated keccak256.
+fn derive_key(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
+    let mut key = luxtensor_crypto::keccak256(&[password, salt].concat());
+    for _ in 1..iterations {
+        key = luxtensor_crypto::keccak256(&key);
+    }
+    key
+}
+
+// ============================================================
+// New command handlers
+// ============================================================
+
+async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
+    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
+
+    // Parse private key and derive sender address
+    let secret = parse_private_key(&args.from)?;
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+        .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
+    let from_address = keypair.address();
+    println!("📤 Sending transaction from: {}", from_address);
+
+    // Parse destination address
+    let to_hex = args.to.strip_prefix("0x").unwrap_or(&args.to);
+    let to_bytes =
+        hex::decode(to_hex).map_err(|_| anyhow::anyhow!("Invalid destination address hex"))?;
+    if to_bytes.len() != 20 {
+        anyhow::bail!("Destination address must be 20 bytes, got {}", to_bytes.len());
+    }
+
+    // Parse value
+    let value_bytes = parse_wei_amount(&args.value)?;
+
+    // Chain ID (default: LuxTensor = 8898)
+    let chain_id = args.chain_id.unwrap_or(8898);
+
+    // Fetch nonce from the node
+    let nonce_result = rpc_call(
+        &args.rpc_url,
+        "eth_getTransactionCount",
+        vec![serde_json::json!(format!("{}", from_address)), serde_json::json!("latest")],
+    )
+    .await?;
+    let nonce = parse_hex_u64(nonce_result.as_str().unwrap_or(&nonce_result.to_string()))?;
+
+    // Get gas price (from arg or from node)
+    let gas_price_bytes = if let Some(ref gp) = args.gas_price {
+        parse_wei_amount(gp)?
+    } else {
+        let gp_result = rpc_call(&args.rpc_url, "eth_gasPrice", vec![]).await?;
+        let gp = parse_hex_u64(gp_result.as_str().unwrap_or(&gp_result.to_string()))?;
+        u64_to_be_trimmed(gp)
+    };
+
+    // Gas limit
+    let gas_limit = args.gas_limit.unwrap_or(21000);
+
+    // Calldata
+    let data_bytes = if let Some(ref data) = args.data {
+        let d = data.strip_prefix("0x").unwrap_or(data);
+        hex::decode(d).map_err(|_| anyhow::anyhow!("Invalid hex calldata"))?
+    } else {
+        vec![]
+    };
+
+    println!("   Nonce:     {}", nonce);
+    println!("   To:        0x{}", hex::encode(&to_bytes));
+    println!("   Value:     {} wei", args.value);
+    println!("   Gas Limit: {}", gas_limit);
+    println!("   Chain ID:  {}", chain_id);
+
+    // Build unsigned tx for EIP-155 signing:
+    // [nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]
+    let unsigned_tx = rlp_encode_list(&[
+        rlp_encode_u64(nonce),
+        rlp_encode_bytes(&gas_price_bytes),
+        rlp_encode_u64(gas_limit),
+        rlp_encode_bytes(&to_bytes),
+        rlp_encode_bytes(&value_bytes),
+        rlp_encode_bytes(&data_bytes),
+        rlp_encode_u64(chain_id),
+        rlp_encode_u64(0),
+        rlp_encode_u64(0),
+    ]);
+
+    // Hash the unsigned transaction
+    let tx_hash = luxtensor_crypto::keccak256(&unsigned_tx);
+
+    // Sign the hash
+    let signature = keypair.sign(&tx_hash).map_err(|e| anyhow::anyhow!("Signing failed: {}", e))?;
+
+    let r = &signature[..32];
+    let s = &signature[32..];
+
+    // Determine recovery ID by trying both (0, 1) and matching the recovered address
+    let mut recovery_id = 0u8;
+    for rid in 0..2u8 {
+        if let Ok(pubkey) = luxtensor_crypto::recover_public_key(&tx_hash, &signature, rid) {
+            if let Ok(addr) = luxtensor_crypto::address_from_public_key(&pubkey) {
+                if addr == from_address {
+                    recovery_id = rid;
+                    break;
+                }
+            }
+        }
+    }
+
+    // EIP-155: v = chain_id * 2 + 35 + recovery_id
+    let v = chain_id * 2 + 35 + recovery_id as u64;
+
+    // Build signed tx: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]
+    let signed_tx = rlp_encode_list(&[
+        rlp_encode_u64(nonce),
+        rlp_encode_bytes(&gas_price_bytes),
+        rlp_encode_u64(gas_limit),
+        rlp_encode_bytes(&to_bytes),
+        rlp_encode_bytes(&value_bytes),
+        rlp_encode_bytes(&data_bytes),
+        rlp_encode_u64(v),
+        rlp_encode_bytes(trim_leading_zeros(r)),
+        rlp_encode_bytes(trim_leading_zeros(s)),
+    ]);
+
+    let raw_tx_hex = format!("0x{}", hex::encode(&signed_tx));
+
+    // Send the raw transaction
+    let result =
+        rpc_call(&args.rpc_url, "eth_sendRawTransaction", vec![serde_json::json!(raw_tx_hex)])
+            .await?;
+
+    println!("✅ Transaction sent!");
+    println!("   Tx Hash: {}", result);
+
+    Ok(())
+}
+
+async fn handle_stake(args: StakeArgs) -> Result<()> {
+    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
+
+    let secret = parse_private_key(&args.from)?;
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+        .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
+    let address = keypair.address();
+
+    println!("🔒 Staking {} MDT from {}", args.amount, address);
+
+    let result = rpc_call(
+        &args.rpc_url,
+        "staking_stake",
+        vec![serde_json::json!(format!("{}", address)), serde_json::json!(args.amount)],
+    )
+    .await?;
+
+    println!("✅ Stake submitted!");
+    println!("   Result: {}", result);
+
+    Ok(())
+}
+
+async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
+    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
+
+    let secret = parse_private_key(&args.from)?;
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+        .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
+    let address = keypair.address();
+
+    println!("🔓 Unstaking {} MDT from {}", args.amount, address);
+
+    let result = rpc_call(
+        &args.rpc_url,
+        "staking_unstake",
+        vec![serde_json::json!(format!("{}", address)), serde_json::json!(args.amount)],
+    )
+    .await?;
+
+    println!("✅ Unstake submitted!");
+    println!("   Result: {}", result);
+
+    Ok(())
+}
+
+async fn handle_delegate(args: DelegateArgs) -> Result<()> {
+    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
+
+    let secret = parse_private_key(&args.from)?;
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+        .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
+    let address = keypair.address();
+
+    println!("🤝 Delegating {} MDT from {} to validator {}", args.amount, address, args.validator);
+
+    let result = rpc_call(
+        &args.rpc_url,
+        "staking_delegate",
+        vec![
+            serde_json::json!(format!("{}", address)),
+            serde_json::json!(args.validator),
+            serde_json::json!(args.amount),
+        ],
+    )
+    .await?;
+
+    println!("✅ Delegation submitted!");
+    println!("   Result: {}", result);
+
+    Ok(())
+}
+
+fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
+    println!("⚠️  WARNING: Handle private keys with extreme care.");
+
+    let secret = parse_private_key(&args.private_key)?;
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+        .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
+    let address = keypair.address();
+
+    // Get password (prompt interactively if not provided via flag)
+    let password = match args.password {
+        Some(p) => p,
+        None => {
+            eprint!("Enter password to encrypt keystore: ");
+            io::stderr().flush()?;
+            let mut pass = String::new();
+            io::stdin().read_line(&mut pass)?;
+            pass.trim().to_string()
+        }
+    };
+
+    if password.is_empty() {
+        anyhow::bail!("Password cannot be empty");
+    }
+
+    // Generate random 16-byte salt using OS CSPRNG (via KeyPair::generate)
+    let salt_keypair = luxtensor_crypto::KeyPair::generate();
+    let salt_hash = luxtensor_crypto::keccak256(salt_keypair.address().as_bytes());
+    let salt = &salt_hash[..16];
+
+    let iterations = 100_000u32;
+    let derived_key = derive_key(password.as_bytes(), salt, iterations);
+
+    // Encrypt the private key (XOR with derived key)
+    let mut ciphertext = [0u8; 32];
+    for i in 0..32 {
+        ciphertext[i] = secret[i] ^ derived_key[i];
+    }
+
+    // MAC for integrity verification: keccak256(derived_key[16..32] || ciphertext)
+    let mut mac_input = Vec::with_capacity(48);
+    mac_input.extend_from_slice(&derived_key[16..32]);
+    mac_input.extend_from_slice(&ciphertext);
+    let mac = luxtensor_crypto::keccak256(&mac_input);
+
+    let keystore = serde_json::json!({
+        "version": 1,
+        "address": format!("{}", address),
+        "crypto": {
+            "cipher": "xor-keccak256",
+            "ciphertext": hex::encode(ciphertext),
+            "kdf": "keccak256-iter",
+            "kdfparams": {
+                "iterations": iterations,
+                "salt": hex::encode(salt)
+            },
+            "mac": hex::encode(mac)
+        }
+    });
+
+    std::fs::write(&args.output, serde_json::to_string_pretty(&keystore)?)?;
+
+    println!("✅ Keystore saved: {}", args.output.display());
+    println!("   Address: {}", address);
+    println!("⚠️  Remember your password — it cannot be recovered!");
+
+    Ok(())
+}
+
+fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
+    let data = std::fs::read_to_string(&args.keystore).map_err(|e| {
+        anyhow::anyhow!("Failed to read keystore '{}': {}", args.keystore.display(), e)
+    })?;
+    let keystore: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("Invalid keystore JSON: {}", e))?;
+
+    let crypto = keystore
+        .get("crypto")
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing 'crypto' field"))?;
+
+    let ciphertext_hex = crypto
+        .get("ciphertext")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing ciphertext"))?;
+    let ciphertext = hex::decode(ciphertext_hex)?;
+    if ciphertext.len() != 32 {
+        anyhow::bail!("Invalid keystore: ciphertext must be 32 bytes");
+    }
+
+    let kdfparams = crypto
+        .get("kdfparams")
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing kdfparams"))?;
+    let iterations = kdfparams
+        .get("iterations")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing iterations"))?
+        as u32;
+    let salt_hex = kdfparams
+        .get("salt")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing salt"))?;
+    let salt = hex::decode(salt_hex)?;
+
+    let stored_mac_hex = crypto
+        .get("mac")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing mac"))?;
+    let stored_mac = hex::decode(stored_mac_hex)?;
+
+    // Derive key from password
+    let derived_key = derive_key(args.password.as_bytes(), &salt, iterations);
+
+    // Verify MAC
+    let mut mac_input = Vec::with_capacity(48);
+    mac_input.extend_from_slice(&derived_key[16..32]);
+    mac_input.extend_from_slice(&ciphertext);
+    let computed_mac = luxtensor_crypto::keccak256(&mac_input);
+
+    if computed_mac[..] != stored_mac[..] {
+        anyhow::bail!("❌ Incorrect password or corrupted keystore");
+    }
+
+    // Decrypt private key
+    let mut private_key = [0u8; 32];
+    for i in 0..32 {
+        private_key[i] = ciphertext[i] ^ derived_key[i];
+    }
+
+    let address = keystore.get("address").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+    println!("⚠️  WARNING: Your private key is displayed below. Keep it secure!");
+    println!("🔑 Address: {}", address);
+    println!("   Private Key: 0x{}", hex::encode(private_key));
+    println!("⚠️  Never share your private key with anyone!");
 
     Ok(())
 }

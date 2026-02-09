@@ -138,7 +138,13 @@ pub fn project_supply(
         let weight = emission_cfg.utility_weight as f64 / 100.0;
         let adjustment = 1.0 + (utility_factor - 1.0) * weight;
 
-        let adjusted_emission_per_block = (base_emission as f64 * adjustment) as u128;
+        // SECURITY: Clamp f64 before casting to u128 to prevent NaN/negative/overflow
+        let adjusted_emission_per_block = {
+            let raw = base_emission as f64 * adjustment;
+            if raw.is_nan() || raw < 0.0 { 0u128 }
+            else if raw > u128::MAX as f64 { u128::MAX }
+            else { raw as u128 }
+        };
         let annual_gross_emission =
             adjusted_emission_per_block.saturating_mul(BLOCKS_PER_YEAR as u128);
 

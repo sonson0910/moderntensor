@@ -120,9 +120,9 @@ LuxTensor is a purpose-built Layer-1 blockchain designed specifically for decent
 | Parameter | Value |
 |-----------|-------|
 | Consensus | Proof of Stake (PoS) |
-| Block Time | 6 seconds |
-| Finality | 2 blocks (~12 seconds) |
-| TPS | 10,000+ |
+| Block Time | 12 seconds |
+| Finality | 2 blocks (~24 seconds) |
+| TPS | 1,000–5,000 |
 | EVM Compatible | Yes |
 | Native Token | MDT |
 
@@ -331,11 +331,13 @@ Validators face penalties for:
 
 | Allocation | Percentage | Amount | Vesting |
 |------------|------------|--------|---------|
-| Emission Rewards | 50% | 10,500,000 | 10 years |
-| Team & Development | 15% | 3,150,000 | 4 years cliff, 2 years linear |
-| Ecosystem Fund | 15% | 3,150,000 | DAO controlled |
-| Early Investors | 10% | 2,100,000 | 1 year cliff, 3 years linear |
-| Community Sale | 5% | 1,050,000 | Immediate |
+| Emission Rewards | 45% | 9,450,000 | 10+ years |
+| Ecosystem Grants | 12% | 2,520,000 | DAO controlled |
+| Team & Development | 10% | 2,100,000 | 1 year cliff, 4 years linear |
+| DAO Treasury | 10% | 2,100,000 | Multi-sig controlled |
+| Private Sale | 8% | 1,680,000 | 1 year cliff, 2 years linear |
+| IDO | 5% | 1,050,000 | 25% TGE, 6 months vest |
+| Liquidity | 5% | 1,050,000 | DEX/CEX liquidity |
 | Foundation Reserve | 5% | 1,050,000 | Multi-sig controlled |
 
 ### 7.3 Emission Schedule

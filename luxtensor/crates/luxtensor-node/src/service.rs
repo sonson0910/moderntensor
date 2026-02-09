@@ -58,7 +58,7 @@ use tracing::{debug, error, info, warn};
 fn current_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("System time before Unix epoch")
+        .unwrap_or(std::time::Duration::ZERO)
         .as_secs()
 }
 
@@ -217,7 +217,7 @@ impl NodeService {
         let consensus_config = ConsensusConfig {
             slot_duration: config.consensus.block_time,
             min_stake: config.consensus.min_stake.parse()
-                .expect("min_stake must be a valid u128 integer"),
+                .map_err(|e| anyhow::anyhow!("min_stake '{}' is not a valid u128: {}", config.consensus.min_stake, e))?,
             block_reward: luxtensor_core::constants::tokenomics::INITIAL_BLOCK_REWARD,
             epoch_length: config.consensus.epoch_length,
             ..Default::default()
@@ -324,7 +324,7 @@ impl NodeService {
         // Initialize FastFinality (BFT-style finality via 2/3 validator signatures)
         let fast_finality = Arc::new(RwLock::new(
             FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
-                .expect("FastFinality config must be valid (threshold=67)")
+                .map_err(|e| anyhow::anyhow!("FastFinality init failed: {}", e))?
         ));
         info!("  ✓ Fast finality initialized (threshold: 67%)");
 
@@ -389,7 +389,7 @@ impl NodeService {
             .unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .expect("System time before UNIX epoch")
+                    .unwrap_or(std::time::Duration::ZERO)
                     .as_secs()
             });
 
@@ -1238,7 +1238,7 @@ impl NodeService {
                     // Calculate current slot
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .expect("System time before UNIX epoch")
+                        .unwrap_or(std::time::Duration::ZERO)
                         .as_secs();
                     let slot = if now > genesis_timestamp {
                         (now - genesis_timestamp) / block_time

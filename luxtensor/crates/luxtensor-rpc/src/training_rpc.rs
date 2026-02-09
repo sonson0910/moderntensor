@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 // =============================================================================
 // TYPES
@@ -102,6 +102,8 @@ pub struct TrainingRpcContext {
     pub job_counter: Arc<RwLock<u64>>,
     /// Proof of Training verifier for gradient validation
     pub pot_verifier: Arc<RwLock<PoTVerifier>>,
+    /// Stake weights per (job_id, trainer_address) in basis points (BPS, 10000 = 100%)
+    pub trainer_stakes: Arc<RwLock<HashMap<(Hash, String), u64>>>,
 }
 
 impl TrainingRpcContext {
@@ -111,6 +113,7 @@ impl TrainingRpcContext {
             rounds: Arc::new(RwLock::new(HashMap::new())),
             job_counter: Arc::new(RwLock::new(0)),
             pot_verifier: Arc::new(RwLock::new(PoTVerifier::new())),
+            trainer_stakes: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -175,7 +178,7 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             *counter,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_nanos()
         );
         let job_id = luxtensor_crypto::keccak256(job_id_data.as_bytes());
@@ -193,7 +196,7 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             status: TrainingJobStatus::Open,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs(),
             trainers: Vec::new(),
         };
@@ -331,6 +334,7 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
 
 fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let jobs = ctx.jobs.clone();
+    let trainer_stakes = ctx.trainer_stakes.clone();
 
     // training_registerTrainer - Register as a trainer for a job
     io.add_sync_method("training_registerTrainer", move |params: Params| {
@@ -360,10 +364,23 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             }
 
             job.trainers.push(trainer_address.clone());
+
+            // Store stake weight (optional third param, default 10000 BPS = 100%)
+            let stake_bps: u64 = if parsed.len() >= 3 {
+                parsed[2].parse::<u64>().unwrap_or(10_000)
+            } else {
+                10_000
+            };
+            {
+                let mut stakes = trainer_stakes.write();
+                stakes.insert((job_id, trainer_address.clone()), stake_bps);
+            }
+
             info!(
-                "Trainer {} registered for job 0x{}",
+                "Trainer {} registered for job 0x{} with stake {}bps",
                 trainer_address,
-                hex::encode(&job_id)
+                hex::encode(&job_id),
+                stake_bps
             );
 
             // Auto-start if min participants reached
@@ -420,6 +437,7 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let jobs = ctx.jobs.clone();
     let rounds = ctx.rounds.clone();
     let pot_verifier = ctx.pot_verifier.clone();
+    let trainer_stakes = ctx.trainer_stakes.clone();
 
     // training_submitGradient - Submit gradient for current round
     io.add_sync_method("training_submitGradient", move |params: Params| {
@@ -468,45 +486,121 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             checkpoint_hash: request.checkpoint_hash.clone(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs(),
             verified,
         };
 
-        let mut rounds_map = rounds.write();
-        if let Some(round_info) = rounds_map.get_mut(&(job_id, current_round)) {
-            round_info.submissions.push(submission);
+        // Phase 1: Add submission and compute FedAvg aggregation if round is complete
+        let (submission_count, round_complete) = {
+            let mut rounds_map = rounds.write();
+            if let Some(round_info) = rounds_map.get_mut(&(job_id, current_round)) {
+                round_info.submissions.push(submission);
 
-            info!(
-                "Gradient submitted for job 0x{} round {}",
-                hex::encode(&job_id),
-                current_round
-            );
+                info!(
+                    "Gradient submitted for job 0x{} round {}",
+                    hex::encode(&job_id),
+                    current_round
+                );
 
-            let submission_count = round_info.submissions.len();
-            let round_complete = submission_count >= min_participants as usize;
+                let submission_count = round_info.submissions.len();
+                let round_complete = submission_count >= min_participants as usize;
 
-            if round_complete {
-                // Aggregate gradients
-                round_info.completed = true;
-                round_info.aggregated_checkpoint = Some(format!(
-                    "0x{}",
-                    hex::encode(luxtensor_crypto::keccak256(
-                        request.gradient_hash.as_bytes()
-                    ))
-                ));
+                if round_complete {
+                    // Compute real FedAvg commitment from all submissions
+                    let stakes_map = trainer_stakes.read();
+                    let job_stakes: HashMap<String, u64> = round_info
+                        .submissions
+                        .iter()
+                        .map(|s| {
+                            let stake = stakes_map
+                                .get(&(job_id, s.trainer.clone()))
+                                .copied()
+                                .unwrap_or(10_000);
+                            (s.trainer.clone(), stake)
+                        })
+                        .collect();
+                    drop(stakes_map);
+
+                    let commitment =
+                        compute_fedavg_commitment(&round_info.submissions, &job_stakes);
+                    round_info.completed = true;
+                    round_info.aggregated_checkpoint = Some(commitment.clone());
+
+                    info!(
+                        "FedAvg aggregation complete for job 0x{} round {}: {} submissions, checkpoint={}",
+                        hex::encode(&job_id),
+                        current_round,
+                        submission_count,
+                        commitment,
+                    );
+                }
+
+                (submission_count, round_complete)
+            } else {
+                return Err(jsonrpc_core::Error::invalid_params("Round not found"));
             }
+        };
 
-            Ok(serde_json::json!({
-                "success": true,
-                "job_id": format!("0x{}", hex::encode(job_id)),
-                "round": current_round,
-                "submission_count": submission_count,
-                "round_complete": round_complete,
-            }))
-        } else {
-            Err(jsonrpc_core::Error::invalid_params("Round not found"))
+        // Phase 2: Auto-advance round if aggregation is complete
+        if round_complete {
+            let mut jobs_map = jobs.write();
+            let mut next_round_num = None;
+
+            if let Some(job) = jobs_map.get_mut(&job_id) {
+                if job.status != TrainingJobStatus::Training {
+                    warn!(
+                        "Job 0x{} not in training status during auto-advance, skipping",
+                        hex::encode(&job_id)
+                    );
+                } else {
+                    let next = job.current_round + 1;
+                    if next >= job.total_rounds {
+                        job.status = TrainingJobStatus::Completed;
+                        info!(
+                            "Training job completed: 0x{}, all {} rounds done",
+                            hex::encode(&job_id),
+                            job.total_rounds
+                        );
+                    } else {
+                        job.current_round = next;
+                        next_round_num = Some(next);
+                        info!(
+                            "Auto-advanced to round {} for job 0x{}",
+                            next,
+                            hex::encode(&job_id)
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    "Job 0x{} not found during auto-advance",
+                    hex::encode(&job_id)
+                );
+            }
+            drop(jobs_map);
+
+            // Phase 3: Initialize next round if needed
+            if let Some(next) = next_round_num {
+                let new_round = RoundInfo {
+                    job_id,
+                    round: next,
+                    submissions: Vec::new(),
+                    aggregated_checkpoint: None,
+                    completed: false,
+                };
+                let mut rounds_map = rounds.write();
+                rounds_map.insert((job_id, next), new_round);
+            }
         }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "job_id": format!("0x{}", hex::encode(job_id)),
+            "round": current_round,
+            "submission_count": submission_count,
+            "round_complete": round_complete,
+        }))
     });
 
     let rounds = ctx.rounds.clone();
@@ -672,6 +766,104 @@ fn parse_job_id(hex_str: &str) -> Result<Hash, jsonrpc_core::Error> {
     Ok(job_id)
 }
 
+/// Compute a deterministic FedAvg commitment from gradient submissions with stake weights.
+///
+/// The commitment is a Merkle root of sorted `(address, stake_weight_bps, gradient_hash)` tuples.
+/// This provides a verifiable, deterministic aggregation proof for federated averaging.
+///
+/// Each leaf is: `H(trainer_address ":" normalized_weight_bps ":" gradient_hash)`
+/// Leaves are sorted by trainer address for determinism before building the Merkle tree.
+/// Stake weights are normalized to BPS (basis points) using integer math — no floating point.
+fn compute_fedavg_commitment(
+    submissions: &[GradientSubmission],
+    stake_weights: &HashMap<String, u64>,
+) -> String {
+    if submissions.is_empty() {
+        warn!("FedAvg: called with empty submissions");
+        return format!("0x{}", hex::encode([0u8; 32]));
+    }
+
+    // Collect (address, stake_bps, gradient_hash) tuples
+    let mut contributions: Vec<(&str, u64, &str)> = submissions
+        .iter()
+        .map(|s| {
+            let stake = stake_weights.get(&s.trainer).copied().unwrap_or(10_000);
+            (s.trainer.as_str(), stake, s.gradient_hash.as_str())
+        })
+        .collect();
+
+    // Sort by trainer address for determinism
+    contributions.sort_by(|a, b| a.0.cmp(b.0));
+
+    // Compute total stake for weight normalization (in BPS, no floats)
+    let total_stake: u64 = contributions.iter().map(|(_, s, _)| s).sum();
+    if total_stake == 0 {
+        warn!("FedAvg: total stake is zero, using equal weights");
+    }
+
+    // Build leaf hashes: H(addr:normalized_weight_bps:gradient_hash)
+    // Normalized weight = (stake * 10000) / total_stake (in BPS)
+    let num_contributors = contributions.len() as u64;
+    let leaf_hashes: Vec<[u8; 32]> = contributions
+        .iter()
+        .map(|(addr, stake, grad_hash)| {
+            let normalized_bps = if total_stake > 0 {
+                (*stake * 10_000) / total_stake
+            } else {
+                10_000 / num_contributors.max(1)
+            };
+            let leaf_data = format!("{}:{}:{}", addr, normalized_bps, grad_hash);
+            luxtensor_crypto::keccak256(leaf_data.as_bytes())
+        })
+        .collect();
+
+    // Compute Merkle root of all leaves
+    let root = compute_merkle_root(&leaf_hashes);
+    format!("0x{}", hex::encode(root))
+}
+
+/// Compute the Merkle root from a list of leaf hashes.
+///
+/// Uses a standard bottom-up Merkle tree construction:
+/// - Pairs of nodes are sorted before hashing (for canonical ordering)
+/// - Odd nodes are promoted to the next level
+/// - Single leaf returns itself as root
+/// - Empty input returns zero hash
+fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
+    if leaves.is_empty() {
+        return [0u8; 32];
+    }
+    if leaves.len() == 1 {
+        return leaves[0];
+    }
+
+    let mut current_level = leaves.to_vec();
+
+    while current_level.len() > 1 {
+        let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+        for chunk in current_level.chunks(2) {
+            if chunk.len() == 2 {
+                // Sort pair for canonical ordering (smaller hash first)
+                let (left, right) = if chunk[0] <= chunk[1] {
+                    (chunk[0], chunk[1])
+                } else {
+                    (chunk[1], chunk[0])
+                };
+                let mut combined = [0u8; 64];
+                combined[..32].copy_from_slice(&left);
+                combined[32..].copy_from_slice(&right);
+                next_level.push(luxtensor_crypto::keccak256(&combined));
+            } else {
+                // Odd node: promote to next level
+                next_level.push(chunk[0]);
+            }
+        }
+        current_level = next_level;
+    }
+
+    current_level[0]
+}
+
 // =============================================================================
 // TESTS
 // =============================================================================
@@ -706,5 +898,101 @@ mod tests {
         let status = TrainingJobStatus::Training;
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"Training\"");
+    }
+
+    #[test]
+    fn test_compute_merkle_root_empty() {
+        let root = compute_merkle_root(&[]);
+        assert_eq!(root, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_compute_merkle_root_single_leaf() {
+        let leaf = luxtensor_crypto::keccak256(b"test");
+        let root = compute_merkle_root(&[leaf]);
+        assert_eq!(root, leaf);
+    }
+
+    #[test]
+    fn test_compute_merkle_root_two_leaves() {
+        let leaf1 = luxtensor_crypto::keccak256(b"leaf1");
+        let leaf2 = luxtensor_crypto::keccak256(b"leaf2");
+        let root = compute_merkle_root(&[leaf1, leaf2]);
+        // Root should be deterministic regardless of input order
+        let root_reversed = compute_merkle_root(&[leaf2, leaf1]);
+        assert_eq!(root, root_reversed, "Merkle root must be order-independent for pairs");
+    }
+
+    #[test]
+    fn test_compute_fedavg_commitment_deterministic() {
+        let submissions = vec![
+            GradientSubmission {
+                trainer: "0xaaa".to_string(),
+                gradient_hash: "0xhash_a".to_string(),
+                checkpoint_hash: "0xcp_a".to_string(),
+                timestamp: 100,
+                verified: true,
+            },
+            GradientSubmission {
+                trainer: "0xbbb".to_string(),
+                gradient_hash: "0xhash_b".to_string(),
+                checkpoint_hash: "0xcp_b".to_string(),
+                timestamp: 101,
+                verified: true,
+            },
+        ];
+        let mut stakes = HashMap::new();
+        stakes.insert("0xaaa".to_string(), 7_000u64);
+        stakes.insert("0xbbb".to_string(), 3_000u64);
+
+        let commitment1 = compute_fedavg_commitment(&submissions, &stakes);
+        let commitment2 = compute_fedavg_commitment(&submissions, &stakes);
+        assert_eq!(commitment1, commitment2, "FedAvg commitment must be deterministic");
+        assert!(commitment1.starts_with("0x"), "Commitment must be hex-prefixed");
+        assert_eq!(commitment1.len(), 66, "Commitment must be 32-byte hex (0x + 64 chars)");
+    }
+
+    #[test]
+    fn test_compute_fedavg_commitment_empty() {
+        let submissions: Vec<GradientSubmission> = vec![];
+        let stakes = HashMap::new();
+        let commitment = compute_fedavg_commitment(&submissions, &stakes);
+        assert_eq!(
+            commitment,
+            format!("0x{}", hex::encode([0u8; 32])),
+            "Empty submissions should produce zero hash"
+        );
+    }
+
+    #[test]
+    fn test_compute_fedavg_commitment_order_independent() {
+        let sub_a = GradientSubmission {
+            trainer: "0xaaa".to_string(),
+            gradient_hash: "0xhash_a".to_string(),
+            checkpoint_hash: "0xcp_a".to_string(),
+            timestamp: 100,
+            verified: true,
+        };
+        let sub_b = GradientSubmission {
+            trainer: "0xbbb".to_string(),
+            gradient_hash: "0xhash_b".to_string(),
+            checkpoint_hash: "0xcp_b".to_string(),
+            timestamp: 101,
+            verified: true,
+        };
+        let mut stakes = HashMap::new();
+        stakes.insert("0xaaa".to_string(), 5_000u64);
+        stakes.insert("0xbbb".to_string(), 5_000u64);
+
+        // Order should not matter — sorted internally by address
+        let c1 = compute_fedavg_commitment(&[sub_a.clone(), sub_b.clone()], &stakes);
+        let c2 = compute_fedavg_commitment(&[sub_b, sub_a], &stakes);
+        assert_eq!(c1, c2, "FedAvg commitment must be order-independent");
+    }
+
+    #[test]
+    fn test_trainer_stakes_default() {
+        let ctx = TrainingRpcContext::new();
+        assert!(ctx.trainer_stakes.read().is_empty());
     }
 }

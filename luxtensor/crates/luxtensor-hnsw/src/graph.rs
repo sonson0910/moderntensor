@@ -213,7 +213,7 @@ impl<const D: usize> HnswGraph<D> {
         self.nodes.push(node);
 
         let entry_point = self.entry_point
-            .expect("entry_point guarded by is_empty check above");
+            .unwrap_or_else(|| unreachable!());
         let mut current_node = entry_point;
 
         // Phase 1: Greedy search from top level down to node's level + 1
@@ -297,7 +297,7 @@ impl<const D: usize> HnswGraph<D> {
         }
 
         let mut current_node = self.entry_point
-            .expect("entry_point guarded by is_none check above");
+            .unwrap_or_else(|| unreachable!());
 
         // Greedy search from top to level 1
         for lc in (1..=self.max_level).rev() {

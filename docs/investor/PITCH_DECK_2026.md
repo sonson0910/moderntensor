@@ -117,7 +117,7 @@
 
 | Feature | Benefit |
 |---------|---------|
-| **Custom L1 Blockchain** | 10x faster than Bittensor (1,000+ TPS) |
+| **Custom L1 Blockchain** | 10x faster than Bittensor (1,000–5,000 TPS) |
 | **Adaptive Tokenomics** | 72-99% less inflation |
 | **AI Validation Protocol** | Quality-based rewards, not just compute |
 | **Full EVM Compatibility** | Easy migration from Ethereum |
@@ -136,9 +136,9 @@
 ├────────────────────┬─────────────────────────────────┤
 │ Language           │ Rust (memory safe, fast)        │
 │ Consensus          │ Proof of Stake + AI Validation  │
-│ Block Time         │ 0.5-1.0 seconds                 │
-│ Throughput         │ 1,000-5,000 TPS                 │
-│ Finality           │ 30-60 seconds                   │
+│ Block Time         │ 12 seconds                      │
+│ Throughput         │ 1,000–5,000 TPS                 │
+│ Finality           │ ~24 seconds (2 blocks)          │
 │ Smart Contracts    │ EVM compatible                  │
 │ Network            │ libp2p with Gossipsub           │
 │ Storage            │ RocksDB (optimized)             │
@@ -148,20 +148,20 @@
 ### Development Progress
 
 ```
-Progress: ████████████████████░░░ 83%
+Progress: ███████████████████████░ ~95%
 
 ✅ Core Blockchain          ✅ PoS Consensus
 ✅ P2P Networking           ✅ Storage Layer
 ✅ RPC API                   ✅ Smart Contracts Framework
 ✅ Python SDK               ✅ CLI Tools
-✅ Testnet Live             ⏳ Mainnet (2 months)
+✅ Testnet Live             ⏳ Mainnet (Q2 2026)
 ```
 
 ### Code Metrics
 
 | Metric | Value |
 |--------|-------|
-| **Rust LOC** | 7,550+ production code |
+| **Rust LOC** | 63,000+ lines across Rust blockchain + Python SDK |
 | **Test Coverage** | 143 tests (100% passing) |
 | **Python SDK** | 144 RPC methods |
 | **Documentation** | Comprehensive |
@@ -246,7 +246,7 @@ MintAmount = max(
 |------|--------------|-----------|------------|
 | **Light Node** | 0 | 0% | - |
 | **Full Node** | 10,000 | 6-12% | +20% (90d) |
-| **Validator** | 100,000 | 10-18% | +30% (180d) |
+| **Validator** | 10,000 | 10-18% | +30% (180d) |
 | **Super Validator** | 500,000 | 15-25% | +40% (365d) |
 
 ### Long-Term Supply Projection
@@ -387,8 +387,8 @@ Timeline
 | Quarter | Milestone | Status |
 |---------|-----------|--------|
 | Q4 2025 | Testnet Launch | ✅ Complete |
-| Q1 2026 | Mainnet Launch | ⏳ 2 months |
-| Q1 2026 | Token Generation Event (TGE) | ⏳ Planned |
+| Q2 2026 | Mainnet Launch | ⏳ In Progress |
+| Q3 2026 | Token Generation Event (TGE) | ⏳ Planned |
 | Q2 2026 | First Subnet Live | ○ Planned |
 | Q3 2026 | zkML Integration | ○ Planned |
 | Q4 2026 | Cross-chain Bridges | ○ Planned |
@@ -436,8 +436,8 @@ Timeline
 
 | Metric | Value |
 |--------|-------|
-| **Development Progress** | 83% complete |
-| **Rust Production Code** | 7,550+ LOC |
+| **Development Progress** | ~95% complete |
+| **Rust Production Code** | 63,000+ lines across Rust blockchain + Python SDK |
 | **Test Suite** | 143 tests (100% passing) |
 | **SDK Methods** | 144 RPC methods |
 | **Testnet Status** | ✅ Live |
@@ -487,7 +487,7 @@ Timeline
 
 | Area | Deliverable | Timeline |
 |------|-------------|----------|
-| **Development** | Mainnet launch, SDK v2, Wallet | Q1-Q2 2026 |
+| **Development** | Mainnet launch, SDK v2, Wallet | Q2 2026 |
 | **Marketing** | Community 10K+, Brand awareness | Q2 2026 |
 | **Business** | 5+ partnerships, 100+ validators | Q2 2026 |
 | **Operations** | Team of 10+, Global presence | Q2-Q3 2026 |
@@ -527,9 +527,9 @@ Timeline
 
 ### 4. Strong Execution
 
-- 83% product complete
+- ~95% product complete
 - Testnet live and operational
-- Clear path to mainnet (2 months)
+- Clear path to mainnet
 
 ### 5. Sustainable Tokenomics
 

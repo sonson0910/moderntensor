@@ -177,6 +177,52 @@ impl GenesisConfig {
             a.address.to_lowercase() == "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
         )
     }
+
+    /// Export genesis config as Ethereum-style genesis.json
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut alloc = serde_json::Map::new();
+        for account in &self.accounts {
+            let addr = account.address.strip_prefix("0x").unwrap_or(&account.address);
+            let mut entry = serde_json::Map::new();
+            entry.insert(
+                "balance".to_string(),
+                serde_json::Value::String(format!("0x{:x}", account.balance)),
+            );
+            if let Some(ref code) = account.code {
+                entry.insert("code".to_string(), serde_json::Value::String(code.clone()));
+            }
+            alloc.insert(addr.to_lowercase(), serde_json::Value::Object(entry));
+        }
+
+        serde_json::json!({
+            "config": {
+                "chainId": self.chain_id,
+                "homesteadBlock": 0,
+                "eip150Block": 0,
+                "eip155Block": 0,
+                "eip158Block": 0,
+                "byzantiumBlock": 0,
+                "constantinopleBlock": 0,
+                "petersburgBlock": 0,
+                "istanbulBlock": 0,
+                "muirGlacierBlock": 0,
+                "berlinBlock": 0,
+                "londonBlock": 0
+            },
+            "difficulty": "0x1",
+            "gasLimit": "0x1c9c380",
+            "extraData": format!("0x{}", hex::encode(self.extra_data.as_bytes())),
+            "timestamp": format!("0x{:x}", self.timestamp),
+            "alloc": alloc
+        })
+    }
+
+    /// Save genesis config as Ethereum-style genesis.json to a file
+    pub fn save_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let json = self.to_json();
+        std::fs::write(path, serde_json::to_string_pretty(&json)?)?;
+        Ok(())
+    }
 }
 
 /// Genesis errors

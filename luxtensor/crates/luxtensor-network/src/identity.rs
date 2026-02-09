@@ -74,6 +74,15 @@ impl NodeIdentity {
         fs::write(path, &bytes)
             .map_err(|e| NetworkError::Connection(format!("Failed to write key file: {}", e)))?;
 
+        // Set restrictive file permissions (owner-only read/write) to protect private key
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms)
+                .map_err(|e| NetworkError::Connection(format!("Failed to set key file permissions: {}", e)))?;
+        }
+
         let peer_id = self.peer_id();
         info!("💾 Saved node identity to {}", path);
         info!("   Peer ID: {}", peer_id);
@@ -104,29 +113,29 @@ impl NodeIdentity {
 
 /// Print instructions for connecting to this node
 pub fn print_connection_info(peer_id: &str, listen_port: u16, external_ip: Option<&str>) {
-    println!();
-    println!("╔═══════════════════════════════════════════════════════════════╗");
-    println!("║                    🔗 Node Connection Info                     ║");
-    println!("╠═══════════════════════════════════════════════════════════════╣");
-    println!("║ Peer ID: {}...", &peer_id[..20]);
-    println!("║ Full ID: {}", peer_id);
-    println!("╠═══════════════════════════════════════════════════════════════╣");
-    println!("║ To connect other nodes, add this to their config:             ║");
-    println!("╠═══════════════════════════════════════════════════════════════╣");
+    info!("");
+    info!("╔═══════════════════════════════════════════════════════════════╗");
+    info!("║                    🔗 Node Connection Info                     ║");
+    info!("╠═══════════════════════════════════════════════════════════════╣");
+    info!("║ Peer ID: {}...", &peer_id[..20.min(peer_id.len())]);
+    info!("║ Full ID: {}", peer_id);
+    info!("╠═══════════════════════════════════════════════════════════════╣");
+    info!("║ To connect other nodes, add this to their config:             ║");
+    info!("╠═══════════════════════════════════════════════════════════════╣");
 
     if let Some(ip) = external_ip {
-        println!("║ bootstrap_nodes = [                                           ║");
-        println!("║   \"/ip4/{}/tcp/{}/p2p/{}\"", ip, listen_port, peer_id);
-        println!("║ ]                                                             ║");
+        info!("║ bootstrap_nodes = [                                           ║");
+        info!("║   \"/ip4/{}/tcp/{}/p2p/{}\"", ip, listen_port, peer_id);
+        info!("║ ]                                                             ║");
     } else {
-        println!("║ # Replace YOUR_IP with this server's IP address              ║");
-        println!("║ bootstrap_nodes = [                                           ║");
-        println!("║   \"/ip4/YOUR_IP/tcp/{}/p2p/{}\"", listen_port, peer_id);
-        println!("║ ]                                                             ║");
+        info!("║ # Replace YOUR_IP with this server's IP address              ║");
+        info!("║ bootstrap_nodes = [                                           ║");
+        info!("║   \"/ip4/YOUR_IP/tcp/{}/p2p/{}\"", listen_port, peer_id);
+        info!("║ ]                                                             ║");
     }
 
-    println!("╚═══════════════════════════════════════════════════════════════╝");
-    println!();
+    info!("╚═══════════════════════════════════════════════════════════════╝");
+    info!("");
 }
 
 #[cfg(test)]

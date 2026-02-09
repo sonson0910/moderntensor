@@ -1,278 +1,180 @@
 # ModernTensor SDK
 
-Python SDK for interacting with Luxtensor blockchain and building AI/ML subnets.
+[![PyPI version](https://img.shields.io/pypi/v/moderntensor.svg)](https://pypi.org/project/moderntensor/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## ⚠️ Important Migration Notice
+Python SDK for interacting with the **Luxtensor** blockchain and building decentralized AI/ML subnets on the ModernTensor network.
 
-**ModernTensor has migrated from Cardano to Luxtensor blockchain.**
+---
 
-- ✅ **Luxtensor** is now the official Layer 1 blockchain (account-based, Ethereum-style)
-- ❌ **Cardano/PyCardano** dependencies have been removed (UTXO-based, incompatible)
+## Quick Install
 
-If you're upgrading from an older version that used Cardano:
+```bash
+pip install moderntensor
+```
 
-- See [CARDANO_DEPRECATION.md](../CARDANO_DEPRECATION.md) for migration guide
-- Old UTXO/Datum/Redeemer code will not work with Luxtensor
-- Use `LuxtensorClient` for all blockchain interactions
+Or install from source for development:
 
-## Architecture
-
-ModernTensor consists of two layers:
-
-1. **Luxtensor (Blockchain Layer)** - Rust-based custom Layer 1 blockchain
-   - Location: `/luxtensor/` directory
-   - Handles: Consensus, P2P, Storage, RPC APIs, **Native AI Precompiles**
-   - Status: **Phase 4 - Native AI Integration Complete (~90%)**
-
-2. **ModernTensor SDK (Python Layer)** - This package
-   - Location: `/sdk/` directory
-   - Handles: Python client, AI/ML framework, developer tools
-   - Status: **v0.5.0 (AI-Ready)**
+```bash
+git clone https://github.com/sonson0910/moderntensor.git
+cd moderntensor
+pip install -e ".[dev]"
+```
 
 ## Quick Start
 
-### Installation
-
-```bash
-pip install -e .
-```
-
-### Connect to Luxtensor
+### Connect to the blockchain
 
 ```python
-# ✅ After pip install (recommended)
-from moderntensor.sdk import connect, LuxtensorClient
+from sdk import connect
 
-# ✅ Development mode (from repo root)
-# import sys; sys.path.insert(0, 'moderntensor')
-# from sdk import connect
-
-# Connect to Luxtensor blockchain
+# Connect to a Luxtensor node
 client = connect(url="http://localhost:8545", network="testnet")
 
 # Check connection
-if client.is_connected():
-    print("Connected!")
-
-# Get current block
-block_number = client.get_block_number()
-print(f"Current block: {block_number}")
-
-# Get account info
-account = client.get_account("0x...")
-print(f"Balance: {account.balance}")
+print(client.is_connected())  # True
 ```
 
-### Async Usage (High Performance)
+### Query the latest block
 
 ```python
-from moderntensor.sdk import async_connect
+block_number = client.get_block_number()
+print(f"Latest block: {block_number}")
+
+block = client.get_block(block_number)
+print(f"Block hash: {block.hash}")
+print(f"Transactions: {len(block.transactions)}")
+```
+
+### Query an account
+
+```python
+account = client.get_account("0xYourAddress...")
+print(f"Balance : {account.balance} MDT")
+print(f"Nonce   : {account.nonce}")
+print(f"Stake   : {account.stake}")
+```
+
+### Send a transaction
+
+```python
+from sdk.transactions import create_transfer_transaction, sign_transaction
+
+tx = create_transfer_transaction(
+    sender="0xSenderAddress",
+    recipient="0xRecipientAddress",
+    amount=1_000_000,
+    nonce=account.nonce,
+)
+signed = sign_transaction(tx, private_key="0xYourPrivateKey")
+result = client.submit_transaction(signed)
+print(f"Tx hash: {result.tx_hash}")
+```
+
+### Async client (high-performance)
+
+```python
 import asyncio
+from sdk import async_connect
 
 async def main():
-    # Async client for high performance
     client = await async_connect(url="http://localhost:8545")
 
-    # Batch multiple queries in single round-trip
-    calls = [
+    # Batch multiple RPC calls in a single round-trip
+    results = await client.batch_call([
         ("eth_blockNumber", []),
         ("staking_getValidators", []),
-    ]
-    results = await client.batch_call(calls)
+    ])
     print(f"Block: {results[0]}, Validators: {len(results[1])}")
 
 asyncio.run(main())
 ```
 
-### Sync vs Async Client
-
-| Feature | `LuxtensorClient` (Sync) | `AsyncLuxtensorClient` |
-| :--- | :--- | :--- |
-| **Use Case** | Simple scripts, CLI | High-perf apps, servers |
-| **Batch Calls** | ❌ Not available | ✅ `batch_call()` |
-| **Concurrent Requests** | ❌ Sequential | ✅ `asyncio.gather()` |
-| **Thread-safe** | ✅ Yes | N/A (async) |
-
-> **Tip:** Use sync for learning/prototyping, async for production servers.
-
 ## Features
 
-### ✅ Implemented
-
-- **Luxtensor Client** - Python client to interact with Luxtensor blockchain
-  - Sync and async operations
-  - Account queries (balance, nonce, stake)
-  - Block and transaction queries
-  - Validator information
-  - Subnet and neuron queries
-  - Batch operations (async)
-
-- **Consensus Module** (New)
-  - Slashing & Penalties (Offline, Double Signing)
-  - Circuit Breaker (Fault tolerance)
-  - Liveness Monitoring (Network health)
-  - Fork Choice (GHOST algorithm)
-  - Fast Finality (BFT-style)
-
-- **AI/ML Framework**
-  - Subnet framework
-  - zkML integration (ezkl) with unified Types
-  - Advanced Scoring & Metrics
-  - Node Tier System (Light/Full/Validator)
-
-- **CLI Tools** (`mtcli`)
-  - Wallet management (coldkey/hotkey)
-  - Transaction operations
-  - Staking operations
-
-- **Key Management**
-  - Coldkey/hotkey generation
-  - Key derivation
-
-### 🚧 In Progress
-
-- **Axon Server** - Server for miners/validators to serve AI models
-- **Dendrite Client** - Client to query miners for AI inference
-- **Synapse Protocol** - Request/response data structures for AI/ML
-- **Enhanced Metagraph** - Network topology and miner rankings
-- **Testing Framework** - Comprehensive test suite
-
-### 📋 Planned
-
-- Subnet templates and tools
-- Developer documentation
-- Performance optimizations
+| Area | Highlights |
+|------|-----------|
+| **Blockchain Client** | Sync & async RPC client, batch calls, account/block/tx queries |
+| **Consensus** | Slashing, circuit breaker, liveness monitoring, fork choice (GHOST), fast finality |
+| **AI/ML Framework** | Subnet protocol, zkML integration (ezkl), advanced scoring, node tiers |
+| **CLI (`mtcli`)** | Wallet management, transactions, staking, subnet operations |
+| **Key Management** | BIP39/BIP44 coldkey/hotkey, PBKDF2 + Fernet encryption |
+| **Networking** | Axon server (miners), Dendrite client (validators), Synapse protocol |
+| **Tokenomics** | Reward calculation, emission schedules, staking mechanics |
+| **Monitoring** | Prometheus metrics, OpenTelemetry tracing |
 
 ## Project Structure
 
-```plaintext
+```
 sdk/
-├── __init__.py              # SDK exports (backward compatible)
-├── luxtensor_client.py      # Main client (74KB, 140+ methods)
-├── async_luxtensor_client.py # Async client
-├── luxtensor_pallets.py     # Pallet call encoding (keccak256)
-├── transactions.py          # Transaction signing
-│
-├── client/                  # NEW - Modular client components
-│   ├── base.py             # BaseClient, data classes
-│   └── ...                 # Component mixins
-│
-├── core/                    # Core utilities & Types
-│   ├── cache.py            # LRU cache with TTL
-│   ├── datatypes.py        # Core data types
-│   ├── node_tier.py        # Node tier definitions
-│   └── scoring.py          # Scoring metrics & logic
-│
-├── consensus/               # NEW - Consensus Logic
-│   ├── slashing.py         # Validator penalties
-│   ├── circuit_breaker.py  # Fault tolerance
-│   ├── liveness.py         # Network health
-│   ├── fork_choice.py      # GHOST algorithm
-│   └── fast_finality.py    # BFT finality
-│
-├── models/                  # Pydantic data models
-│   ├── subnet.py           # SubnetInfo, RootConfig
-│   └── ...                 # Other models
-│
-├── ai_ml/                   # AI/ML framework
-│   ├── core/               # SubnetProtocol
-│   ├── zkml/               # Zero-knowledge ML proofs & types
-│   └── agent/              # Miner/Validator AI agents
-│
-├── axon/                    # Server for miners/validators
-├── dendrite/                # Client for AI queries
-├── synapse/                 # Request/response protocol
-├── security/                # RBAC, auditing
-├── keymanager/              # Wallet/key management
-├── cli/                     # CLI tools (mtcli)
-├── tokenomics/              # Token economics
-└── monitoring/              # Metrics and monitoring
+├── __init__.py                # Public API exports
+├── luxtensor_client.py        # Sync RPC client
+├── async_luxtensor_client.py  # Async RPC client
+├── transactions.py            # Transaction creation & signing
+├── websocket_client.py        # Real-time event subscriptions
+├── cli/                       # mtcli command-line tool
+├── ai_ml/                     # AI/ML framework & zkML
+├── axon/                      # Miner/validator server
+├── dendrite/                  # AI inference query client
+├── synapse/                   # Request/response protocol
+├── consensus/                 # PoS consensus logic
+├── core/                      # Cache, data types, scoring
+├── models/                    # Pydantic data models
+├── keymanager/                # Wallet & key management
+├── security/                  # RBAC, auditing, rate limiting
+├── tokenomics/                # Token economics
+└── monitoring/                # Metrics & tracing
 ```
-
-## Development
-
-### Running Luxtensor Node
-
-The SDK requires a running Luxtensor node:
-
-```bash
-cd luxtensor
-cargo run --release
-```
-
-### Running Examples
-
-```bash
-# Luxtensor client example
-python examples/luxtensor_client_example.py
-
-# More examples coming soon...
-```
-
-### Testing
-
-```bash
-pytest tests/
-```
-
-## Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - Complete examples for common use cases ⭐
-- [SDK Redesign Roadmap](../SDK_REDESIGN_ROADMAP.md) - Implementation plan
-- [Architecture Clarification](../SDK_ARCHITECTURE_CLARIFICATION.md) - SDK vs Blockchain
-- [API Reference](API_REFERENCE.md) - All RPC methods
-- [Luxtensor README](../luxtensor/README.md) - Blockchain layer docs
 
 ## API Reference
 
-### LuxtensorClient
+### LuxtensorClient (sync)
 
-Synchronous client for blockchain interaction.
-
-**Methods:**
-
-- `get_chain_info()` - Get blockchain information
-- `get_block_number()` - Get current block height
-- `get_block(block_number)` - Get block by number
-- `get_account(address)` - Get account info
-- `get_balance(address)` - Get account balance
-- `get_nonce(address)` - Get account nonce
-- `submit_transaction(signed_tx)` - Submit transaction
-- `get_transaction(tx_hash)` - Get transaction
-- `get_validators()` - Get active validators
-- `get_subnet_info(subnet_id)` - Get subnet info
-- `get_neurons(subnet_id)` - Get neurons in subnet
-- `get_weights(subnet_id, neuron_uid)` - Get weight matrix
-- `get_stake(address)` - Get staked amount
-- `is_connected()` - Check connection
+| Method | Description |
+|--------|-------------|
+| `connect(url, network)` | Create a connected client |
+| `get_chain_info()` | Blockchain metadata |
+| `get_block_number()` | Current block height |
+| `get_block(n)` | Block by number |
+| `get_account(addr)` | Account info (balance, nonce, stake) |
+| `get_balance(addr)` | Account balance |
+| `submit_transaction(tx)` | Submit signed transaction |
+| `get_transaction(hash)` | Transaction by hash |
+| `get_validators()` | Active validator set |
+| `get_subnet_info(id)` | Subnet metadata |
+| `get_neurons(subnet_id)` | Neurons in a subnet |
+| `get_stake(addr)` | Staked amount |
+| `is_connected()` | Connection status |
 
 ### AsyncLuxtensorClient
 
-Asynchronous client for high-performance operations.
+All sync methods are available as coroutines, plus:
 
-**Additional Methods:**
+| Method | Description |
+|--------|-------------|
+| `batch_call(calls)` | Execute multiple RPC calls concurrently |
 
-- `batch_call(calls)` - Execute multiple RPC calls concurrently
+## Documentation
 
-All sync methods have async equivalents.
+- [Quick Start Guide](QUICKSTART.md)
+- [API Reference](API_REFERENCE.md)
+- [Architecture Overview](../docs/architecture/)
+- [Whitepaper (Vietnamese)](../MODERNTENSOR_WHITEPAPER_VI.md)
+- [Changelog](../CHANGELOG.md)
 
 ## Contributing
 
-We welcome contributions! Areas where help is needed:
+We welcome contributions! See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 
-1. **Axon Server** - Building the miner/validator server
-2. **Dendrite Client** - Query client for AI inference
-3. **Synapse Protocol** - AI/ML protocol definitions
-4. **Metagraph** - Network topology management
-5. **Testing** - Writing comprehensive tests
-6. **Documentation** - API docs and tutorials
+Areas where help is especially welcome:
+
+1. **Testing** — expand the test suite
+2. **Documentation** — tutorials and API docs
+3. **Axon / Dendrite** — miner and validator networking
+4. **AI/ML** — subnet templates and scoring algorithms
+5. **DevOps** — CI, packaging, deployment
 
 ## License
 
-MIT License
-
-## Links
-
-- **Luxtensor (Blockchain):** `/luxtensor/`
-- **Roadmap:** [SDK_REDESIGN_ROADMAP.md](../SDK_REDESIGN_ROADMAP.md)
-- **ModernTensor Whitepaper:** [MODERNTENSOR_WHITEPAPER_VI.md](../MODERNTENSOR_WHITEPAPER_VI.md)
+This project is licensed under the [MIT License](../LICENSE).

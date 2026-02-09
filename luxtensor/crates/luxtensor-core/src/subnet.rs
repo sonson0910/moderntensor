@@ -177,7 +177,9 @@ impl SubnetWeights {
         let total: u32 = self.weights.values().map(|&v| v as u32).sum();
         if total > 0 {
             for v in self.weights.values_mut() {
-                *v = ((*v as u32 * 10000) / total) as u16;
+                // SECURITY: Clamp to u16::MAX to prevent silent truncation
+                let normalized = (*v as u32 * 10000) / total;
+                *v = normalized.min(u16::MAX as u32) as u16;
             }
         }
     }

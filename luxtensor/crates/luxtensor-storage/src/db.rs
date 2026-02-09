@@ -485,6 +485,7 @@ impl BlockchainDB {
             StorageError::DatabaseError("CF_RECEIPTS not found".to_string())
         })?;
 
+        let mut batch = WriteBatch::default();
         let mut pruned = 0usize;
 
         for height in 0..before_height {
@@ -497,13 +498,17 @@ impl BlockchainDB {
                 let tx_hash = tx.hash();
                 // Only count if the receipt actually existed
                 if self.db.get_cf(cf, &tx_hash)?.is_some() {
-                    self.db.delete_cf(cf, &tx_hash)?;
+                    batch.delete_cf(cf, &tx_hash);
                     pruned += 1;
                 }
             }
         }
 
+        // Atomic write: all deletions succeed or none do
         if pruned > 0 {
+            self.db.write(batch).map_err(|e| {
+                StorageError::DatabaseError(format!("Failed to write prune batch: {}", e))
+            })?;
             tracing::info!("Pruned {} receipts for blocks [0, {})", pruned, before_height);
         }
 

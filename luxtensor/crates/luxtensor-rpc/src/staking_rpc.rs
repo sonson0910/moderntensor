@@ -48,6 +48,15 @@ fn internal_error(msg: &str) -> Error {
 }
 
 /// Register staking-related RPC methods with persistent storage
+///
+/// # Balance Verification
+///
+/// IMPORTANT: This module uses MetagraphDB for staking bookkeeping only.
+/// Balance verification against the EVM state is handled at the handler level
+/// (see `handlers/staking.rs` `register_staking_handlers` which uses `UnifiedStateDB`).
+///
+/// When activating this module, pass an `Arc<RwLock<UnifiedStateDB>>` and add
+/// balance checks before `store_stake` / `store_delegation` calls.
 pub fn register_staking_methods(
     io: &mut IoHandler,
     metagraph_db: Arc<MetagraphDB>,
@@ -104,7 +113,8 @@ pub fn register_staking_methods(
 
         let new_stake = match existing {
             Some(mut data) => {
-                data.stake += amount;
+                data.stake = data.stake.checked_add(amount)
+                    .ok_or_else(|| Error::invalid_params("Stake overflow"))?;
                 data
             }
             None => StakingData {
@@ -222,6 +232,13 @@ pub fn register_staking_methods(
         let lock_days: u32 = parsed.get(5)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+
+        // Validate lock_days to prevent permanent/excessive lock
+        if lock_days > 1825 {
+            return Err(Error::invalid_params(
+                "lock_days cannot exceed 1825 (5 years)"
+            ));
+        }
 
         // Security: Verify timestamp is recent (within 5 minutes)
         let now = get_current_timestamp();

@@ -35,7 +35,11 @@ pub fn logarithmic_stake(stake: u128) -> u128 {
     // Apply factor, ensuring minimum of 10% effectiveness for very large stakes
     let effective_factor = log_factor.max(0.10);
 
-    (stake_f * effective_factor) as u128
+    // SECURITY: Clamp f64 before casting to u128 to avoid NaN/negative
+    let raw = stake_f * effective_factor;
+    if raw.is_nan() || raw < 0.0 { 0u128 }
+    else if raw > u128::MAX as f64 { u128::MAX }
+    else { raw as u128 }
 }
 
 
@@ -200,7 +204,11 @@ impl NodeInfo {
     /// Calculate effective stake with GPU bonus
     pub fn effective_stake_with_gpu(&self) -> u128 {
         let base = self.effective_stake();
-        (base as f64 * self.gpu.bonus_multiplier()) as u128
+        // SECURITY: Clamp f64 before casting to u128
+        let raw = base as f64 * self.gpu.bonus_multiplier();
+        if raw.is_nan() || raw < 0.0 { 0u128 }
+        else if raw > u128::MAX as f64 { u128::MAX }
+        else { raw as u128 }
     }
 
     /// Set GPU capability

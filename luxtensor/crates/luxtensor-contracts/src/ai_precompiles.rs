@@ -172,7 +172,7 @@ impl AIPrecompileState {
     /// Generate unique request ID
     fn generate_request_id(&self, caller: &[u8; 20], model_hash: &[u8; 32]) -> [u8; 32] {
         let mut counter = self.request_counter.write()
-            .expect("AIPrecompileState::request_counter lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *counter += 1;
 
         // Concatenate inputs for hashing
@@ -187,14 +187,14 @@ impl AIPrecompileState {
     /// Store new request
     pub fn store_request(&self, entry: AIRequestEntry) {
         let mut requests = self.requests.write()
-            .expect("AIPrecompileState::requests write lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         requests.insert(entry.request_id, entry);
     }
 
     /// Get request by ID
     pub fn get_request(&self, request_id: &[u8; 32]) -> Option<AIRequestEntry> {
         let requests = self.requests.read()
-            .expect("AIPrecompileState::requests read lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         requests.get(request_id).cloned()
     }
 
@@ -206,7 +206,7 @@ impl AIPrecompileState {
         result: Vec<u8>,
     ) -> bool {
         let mut requests = self.requests.write()
-            .expect("AIPrecompileState::requests write lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(entry) = requests.get_mut(request_id) {
             if entry.status == RequestStatus::Pending {
                 entry.status = RequestStatus::Fulfilled;
@@ -221,7 +221,7 @@ impl AIPrecompileState {
     /// Generate unique training job ID
     fn generate_job_id(&self, creator: &[u8; 20], model_id: &[u8; 32]) -> [u8; 32] {
         let mut counter = self.training_job_counter.write()
-            .expect("AIPrecompileState::training_job_counter lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *counter += 1;
 
         let mut data = Vec::with_capacity(20 + 32 + 8);
@@ -235,21 +235,21 @@ impl AIPrecompileState {
     /// Store new training job
     pub fn store_training_job(&self, job: TrainingJob) {
         let mut jobs = self.training_jobs.write()
-            .expect("AIPrecompileState::training_jobs write lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         jobs.insert(job.job_id, job);
     }
 
     /// Get training job by ID
     pub fn get_training_job(&self, job_id: &[u8; 32]) -> Option<TrainingJob> {
         let jobs = self.training_jobs.read()
-            .expect("AIPrecompileState::training_jobs read lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         jobs.get(job_id).cloned()
     }
 
     /// List active training jobs
     pub fn list_active_training_jobs(&self) -> Vec<TrainingJob> {
         let jobs = self.training_jobs.read()
-            .expect("AIPrecompileState::training_jobs read lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         jobs.values()
             .filter(|j| j.status == TrainingStatus::Open || j.status == TrainingStatus::Training)
             .cloned()

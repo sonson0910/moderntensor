@@ -343,7 +343,7 @@ impl RpcServer {
         self.register_account_methods(&mut io);
 
         // Register modular handlers (with DB persistence)
-        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone(), self.chain_id());
+        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone(), self.chain_id(), self.unified_state.clone());
         register_subnet_handlers(&mut io, self.subnets.clone(), self.db.clone());
         register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone(), self.db.clone());
         register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());

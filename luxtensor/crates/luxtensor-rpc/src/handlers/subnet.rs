@@ -123,7 +123,7 @@ pub fn register_subnet_handlers(
             total_stake: 0,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs(),
         };
 

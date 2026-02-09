@@ -79,7 +79,7 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             task_request.input_data,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_nanos()
         );
         let task_id = luxtensor_crypto::keccak256(task_id_data.as_bytes());
@@ -96,7 +96,7 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             worker: None,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .expect("System time before UNIX epoch")
+                .unwrap_or(std::time::Duration::ZERO)
                 .as_secs(),
             completed_at: None,
         };

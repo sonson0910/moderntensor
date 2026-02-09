@@ -145,7 +145,8 @@ impl EmissionController {
         self.current_supply = self.current_supply.saturating_add(emission);
 
         // Check for halving
-        let new_halving_epoch = (block_height / self.config.halving_interval) as u32;
+        let halving_epoch_u64 = block_height / self.config.halving_interval;
+        let new_halving_epoch = halving_epoch_u64.min(u32::MAX as u64) as u32;
         let halving_occurred = new_halving_epoch > self.halving_epoch;
         if halving_occurred {
             self.halving_epoch = new_halving_epoch;

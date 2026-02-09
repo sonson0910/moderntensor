@@ -292,6 +292,11 @@ impl EvmExecutor {
     /// state before execution. It MUST NOT be exposed to external callers or
     /// used to create funds out of thin air. Only call with balances already
     /// validated against the canonical StateDB.
+    ///
+    /// # Warning
+    /// This method is `pub` because it's used by sibling crates (luxtensor-node,
+    /// luxtensor-rpc). It must NEVER be exposed through any RPC endpoint or
+    /// user-facing API.
     #[doc(hidden)]
     pub fn fund_account(&self, address: &Address, amount: u128) {
         let addr = address_to_revm(address);

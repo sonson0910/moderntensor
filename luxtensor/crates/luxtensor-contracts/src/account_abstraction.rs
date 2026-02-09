@@ -153,6 +153,8 @@ pub enum AccountAbstractionError {
     SenderNotDeployed,
     #[error("Paymaster not staked")]
     PaymasterNotStaked,
+    #[error("Invalid paymaster address")]
+    InvalidPaymaster,
     #[error("Insufficient balance")]
     InsufficientBalance,
     #[error("Validation failed: {0}")]
@@ -246,8 +248,10 @@ impl EntryPoint {
 
         // Check paymaster stake if used
         if user_op.has_paymaster() {
-            let paymaster = user_op.paymaster()
-                .expect("paymaster checked via has_paymaster()");
+            let paymaster = match user_op.paymaster() {
+                Some(p) => p,
+                None => return Err(AccountAbstractionError::InvalidPaymaster),
+            };
             let paymasters = self.paymasters.read();
             match paymasters.get(&paymaster) {
                 Some(info) if info.stake >= MIN_PAYMASTER_STAKE => {}

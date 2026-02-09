@@ -1,99 +1,143 @@
-# Remove duplicate build-system section for setuptools
-# [build-system]
-# requires = ["setuptools>=64.0", "wheel"]
-# build-backend = "setuptools.build_meta"
-
-[project]
-name = "moderntensor"
-version = "0.1.0"
-description = "Moderntensor CLI"
-readme = "README.md"
-# Use table format required by setuptools 68.0.0
-license = { text = "MIT" }
-# Attempt to explicitly override license file auto-detection
-license-files = []
-authors = [
-  { name = "son", email = "sonlearn155@gmail.com" }
-]
-keywords = ["blockchain", "layer1", "proof-of-stake", "ai-validation", "zkml", "cryptocurrency"]
-classifiers = [
-  "Programming Language :: Python :: 3",
-]
-requires-python = ">=3.8"
-dependencies = [
-  # Core cryptography - Layer 1 blockchain
-  "bip_utils==2.9.3",
-  "cryptography==42.0.8",
-  "ecdsa==0.18.0",
-  "coincurve>=19.0.1",
-  "pycryptodome==3.23.0",
-  
-  # Web framework
-  "fastapi==0.115.6",
-  "uvicorn==0.34.0",
-  "starlette==0.41.3",
-  "pydantic==2.10.4",
-  "pydantic-settings==2.7.1",
-  "pydantic_core==2.27.2",
-  
-  # Networking
-  "websockets==13.0",
-  "requests==2.32.3",
-  "httptools==0.6.4",
-  "h11==0.14.0",
-  
-  # Storage (for Phase 4)
-  "plyvel==1.5.0",
-  
-  # Utilities
-  "click==8.1.8",
-  "loguru==0.7.3",
-  "PyYAML==6.0.2",
-  "python-dotenv==1.0.1",
-  "colorama==0.4.6",
-  
-  # Standard library additions
-  "annotated-types==0.7.0",
-  "anyio==4.7.0",
-  "certifi==2024.12.14",
-  "charset-normalizer==3.4.1",
-  "cmake==3.31.2",
-  "dependency-injector==4.45.0",
-  "dnspython==2.7.0",
-  "email_validator==2.2.0",
-  "idna==3.10",
-  "python-multipart==0.0.20",
-  "sniffio==1.3.1",
-  "typing_extensions==4.12.2",
-  "urllib3==2.3.0",
-  "watchfiles==1.0.3",
-  "win32_setctime==1.2.0"
-]
-
-[project.urls]
-homepage = "https://github.com/sonson0910"
-
-# Scripts (entry_points) - replacement for 'console_scripts' in setup.py
-[project.scripts]
-mtcli = "sdk.cli.main:cli"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["sdk*"]
-
-[project.optional-dependencies]
-cli = ["click>=8.1.0", "rich>=13.0.0"]
-
-[tool.pytest.ini_options]
-markers = [
-    "integration: mark a test as an integration test",
-    "ignore:`network` argument will be deprecated in the future.:UserWarning"
-]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# Add Hatch build configuration to specify package directory
+[project]
+name = "moderntensor"
+version = "0.2.0"
+description = "Python SDK for ModernTensor — a decentralized Layer 1 blockchain for AI/ML workloads with PoS consensus, zkML proofs, and native AI precompiles."
+readme = "README.md"
+license = { text = "MIT" }
+license-files = []
+authors = [
+  { name = "ModernTensor Foundation", email = "sonlearn155@gmail.com" }
+]
+maintainers = [
+  { name = "son", email = "sonlearn155@gmail.com" }
+]
+keywords = [
+  "blockchain", "layer1", "proof-of-stake", "ai-validation",
+  "zkml", "cryptocurrency", "decentralized-ai", "machine-learning",
+  "luxtensor", "web3"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Distributed Computing",
+  "Typing :: Typed",
+]
+requires-python = ">=3.10"
+dependencies = [
+  # Core cryptography — Layer 1 blockchain
+  "bip_utils>=2.9.3",
+  "cryptography>=42.0.0",
+  "ecdsa>=0.18.0",
+  "coincurve>=19.0.1",
+  "pycryptodome>=3.20.0",
+
+  # Web framework & data validation
+  "fastapi>=0.115.0",
+  "uvicorn>=0.34.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.7.0",
+
+  # Networking
+  "websockets>=13.0",
+  "requests>=2.32.0",
+  "httpx>=0.28.0",
+
+  # CLI & utilities
+  "click>=8.1.0",
+  "rich>=13.0.0",
+  "loguru>=0.7.0",
+  "PyYAML>=6.0",
+  "python-dotenv>=1.0.0",
+  "colorama>=0.4.6",
+
+  # Dependency injection
+  "dependency-injector>=4.45.0",
+
+  # Misc
+  "typing_extensions>=4.12.0",
+  "annotated-types>=0.7.0",
+  "anyio>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/sonson0910/moderntensor"
+Documentation = "https://github.com/sonson0910/moderntensor/tree/main/docs"
+Repository = "https://github.com/sonson0910/moderntensor"
+Issues = "https://github.com/sonson0910/moderntensor/issues"
+Changelog = "https://github.com/sonson0910/moderntensor/blob/main/CHANGELOG.md"
+
+[project.scripts]
+mtcli = "sdk.cli.main:cli"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.1.0",
+  "ruff>=0.4.0",
+  "black>=24.0.0",
+  "mypy>=1.8.0",
+  "pre-commit>=3.6.0",
+]
+docs = [
+  "mkdocs>=1.5.0",
+  "mkdocs-material>=9.5.0",
+  "mkdocstrings[python]>=0.24.0",
+]
+monitoring = [
+  "prometheus-client>=0.19.0",
+  "opentelemetry-api>=1.21.0",
+  "opentelemetry-sdk>=1.21.0",
+  "opentelemetry-exporter-otlp>=1.21.0",
+  "opentelemetry-instrumentation-fastapi>=0.42b0",
+]
+all = ["moderntensor[dev,docs,monitoring]"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "sdk/",
+  "LICENSE",
+  "README.md",
+  "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: mark a test as an integration test",
+    "ignore:`network` argument will be deprecated in the future.:UserWarning",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["sdk", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.black]
+target-version = ["py310"]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = false

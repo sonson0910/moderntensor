@@ -103,8 +103,10 @@ pub async fn wait_for_shutdown_signal() {
     {
         use tokio::signal::unix::{signal, SignalKind};
 
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt())
+            .unwrap_or_else(|e| panic!("FATAL: cannot install SIGINT handler: {}", e));
+        let mut sigterm = signal(SignalKind::terminate())
+            .unwrap_or_else(|e| panic!("FATAL: cannot install SIGTERM handler: {}", e));
 
         tokio::select! {
             _ = sigint.recv() => {
@@ -120,7 +122,7 @@ pub async fn wait_for_shutdown_signal() {
     {
         tokio::signal::ctrl_c()
             .await
-            .expect("Failed to install Ctrl+C handler");
+            .unwrap_or_else(|e| panic!("FATAL: cannot install Ctrl+C handler: {}", e));
         info!("📥 Received Ctrl+C, initiating shutdown...");
     }
 }

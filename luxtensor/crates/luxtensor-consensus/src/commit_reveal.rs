@@ -36,12 +36,12 @@ pub struct CommitRevealConfig {
 impl Default for CommitRevealConfig {
     fn default() -> Self {
         Self {
-            commit_window: 100,      // ~20 minutes at 12s blocks
-            reveal_window: 100,      // ~20 minutes to reveal
-            min_commits: 1,          // At least 1 validator (for testnets)
+            commit_window: 100, // ~20 minutes at 12s blocks
+            reveal_window: 100, // ~20 minutes to reveal
+            min_commits: 1,     // At least 1 validator (for testnets)
             slash_on_no_reveal: true,
             // Per tokenomics: validators who don't reveal get slashed
-            no_reveal_slash_percent: 5,  // 5% of stake slashed (was 80%, reduced to prevent catastrophic loss from transient issues)
+            no_reveal_slash_percent: 5, // 5% of stake slashed (was 80%, reduced to prevent catastrophic loss from transient issues)
             // Per tokenomics: 80% of slashed tokens are burned
             slash_burn_percent: 80,
         }
@@ -104,9 +104,7 @@ impl EpochFinalizationResult {
 
     /// Get validators to slash
     pub fn slashed_validators(&self) -> Vec<Address> {
-        self.slashing.as_ref()
-            .map(|s| s.validators.clone())
-            .unwrap_or_default()
+        self.slashing.as_ref().map(|s| s.validators.clone()).unwrap_or_default()
     }
 }
 
@@ -166,7 +164,6 @@ pub struct SubnetEpochState {
     cached_weights: HashMap<u64, (u64, usize)>, // uid -> (sum, count)
 }
 
-
 impl SubnetEpochState {
     pub fn new(
         subnet_uid: u64,
@@ -202,10 +199,15 @@ impl SubnetEpochState {
     pub fn get_revealed_weights(&self) -> Vec<(u64, u16)> {
         // Use cached weights if populated (from incremental updates during reveal)
         if !self.cached_weights.is_empty() {
-            return self.cached_weights
+            return self
+                .cached_weights
                 .iter()
                 .map(|(uid, (sum, count))| {
-                    let avg = if *count > 0 { (*sum / *count as u64) as u16 } else { 0 };
+                    let avg = if *count > 0 {
+                        ((*sum / *count as u64) as u128).min(u16::MAX as u128) as u16
+                    } else {
+                        0
+                    };
                     (*uid, avg)
                 })
                 .collect();
@@ -228,7 +230,11 @@ impl SubnetEpochState {
         weight_sums
             .iter()
             .map(|(uid, (sum, count))| {
-                let avg = if *count > 0 { (*sum / *count as u64) as u16 } else { 0 };
+                let avg = if *count > 0 {
+                    ((*sum / *count as u64) as u128).min(u16::MAX as u128) as u16
+                } else {
+                    0
+                };
                 (*uid, avg)
             })
             .collect()
@@ -287,21 +293,12 @@ pub struct CommitRevealManager {
 impl CommitRevealManager {
     /// Create new manager
     pub fn new(config: CommitRevealConfig) -> Self {
-        Self {
-            config,
-            epochs: RwLock::new(HashMap::new()),
-            history: RwLock::new(Vec::new()),
-        }
+        Self { config, epochs: RwLock::new(HashMap::new()), history: RwLock::new(Vec::new()) }
     }
 
     /// Start new epoch for subnet
     pub fn start_epoch(&self, subnet_uid: u64, epoch_number: u64, current_block: u64) {
-        let state = SubnetEpochState::new(
-            subnet_uid,
-            epoch_number,
-            current_block,
-            &self.config,
-        );
+        let state = SubnetEpochState::new(subnet_uid, epoch_number, current_block, &self.config);
 
         self.epochs.write().insert(subnet_uid, state);
         info!(
@@ -320,9 +317,7 @@ impl CommitRevealManager {
     ) -> Result<(), CommitRevealError> {
         let mut epochs = self.epochs.write();
 
-        let state = epochs
-            .get_mut(&subnet_uid)
-            .ok_or(CommitRevealError::NoActiveEpoch)?;
+        let state = epochs.get_mut(&subnet_uid).ok_or(CommitRevealError::NoActiveEpoch)?;
 
         // Check phase
         if state.phase != EpochPhase::Committing {
@@ -357,9 +352,7 @@ impl CommitRevealManager {
     ) -> Result<(), CommitRevealError> {
         let mut epochs = self.epochs.write();
 
-        let state = epochs
-            .get_mut(&subnet_uid)
-            .ok_or(CommitRevealError::NoActiveEpoch)?;
+        let state = epochs.get_mut(&subnet_uid).ok_or(CommitRevealError::NoActiveEpoch)?;
 
         // Update phase
         state.update_phase(current_block);
@@ -383,10 +376,7 @@ impl CommitRevealManager {
 
         // Verify hash matches
         if !commit.verify_reveal(&weights, &salt) {
-            warn!(
-                "Validator {:?} reveal hash mismatch for subnet {}",
-                validator, subnet_uid
-            );
+            warn!("Validator {:?} reveal hash mismatch for subnet {}", validator, subnet_uid);
             return Err(CommitRevealError::HashMismatch);
         }
 
@@ -400,12 +390,13 @@ impl CommitRevealManager {
 
         info!(
             "Validator {:?} revealed weights for subnet {} ({} entries)",
-            validator, subnet_uid, weights.len()
+            validator,
+            subnet_uid,
+            weights.len()
         );
 
         Ok(())
     }
-
 
     /// Finalize epoch and return aggregated weights
     pub fn finalize_epoch(
@@ -426,9 +417,7 @@ impl CommitRevealManager {
     ) -> Result<EpochFinalizationResult, CommitRevealError> {
         let mut epochs = self.epochs.write();
 
-        let state = epochs
-            .get_mut(&subnet_uid)
-            .ok_or(CommitRevealError::NoActiveEpoch)?;
+        let state = epochs.get_mut(&subnet_uid).ok_or(CommitRevealError::NoActiveEpoch)?;
 
         // Update phase
         state.update_phase(current_block);
@@ -454,37 +443,36 @@ impl CommitRevealManager {
         state.phase = EpochPhase::Finalized;
 
         // Get non-revealers for slashing (per tokenomics: 80% burned)
-        let non_revealers: Vec<Address> = state
-            .commits
-            .iter()
-            .filter(|c| !c.revealed)
-            .map(|c| c.validator)
-            .collect();
+        let non_revealers: Vec<Address> =
+            state.commits.iter().filter(|c| !c.revealed).map(|c| c.validator).collect();
 
         // Calculate slashing per tokenomics
-        let slashing = if self.config.slash_on_no_reveal && !non_revealers.is_empty() {
-            let slash_percent = self.config.no_reveal_slash_percent;
-            let burn_percent = self.config.slash_burn_percent;
+        let slashing =
+            if self.config.slash_on_no_reveal && !non_revealers.is_empty() {
+                let slash_percent = self.config.no_reveal_slash_percent;
+                let burn_percent = self.config.slash_burn_percent;
 
-            warn!(
+                warn!(
                 "Epoch {} for subnet {}: {} validators did not reveal, slashing {}% ({}% burned)",
                 state.epoch_number, subnet_uid, non_revealers.len(), slash_percent, burn_percent
             );
 
-            Some(SlashingResult {
-                validators: non_revealers,
-                slash_percent,
-                burn_percent,
-                // Burn = slash_amount * burn_percent / 100
-                // Treasury = slash_amount * (100 - burn_percent) / 100
-            })
-        } else {
-            None
-        };
+                Some(SlashingResult {
+                    validators: non_revealers,
+                    slash_percent,
+                    burn_percent,
+                    // Burn = slash_amount * burn_percent / 100
+                    // Treasury = slash_amount * (100 - burn_percent) / 100
+                })
+            } else {
+                None
+            };
 
         info!(
             "Finalized epoch {} for subnet {} with {} weight entries",
-            state.epoch_number, subnet_uid, weights.len()
+            state.epoch_number,
+            subnet_uid,
+            weights.len()
         );
 
         Ok(EpochFinalizationResult {
@@ -502,11 +490,7 @@ impl CommitRevealManager {
 
     /// Get pending commits for subnet
     pub fn get_pending_commits(&self, subnet_uid: u64) -> Vec<WeightCommit> {
-        self.epochs
-            .read()
-            .get(&subnet_uid)
-            .map(|s| s.commits.clone())
-            .unwrap_or_default()
+        self.epochs.read().get(&subnet_uid).map(|s| s.commits.clone()).unwrap_or_default()
     }
 
     /// Check if validator has committed
@@ -523,11 +507,7 @@ impl CommitRevealManager {
         self.epochs
             .read()
             .get(&subnet_uid)
-            .map(|s| {
-                s.commits
-                    .iter()
-                    .any(|c| &c.validator == validator && c.revealed)
-            })
+            .map(|s| s.commits.iter().any(|c| &c.validator == validator && c.revealed))
             .unwrap_or(false)
     }
 
@@ -615,9 +595,7 @@ mod tests {
 
         // Commit
         let commit_hash = compute_commit_hash(&weights, &salt);
-        assert!(manager
-            .commit_weights(subnet_uid, validator, commit_hash, 5)
-            .is_ok());
+        assert!(manager.commit_weights(subnet_uid, validator, commit_hash, 5).is_ok());
 
         // Cannot commit again
         assert_eq!(
@@ -632,9 +610,7 @@ mod tests {
         );
 
         // Reveal during reveal phase
-        assert!(manager
-            .reveal_weights(subnet_uid, validator, weights.clone(), salt, 15)
-            .is_ok());
+        assert!(manager.reveal_weights(subnet_uid, validator, weights.clone(), salt, 15).is_ok());
 
         // Cannot reveal again
         assert_eq!(
@@ -666,9 +642,7 @@ mod tests {
 
         // Commit with correct weights
         let commit_hash = compute_commit_hash(&weights, &salt);
-        manager
-            .commit_weights(subnet_uid, validator, commit_hash, 5)
-            .unwrap();
+        manager.commit_weights(subnet_uid, validator, commit_hash, 5).unwrap();
 
         // Try to reveal with different weights
         assert_eq!(

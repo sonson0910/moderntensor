@@ -298,7 +298,7 @@ impl MetagraphDB {
         let mut batch = WriteBatch::default();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
         for (to_uid, weight) in weights {

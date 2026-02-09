@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
+use tracing::warn;
 
 /// Node endpoint information
 #[derive(Debug, Clone)]
@@ -112,7 +113,7 @@ impl RpcLoadBalancer {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
-                .expect("Failed to create HTTP client"),
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
@@ -131,7 +132,7 @@ impl RpcLoadBalancer {
 
         // If no healthy nodes, fall back to all nodes
         if candidates.is_empty() && self.endpoints.len() > 0 {
-            eprintln!("[WARN] No healthy nodes available, falling back to all endpoints");
+            warn!("No healthy nodes available, falling back to all endpoints");
             candidates = self.endpoints.iter().collect();
         }
 
@@ -212,9 +213,10 @@ impl RpcLoadBalancer {
 
             if node_health.consecutive_failures >= self.config.max_consecutive_failures {
                 node_health.is_healthy = false;
-                eprintln!(
-                    "[WARN] Node {} marked unhealthy after {} consecutive failures",
-                    url, node_health.consecutive_failures
+                warn!(
+                    url = %url,
+                    failures = node_health.consecutive_failures,
+                    "Node marked unhealthy after consecutive failures"
                 );
             }
         }

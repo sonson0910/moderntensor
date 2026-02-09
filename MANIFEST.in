@@ -1,0 +1,18 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include sdk/README.md
+include pyproject.toml
+recursive-include sdk *.py *.pyi
+recursive-exclude tests *
+recursive-exclude luxtensor *
+recursive-exclude examples *
+recursive-exclude docs *
+recursive-exclude docker *
+recursive-exclude grafana *
+recursive-exclude k8s *
+recursive-exclude indexer *
+recursive-exclude book *
+prune .github
+prune scripts
+global-exclude *.pyc __pycache__ *.egg-info
