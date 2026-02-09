@@ -58,32 +58,60 @@ impl TransactionBroadcaster for NoOpBroadcaster {
     }
 }
 
+/// Default broadcaster channel capacity — bounded to prevent OOM
+const BROADCASTER_CHANNEL_CAPACITY: usize = 4096;
+
 /// Channel-based broadcaster that sends to a receiver (P2P layer or other)
+///
+/// SECURITY: Uses bounded channel to prevent unbounded memory growth
+/// from slow consumers or malicious peers.
 pub struct ChannelBroadcaster {
-    sender: mpsc::UnboundedSender<Transaction>,
+    sender: mpsc::Sender<Transaction>,
     name: &'static str,
 }
 
 impl ChannelBroadcaster {
-    /// Create a new channel broadcaster
-    pub fn new(sender: mpsc::UnboundedSender<Transaction>, name: &'static str) -> Self {
+    /// Create a new channel broadcaster with a bounded sender
+    pub fn new(sender: mpsc::Sender<Transaction>, name: &'static str) -> Self {
         Self { sender, name }
     }
 
     /// Create broadcaster for P2P network
-    pub fn for_p2p(sender: mpsc::UnboundedSender<Transaction>) -> Self {
+    pub fn for_p2p(sender: mpsc::Sender<Transaction>) -> Self {
         Self::new(sender, "P2P")
     }
 
     /// Create broadcaster for WebSocket subscribers
-    pub fn for_websocket(sender: mpsc::UnboundedSender<Transaction>) -> Self {
+    pub fn for_websocket(sender: mpsc::Sender<Transaction>) -> Self {
         Self::new(sender, "WebSocket")
+    }
+
+    /// Create a bounded channel pair for P2P broadcasting
+    pub fn new_p2p_pair() -> (Self, mpsc::Receiver<Transaction>) {
+        let (tx, rx) = mpsc::channel(BROADCASTER_CHANNEL_CAPACITY);
+        (Self::new(tx, "P2P"), rx)
+    }
+
+    /// Create a bounded channel pair for WebSocket broadcasting
+    pub fn new_websocket_pair() -> (Self, mpsc::Receiver<Transaction>) {
+        let (tx, rx) = mpsc::channel(BROADCASTER_CHANNEL_CAPACITY);
+        (Self::new(tx, "WebSocket"), rx)
     }
 }
 
 impl TransactionBroadcaster for ChannelBroadcaster {
     fn broadcast(&self, tx: &Transaction) -> Result<(), BroadcastError> {
-        self.sender.send(tx.clone()).map_err(|e| BroadcastError::ChannelClosed(e.to_string()))?;
+        // SECURITY: try_send so broadcast() stays sync and non-blocking.
+        // If channel is full, the oldest consumer hasn't kept up.
+        self.sender.try_send(tx.clone()).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => {
+                warn!("📤 {} broadcaster: Channel full, dropping tx 0x{}", self.name, hex::encode(tx.hash()));
+                BroadcastError::NetworkError("Broadcast channel full".to_string())
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                BroadcastError::ChannelClosed(format!("{} channel closed", self.name))
+            }
+        })?;
 
         info!("📤 {} broadcaster: Sent tx 0x{} to channel", self.name, hex::encode(tx.hash()));
         Ok(())
@@ -165,14 +193,14 @@ impl BroadcasterBuilder {
         Self { broadcasters: Vec::new() }
     }
 
-    /// Add P2P broadcaster
-    pub fn with_p2p(mut self, sender: mpsc::UnboundedSender<Transaction>) -> Self {
+    /// Add P2P broadcaster (bounded channel)
+    pub fn with_p2p(mut self, sender: mpsc::Sender<Transaction>) -> Self {
         self.broadcasters.push(Arc::new(ChannelBroadcaster::for_p2p(sender)));
         self
     }
 
-    /// Add WebSocket broadcaster
-    pub fn with_websocket(mut self, sender: mpsc::UnboundedSender<Transaction>) -> Self {
+    /// Add WebSocket broadcaster (bounded channel)
+    pub fn with_websocket(mut self, sender: mpsc::Sender<Transaction>) -> Self {
         self.broadcasters.push(Arc::new(ChannelBroadcaster::for_websocket(sender)));
         self
     }
@@ -231,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_channel_broadcaster() {
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::channel(64);
         let broadcaster = ChannelBroadcaster::for_p2p(sender);
         let tx = create_test_tx();
 
@@ -245,8 +273,8 @@ mod tests {
 
     #[test]
     fn test_composite_broadcaster() {
-        let (sender1, _rx1) = mpsc::unbounded_channel();
-        let (sender2, _rx2) = mpsc::unbounded_channel();
+        let (sender1, _rx1) = mpsc::channel(64);
+        let (sender2, _rx2) = mpsc::channel(64);
 
         let broadcaster = CompositeBroadcaster::dual(
             Arc::new(ChannelBroadcaster::for_p2p(sender1)),
@@ -259,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let (sender, _rx) = mpsc::unbounded_channel();
+        let (sender, _rx) = mpsc::channel(64);
 
         let broadcaster = BroadcasterBuilder::new().with_p2p(sender).build();
 

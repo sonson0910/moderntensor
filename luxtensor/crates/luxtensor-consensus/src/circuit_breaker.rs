@@ -158,42 +158,60 @@ impl CircuitBreaker {
     }
 
     /// Record a successful operation
+    ///
+    /// SECURITY: Holds state write lock across the entire operation to prevent
+    /// TOCTOU races between state read and counter updates.
     pub fn record_success(&self) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.successful_requests.fetch_add(1, Ordering::Relaxed);
-        self.failure_count.store(0, Ordering::Relaxed);
 
-        let state = *self.state.read();
-        if state == CircuitState::HalfOpen {
-            let successes = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
+        // Hold write lock to ensure atomic read-modify-write of state + counters
+        let mut state = self.state.write();
+        self.failure_count.store(0, Ordering::SeqCst);
+
+        if *state == CircuitState::HalfOpen {
+            let successes = self.success_count.fetch_add(1, Ordering::SeqCst) + 1;
             if successes >= self.config.success_threshold {
+                drop(state); // drop before transition_to which also takes write lock
                 self.transition_to(CircuitState::Closed);
+                return;
             }
         }
+        drop(state);
     }
 
     /// Record a failed operation
+    ///
+    /// SECURITY: Holds state write lock across the entire operation to prevent
+    /// TOCTOU races between state read and counter updates.
     pub fn record_failure(&self) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.failed_requests.fetch_add(1, Ordering::Relaxed);
-        self.success_count.store(0, Ordering::Relaxed);
 
-        let state = *self.state.read();
-        match state {
+        // Hold write lock to ensure atomic read-modify-write of state + counters
+        let mut state = self.state.write();
+        self.success_count.store(0, Ordering::SeqCst);
+
+        match *state {
             CircuitState::Closed => {
-                let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
+                let failures = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if failures >= self.config.failure_threshold {
+                    drop(state);
                     self.transition_to(CircuitState::Open);
+                    return;
                 }
             }
             CircuitState::HalfOpen => {
                 // Any failure in half-open reopens circuit
+                drop(state);
                 self.transition_to(CircuitState::Open);
+                return;
             }
             CircuitState::Open => {
                 // Already open, just count
             }
         }
+        drop(state);
     }
 
     /// Record a rejected request (circuit open)
@@ -239,11 +257,11 @@ impl CircuitBreaker {
     /// Get statistics
     pub fn stats(&self) -> CircuitBreakerStats {
         CircuitBreakerStats {
-            total_requests: self.total_requests.load(Ordering::Relaxed),
-            successful_requests: self.successful_requests.load(Ordering::Relaxed),
-            failed_requests: self.failed_requests.load(Ordering::Relaxed),
-            rejected_requests: self.rejected_requests.load(Ordering::Relaxed),
-            state_changes: self.state_changes.load(Ordering::Relaxed),
+            total_requests: self.total_requests.load(Ordering::SeqCst),
+            successful_requests: self.successful_requests.load(Ordering::SeqCst),
+            failed_requests: self.failed_requests.load(Ordering::SeqCst),
+            rejected_requests: self.rejected_requests.load(Ordering::SeqCst),
+            state_changes: self.state_changes.load(Ordering::SeqCst),
             current_state: self.state(),
         }
     }
@@ -252,8 +270,8 @@ impl CircuitBreaker {
     pub fn reset(&self) {
         *self.state.write() = CircuitState::Closed;
         *self.opened_at.write() = None;
-        self.failure_count.store(0, Ordering::Relaxed);
-        self.success_count.store(0, Ordering::Relaxed);
+        self.failure_count.store(0, Ordering::SeqCst);
+        self.success_count.store(0, Ordering::SeqCst);
         info!("CircuitBreaker '{}' reset", self.config.name);
     }
 
@@ -277,21 +295,21 @@ impl CircuitBreaker {
         }
 
         *self.state.write() = new_state;
-        self.state_changes.fetch_add(1, Ordering::Relaxed);
+        self.state_changes.fetch_add(1, Ordering::SeqCst);
 
         match new_state {
             CircuitState::Open => {
                 *self.opened_at.write() = Some(Instant::now());
-                self.success_count.store(0, Ordering::Relaxed);
+                self.success_count.store(0, Ordering::SeqCst);
                 warn!(
                     "CircuitBreaker '{}': {} -> Open (failures: {})",
                     self.config.name,
                     format!("{:?}", old_state),
-                    self.failure_count.load(Ordering::Relaxed)
+                    self.failure_count.load(Ordering::SeqCst)
                 );
             }
             CircuitState::HalfOpen => {
-                self.success_count.store(0, Ordering::Relaxed);
+                self.success_count.store(0, Ordering::SeqCst);
                 info!(
                     "CircuitBreaker '{}': Open -> HalfOpen (testing recovery)",
                     self.config.name
@@ -299,7 +317,7 @@ impl CircuitBreaker {
             }
             CircuitState::Closed => {
                 *self.opened_at.write() = None;
-                self.failure_count.store(0, Ordering::Relaxed);
+                self.failure_count.store(0, Ordering::SeqCst);
                 info!(
                     "CircuitBreaker '{}': {} -> Closed (recovered)",
                     self.config.name,

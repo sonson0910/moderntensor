@@ -248,13 +248,28 @@ class NeuronClient(BaseRpcClient):
         return self._get_metric(subnet_id, neuron_uid, "dividends")
 
     def get_emission(self, subnet_id: int, neuron_uid: int) -> float:
-        """Get neuron emission"""
-        return self._get_metric(subnet_id, neuron_uid, "emission")
+        """Get neuron emission.
+
+        Note: There is no query_emission RPC. Emission is fetched from
+        the full neuron data via neuron_get.
+        """
+        try:
+            neuron = self._call_rpc("neuron_get", [subnet_id, neuron_uid])
+            if neuron and isinstance(neuron, dict):
+                return float(neuron.get("emission", 0.0))
+            return 0.0
+        except Exception as e:
+            logger.warning(f"Failed to get emission: {e}")
+            return 0.0
 
     def _get_metric(self, subnet_id: int, neuron_uid: int, metric: str) -> float:
-        """Helper to get single neuron metric"""
+        """Helper to get single neuron metric via query_* RPC.
+
+        Valid metrics: rank, trust, consensus, incentive, dividends.
+        For emission, use get_emission() directly.
+        """
         try:
-            result = self._call_rpc(f"neuron_get{metric.capitalize()}", [subnet_id, neuron_uid])
+            result = self._call_rpc(f"query_{metric}", [subnet_id, neuron_uid])
             return float(result) if result else 0.0
         except Exception as e:
             logger.warning(f"Failed to get {metric}: {e}")

@@ -95,6 +95,11 @@ impl FeeMarket {
         let target = self.config.target_gas_used;
         let denominator = self.config.base_fee_max_change_denominator as u128;
 
+        // SECURITY: Guard against div-by-zero from misconfigured target or denominator
+        if target == 0 || denominator == 0 {
+            return self.base_fee;
+        }
+
         if parent_gas_used == target {
             // Exactly at target, no change
             return self.base_fee;

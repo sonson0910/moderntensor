@@ -943,7 +943,7 @@ class LuxtensorClient(
         try:
             # Convert int keys to strings for JSON
             weights_json = {str(k): v for k, v in weights.items()}
-            result = self._call_rpc("subnet_setWeights", [validator, weights_json])
+            result = self._call_rpc("weight_setWeights", [validator, weights_json])
             return result
         except Exception as e:
             logger.error(f"Failed to set subnet weights: {e}")
@@ -1035,8 +1035,12 @@ class LuxtensorClient(
             Axon information (ip, port, protocol)
         """
         try:
-            result = self._call_rpc("query_neuronAxon", [subnet_id, neuron_uid])
-            return result
+            # query_neuronAxon not available; derive from query_neuron endpoint
+            neuron = self._call_rpc("query_neuron", [subnet_id, neuron_uid])
+            if neuron and isinstance(neuron, dict):
+                endpoint = neuron.get("endpoint", "")
+                return {"ip": endpoint, "port": 0, "protocol": 4, "hotkey": neuron.get("address", "")}
+            return {}
         except Exception as e:
             logger.error(f"Error getting axon for neuron {neuron_uid}: {e}")
             raise
@@ -1053,8 +1057,10 @@ class LuxtensorClient(
             Prometheus endpoint information
         """
         try:
-            result = self._call_rpc("query_neuronPrometheus", [subnet_id, neuron_uid])
-            return result
+            # query_neuronPrometheus not available on LuxTensor server
+            import warnings
+            warnings.warn("query_neuronPrometheus not available on LuxTensor; returning empty dict")
+            return {}
         except Exception as e:
             logger.error(f"Error getting prometheus for neuron {neuron_uid}: {e}")
             raise
@@ -1118,7 +1124,8 @@ class LuxtensorClient(
             }
 
             # Submit transaction to register axon
-            result = self._call_rpc("tx_serveAxon", [subnet_id, axon_info])
+            # tx_serveAxon not available; use neuron_register
+            result = self._call_rpc("neuron_register", [subnet_id, axon_info])
 
             logger.info(f"Registered axon for subnet {subnet_id} at {ip}:{port}")
             return result
@@ -1390,8 +1397,11 @@ class LuxtensorClient(
             Rate limit in blocks
         """
         try:
-            result = self._call_rpc("query_weightsRateLimit", [subnet_id])
-            return int(result)
+            # query_weightsRateLimit not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("weights_rate_limit", 0))
+            return int(0)
         except Exception as e:
             logger.error(f"Error getting weights rate limit for subnet {subnet_id}: {e}")
             raise
@@ -1466,8 +1476,11 @@ class LuxtensorClient(
             True if has permit, False otherwise
         """
         try:
-            result = self._call_rpc("query_hasValidatorPermit", [subnet_id, hotkey])
-            return bool(result)
+            # query_hasValidatorPermit not available; check if hotkey is in validators
+            validators = self._call_rpc("staking_getValidators", [])
+            if validators and isinstance(validators, list):
+                return any(v.get("address", "") == hotkey for v in validators)
+            return False
         except Exception as e:
             logger.error(f"Error checking validator permit for {hotkey}: {e}")
             raise
@@ -1484,8 +1497,11 @@ class LuxtensorClient(
             Trust score (0-1)
         """
         try:
-            result = self._call_rpc("query_validatorTrust", [subnet_id, neuron_uid])
-            return float(result)
+            # query_validatorTrust not available; derive from query_neuron trust
+            neuron = self._call_rpc("query_neuron", [subnet_id, neuron_uid])
+            if neuron and isinstance(neuron, dict):
+                return float(neuron.get("trust", 0.0))
+            return 0.0
         except Exception as e:
             logger.error(f"Error getting validator trust for neuron {neuron_uid}: {e}")
             raise
@@ -1595,8 +1611,11 @@ class LuxtensorClient(
             Emission rate
         """
         try:
-            result = self._call_rpc("query_emission", [subnet_id, neuron_uid])
-            return float(result)
+            # Per-neuron query_emission not available; use query_subnetEmission
+            result = self._call_rpc("query_subnetEmission", [subnet_id])
+            if result is not None:
+                return float(result)
+            return 0.0
         except Exception as e:
             logger.error(f"Error getting emission for neuron {neuron_uid}: {e}")
             raise
@@ -1616,8 +1635,11 @@ class LuxtensorClient(
             Registration cost in tokens
         """
         try:
-            result = self._call_rpc("query_registrationCost", [subnet_id])
-            return int(result)
+            # query_registrationCost not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("registration_cost", 0))
+            return int(0)
         except Exception as e:
             logger.error(f"Error getting registration cost for subnet {subnet_id}: {e}")
             raise
@@ -1633,8 +1655,11 @@ class LuxtensorClient(
             Burn cost in tokens
         """
         try:
-            result = self._call_rpc("query_burnCost", [subnet_id])
-            return int(result)
+            # query_burnCost not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("burn_cost", 0))
+            return int(0)
         except Exception as e:
             logger.error(f"Error getting burn cost for subnet {subnet_id}: {e}")
             raise
@@ -1650,8 +1675,11 @@ class LuxtensorClient(
             Difficulty value
         """
         try:
-            result = self._call_rpc("query_difficulty", [subnet_id])
-            return int(result)
+            # query_difficulty not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("difficulty", 1))
+            return int(1)
         except Exception as e:
             logger.error(f"Error getting difficulty for subnet {subnet_id}: {e}")
             raise
@@ -1667,8 +1695,11 @@ class LuxtensorClient(
             Immunity period in blocks
         """
         try:
-            result = self._call_rpc("query_immunityPeriod", [subnet_id])
-            return int(result)
+            # query_immunityPeriod not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("immunity_period", 100))
+            return int(100)
         except Exception as e:
             logger.error(f"Error getting immunity period for subnet {subnet_id}: {e}")
             raise
@@ -1685,8 +1716,8 @@ class LuxtensorClient(
             Total tokens issued
         """
         try:
-            result = self._call_rpc("query_totalIssuance")
-            return int(result)
+            # query_totalIssuance not available on LuxTensor server
+            raise NotImplementedError("Total issuance query not available on LuxTensor server")
         except Exception as e:
             logger.error(f"Error getting total issuance: {e}")
             raise
@@ -1699,7 +1730,7 @@ class LuxtensorClient(
             Number of subnets
         """
         try:
-            result = self._call_rpc("query_totalSubnets")
+            result = self._call_rpc("subnet_getCount")
             return int(result)
         except Exception as e:
             logger.error(f"Error getting total subnets: {e}")
@@ -1713,8 +1744,11 @@ class LuxtensorClient(
             Maximum subnets
         """
         try:
-            result = self._call_rpc("query_maxSubnets")
-            return int(result)
+            # query_maxSubnets not available; derive from subnet_getConfig
+            config = self._call_rpc("subnet_getConfig", [])
+            if config and isinstance(config, dict):
+                return int(config.get("max_subnets", 32))
+            return 32
         except Exception as e:
             logger.error(f"Error getting max subnets: {e}")
             raise
@@ -1727,8 +1761,19 @@ class LuxtensorClient(
             Total neuron count
         """
         try:
-            result = self._call_rpc("query_totalNeurons")
-            return int(result)
+            # query_totalNeurons not available; sum neuronCount across subnets
+            total = 0
+            try:
+                subnets = self._call_rpc("subnet_getAll", [])
+                if subnets and isinstance(subnets, list):
+                    for s in subnets:
+                        sid = s.get("id", s.get("netuid"))
+                        if sid is not None:
+                            count = self._call_rpc("query_neuronCount", [sid])
+                            total += int(count) if count else 0
+            except Exception:
+                pass
+            return total
         except Exception as e:
             logger.error(f"Error getting total neurons: {e}")
             raise
@@ -1741,8 +1786,26 @@ class LuxtensorClient(
             Network statistics and information
         """
         try:
-            result = self._call_rpc("query_networkInfo")
-            return result
+            # query_networkInfo not available; compose from available RPCs
+            info = {}
+            try:
+                info["health"] = self._call_rpc("system_health")
+            except Exception:
+                pass
+            try:
+                info["version"] = self._call_rpc("web3_clientVersion")
+            except Exception:
+                pass
+            try:
+                info["peer_count"] = self._call_rpc("net_peerCount")
+            except Exception:
+                pass
+            try:
+                subnets = self._call_rpc("subnet_getAll", [])
+                info["subnet_count"] = len(subnets) if subnets else 0
+            except Exception:
+                pass
+            return info
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
             raise
@@ -1759,7 +1822,7 @@ class LuxtensorClient(
             List of delegate information
         """
         try:
-            result = self._call_rpc("query_delegates")
+            result = self._call_rpc("staking_getDelegates")
             return result
         except Exception as e:
             logger.error(f"Error getting delegates: {e}")
@@ -1776,8 +1839,13 @@ class LuxtensorClient(
             Delegate information
         """
         try:
-            result = self._call_rpc("query_delegateInfo", [hotkey])
-            return result
+            # query_delegateInfo not available; derive from staking_getDelegates
+            delegates = self._call_rpc("staking_getDelegates", [])
+            if delegates and isinstance(delegates, list):
+                for d in delegates:
+                    if d.get("address", "") == hotkey or d.get("hotkey", "") == hotkey:
+                        return d
+            return {}
         except Exception as e:
             logger.error(f"Error getting delegate info for {hotkey}: {e}")
             raise
@@ -1793,8 +1861,13 @@ class LuxtensorClient(
             Commission rate (0-1, e.g., 0.18 = 18%)
         """
         try:
-            result = self._call_rpc("query_delegateTake", [hotkey])
-            return float(result)
+            # query_delegateTake not available; derive from staking_getDelegates
+            delegates = self._call_rpc("staking_getDelegates", [])
+            if delegates and isinstance(delegates, list):
+                for d in delegates:
+                    if d.get("address", "") == hotkey or d.get("hotkey", "") == hotkey:
+                        return float(d.get("take", d.get("commission_rate", 0.18)))
+            return 0.18  # Default commission
         except Exception as e:
             logger.error(f"Error getting delegate take for {hotkey}: {e}")
             raise
@@ -1810,8 +1883,13 @@ class LuxtensorClient(
             List of nominator addresses
         """
         try:
-            result = self._call_rpc("query_nominators", [hotkey])
-            return result
+            # query_nominators not available; derive from staking_getDelegates
+            delegates = self._call_rpc("staking_getDelegates", [])
+            if delegates and isinstance(delegates, list):
+                for d in delegates:
+                    if d.get("address", "") == hotkey or d.get("hotkey", "") == hotkey:
+                        return d.get("nominators", d.get("delegators", []))
+            return []
         except Exception as e:
             logger.error(f"Error getting nominators for {hotkey}: {e}")
             raise
@@ -1827,8 +1905,11 @@ class LuxtensorClient(
             True if is delegate, False otherwise
         """
         try:
-            result = self._call_rpc("query_isDelegate", [hotkey])
-            return bool(result)
+            # query_isDelegate not available; derive from staking_getDelegates
+            delegates = self._call_rpc("staking_getDelegates", [])
+            if delegates and isinstance(delegates, list):
+                return any(d.get("address", "") == hotkey or d.get("hotkey", "") == hotkey for d in delegates)
+            return False
         except Exception as e:
             logger.error(f"Error checking if {hotkey} is delegate: {e}")
             raise
@@ -1855,8 +1936,10 @@ class LuxtensorClient(
             List of transactions
         """
         try:
-            result = self._call_rpc("query_transactionsForAddress", [address, limit, offset])
-            return result
+            # query_transactionsForAddress not available (no indexer)
+            import warnings
+            warnings.warn("Transaction history not available without an indexer service")
+            return []
         except Exception as e:
             logger.error(f"Error getting transactions for {address}: {e}")
             raise
@@ -1877,8 +1960,10 @@ class LuxtensorClient(
             List of stake events
         """
         try:
-            result = self._call_rpc("query_stakeHistory", [address, limit])
-            return result
+            # query_stakeHistory not available (no indexer)
+            import warnings
+            warnings.warn("Stake history not available without an indexer service")
+            return []
         except Exception as e:
             logger.error(f"Error getting stake history for {address}: {e}")
             raise
@@ -1899,8 +1984,10 @@ class LuxtensorClient(
             List of transfers
         """
         try:
-            result = self._call_rpc("query_transferHistory", [address, limit])
-            return result
+            # query_transferHistory not available (no indexer)
+            import warnings
+            warnings.warn("Transfer history not available without an indexer service")
+            return []
         except Exception as e:
             logger.error(f"Error getting transfer history for {address}: {e}")
             raise
@@ -1920,7 +2007,7 @@ class LuxtensorClient(
             Network metadata including URLs, descriptions, etc.
         """
         try:
-            result = self._call_rpc("query_subnetNetworkMetadata", [subnet_id])
+            result = self._call_rpc("subnet_getInfo", [subnet_id])
             return result
         except Exception as e:
             logger.error(f"Error getting network metadata for subnet {subnet_id}: {e}")
@@ -1937,8 +2024,10 @@ class LuxtensorClient(
             True if registration allowed, False otherwise
         """
         try:
-            result = self._call_rpc("query_subnetRegistrationAllowed", [subnet_id])
-            return bool(result)
+            result = self._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if result and isinstance(result, dict):
+                return bool(result.get("registration_allowed", True))
+            return True  # Default: allowed
         except Exception as e:
             logger.error(f"Error checking registration allowed for subnet {subnet_id}: {e}")
             raise
@@ -1954,8 +2043,11 @@ class LuxtensorClient(
             Maximum UID count
         """
         try:
-            result = self._call_rpc("query_maxAllowedUids", [subnet_id])
-            return int(result)
+            # query_maxAllowedUids not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("max_allowed_uids", 256))
+            return int(256)
         except Exception as e:
             logger.error(f"Error getting max allowed UIDs for subnet {subnet_id}: {e}")
             raise
@@ -1971,8 +2063,11 @@ class LuxtensorClient(
             Minimum allowed weights
         """
         try:
-            result = self._call_rpc("query_minAllowedWeights", [subnet_id])
-            return int(result)
+            # query_minAllowedWeights not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("min_allowed_weights", 1))
+            return int(1)
         except Exception as e:
             logger.error(f"Error getting min allowed weights for subnet {subnet_id}: {e}")
             raise
@@ -1988,8 +2083,11 @@ class LuxtensorClient(
             Maximum weight limit
         """
         try:
-            result = self._call_rpc("query_maxWeightLimit", [subnet_id])
-            return float(result)
+            # query_maxWeightLimit not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("max_weights_limit", 1.0))
+            return float(1.0)
         except Exception as e:
             logger.error(f"Error getting max weight limit for subnet {subnet_id}: {e}")
             raise
@@ -2005,8 +2103,11 @@ class LuxtensorClient(
             Scaling law power
         """
         try:
-            result = self._call_rpc("query_scalingLawPower", [subnet_id])
-            return float(result)
+            # query_scalingLawPower not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("scaling_law_power", 0.0))
+            return float(0.0)
         except Exception as e:
             logger.error(f"Error getting scaling law power for subnet {subnet_id}: {e}")
             raise
@@ -2022,8 +2123,11 @@ class LuxtensorClient(
             Synergy scaling law power
         """
         try:
-            result = self._call_rpc("query_synergyScalingLawPower", [subnet_id])
-            return float(result)
+            # query_synergyScalingLawPower not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("synergy_scaling_law_power", 0.0))
+            return float(0.0)
         except Exception as e:
             logger.error(f"Error getting synergy scaling law power for subnet {subnet_id}: {e}")
             raise
@@ -2039,8 +2143,11 @@ class LuxtensorClient(
             Number of subnetworks
         """
         try:
-            result = self._call_rpc("query_subnetworkN", [subnet_id])
-            return int(result)
+            # query_subnetworkN not available; derive from subnet_getInfo
+            info = self._call_rpc("subnet_getInfo", [subnet_id])
+            if info and isinstance(info, dict):
+                return int(info.get("participant_count", 0))
+            return 0
         except Exception as e:
             logger.error(f"Error getting subnetwork N for subnet {subnet_id}: {e}")
             raise
@@ -2056,8 +2163,11 @@ class LuxtensorClient(
             Maximum validator count
         """
         try:
-            result = self._call_rpc("query_maxAllowedValidators", [subnet_id])
-            return int(result)
+            # query_maxAllowedValidators not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("max_allowed_validators", 64))
+            return int(64)
         except Exception as e:
             logger.error(f"Error getting max allowed validators for subnet {subnet_id}: {e}")
             raise
@@ -2073,8 +2183,11 @@ class LuxtensorClient(
             Bonds moving average
         """
         try:
-            result = self._call_rpc("query_bondsMovingAverage", [subnet_id])
-            return float(result)
+            # query_bondsMovingAverage not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("bonds_moving_average", 0.0))
+            return float(0.0)
         except Exception as e:
             logger.error(f"Error getting bonds moving average for subnet {subnet_id}: {e}")
             raise
@@ -2090,8 +2203,11 @@ class LuxtensorClient(
             Maximum registrations per block
         """
         try:
-            result = self._call_rpc("query_maxRegistrationsPerBlock", [subnet_id])
-            return int(result)
+            # query_maxRegistrationsPerBlock not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("max_regs_per_block", 1))
+            return int(1)
         except Exception as e:
             logger.error(f"Error getting max registrations per block for subnet {subnet_id}: {e}")
             raise
@@ -2107,8 +2223,11 @@ class LuxtensorClient(
             Target registrations per interval
         """
         try:
-            result = self._call_rpc("query_targetRegistrationsPerInterval", [subnet_id])
-            return int(result)
+            # query_targetRegistrationsPerInterval not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("target_regs_per_interval", 1))
+            return int(1)
         except Exception as e:
             logger.error(f"Error getting target registrations for subnet {subnet_id}: {e}")
             raise
@@ -2124,8 +2243,11 @@ class LuxtensorClient(
             Adjustment alpha (0-1)
         """
         try:
-            result = self._call_rpc("query_adjustmentAlpha", [subnet_id])
-            return float(result)
+            # query_adjustmentAlpha not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("adjustment_alpha", 0.0))
+            return float(0.0)
         except Exception as e:
             logger.error(f"Error getting adjustment alpha for subnet {subnet_id}: {e}")
             raise
@@ -2141,8 +2263,11 @@ class LuxtensorClient(
             Adjustment interval in blocks
         """
         try:
-            result = self._call_rpc("query_adjustmentInterval", [subnet_id])
-            return int(result)
+            # query_adjustmentInterval not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("adjustment_interval", 100))
+            return int(100)
         except Exception as e:
             logger.error(f"Error getting adjustment interval for subnet {subnet_id}: {e}")
             raise
@@ -2158,8 +2283,11 @@ class LuxtensorClient(
             Activity cutoff in blocks
         """
         try:
-            result = self._call_rpc("query_activityCutoff", [subnet_id])
-            return int(result)
+            # query_activityCutoff not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return int(hyper.get("activity_cutoff", 5000))
+            return int(5000)
         except Exception as e:
             logger.error(f"Error getting activity cutoff for subnet {subnet_id}: {e}")
             raise
@@ -2175,8 +2303,11 @@ class LuxtensorClient(
             Rho value
         """
         try:
-            result = self._call_rpc("query_rho", [subnet_id])
-            return float(result)
+            # query_rho not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("rho", 10.0))
+            return float(10.0)
         except Exception as e:
             logger.error(f"Error getting rho for subnet {subnet_id}: {e}")
             raise
@@ -2192,8 +2323,11 @@ class LuxtensorClient(
             Kappa value
         """
         try:
-            result = self._call_rpc("query_kappa", [subnet_id])
-            return float(result)
+            # query_kappa not available; derive from query_subnetHyperparameters
+            hyper = self._call_rpc("query_subnetHyperparameters", [subnet_id])
+            if hyper and isinstance(hyper, dict):
+                return float(hyper.get("kappa", 10.0))
+            return float(10.0)
         except Exception as e:
             logger.error(f"Error getting kappa for subnet {subnet_id}: {e}")
             raise
@@ -2210,7 +2344,7 @@ class LuxtensorClient(
             List of validator hotkeys
         """
         try:
-            result = self._call_rpc("query_rootNetworkValidators")
+            result = self._call_rpc("subnet_getRootValidators")
             return result
         except Exception as e:
             logger.error(f"Error getting root network validators: {e}")
@@ -2224,8 +2358,8 @@ class LuxtensorClient(
             List of senate member addresses
         """
         try:
-            result = self._call_rpc("query_senateMembers")
-            return result
+            # query_senateMembers not available on LuxTensor
+            raise NotImplementedError("Senate members query not available on LuxTensor server")
         except Exception as e:
             logger.error(f"Error getting senate members: {e}")
             raise
@@ -2341,7 +2475,8 @@ class LuxtensorClient(
     def get_proposals(self) -> List[Dict[str, Any]]:
         """Get list of active governance proposals."""
         try:
-            return self._call_rpc("governance_getProposals")
+            # governance_getProposals not available on LuxTensor
+            raise NotImplementedError("Governance proposals not available on LuxTensor server")
         except Exception as e:
             logger.error(f"Error getting proposals: {e}")
             raise
@@ -2349,7 +2484,8 @@ class LuxtensorClient(
     def get_proposal(self, proposal_id: int) -> Dict[str, Any]:
         """Get details of a specific proposal."""
         try:
-            return self._call_rpc("governance_getProposal", [proposal_id])
+            # governance_getProposal not available on LuxTensor
+            raise NotImplementedError("Governance proposal details not available on LuxTensor server")
         except Exception as e:
             logger.error(f"Error getting proposal {proposal_id}: {e}")
             raise
@@ -2357,7 +2493,7 @@ class LuxtensorClient(
     def get_network_version(self) -> str:
         """Get network protocol version."""
         try:
-            return self._call_rpc("system_version")
+            return self._call_rpc("web3_clientVersion")
         except Exception as e:
             logger.error(f"Error getting network version: {e}")
             raise
@@ -2365,7 +2501,7 @@ class LuxtensorClient(
     def get_peer_count(self) -> int:
         """Get number of connected peers."""
         try:
-            return int(self._call_rpc("system_peerCount"))
+            return int(self._call_rpc("net_peerCount"))
         except Exception as e:
             logger.error(f"Error getting peer count: {e}")
             raise
@@ -2373,15 +2509,18 @@ class LuxtensorClient(
     def is_syncing(self) -> bool:
         """Check if node is currently syncing."""
         try:
-            sync_state = self._call_rpc("system_syncState")
-            return sync_state.get("isSyncing", False)
+            sync_state = self._call_rpc("eth_syncing")
+            # eth_syncing returns False if not syncing, or an object if syncing
+            if isinstance(sync_state, bool):
+                return sync_state
+            return bool(sync_state)
         except Exception:
             return False
 
     def get_free_balance(self, address: str) -> int:
         """Get free (transferable) balance for an address."""
         try:
-            return int(self._call_rpc("balances_free", [address]))
+            return int(self._call_rpc("eth_getBalance", [address]))
         except Exception as e:
             logger.error(f"Error getting free balance: {e}")
             raise
@@ -2389,7 +2528,10 @@ class LuxtensorClient(
     def get_reserved_balance(self, address: str) -> int:
         """Get reserved (locked) balance for an address."""
         try:
-            return int(self._call_rpc("balances_reserved", [address]))
+            # balances_reserved not available on LuxTensor EVM
+            import warnings
+            warnings.warn("Reserved balance not available on LuxTensor EVM; returning 0")
+            return 0
         except Exception as e:
             logger.error(f"Error getting reserved balance: {e}")
             raise
@@ -2507,30 +2649,34 @@ class AsyncLuxtensorClient:
 
     async def get_block_number(self) -> int:
         """Get current block height (async)"""
-        return await self._call_rpc("chain_getBlockNumber")
+        return await self._call_rpc("eth_blockNumber")
 
     async def get_block(self, block_number: Optional[int] = None) -> Dict[str, Any]:
         """Get block by number (async)"""
         params = [block_number] if block_number is not None else ["latest"]
-        return await self._call_rpc("chain_getBlock", params)
+        return await self._call_rpc("eth_getBlockByNumber", params)
 
     async def get_account(self, address: str) -> Account:
         """Get account information (async)"""
-        result = await self._call_rpc("state_getAccount", [address])
-        return Account(**result)
+        # state_getAccount not available; use eth_getBalance + eth_getTransactionCount
+        balance = await self._call_rpc("eth_getBalance", [address, "latest"])
+        nonce_result = await self._call_rpc("eth_getTransactionCount", [address, "latest"])
+        bal = int(balance, 16) if isinstance(balance, str) else int(balance)
+        nonce = int(nonce_result, 16) if isinstance(nonce_result, str) else int(nonce_result)
+        return Account(address=address, balance=bal, nonce=nonce)
 
     async def submit_transaction(self, signed_tx: str) -> TransactionResult:
         """Submit transaction (async)"""
-        result = await self._call_rpc("tx_submit", [signed_tx])
+        result = await self._call_rpc("eth_sendRawTransaction", [signed_tx])
         return TransactionResult(**result)
 
     async def get_validators(self) -> List[Dict[str, Any]]:
         """Get active validators (async)"""
-        return await self._call_rpc("validators_getActive")
+        return await self._call_rpc("staking_getValidators")
 
     async def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
         """Get neurons in subnet (async)"""
-        return await self._call_rpc("subnet_getNeurons", [subnet_id])
+        return await self._call_rpc("neuron_getAll", [subnet_id])
 
     async def is_connected(self) -> bool:
         """Check connection (async)"""

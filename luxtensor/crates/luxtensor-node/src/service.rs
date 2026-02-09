@@ -1,7 +1,7 @@
 use crate::config::Config;
+use crate::executor::{calculate_receipts_root, TransactionExecutor};
 use crate::mempool::Mempool;
-use crate::executor::{TransactionExecutor, calculate_receipts_root};
-use crate::task_dispatcher::{TaskDispatcher, DispatcherConfig, DispatchService};
+use crate::task_dispatcher::{DispatchService, DispatcherConfig, TaskDispatcher};
 
 /// Maximum allowed clock drift (in seconds) for future block timestamps.
 const MAX_BLOCK_CLOCK_DRIFT_SECS: u64 = 30;
@@ -20,32 +20,42 @@ const MAX_TRANSACTIONS_PER_BLOCK: usize = 1000;
 
 /// Round-robin leader selection (fallback for bootstrap when PoS has no stake data)
 fn is_leader_for_slot(validator_id: &str, slot: u64, validators: &[String]) -> bool {
-    if validators.is_empty() { return true; }
+    if validators.is_empty() {
+        return true;
+    }
     let leader_index = (slot % validators.len() as u64) as usize;
     validators.get(leader_index).map_or(false, |leader| leader == validator_id)
 }
 
-use futures::FutureExt;
+use crate::graceful_shutdown::{GracefulShutdown, ShutdownConfig};
+use crate::health::{HealthConfig, HealthMonitor};
 use anyhow::{Context, Result};
-use luxtensor_consensus::{ConsensusConfig, ProofOfStake, RewardExecutor, UtilityMetrics, MinerInfo, ValidatorInfo, DelegatorInfo, SubnetInfo, TokenAllocation, NodeRegistry};
+use futures::FutureExt;
 use luxtensor_consensus::fast_finality::FastFinality;
 use luxtensor_consensus::fork_choice::ForkChoice;
-use luxtensor_consensus::long_range_protection::{LongRangeProtection, LongRangeConfig};
-use luxtensor_consensus::randao::{RandaoMixer, RandaoConfig};
-use luxtensor_consensus::slashing::{SlashingManager, SlashingConfig};
-use luxtensor_consensus::liveness::{LivenessMonitor, LivenessConfig};
-use luxtensor_core::{Block, Transaction, StateDB};
-use luxtensor_crypto::{MerkleTree, KeyPair};
-use luxtensor_network::{SwarmP2PNode, SwarmP2PEvent, SwarmCommand, NodeIdentity, print_connection_info, get_seeds_for_chain};
-use luxtensor_network::eclipse_protection::{EclipseProtection, EclipseConfig};
-use luxtensor_network::rate_limiter::{RateLimiter as NetworkRateLimiter, RateLimiterConfig as NetworkRateLimiterConfig};
+use luxtensor_consensus::liveness::{LivenessConfig, LivenessMonitor};
+use luxtensor_consensus::long_range_protection::{LongRangeConfig, LongRangeProtection};
+use luxtensor_consensus::randao::{RandaoConfig, RandaoMixer};
+use luxtensor_consensus::slashing::{SlashingConfig, SlashingManager};
+use luxtensor_consensus::{
+    ConsensusConfig, DelegatorInfo, MinerInfo, NodeRegistry, ProofOfStake, RewardExecutor,
+    SubnetInfo, TokenAllocation, UtilityMetrics, ValidatorInfo,
+};
+use luxtensor_core::{Block, StateDB, Transaction};
+use luxtensor_crypto::{KeyPair, MerkleTree};
+use luxtensor_network::eclipse_protection::{EclipseConfig, EclipseProtection};
+use luxtensor_network::rate_limiter::{
+    RateLimiter as NetworkRateLimiter, RateLimiterConfig as NetworkRateLimiterConfig,
+};
+use luxtensor_network::{
+    get_seeds_for_chain, print_connection_info, NodeIdentity, SwarmCommand, SwarmP2PEvent,
+    SwarmP2PNode,
+};
 use luxtensor_rpc::RpcServer;
-use luxtensor_storage::BlockchainDB;
+use luxtensor_storage::maintenance::{BackupConfig, DbMaintenance, PruningConfig};
 use luxtensor_storage::metagraph_store::MetagraphDB;
-use luxtensor_storage::maintenance::{DbMaintenance, BackupConfig, PruningConfig};
+use luxtensor_storage::BlockchainDB;
 use luxtensor_storage::{CheckpointManager, CHECKPOINT_INTERVAL};
-use crate::graceful_shutdown::{GracefulShutdown, ShutdownConfig};
-use crate::health::{HealthMonitor, HealthConfig};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -68,7 +78,8 @@ fn parse_address_from_hex(addr_str: &str) -> Result<[u8; 20]> {
     if addr_str.len() != 40 {
         return Err(anyhow::anyhow!("Invalid address length"));
     }
-    let bytes = hex::decode(addr_str).context(format!("Failed to decode hex address: {}", addr_str))?;
+    let bytes =
+        hex::decode(addr_str).context(format!("Failed to decode hex address: {}", addr_str))?;
     let mut addr = [0u8; 20];
     addr.copy_from_slice(&bytes);
     Ok(addr)
@@ -180,7 +191,10 @@ impl NodeService {
 
         // Initialize storage
         info!("📦 Initializing storage...");
-        let db_path_str = config.storage.db_path.to_str()
+        let db_path_str = config
+            .storage
+            .db_path
+            .to_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?;
         let storage = Arc::new(BlockchainDB::open(db_path_str)?);
         let initial_best_height = storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
@@ -216,8 +230,13 @@ impl NodeService {
         info!("⚖️  Initializing consensus...");
         let consensus_config = ConsensusConfig {
             slot_duration: config.consensus.block_time,
-            min_stake: config.consensus.min_stake.parse()
-                .map_err(|e| anyhow::anyhow!("min_stake '{}' is not a valid u128: {}", config.consensus.min_stake, e))?,
+            min_stake: config.consensus.min_stake.parse().map_err(|e| {
+                anyhow::anyhow!(
+                    "min_stake '{}' is not a valid u128: {}",
+                    config.consensus.min_stake,
+                    e
+                )
+            })?,
             block_reward: luxtensor_core::constants::tokenomics::INITIAL_BLOCK_REWARD,
             epoch_length: config.consensus.epoch_length,
             ..Default::default()
@@ -231,7 +250,10 @@ impl NodeService {
         // Initialize mempool
         info!("📝 Initializing transaction mempool...");
         let mempool = Arc::new(Mempool::new(config.mempool.max_size, config.node.chain_id));
-        info!("  ✓ Mempool initialized (max size: {}, chain_id: {})", config.mempool.max_size, config.node.chain_id);
+        info!(
+            "  ✓ Mempool initialized (max size: {}, chain_id: {})",
+            config.mempool.max_size, config.node.chain_id
+        );
 
         // Check if genesis block exists, create if not
         if storage.get_block_by_height(0)?.is_none() {
@@ -247,12 +269,18 @@ impl NodeService {
         // In production, genesis balances should come from the genesis block/config
         if config.node.dev_mode {
             let dev_accounts: &[[u8; 20]] = &[
-                [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
-                 0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
-                [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
-                 0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
-                [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
-                 0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
+                [
+                    0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8, 0x82,
+                    0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66,
+                ],
+                [
+                    0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01, 0x0c, 0x7d, 0x01,
+                    0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8,
+                ],
+                [
+                    0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58, 0x5d, 0xd2, 0x99,
+                    0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc,
+                ],
             ];
 
             for addr_bytes in dev_accounts {
@@ -261,15 +289,17 @@ impl NodeService {
                 dev_account.balance = 10_000_000_000_000_000_000_000_u128; // 10000 ETH in wei
                 state_db.write().set_account(dev_address, dev_account);
             }
-            warn!("⚠️  DEV MODE: {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
+            warn!(
+                "⚠️  DEV MODE: {} genesis accounts initialized with 10000 ETH each",
+                dev_accounts.len()
+            );
         }
 
         // Initialize reward executor for epoch processing
-        let dao_address = parse_address_from_hex(&config.node.dao_address)
-            .unwrap_or_else(|_| {
-                warn!("Invalid DAO address in config, using default zero address");
-                [0u8; 20]
-            });
+        let dao_address = parse_address_from_hex(&config.node.dao_address).unwrap_or_else(|_| {
+            warn!("Invalid DAO address in config, using default zero address");
+            [0u8; 20]
+        });
         let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
         info!("  ✓ Reward executor initialized with DAO: 0x{}", hex::encode(&dao_address));
 
@@ -299,18 +329,18 @@ impl NodeService {
         info!("  ✓ Eclipse protection initialized");
 
         // Initialize long-range attack protection
-        let genesis_hash = storage.get_block_by_height(0)
+        let genesis_hash = storage
+            .get_block_by_height(0)
             .context("Failed to load genesis block for long-range protection")?
             .map(|b| b.hash())
             .unwrap_or([0u8; 32]);
-        let long_range_protection = Arc::new(LongRangeProtection::new(
-            LongRangeConfig::default(),
-            genesis_hash,
-        ));
+        let long_range_protection =
+            Arc::new(LongRangeProtection::new(LongRangeConfig::default(), genesis_hash));
         info!("  ✓ Long-range protection initialized");
 
         // Initialize liveness monitor
-        let liveness_monitor = Arc::new(RwLock::new(LivenessMonitor::new(LivenessConfig::default())));
+        let liveness_monitor =
+            Arc::new(RwLock::new(LivenessMonitor::new(LivenessConfig::default())));
         info!("  ✓ Liveness monitor initialized");
 
         // Initialize graceful shutdown handler
@@ -324,12 +354,13 @@ impl NodeService {
         // Initialize FastFinality (BFT-style finality via 2/3 validator signatures)
         let fast_finality = Arc::new(RwLock::new(
             FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
-                .map_err(|e| anyhow::anyhow!("FastFinality init failed: {}", e))?
+                .map_err(|e| anyhow::anyhow!("FastFinality init failed: {}", e))?,
         ));
         info!("  ✓ Fast finality initialized (threshold: 67%)");
 
         // Initialize ForkChoice (GHOST algorithm for canonical chain selection)
-        let genesis_block = storage.get_block_by_height(0)
+        let genesis_block = storage
+            .get_block_by_height(0)
             .context("Failed to read genesis block for fork choice initialization")?
             .ok_or_else(|| anyhow::anyhow!("Genesis block required for fork choice"))?;
         let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
@@ -339,41 +370,36 @@ impl NodeService {
         let metagraph_path = config.node.data_dir.join("metagraph");
         std::fs::create_dir_all(&metagraph_path)
             .context(format!("Failed to create metagraph directory: {:?}", metagraph_path))?;
-        let metagraph_db = Arc::new(MetagraphDB::open(&metagraph_path)
-            .context(format!("Failed to open metagraph DB at {:?}", metagraph_path))?);
+        let metagraph_db = Arc::new(
+            MetagraphDB::open(&metagraph_path)
+                .context(format!("Failed to open metagraph DB at {:?}", metagraph_path))?,
+        );
         info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
 
         // Initialize AI Task Dispatcher for DePIN workload distribution
-        let task_dispatcher = Arc::new(TaskDispatcher::new(
-            metagraph_db.clone(),
-            DispatcherConfig::default(),
-        ));
+        let task_dispatcher =
+            Arc::new(TaskDispatcher::new(metagraph_db.clone(), DispatcherConfig::default()));
         info!("  ✓ AI Task Dispatcher initialized");
 
         // Initialize RANDAO mixer for unbiased randomness accumulation
-        let randao = Arc::new(RwLock::new(
-            RandaoMixer::with_genesis(RandaoConfig::default(), genesis_hash)
-        ));
+        let randao =
+            Arc::new(RwLock::new(RandaoMixer::with_genesis(RandaoConfig::default(), genesis_hash)));
         info!("  ✓ RANDAO mixer initialized");
 
         // Initialize Slashing manager
-        let slashing_manager = Arc::new(RwLock::new(
-            SlashingManager::new(
-                SlashingConfig::default(),
-                Arc::new(RwLock::new(luxtensor_consensus::ValidatorSet::new())),
-            )
-        ));
+        let slashing_manager = Arc::new(RwLock::new(SlashingManager::new(
+            SlashingConfig::default(),
+            Arc::new(RwLock::new(luxtensor_consensus::ValidatorSet::new())),
+        )));
         info!("  ✓ Slashing manager initialized");
 
         // Initialize network-layer rate limiter
-        let network_rate_limiter = Arc::new(NetworkRateLimiter::new(
-            NetworkRateLimiterConfig {
-                requests_per_second: 50,   // 50 msgs/s per peer
-                burst_size: 100,           // allow short bursts
-                ban_duration: std::time::Duration::from_secs(300),
-                violations_before_ban: 10,
-            }
-        ));
+        let network_rate_limiter = Arc::new(NetworkRateLimiter::new(NetworkRateLimiterConfig {
+            requests_per_second: 50, // 50 msgs/s per peer
+            burst_size: 100,         // allow short bursts
+            ban_duration: std::time::Duration::from_secs(300),
+            violations_before_ban: 10,
+        }));
         info!("  ✓ Network rate limiter initialized");
 
         // Create shutdown channel
@@ -384,7 +410,8 @@ impl NodeService {
 
         // Get genesis timestamp from genesis block (for slot calculation)
         // This ensures all nodes use the same genesis timestamp from the chain
-        let genesis_timestamp = storage.get_block_by_height(0)?
+        let genesis_timestamp = storage
+            .get_block_by_height(0)?
             .map(|block| block.header.timestamp)
             .unwrap_or_else(|| {
                 std::time::SystemTime::now()
@@ -403,7 +430,10 @@ impl NodeService {
                         match KeyPair::from_secret(&secret) {
                             Ok(keypair) => {
                                 let address = keypair.address();
-                                info!("🔑 Loaded validator key, address: 0x{}", hex::encode(&address));
+                                info!(
+                                    "🔑 Loaded validator key, address: 0x{}",
+                                    hex::encode(&address)
+                                );
                                 Some(keypair)
                             }
                             Err(e) => {
@@ -459,7 +489,7 @@ impl NodeService {
             slashing_manager,
             network_rate_limiter,
             best_height_guard: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
-                initial_best_height
+                initial_best_height,
             )),
         })
     }
@@ -469,15 +499,14 @@ impl NodeService {
         info!("🚀 Starting node services...");
 
         // Create shared Mempool for transaction bridge
-        let rpc_mempool = Arc::new(parking_lot::RwLock::new(
-            luxtensor_rpc::Mempool::new()
-        ));
+        let rpc_mempool = Arc::new(parking_lot::RwLock::new(luxtensor_rpc::Mempool::new()));
 
         // ============================================================
         // Create shared pending_txs for unified TX storage (RPC + P2P)
         // ============================================================
-        let shared_pending_txs: Arc<parking_lot::RwLock<std::collections::HashMap<luxtensor_core::Hash, Transaction>>> =
-            Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
+        let shared_pending_txs: Arc<
+            parking_lot::RwLock<std::collections::HashMap<luxtensor_core::Hash, Transaction>>,
+        > = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
 
         // ============================================================
         // PHASE 1: Start P2P Swarm FIRST (to get command channel)
@@ -485,11 +514,15 @@ impl NodeService {
         info!("🌐 Starting P2P Swarm network...");
         let (p2p_event_tx, mut p2p_event_rx) = mpsc::channel::<SwarmP2PEvent>(4096);
 
-        // Channel for RPC to send transactions to P2P layer
-        let (_tx_broadcast_tx, mut tx_broadcast_rx) = mpsc::channel::<Transaction>(1024);
+        // NOTE: RPC→P2P transaction relay is now handled directly by SwarmBroadcaster
+        // which sends transactions to the P2P swarm via the command channel.
+        // The previously-unused mpsc channel has been removed.
 
         // Load or generate persistent node identity (Peer ID)
-        let node_key_path = self.config.network.node_key_path
+        let node_key_path = self
+            .config
+            .network
+            .node_key_path
             .clone()
             .unwrap_or_else(|| self.config.node.data_dir.join("node.key"));
         let node_key_path_str = node_key_path.to_string_lossy().to_string();
@@ -524,7 +557,11 @@ impl NodeService {
         } else {
             let hardcoded = get_seeds_for_chain(self.config.node.chain_id);
             if !hardcoded.is_empty() {
-                info!("📡 Using {} hardcoded seed node(s) for chain {}", hardcoded.len(), self.config.node.chain_id);
+                info!(
+                    "📡 Using {} hardcoded seed node(s) for chain {}",
+                    hardcoded.len(),
+                    self.config.node.chain_id
+                );
                 hardcoded
             } else {
                 info!("📡 No bootstrap nodes configured, using mDNS discovery");
@@ -540,7 +577,9 @@ impl NodeService {
             keypair,
             bootstrap_nodes.clone(),
             enable_mdns,
-        ).await {
+        )
+        .await
+        {
             Ok((mut swarm_node, command_tx)) => {
                 info!("  ✓ P2P Swarm started");
                 info!("    Listen port: {}", self.config.network.listen_port);
@@ -554,25 +593,14 @@ impl NodeService {
                 // Save broadcast_tx for block production
                 self.broadcast_tx = Some(command_tx.clone());
 
-                // Clone for transaction broadcasting task
-                let command_tx_for_rpc = command_tx.clone();
-
                 // 🔧 FIX: Run swarm in tokio::spawn (same runtime as RPC)
                 // This ensures channels work correctly between tasks
                 tokio::spawn(async move {
                     swarm_node.run().await;
                     // 🔧 FIX #19: Log if swarm exits unexpectedly
-                    tracing::error!("🚨 CRITICAL: P2P swarm event loop exited — node is now isolated!");
-                });
-
-                // Start transaction relay task (RPC → P2P)
-                tokio::spawn(async move {
-                    while let Some(tx) = tx_broadcast_rx.recv().await {
-                        info!("📡 TX RELAY: Received TX, forwarding to P2P swarm: 0x{}", hex::encode(tx.hash()));
-                        if let Err(e) = command_tx_for_rpc.send(SwarmCommand::BroadcastTransaction(tx)).await {
-                            warn!("Failed to relay transaction to P2P swarm: {}", e);
-                        }
-                    }
+                    tracing::error!(
+                        "🚨 CRITICAL: P2P swarm event loop exited — node is now isolated!"
+                    );
                 });
 
                 // Start P2P event handler
@@ -588,7 +616,7 @@ impl NodeService {
                 let mempool_for_p2p = self.mempool.clone(); // Mempool for P2P txs
                 let health_monitor_for_p2p = self.health_monitor.clone(); // Health monitoring
                 let rate_limiter_for_p2p = self.network_rate_limiter.clone(); // Network rate limiter
-                // 🔧 FIX #6: Clone state_db and executor for P2P block state execution
+                                                                              // 🔧 FIX #6: Clone state_db and executor for P2P block state execution
                 let state_db_for_p2p = self.state_db.clone();
                 let executor_for_p2p = self.executor.clone();
                 // 🔧 FIX #9: Atomic height guard to prevent block height race between
@@ -606,25 +634,40 @@ impl NodeService {
                                 // 🛡️ Rate-limit: check per-peer message rate
                                 let proposer_id = hex::encode(&block.header.validator);
                                 if !rate_limiter_for_p2p.check(&proposer_id) {
-                                    warn!("🛡️ Block #{} rate-limited from proposer {}", height, proposer_id);
+                                    warn!(
+                                        "🛡️ Block #{} rate-limited from proposer {}",
+                                        height, proposer_id
+                                    );
                                     continue;
                                 }
 
                                 // 🛡️ Long-range attack protection: validate against checkpoints
-                                if !long_range_protection_for_p2p.validate_against_checkpoints(block_hash, height) {
+                                if !long_range_protection_for_p2p
+                                    .validate_against_checkpoints(block_hash, height)
+                                {
                                     warn!("🛡️ Block #{} rejected: checkpoint mismatch (potential long-range attack)", height);
                                     continue;
                                 }
 
                                 // Check if we already have this block
-                                if storage_for_p2p.get_block_by_height(height).ok().flatten().is_some() {
+                                if storage_for_p2p
+                                    .get_block_by_height(height)
+                                    .ok()
+                                    .flatten()
+                                    .is_some()
+                                {
                                     debug!("Already have block #{}, skipping", height);
                                     continue;
                                 }
 
                                 // Check weak subjectivity
-                                if !long_range_protection_for_p2p.is_within_weak_subjectivity(height) {
-                                    warn!("🛡️ Block #{} rejected: outside weak subjectivity window", height);
+                                if !long_range_protection_for_p2p
+                                    .is_within_weak_subjectivity(height)
+                                {
+                                    warn!(
+                                        "🛡️ Block #{} rejected: outside weak subjectivity window",
+                                        height
+                                    );
                                     continue;
                                 }
 
@@ -633,28 +676,42 @@ impl NodeService {
                                 // ====================================================================
 
                                 // 1. Validate sequential height
-                                let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+                                let my_height = storage_for_p2p
+                                    .get_best_height()
+                                    .unwrap_or(Some(0))
+                                    .unwrap_or(0);
                                 if height > my_height + 1 {
                                     // Gap — request sync instead of storing out-of-order block
-                                    debug!("Block #{} is ahead of our height {}, requesting sync", height, my_height);
+                                    debug!(
+                                        "Block #{} is ahead of our height {}, requesting sync",
+                                        height, my_height
+                                    );
                                     if let Some(ref tx) = broadcast_tx_for_sync {
-                                        if let Err(e) = tx.send(SwarmCommand::RequestSync {
-                                            from_height: my_height + 1,
-                                            to_height: height,
-                                            my_id: node_name.clone(),
-                                        }).await {
+                                        if let Err(e) = tx
+                                            .send(SwarmCommand::RequestSync {
+                                                from_height: my_height + 1,
+                                                to_height: height,
+                                                my_id: node_name.clone(),
+                                            })
+                                            .await
+                                        {
                                             warn!("Failed to send sync request: {}", e);
                                         }
                                     }
                                     continue;
                                 }
                                 if height <= my_height {
-                                    debug!("Block #{} is not newer than our height {}", height, my_height);
+                                    debug!(
+                                        "Block #{} is not newer than our height {}",
+                                        height, my_height
+                                    );
                                     continue;
                                 }
 
                                 // 2. Validate previous_hash chain link
-                                if let Ok(Some(prev_block)) = storage_for_p2p.get_block_by_height(my_height) {
+                                if let Ok(Some(prev_block)) =
+                                    storage_for_p2p.get_block_by_height(my_height)
+                                {
                                     if block.header.previous_hash != prev_block.hash() {
                                         warn!("🚫 Block #{} rejected: previous_hash mismatch (expected {:?}, got {:?})",
                                             height, &prev_block.hash()[..4], &block.header.previous_hash[..4]);
@@ -670,7 +727,9 @@ impl NodeService {
                                 }
 
                                 // 3. Validate block signature (if validator field is set)
-                                if block.header.validator != [0u8; 32] && !block.header.signature.is_empty() {
+                                if block.header.validator != [0u8; 32]
+                                    && !block.header.signature.is_empty()
+                                {
                                     // Extract the 20-byte address from the 32-byte validator field
                                     let validator_addr = &block.header.validator[12..32];
                                     // Reconstruct unsigned header for hash verification
@@ -681,7 +740,10 @@ impl NodeService {
 
                                     // Verify signature using ECDSA recovery
                                     if sig_backup.len() >= 64 {
-                                        match luxtensor_crypto::recover_address(&header_hash, &sig_backup) {
+                                        match luxtensor_crypto::recover_address(
+                                            &header_hash,
+                                            &sig_backup,
+                                        ) {
                                             Ok(recovered_addr) => {
                                                 if recovered_addr.as_bytes() != validator_addr {
                                                     warn!("🚫 Block #{} rejected: invalid validator signature (recovered {:?} != expected {:?})",
@@ -698,9 +760,8 @@ impl NodeService {
                                 }
 
                                 // 4. Validate txs_root (Merkle root of transactions)
-                                let tx_hashes: Vec<[u8; 32]> = block.transactions.iter()
-                                    .map(|tx| tx.hash())
-                                    .collect();
+                                let tx_hashes: Vec<[u8; 32]> =
+                                    block.transactions.iter().map(|tx| tx.hash()).collect();
                                 let expected_txs_root = if tx_hashes.is_empty() {
                                     [0u8; 32]
                                 } else {
@@ -724,34 +785,43 @@ impl NodeService {
 
                                 // 6. Full structural validation via Block::validate()
                                 if let Err(e) = block.validate() {
-                                    warn!("🚫 Block #{} rejected: validate() failed: {}", height, e);
+                                    warn!(
+                                        "🚫 Block #{} rejected: validate() failed: {}",
+                                        height, e
+                                    );
                                     continue;
                                 }
 
                                 // 🔧 FIX #9: Atomic CAS to prevent block height race
                                 // If block production stored at this height first, skip
                                 let expected_height = height - 1;
-                                if best_height_for_p2p.compare_exchange(
-                                    expected_height, height,
-                                    std::sync::atomic::Ordering::SeqCst,
-                                    std::sync::atomic::Ordering::SeqCst,
-                                ).is_err() {
+                                if best_height_for_p2p
+                                    .compare_exchange(
+                                        expected_height,
+                                        height,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                    )
+                                    .is_err()
+                                {
                                     debug!("Block #{} skipped: height race detected (another path committed first)", height);
                                     continue;
                                 }
 
                                 if let Err(e) = storage_for_p2p.store_block(&block) {
                                     // Roll back atomic on store failure
-                                    best_height_for_p2p.store(expected_height, std::sync::atomic::Ordering::SeqCst);
+                                    best_height_for_p2p.store(
+                                        expected_height,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                    );
                                     warn!("Failed to store received block: {}", e);
                                 } else {
                                     info!("📥 Synced block #{} from peer", height);
 
                                     // 🔧 FIX #21: Remove confirmed txs from pending pool to prevent ghost entries
                                     {
-                                        let tx_hashes: Vec<[u8; 32]> = block.transactions.iter()
-                                            .map(|tx| tx.hash())
-                                            .collect();
+                                        let tx_hashes: Vec<[u8; 32]> =
+                                            block.transactions.iter().map(|tx| tx.hash()).collect();
                                         let mut pending = shared_pending_txs_for_p2p.write();
                                         for hash in &tx_hashes {
                                             pending.remove(hash);
@@ -762,33 +832,59 @@ impl NodeService {
                                     // 🔧 FIX #6: Execute transactions against StateDB for P2P-received blocks
                                     // Previously only the block producer executed txs, causing state divergence
                                     // on non-validator nodes (incorrect RPC balances/nonces)
+                                    //
+                                    // SECURITY: Split lock scope — write lock only during TX execution,
+                                    // read lock for disk flush to minimize RPC query starvation.
                                     {
                                         let mut state = state_db_for_p2p.write();
-                                        for (tx_index, tx) in block.transactions.iter().enumerate() {
-                                            if let Err(e) = executor_for_p2p.execute(tx, &mut state, height, block_hash, tx_index, block.header.timestamp) {
+                                        for (tx_index, tx) in block.transactions.iter().enumerate()
+                                        {
+                                            if let Err(e) = executor_for_p2p.execute(
+                                                tx,
+                                                &mut state,
+                                                height,
+                                                block_hash,
+                                                tx_index,
+                                                block.header.timestamp,
+                                            ) {
                                                 debug!("P2P block #{} tx {} execution failed: {} (may be expected for already-applied state)", height, tx_index, e);
                                             }
                                         }
-                                        // Persist state after applying all transactions
-                                        if let Err(e) = state.flush_to_db(storage_for_p2p.as_ref()) {
+                                        // Drop write lock before disk I/O
+                                    }
+                                    // Persist state with read lock only (flush_to_db takes &self)
+                                    {
+                                        let state = state_db_for_p2p.read();
+                                        if let Err(e) = state.flush_to_db(storage_for_p2p.as_ref())
+                                        {
                                             warn!("Failed to persist P2P block state: {}", e);
                                         }
                                     }
 
                                     // 🔗 Feed block to ForkChoice (GHOST) for canonical chain tracking
-                                    if let Err(e) = fork_choice_for_p2p.read().add_block(block.clone()) {
+                                    if let Err(e) =
+                                        fork_choice_for_p2p.read().add_block(block.clone())
+                                    {
                                         debug!("ForkChoice: {}", e);
                                     }
 
                                     // 🔐 FastFinality: record the block producer's attestation
                                     if block.header.validator != [0u8; 32] {
                                         let mut validator_addr = [0u8; 20];
-                                        validator_addr.copy_from_slice(&block.header.validator[12..32]);
+                                        validator_addr
+                                            .copy_from_slice(&block.header.validator[12..32]);
                                         let addr = luxtensor_core::Address::from(validator_addr);
-                                        let finalized = fast_finality_for_p2p.write().add_signature(block_hash, height, addr);
+                                        let finalized = fast_finality_for_p2p
+                                            .write()
+                                            .add_signature(block_hash, height, addr);
                                         match finalized {
-                                            Ok(true) => info!("⚡ Block #{} reached fast finality!", height),
-                                            Ok(false) => debug!("Block #{} collecting finality signatures", height),
+                                            Ok(true) => {
+                                                info!("⚡ Block #{} reached fast finality!", height)
+                                            }
+                                            Ok(false) => debug!(
+                                                "Block #{} collecting finality signatures",
+                                                height
+                                            ),
                                             Err(e) => debug!("FastFinality skipped: {}", e),
                                         }
                                     }
@@ -803,7 +899,9 @@ impl NodeService {
                                     let finality_depth = 32; // Same as min_finality_confirmations
                                     if height > finality_depth {
                                         let finalized_height = height - finality_depth;
-                                        if let Ok(Some(finalized_block)) = storage_for_p2p.get_block_by_height(finalized_height) {
+                                        if let Ok(Some(finalized_block)) =
+                                            storage_for_p2p.get_block_by_height(finalized_height)
+                                        {
                                             long_range_protection_for_p2p.update_finalized(
                                                 finalized_block.hash(),
                                                 finalized_height,
@@ -840,10 +938,19 @@ impl NodeService {
                                 let synthetic_ip = peer_id_to_synthetic_ip(&peer_id_str);
                                 let is_outbound = false; // Default to inbound
 
-                                if eclipse_protection_for_p2p.should_allow_connection(&synthetic_ip, is_outbound) {
-                                    eclipse_protection_for_p2p.add_peer(peer_id_str.clone(), synthetic_ip, is_outbound);
-                                    info!("👋 Peer connected: {} (diversity: {}%)",
-                                        peer_id, eclipse_protection_for_p2p.calculate_diversity_score());
+                                if eclipse_protection_for_p2p
+                                    .should_allow_connection(&synthetic_ip, is_outbound)
+                                {
+                                    eclipse_protection_for_p2p.add_peer(
+                                        peer_id_str.clone(),
+                                        synthetic_ip,
+                                        is_outbound,
+                                    );
+                                    info!(
+                                        "👋 Peer connected: {} (diversity: {}%)",
+                                        peer_id,
+                                        eclipse_protection_for_p2p.calculate_diversity_score()
+                                    );
                                 } else {
                                     warn!("🛡️ Peer blocked by eclipse protection: {}", peer_id);
                                 }
@@ -852,21 +959,32 @@ impl NodeService {
                                 luxtensor_rpc::peer_count::increment_peer_count();
 
                                 // 🎯 Update liveness monitor with current peer count
-                                let current_peer_count = luxtensor_rpc::peer_count::get_peer_count();
-                                liveness_monitor_for_p2p.write().update_peer_count(current_peer_count);
+                                let current_peer_count =
+                                    luxtensor_rpc::peer_count::get_peer_count();
+                                liveness_monitor_for_p2p
+                                    .write()
+                                    .update_peer_count(current_peer_count);
 
                                 // 🏥 Update health monitor with peer count
-                                health_monitor_for_p2p.write().update_peer_count(current_peer_count);
+                                health_monitor_for_p2p
+                                    .write()
+                                    .update_peer_count(current_peer_count);
 
                                 // Request sync when peer connects
-                                let my_height = storage_for_p2p.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+                                let my_height = storage_for_p2p
+                                    .get_best_height()
+                                    .unwrap_or(Some(0))
+                                    .unwrap_or(0);
                                 if let Some(ref tx) = broadcast_tx_for_sync {
                                     // Request blocks we don't have (up to 100 ahead)
-                                    if let Err(e) = tx.send(SwarmCommand::RequestSync {
-                                        from_height: my_height + 1,
-                                        to_height: my_height + 100,
-                                        my_id: node_name.clone(),
-                                    }).await {
+                                    if let Err(e) = tx
+                                        .send(SwarmCommand::RequestSync {
+                                            from_height: my_height + 1,
+                                            to_height: my_height + 100,
+                                            my_id: node_name.clone(),
+                                        })
+                                        .await
+                                    {
                                         warn!("Failed to send sync request on peer connect: {}", e);
                                     }
                                     info!("🔄 Requesting sync from height {}", my_height + 1);
@@ -880,11 +998,16 @@ impl NodeService {
                                 luxtensor_rpc::peer_count::decrement_peer_count();
 
                                 // 🎯 Update liveness monitor with current peer count
-                                let current_peer_count = luxtensor_rpc::peer_count::get_peer_count();
-                                liveness_monitor_for_p2p.write().update_peer_count(current_peer_count);
+                                let current_peer_count =
+                                    luxtensor_rpc::peer_count::get_peer_count();
+                                liveness_monitor_for_p2p
+                                    .write()
+                                    .update_peer_count(current_peer_count);
 
                                 // 🏥 Update health monitor with peer count
-                                health_monitor_for_p2p.write().update_peer_count(current_peer_count);
+                                health_monitor_for_p2p
+                                    .write()
+                                    .update_peer_count(current_peer_count);
                             }
                             SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
                                 // 🛡️ Rate-limit sync requests (cost 5 tokens — heavier than single msg)
@@ -895,20 +1018,33 @@ impl NodeService {
 
                                 // Cap sync response to prevent memory exhaustion
                                 let max_blocks_per_response = 50u64;
-                                let capped_to = to_height.min(from_height + max_blocks_per_response - 1);
-                                info!("🔄 Got sync request from {} for blocks {}-{} (capped at {})",
-                                    requester_id, from_height, to_height, capped_to);
+                                let capped_to =
+                                    to_height.min(from_height + max_blocks_per_response - 1);
+                                info!(
+                                    "🔄 Got sync request from {} for blocks {}-{} (capped at {})",
+                                    requester_id, from_height, to_height, capped_to
+                                );
                                 // Collect blocks we have in range
                                 let mut blocks_to_send = Vec::new();
                                 for h in from_height..=capped_to {
-                                    if let Ok(Some(block)) = storage_for_p2p.get_block_by_height(h) {
+                                    if let Ok(Some(block)) = storage_for_p2p.get_block_by_height(h)
+                                    {
                                         blocks_to_send.push(block);
                                     }
                                 }
                                 if !blocks_to_send.is_empty() {
-                                    info!("📤 Sending {} blocks to {}", blocks_to_send.len(), requester_id);
+                                    info!(
+                                        "📤 Sending {} blocks to {}",
+                                        blocks_to_send.len(),
+                                        requester_id
+                                    );
                                     if let Some(ref tx) = broadcast_tx_for_sync {
-                                        if let Err(e) = tx.send(SwarmCommand::SendBlocks { blocks: blocks_to_send }).await {
+                                        if let Err(e) = tx
+                                            .send(SwarmCommand::SendBlocks {
+                                                blocks: blocks_to_send,
+                                            })
+                                            .await
+                                        {
                                             warn!("Failed to send blocks in sync response: {}", e);
                                         }
                                     }
@@ -937,17 +1073,21 @@ impl NodeService {
                         interval.tick().await;
 
                         // Check if we're behind
-                        let my_height = sync_storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+                        let my_height =
+                            sync_storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
 
                         // Only request sync if we've made no progress since last check
                         // This prevents spamming when we're already caught up
                         if my_height == last_sync_height {
                             let batch_size = 50u64.min(100); // Cap batch to avoid huge responses
-                            if let Err(e) = sync_command_tx.send(SwarmCommand::RequestSync {
-                                from_height: my_height + 1,
-                                to_height: my_height + batch_size,
-                                my_id: sync_node_name.clone(),
-                            }).await {
+                            if let Err(e) = sync_command_tx
+                                .send(SwarmCommand::RequestSync {
+                                    from_height: my_height + 1,
+                                    to_height: my_height + batch_size,
+                                    my_id: sync_node_name.clone(),
+                                })
+                                .await
+                            {
                                 warn!("Failed to send periodic sync request: {}", e);
                             }
 
@@ -970,19 +1110,24 @@ impl NodeService {
         // ============================================================
         // Shared unified_state for syncing between RPC and block production.
         // Populated when RPC is enabled; None when RPC is disabled.
-        let mut unified_state_for_blocks: Option<Arc<parking_lot::RwLock<luxtensor_core::UnifiedStateDB>>> = None;
+        let mut unified_state_for_blocks: Option<
+            Arc<parking_lot::RwLock<luxtensor_core::UnifiedStateDB>>,
+        > = None;
 
         if self.config.rpc.enabled {
             info!("🔌 Starting RPC server with direct Swarm broadcaster...");
 
             // Use command_tx directly from P2P swarm (bypassing tx_relay task)
-            let broadcaster: Arc<dyn luxtensor_rpc::TransactionBroadcaster> = match &self.broadcast_tx {
-                Some(cmd_tx) => Arc::new(crate::swarm_broadcaster::SwarmBroadcaster::new(cmd_tx.clone())),
-                None => {
-                    warn!("No P2P swarm available, using NoOp broadcaster");
-                    Arc::new(luxtensor_rpc::NoOpBroadcaster)
-                }
-            };
+            let broadcaster: Arc<dyn luxtensor_rpc::TransactionBroadcaster> =
+                match &self.broadcast_tx {
+                    Some(cmd_tx) => {
+                        Arc::new(crate::swarm_broadcaster::SwarmBroadcaster::new(cmd_tx.clone()))
+                    }
+                    None => {
+                        warn!("No P2P swarm available, using NoOp broadcaster");
+                        Arc::new(luxtensor_rpc::NoOpBroadcaster)
+                    }
+                };
 
             // Use shared pending_txs for unified TX storage between RPC and P2P
             // 🔧 FIX: Pass config chain_id instead of hardcoded 1337
@@ -1043,7 +1188,6 @@ impl NodeService {
             self.tasks.push(task);
         }
 
-
         // Start block production if validator
         let best_height_for_block_prod = self.best_height_guard.clone();
         if self.config.node.is_validator {
@@ -1060,7 +1204,11 @@ impl NodeService {
             let rpc_mempool_for_block = rpc_mempool.clone();
 
             // Leader election params
-            let validator_id = self.config.node.validator_id.clone()
+            let validator_id = self
+                .config
+                .node
+                .validator_id
+                .clone()
                 .unwrap_or_else(|| self.config.node.name.clone());
             let validators = self.config.consensus.validators.clone();
             let genesis_timestamp = self.genesis_timestamp;
@@ -1092,11 +1240,12 @@ impl NodeService {
                     chain_id,
                     our_validator_address,
                     validator_keypair_for_block,
-                    best_height_for_block_prod,  // 🔧 FIX #9: Atomic height guard
+                    best_height_for_block_prod, // 🔧 FIX #9: Atomic height guard
                     metagraph_db_clone,
-                    unified_state_clone,  // For syncing RPC state after each block
-                    randao_clone,         // RANDAO mixer for epoch finalization
-                ).await
+                    unified_state_clone, // For syncing RPC state after each block
+                    randao_clone,        // RANDAO mixer for epoch finalization
+                )
+                .await
             });
 
             self.tasks.push(task);
@@ -1164,12 +1313,16 @@ impl NodeService {
 
         // Save shutdown checkpoint for recovery
         self.graceful_shutdown.begin_state_save();
-        let current_height = self.storage.get_block_by_height(0)
+        let current_height = self
+            .storage
+            .get_block_by_height(0)
             .ok()
             .flatten()
             .map(|b| b.header.height)
             .unwrap_or(0);
-        let current_hash = self.storage.get_block_by_height(current_height)
+        let current_hash = self
+            .storage
+            .get_block_by_height(current_height)
             .ok()
             .flatten()
             .map(|b| b.hash())
@@ -1240,7 +1393,7 @@ impl NodeService {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or(std::time::Duration::ZERO)
                         .as_secs();
-                    let slot = if now > genesis_timestamp {
+                    let slot = if now > genesis_timestamp && block_time > 0 {
                         (now - genesis_timestamp) / block_time
                     } else {
                         slot_counter
@@ -1439,11 +1592,15 @@ impl NodeService {
         let new_height = height + 1;
 
         // 🔧 FIX #9: Atomic CAS to prevent block height race
-        if best_height_guard.compare_exchange(
-            height, new_height,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        ).is_err() {
+        if best_height_guard
+            .compare_exchange(
+                height,
+                new_height,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
             return Err(anyhow::anyhow!(
                 "Block height race: expected height {} but another block was committed first",
                 height
@@ -1451,16 +1608,16 @@ impl NodeService {
         }
 
         // Get previous block
-        let previous_block = storage.get_block_by_height(height)
+        let previous_block = storage
+            .get_block_by_height(height)
             .context(format!("Failed to read block at height {} from storage", height))?
             .ok_or_else(|| anyhow::anyhow!("Previous block not found at height {}", height))?;
 
         // 🔧 FIX MC-2: Capture timestamp once and reuse for both preliminary and final
         // headers. Previously SystemTime::now() was called twice, which could yield
         // different seconds across the two headers (race / clock skew).
-        let block_timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
+        let block_timestamp =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
 
         // Get transactions from mempool
         let transactions = mempool.get_transactions_for_block(MAX_TRANSACTIONS_PER_BLOCK);
@@ -1497,7 +1654,14 @@ impl NodeService {
         let mut total_gas = 0u64;
 
         for (tx_index, tx) in transactions.into_iter().enumerate() {
-            match executor.execute(&tx, &mut temp_state, new_height, block_hash, tx_index, block_timestamp) {
+            match executor.execute(
+                &tx,
+                &mut temp_state,
+                new_height,
+                block_hash,
+                tx_index,
+                block_timestamp,
+            ) {
                 Ok(receipt) => {
                     total_gas += receipt.gas_used;
                     valid_receipts.push(receipt);
@@ -1510,14 +1674,9 @@ impl NodeService {
         }
 
         // Calculate transaction root
-        let tx_hashes: Vec<[u8; 32]> = valid_transactions.iter()
-            .map(|tx| tx.hash())
-            .collect();
-        let txs_root = if tx_hashes.is_empty() {
-            [0u8; 32]
-        } else {
-            MerkleTree::new(tx_hashes).root()
-        };
+        let tx_hashes: Vec<[u8; 32]> = valid_transactions.iter().map(|tx| tx.hash()).collect();
+        let txs_root =
+            if tx_hashes.is_empty() { [0u8; 32] } else { MerkleTree::new(tx_hashes).root() };
 
         // Calculate receipts root
         let receipts_root = calculate_receipts_root(&valid_receipts);
@@ -1538,7 +1697,6 @@ impl NodeService {
         // the final merge + commit + flush (<10ms). RPC reads are no longer blocked
         // during block production.
 
-
         // Create new block header with signing
         // First create unsigned header to get hash
         let mut unsigned_header = luxtensor_core::BlockHeader {
@@ -1550,7 +1708,7 @@ impl NodeService {
             txs_root,
             receipts_root,
             validator: [0u8; 32],
-            signature: vec![],  // Empty for signing
+            signature: vec![], // Empty for signing
             gas_used: total_gas,
             gas_limit: BLOCK_GAS_LIMIT,
             extra_data: vec![],
@@ -1567,7 +1725,11 @@ impl NodeService {
             let header_hash = unsigned_header.hash();
             match keypair.sign(&header_hash) {
                 Ok(sig) => {
-                    info!("🔐 Block #{} signed by validator 0x{}", new_height, hex::encode(&address));
+                    info!(
+                        "🔐 Block #{} signed by validator 0x{}",
+                        new_height,
+                        hex::encode(&address)
+                    );
                     (validator, sig.to_vec())
                 }
                 Err(e) => {
@@ -1577,7 +1739,8 @@ impl NodeService {
                         new_height, e
                     );
                     return Err(anyhow::anyhow!(
-                        "Block signing failed: {}. Validator cannot produce unsigned blocks.", e
+                        "Block signing failed: {}. Validator cannot produce unsigned blocks.",
+                        e
                     ));
                 }
             }
@@ -1597,7 +1760,8 @@ impl NodeService {
         let block = Block::new(header.clone(), valid_transactions.clone());
 
         // Store block
-        storage.store_block(&block)
+        storage
+            .store_block(&block)
             .context(format!("Failed to store block at height {}", header.height))?;
 
         // Update consensus with the new block hash for VRF entropy
@@ -1613,7 +1777,12 @@ impl NodeService {
         };
         match consensus.read().distribute_reward_with_height(&producer_addr, new_height) {
             Ok(reward) if reward > 0 => {
-                info!("💰 Block #{} reward: {} wei to 0x{}", new_height, reward, hex::encode(producer_addr.as_bytes()));
+                info!(
+                    "💰 Block #{} reward: {} wei to 0x{}",
+                    new_height,
+                    reward,
+                    hex::encode(producer_addr.as_bytes())
+                );
             }
             Ok(_) => {}
             Err(e) => {
@@ -1644,13 +1813,21 @@ impl NodeService {
         let tx_hashes: Vec<_> = valid_transactions.iter().map(|tx| tx.hash()).collect();
         mempool.remove_transactions(&tx_hashes);
 
-        info!("📦 Produced block #{} with {} transactions, {} gas used, hash {:?}",
-            new_height, valid_transactions.len(), total_gas, block.hash());
+        info!(
+            "📦 Produced block #{} with {} transactions, {} gas used, hash {:?}",
+            new_height,
+            valid_transactions.len(),
+            total_gas,
+            block.hash()
+        );
 
         // Check if this is an epoch boundary and process rewards
         if new_height % epoch_length == 0 && epoch_length > 0 {
             let epoch_num = new_height / epoch_length;
-            info!("🎯 Epoch {} completed at block #{}, processing rewards...", epoch_num, new_height);
+            info!(
+                "🎯 Epoch {} completed at block #{}, processing rewards...",
+                epoch_num, new_height
+            );
 
             // Create utility metrics for this epoch
             // Calculate actual block utilization based on gas used vs gas limit
@@ -1661,9 +1838,8 @@ impl NodeService {
             let metagraph_subnets = metagraph_db.get_all_subnets().unwrap_or_default();
             let metagraph_delegations = metagraph_db.get_all_delegations().unwrap_or_default();
 
-            let active_validator_count = metagraph_validators.iter()
-                .filter(|v| v.is_active)
-                .count();
+            let active_validator_count =
+                metagraph_validators.iter().filter(|v| v.is_active).count();
 
             let utility = UtilityMetrics {
                 active_validators: active_validator_count.max(1) as u64,
@@ -1691,16 +1867,15 @@ impl NodeService {
             }
 
             // Build validator list from metagraph
-            let validators: Vec<ValidatorInfo> = metagraph_validators.iter()
+            let validators: Vec<ValidatorInfo> = metagraph_validators
+                .iter()
                 .filter(|v| v.is_active && v.stake > 0)
-                .map(|v| ValidatorInfo {
-                    address: v.address,
-                    stake: v.stake,
-                })
+                .map(|v| ValidatorInfo { address: v.address, stake: v.stake })
                 .collect();
 
             // Build delegator list from metagraph
-            let delegators: Vec<DelegatorInfo> = metagraph_delegations.iter()
+            let delegators: Vec<DelegatorInfo> = metagraph_delegations
+                .iter()
                 .map(|d| DelegatorInfo {
                     address: d.delegator,
                     stake: d.amount,
@@ -1709,11 +1884,9 @@ impl NodeService {
                 .collect();
 
             // Build subnet list for emission
-            let subnets: Vec<SubnetInfo> = metagraph_subnets.iter()
-                .map(|s| SubnetInfo {
-                    owner: s.owner,
-                    emission_weight: s.emission_rate,
-                })
+            let subnets: Vec<SubnetInfo> = metagraph_subnets
+                .iter()
+                .map(|s| SubnetInfo { owner: s.owner, emission_weight: s.emission_rate })
                 .collect();
 
             // Fallback: if metagraph is empty (bootstrapping), use block producer
@@ -1753,8 +1926,13 @@ impl NodeService {
                 &subnets,
             );
 
-            info!("💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
-                epoch_num, result.total_emission, result.participants_rewarded, result.dao_allocation);
+            info!(
+                "💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
+                epoch_num,
+                result.total_emission,
+                result.participants_rewarded,
+                result.dao_allocation
+            );
 
             // Finalize RANDAO mix for this epoch and feed it into PoS seed.
             // This provides unbiasable randomness for the next epoch's
@@ -1771,7 +1949,6 @@ impl NodeService {
                     debug!("⚠️  RANDAO finalize skipped for epoch {}: {}", epoch_num, e);
                 }
             }
-
         }
 
         // Record block hash for EVM BLOCKHASH opcode (up to 256 recent blocks)
@@ -1791,13 +1968,19 @@ impl NodeService {
         info!("  Validator:    {}", self.config.node.is_validator);
         info!("");
         info!("  🌐 Network");
-        info!("    Address:    {}:{}", self.config.network.listen_addr, self.config.network.listen_port);
+        info!(
+            "    Address:    {}:{}",
+            self.config.network.listen_addr, self.config.network.listen_port
+        );
         info!("    Max Peers:  {}", self.config.network.max_peers);
         info!("");
         if self.config.rpc.enabled {
             info!("  🔌 RPC");
             info!("    Enabled:    Yes");
-            info!("    Address:    {}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
+            info!(
+                "    Address:    {}:{}",
+                self.config.rpc.listen_addr, self.config.rpc.listen_port
+            );
         } else {
             info!("  🔌 RPC:       Disabled");
         }
@@ -1834,7 +2017,8 @@ impl NodeService {
 
     /// Add transaction to mempool
     pub fn add_transaction(&self, tx: Transaction) -> Result<()> {
-        self.mempool.add_transaction(tx)
+        self.mempool
+            .add_transaction(tx)
             .map_err(|e| anyhow::anyhow!("Failed to add transaction: {}", e))
     }
 
@@ -1908,30 +2092,39 @@ fn sign_transaction_with_dev_key(tx: &mut Transaction, from: &[u8; 20]) -> bool 
     let dev_accounts: &[([u8; 20], [u8; 32])] = &[
         // Account #0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
         (
-            [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce,
-             0x6a, 0xb8, 0x82, 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
-            [0xac, 0x09, 0x74, 0xbe, 0xc3, 0x9a, 0x17, 0xe3, 0x6b, 0xa4,
-             0xa6, 0xb4, 0xd2, 0x38, 0xff, 0x94, 0x4b, 0xac, 0xb4, 0x78,
-             0xcb, 0xed, 0x5e, 0xfc, 0xae, 0x78, 0x4d, 0x7b, 0xf4, 0xf2,
-             0xff, 0x80]
+            [
+                0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8, 0x82, 0x72,
+                0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66,
+            ],
+            [
+                0xac, 0x09, 0x74, 0xbe, 0xc3, 0x9a, 0x17, 0xe3, 0x6b, 0xa4, 0xa6, 0xb4, 0xd2, 0x38,
+                0xff, 0x94, 0x4b, 0xac, 0xb4, 0x78, 0xcb, 0xed, 0x5e, 0xfc, 0xae, 0x78, 0x4d, 0x7b,
+                0xf4, 0xf2, 0xff, 0x80,
+            ],
         ),
         // Account #1: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
         (
-            [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01,
-             0x0c, 0x7d, 0x01, 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
-            [0x59, 0xc6, 0x99, 0x5e, 0x99, 0x8f, 0x97, 0xa5, 0xa0, 0x04,
-             0x49, 0x66, 0xf0, 0x94, 0x53, 0x89, 0xdc, 0x9e, 0x86, 0xda,
-             0xe8, 0x8c, 0x7a, 0x84, 0x12, 0xf4, 0x60, 0x3b, 0x6b, 0x78,
-             0x69, 0x0d]
+            [
+                0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01, 0x0c, 0x7d, 0x01, 0xb5,
+                0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8,
+            ],
+            [
+                0x59, 0xc6, 0x99, 0x5e, 0x99, 0x8f, 0x97, 0xa5, 0xa0, 0x04, 0x49, 0x66, 0xf0, 0x94,
+                0x53, 0x89, 0xdc, 0x9e, 0x86, 0xda, 0xe8, 0x8c, 0x7a, 0x84, 0x12, 0xf4, 0x60, 0x3b,
+                0x6b, 0x78, 0x69, 0x0d,
+            ],
         ),
         // Account #2: 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
         (
-            [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58,
-             0x5d, 0xd2, 0x99, 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
-            [0x5d, 0xe4, 0x11, 0x1a, 0xfa, 0x1a, 0x4b, 0x94, 0x90, 0x8f,
-             0x83, 0x10, 0x3e, 0xb1, 0xf1, 0x70, 0x63, 0x67, 0xc2, 0xe6,
-             0x8c, 0xa8, 0x70, 0xfc, 0x3f, 0xb9, 0xa8, 0x04, 0xcd, 0xab,
-             0x36, 0x5a]
+            [
+                0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58, 0x5d, 0xd2, 0x99, 0xe0,
+                0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc,
+            ],
+            [
+                0x5d, 0xe4, 0x11, 0x1a, 0xfa, 0x1a, 0x4b, 0x94, 0x90, 0x8f, 0x83, 0x10, 0x3e, 0xb1,
+                0xf1, 0x70, 0x63, 0x67, 0xc2, 0xe6, 0x8c, 0xa8, 0x70, 0xfc, 0x3f, 0xb9, 0xa8, 0x04,
+                0xcd, 0xab, 0x36, 0x5a,
+            ],
         ),
     ];
 

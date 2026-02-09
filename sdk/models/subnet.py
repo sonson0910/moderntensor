@@ -61,16 +61,16 @@ class SubnetInfo(BaseModel):
     """
     Subnet metadata and state information.
 
-    Matches LuxTensor SubnetData:
+    Matches LuxTensor RPC SubnetInfo:
     - id: u64
     - name: String
-    - owner: [u8; 20]
+    - owner: String
     - emission_rate: u128
+    - participant_count: usize
+    - total_stake: u128
     - created_at: u64
-    - tempo: u16
-    - max_neurons: u16
-    - min_stake: u128
-    - active: bool
+
+    Note: subnet_rpc.rs may return camelCase keys (totalStake, registeredAt, emissionShare).
     """
 
     # Identity (u64 in LuxTensor)
@@ -84,15 +84,19 @@ class SubnetInfo(BaseModel):
 
     # Network State
     active: bool = Field(default=True, description="Whether subnet is active")
-    n: int = Field(default=0, description="Current number of neurons", ge=0)
-    max_neurons: int = Field(default=256, description="Maximum neurons allowed (u16)", ge=0)
+    participant_count: int = Field(default=0, description="Number of participants in subnet", ge=0)
+    total_stake: int = Field(default=0, description="Total stake in subnet (u128)", ge=0)
+
+    # Optional fields (may not be returned by the Rust RPC server)
+    n: Optional[int] = Field(default=None, description="Current number of neurons")
+    max_neurons: Optional[int] = Field(default=None, description="Maximum neurons allowed (u16)")
 
     # Economic Parameters (u128 in LuxTensor)
     emission_rate: int = Field(default=0, description="Emission rate (u128)", ge=0)
-    min_stake: int = Field(default=0, description="Minimum stake required (u128)", ge=0)
+    min_stake: Optional[int] = Field(default=None, description="Minimum stake required (u128)")
 
-    # Timing (u16 in LuxTensor)
-    tempo: int = Field(default=100, description="Tempo (epoch length)", ge=1)
+    # Timing
+    tempo: Optional[int] = Field(default=None, description="Tempo (epoch length)")
     created_at: int = Field(default=0, description="Creation block/timestamp", ge=0)
 
     # Hyperparameters
@@ -114,8 +118,42 @@ class SubnetInfo(BaseModel):
 
     @classmethod
     def from_rust_data(cls, data: dict) -> "SubnetInfo":
-        """Create SubnetInfo from LuxTensor RPC response."""
+        """Create SubnetInfo from LuxTensor RPC response.
+
+        Handles both snake_case (from types.rs) and camelCase (from subnet_rpc.rs) field names.
+        """
         subnet_id = data.get("id", 0)
+
+        # Handle both snake_case and camelCase for emission
+        emission_rate = (
+            data.get("emission_rate")
+            or data.get("emissionShare")
+            or data.get("emission_share")
+            or 0
+        )
+
+        # Handle both snake_case and camelCase for created_at
+        created_at = (
+            data.get("created_at")
+            or data.get("registeredAt")
+            or data.get("registered_at")
+            or 0
+        )
+
+        # Handle both snake_case and camelCase for total_stake
+        total_stake = (
+            data.get("total_stake")
+            or data.get("totalStake")
+            or 0
+        )
+
+        # Handle both snake_case and camelCase for participant_count
+        participant_count = (
+            data.get("participant_count")
+            or data.get("participantCount")
+            or 0
+        )
+
         return cls(
             id=subnet_id,
             subnet_uid=subnet_id,
@@ -123,11 +161,14 @@ class SubnetInfo(BaseModel):
             name=data.get("name", ""),
             owner=data.get("owner", "0x" + "0" * 40),
             active=data.get("active", True),
-            max_neurons=data.get("max_neurons", 256),
-            emission_rate=data.get("emission_rate", 0),
-            min_stake=data.get("min_stake", 0),
-            tempo=data.get("tempo", 100),
-            created_at=data.get("created_at", 0),
+            participant_count=participant_count,
+            total_stake=total_stake,
+            n=data.get("n"),
+            max_neurons=data.get("max_neurons") or data.get("maxNeurons"),
+            emission_rate=emission_rate,
+            min_stake=data.get("min_stake") or data.get("minStake"),
+            tempo=data.get("tempo"),
+            created_at=created_at,
         )
 
     class Config:
@@ -139,18 +180,16 @@ class SubnetInfo(BaseModel):
                 "name": "AI Compute",
                 "owner": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb2",
                 "active": True,
-                "n": 100,
-                "max_neurons": 256,
+                "participant_count": 100,
+                "total_stake": 5000000000,
                 "emission_rate": 1000000,
-                "min_stake": 1000,
-                "tempo": 100,
                 "created_at": 123456,
                 "block": 200000
             }
         }
 
     def __str__(self) -> str:
-        return f"SubnetInfo(id={self.id}, name='{self.name}', neurons={self.n}/{self.max_neurons})"
+        return f"SubnetInfo(id={self.id}, name='{self.name}', participants={self.participant_count})"
 
     def __repr__(self) -> str:
         return self.__str__()

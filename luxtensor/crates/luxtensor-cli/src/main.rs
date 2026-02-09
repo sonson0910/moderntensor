@@ -384,6 +384,10 @@ async fn rpc_call(
 }
 
 fn generate_config(args: ConfigGenArgs) -> Result<()> {
+    // SECURITY: Validate node_id >= 1 to prevent u32 underflow wrapping
+    if args.node_id == 0 {
+        anyhow::bail!("node_id must be >= 1");
+    }
     let port_offset = (args.node_id - 1) as u16;
     let p2p_port = 30303 + port_offset;
     let rpc_port = 8545 + port_offset;

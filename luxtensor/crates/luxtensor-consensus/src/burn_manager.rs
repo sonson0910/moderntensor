@@ -20,10 +20,10 @@ pub struct BurnConfig {
 impl Default for BurnConfig {
     fn default() -> Self {
         Self {
-            tx_fee_burn_rate_bps: 5000,      // 50%
-            subnet_burn_rate_bps: 5000,      // 50%
+            tx_fee_burn_rate_bps: 5000,       // 50%
+            subnet_burn_rate_bps: 5000,       // 50%
             unmet_quota_burn_rate_bps: 10000, // 100%
-            slashing_burn_rate_bps: 8000,    // 80%
+            slashing_burn_rate_bps: 8000,     // 80%
         }
     }
 }
@@ -99,7 +99,8 @@ impl BurnManager {
 
     /// Process transaction fee - returns (burned, remaining)
     pub fn burn_tx_fee(&self, fee: u128, block_height: u64) -> (u128, u128) {
-        let burn_amount = fee * self.config.tx_fee_burn_rate_bps as u128 / 10000;
+        let burn_amount =
+            fee.checked_mul(self.config.tx_fee_burn_rate_bps as u128).unwrap_or(u128::MAX) / 10000;
         let remaining = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::TransactionFee, burn_amount, block_height, None);
@@ -112,8 +113,14 @@ impl BurnManager {
     }
 
     /// Process subnet registration - returns (burned, recycled_to_grants)
-    pub fn burn_subnet_registration(&self, fee: u128, block_height: u64, owner: [u8; 20]) -> (u128, u128) {
-        let burn_amount = fee * self.config.subnet_burn_rate_bps as u128 / 10000;
+    pub fn burn_subnet_registration(
+        &self,
+        fee: u128,
+        block_height: u64,
+        owner: [u8; 20],
+    ) -> (u128, u128) {
+        let burn_amount =
+            fee.checked_mul(self.config.subnet_burn_rate_bps as u128).unwrap_or(u128::MAX) / 10000;
         let recycle_amount = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::SubnetRegistration, burn_amount, block_height, Some(owner));
@@ -128,7 +135,9 @@ impl BurnManager {
 
     /// Burn for unmet quota (100% burned)
     pub fn burn_unmet_quota(&self, amount: u128, block_height: u64, participant: [u8; 20]) -> u128 {
-        let burn_amount = amount * self.config.unmet_quota_burn_rate_bps as u128 / 10000;
+        let burn_amount =
+            amount.checked_mul(self.config.unmet_quota_burn_rate_bps as u128).unwrap_or(u128::MAX)
+                / 10000;
 
         self.record_burn(BurnType::UnmetQuota, burn_amount, block_height, Some(participant));
 
@@ -140,8 +149,16 @@ impl BurnManager {
     }
 
     /// Process slashing - returns (burned, remaining)
-    pub fn burn_slashing(&self, slashed_amount: u128, block_height: u64, validator: [u8; 20]) -> (u128, u128) {
-        let burn_amount = slashed_amount * self.config.slashing_burn_rate_bps as u128 / 10000;
+    pub fn burn_slashing(
+        &self,
+        slashed_amount: u128,
+        block_height: u64,
+        validator: [u8; 20],
+    ) -> (u128, u128) {
+        let burn_amount = slashed_amount
+            .checked_mul(self.config.slashing_burn_rate_bps as u128)
+            .unwrap_or(u128::MAX)
+            / 10000;
         let remaining = slashed_amount.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::Slashing, burn_amount, block_height, Some(validator));
@@ -154,14 +171,15 @@ impl BurnManager {
     }
 
     /// Record a burn event
-    fn record_burn(&self, burn_type: BurnType, amount: u128, block_height: u64, source: Option<[u8; 20]>) {
+    fn record_burn(
+        &self,
+        burn_type: BurnType,
+        amount: u128,
+        block_height: u64,
+        source: Option<[u8; 20]>,
+    ) {
         if amount > 0 {
-            self.events.write().push(BurnEvent {
-                burn_type,
-                amount,
-                block_height,
-                source,
-            });
+            self.events.write().push(BurnEvent { burn_type, amount, block_height, source });
         }
     }
 

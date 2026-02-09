@@ -22,13 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class SubscriptionType(Enum):
-    """Available subscription types"""
-    NEW_BLOCKS = "newBlocks"
-    PENDING_TRANSACTIONS = "pendingTransactions"
-    ACCOUNT_CHANGES = "accountChanges"
-    STAKE_UPDATES = "stakeUpdates"
-    WEIGHT_COMMITS = "weightCommits"
-    SUBNET_EVENTS = "subnetEvents"
+    """Available subscription types matching LuxTensor WebSocket server (Ethereum standard)."""
+    NEW_HEADS = "newHeads"                      # New block headers
+    NEW_PENDING_TRANSACTIONS = "newPendingTransactions"  # Pending TXs
+    LOGS = "logs"                                # Contract event logs
+    SYNCING = "syncing"                          # Sync status
 
 
 @dataclass
@@ -101,43 +99,43 @@ class LuxtensorWebSocket:
 
     def subscribe_blocks(self, callback: Callable[[BlockEvent], None]) -> None:
         """Subscribe to new block events."""
-        self._add_subscription(SubscriptionType.NEW_BLOCKS, callback)
+        self._add_subscription(SubscriptionType.NEW_HEADS, callback)
 
     def subscribe_pending_transactions(
         self, callback: Callable[[TransactionEvent], None]
     ) -> None:
         """Subscribe to pending transaction events."""
-        self._add_subscription(SubscriptionType.PENDING_TRANSACTIONS, callback)
+        self._add_subscription(SubscriptionType.NEW_PENDING_TRANSACTIONS, callback)
 
     def subscribe_account_changes(
         self,
         address: str,
         callback: Callable[[AccountChangeEvent], None]
     ) -> None:
-        """Subscribe to account balance changes for specific address."""
+        """Subscribe to account balance changes for specific address via log events."""
         # Store address filter with callback
         callback._filter_address = address  # type: ignore
-        self._add_subscription(SubscriptionType.ACCOUNT_CHANGES, callback)
+        self._add_subscription(SubscriptionType.LOGS, callback)
 
     def subscribe_stake_updates(
         self,
         callback: Callable[[Dict[str, Any]], None],
         hotkey: Optional[str] = None
     ) -> None:
-        """Subscribe to stake/delegation updates."""
+        """Subscribe to stake/delegation updates via log events."""
         if hotkey:
             callback._filter_hotkey = hotkey  # type: ignore
-        self._add_subscription(SubscriptionType.STAKE_UPDATES, callback)
+        self._add_subscription(SubscriptionType.LOGS, callback)
 
     def subscribe_weight_commits(
         self,
         callback: Callable[[Dict[str, Any]], None],
         subnet_id: Optional[int] = None
     ) -> None:
-        """Subscribe to weight commit events."""
+        """Subscribe to weight commit events via log events."""
         if subnet_id is not None:
             callback._filter_subnet = subnet_id  # type: ignore
-        self._add_subscription(SubscriptionType.WEIGHT_COMMITS, callback)
+        self._add_subscription(SubscriptionType.LOGS, callback)
 
     def _add_subscription(
         self, sub_type: SubscriptionType, callback: Callable
@@ -183,7 +181,7 @@ class LuxtensorWebSocket:
         for sub_type in self._subscriptions.keys():
             try:
                 sub_id = await self._send_request(
-                    "luxtensor_subscribe",
+                    "eth_subscribe",
                     [sub_type.value]
                 )
                 if sub_id:
@@ -206,8 +204,8 @@ class LuxtensorWebSocket:
                     future.set_result(data.get("result"))
                 return
 
-            # Handle subscription event
-            if "method" in data and data["method"] == "luxtensor_subscription":
+            # Handle subscription event (Ethereum standard)
+            if "method" in data and data["method"] == "eth_subscription":
                 params = data.get("params", {})
                 sub_id = params.get("subscription")
                 result = params.get("result", {})
@@ -254,14 +252,23 @@ class LuxtensorWebSocket:
         self, sub_type: SubscriptionType, data: Dict[str, Any]
     ) -> Any:
         """Create typed event from raw data."""
-        if sub_type == SubscriptionType.NEW_BLOCKS:
+        if sub_type == SubscriptionType.NEW_HEADS:
             return BlockEvent(
-                block_number=data.get("number", 0),
+                block_number=int(data.get("number", "0x0"), 16) if isinstance(data.get("number"), str) else data.get("number", 0),
                 block_hash=data.get("hash", ""),
-                timestamp=data.get("timestamp", 0),
-                tx_count=data.get("tx_count", 0)
+                timestamp=int(data.get("timestamp", "0x0"), 16) if isinstance(data.get("timestamp"), str) else data.get("timestamp", 0),
+                tx_count=len(data.get("transactions", [])) if isinstance(data.get("transactions"), list) else data.get("tx_count", 0)
             )
-        elif sub_type == SubscriptionType.PENDING_TRANSACTIONS:
+        elif sub_type == SubscriptionType.NEW_PENDING_TRANSACTIONS:
+            # newPendingTransactions returns just the tx hash string
+            if isinstance(data, str):
+                return TransactionEvent(
+                    tx_hash=data,
+                    from_address="",
+                    to_address=None,
+                    value=0,
+                    status="pending"
+                )
             return TransactionEvent(
                 tx_hash=data.get("hash", ""),
                 from_address=data.get("from", ""),
@@ -269,15 +276,18 @@ class LuxtensorWebSocket:
                 value=data.get("value", 0),
                 status="pending"
             )
-        elif sub_type == SubscriptionType.ACCOUNT_CHANGES:
-            return AccountChangeEvent(
-                address=data.get("address", ""),
-                old_balance=data.get("old_balance", 0),
-                new_balance=data.get("new_balance", 0),
-                block_number=data.get("block_number", 0)
-            )
+        elif sub_type == SubscriptionType.LOGS:
+            # Logs can represent account changes, stake updates, weight commits, etc.
+            if "address" in data and "old_balance" in data:
+                return AccountChangeEvent(
+                    address=data.get("address", ""),
+                    old_balance=data.get("old_balance", 0),
+                    new_balance=data.get("new_balance", 0),
+                    block_number=int(data.get("blockNumber", "0x0"), 16) if isinstance(data.get("blockNumber"), str) else data.get("block_number", 0)
+                )
+            return data  # Return raw log for other log types
         else:
-            return data  # Return raw dict for other types
+            return data  # Return raw dict for syncing and other types
 
     async def connect(self) -> None:
         """Connect to WebSocket and start listening."""

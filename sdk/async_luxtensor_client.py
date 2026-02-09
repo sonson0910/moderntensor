@@ -193,7 +193,7 @@ class AsyncLuxtensorClient:
         """
         try:
             result = await self._make_request(
-                "neuron_listBySubnet",
+                "neuron_getAll",
                 params=[netuid]
             )
             return [NeuronInfo(**n) for n in result] if result else []
@@ -251,7 +251,7 @@ class AsyncLuxtensorClient:
             List of SubnetInfo objects
         """
         try:
-            result = await self._make_request("query_allSubnets")
+            result = await self._make_request("subnet_getAll")
             return [SubnetInfo(**s) for s in result] if result else []
         except Exception as e:
             logger.error(f"Error getting subnets: {e}")

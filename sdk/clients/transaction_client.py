@@ -96,33 +96,37 @@ class TransactionClient(BaseRpcClient):
         """
         Get transaction history for address.
 
+        Note: Requires an indexer service. The core LuxTensor node does not
+        support tx_getByAddress. Returns empty list if unavailable.
+
         Args:
             address: Account address
             limit: Max transactions
 
         Returns:
-            List of transactions
+            List of transactions (empty if indexer not available)
         """
-        try:
-            result = self._call_rpc("tx_getByAddress", [address, limit])
-            return result if result else []
-        except Exception as e:
-            logger.warning(f"Failed to get transactions: {e}")
-            return []
+        logger.warning(
+            "tx_getByAddress is not available on the core node. "
+            "Use an indexer service for transaction history queries."
+        )
+        return []
 
     def get_pending_transactions(self) -> List[Dict[str, Any]]:
         """
         Get pending transactions in mempool.
 
+        Note: The core LuxTensor node does not expose a tx_pendingTransactions
+        RPC. Subscribe to newPendingTransactions via WebSocket instead.
+
         Returns:
-            List of pending transactions
+            List of pending transactions (empty if unavailable)
         """
-        try:
-            result = self._call_rpc("tx_pendingTransactions", [])
-            return result if result else []
-        except Exception as e:
-            logger.warning(f"Failed to get pending transactions: {e}")
-            return []
+        logger.warning(
+            "tx_pendingTransactions is not available on the core node. "
+            "Use WebSocket subscription 'newPendingTransactions' instead."
+        )
+        return []
 
     def estimate_gas(self, tx_params: Dict[str, Any]) -> int:
         """

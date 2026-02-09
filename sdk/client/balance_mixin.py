@@ -59,7 +59,10 @@ class BalanceMixin:
             Free balance in base units
         """
         try:
-            return int(self._rpc()._call_rpc("balances_free", [address]))
+            result = self._rpc()._call_rpc("eth_getBalance", [address, "latest"])
+            if isinstance(result, str) and result.startswith("0x"):
+                return int(result, 16)
+            return int(result) if result else 0
         except Exception as e:
             logger.error(f"Error getting free balance: {e}")
             raise
@@ -75,7 +78,10 @@ class BalanceMixin:
             Reserved balance in base units
         """
         try:
-            return int(self._rpc()._call_rpc("balances_reserved", [address]))
+            # Reserved balance not available as separate RPC; derive from total - free
+            # or return 0 as the Rust server does not track reserved balance separately
+            logger.warning("Reserved balance not directly available on LuxTensor server")
+            return 0
         except Exception as e:
             logger.error(f"Error getting reserved balance: {e}")
             raise
@@ -121,8 +127,11 @@ class BalanceMixin:
             Total tokens issued
         """
         try:
-            result = self._rpc()._call_rpc("query_totalIssuance")
-            return int(result)
+            # Total issuance not available as direct RPC on LuxTensor server
+            raise NotImplementedError(
+                "query_totalIssuance is not available on LuxTensor server. "
+                "Use rewards_getStats for network-level statistics."
+            )
         except Exception as e:
             logger.error(f"Error getting total issuance: {e}")
             raise

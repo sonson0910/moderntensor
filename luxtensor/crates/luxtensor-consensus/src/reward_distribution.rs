@@ -301,14 +301,15 @@ impl RewardDistributor {
         infra_nodes: &[InfrastructureNodeInfo],
     ) -> DistributionResult {
         // Calculate pool sizes using integer BPS arithmetic (no f64 precision loss)
-        let miner_pool = total_emission * self.config.miner_share_bps as u128 / 10_000;
-        let validator_pool = total_emission * self.config.validator_share_bps as u128 / 10_000;
-        let infra_pool = total_emission * self.config.infrastructure_share_bps as u128 / 10_000;
-        let delegator_pool = total_emission * self.config.delegator_share_bps as u128 / 10_000;
-        let subnet_pool = total_emission * self.config.subnet_owner_share_bps as u128 / 10_000;
-        let dao_allocation = total_emission * self.config.dao_share_bps as u128 / 10_000;
+        // SECURITY: Use checked_mul to prevent overflow when total_emission is large
+        let miner_pool = total_emission.checked_mul(self.config.miner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let validator_pool = total_emission.checked_mul(self.config.validator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let infra_pool = total_emission.checked_mul(self.config.infrastructure_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let delegator_pool = total_emission.checked_mul(self.config.delegator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let subnet_pool = total_emission.checked_mul(self.config.subnet_owner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let dao_allocation = total_emission.checked_mul(self.config.dao_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
         let community_ecosystem_allocation =
-            total_emission * self.config.community_ecosystem_share_bps as u128 / 10_000;
+            total_emission.checked_mul(self.config.community_ecosystem_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
 
         // Distribute to each group
         let miner_rewards = self.distribute_by_score(miner_pool, miners);
@@ -359,11 +360,9 @@ impl RewardDistributor {
             .iter()
             .map(|m| {
                 // Scale: (score * PRECISION) / total_score — both f64, result fits u128
-                let share = if total_score > 0.0 {
-                    ((m.score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
-                } else {
-                    0
-                };
+                // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
+                let raw = (m.score / total_score) * PRECISION as f64;
+                let share = if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 };
                 (m.address, share)
             })
             .collect();
@@ -407,7 +406,9 @@ impl RewardDistributor {
         const PRECISION: u128 = 1_000_000_000_000;
         for (address, effective_score) in effective_scores {
             let scaled_share = if total_score > 0.0 {
-                ((effective_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+                // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
+                let raw = (effective_score / total_score) * PRECISION as f64;
+                if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 }
             } else {
                 0
             };
@@ -455,7 +456,9 @@ impl RewardDistributor {
             // SECURITY: Use fixed-point integer arithmetic for precision
             const PRECISION: u128 = 1_000_000_000_000;
             let scaled_share = if total_score > 0.0 {
-                ((effective_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+                // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
+                let raw = (effective_score / total_score) * PRECISION as f64;
+                if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 }
             } else {
                 0
             };
@@ -559,7 +562,9 @@ impl RewardDistributor {
             // SECURITY: Use fixed-point integer arithmetic instead of f64
             const PRECISION: u128 = 1_000_000_000_000;
             let scaled_share = if total_score > 0.0 {
-                ((node.uptime_score / total_score) * PRECISION as f64).min(PRECISION as f64) as u128
+                // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
+                let raw = (node.uptime_score / total_score) * PRECISION as f64;
+                if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 }
             } else {
                 0
             };

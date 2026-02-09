@@ -1,9 +1,9 @@
 // Performance optimization utilities for LuxTensor
 // Provides caching, parallel processing, and optimized data structures
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use std::time::{Duration, Instant};
 
 /// LRU cache for frequently accessed data
@@ -22,11 +22,7 @@ struct CacheEntry<V> {
 impl<K: Clone + Eq + std::hash::Hash, V: Clone> LruCache<K, V> {
     /// Create a new LRU cache with given capacity
     pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            cache: HashMap::new(),
-            access_order: Vec::new(),
-        }
+        Self { capacity, cache: HashMap::new(), access_order: Vec::new() }
     }
 
     /// Get a value from cache
@@ -57,11 +53,7 @@ impl<K: Clone + Eq + std::hash::Hash, V: Clone> LruCache<K, V> {
             }
         }
 
-        let entry = CacheEntry {
-            value,
-            last_access: Instant::now(),
-            access_count: 1,
-        };
+        let entry = CacheEntry { value, last_access: Instant::now(), access_count: 1 };
 
         self.cache.insert(key.clone(), entry);
 
@@ -91,11 +83,8 @@ impl<K: Clone + Eq + std::hash::Hash, V: Clone> LruCache<K, V> {
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         let total_accesses: u64 = self.cache.values().map(|e| e.access_count).sum();
-        let avg_accesses = if !self.cache.is_empty() {
-            total_accesses / self.cache.len() as u64
-        } else {
-            0
-        };
+        let avg_accesses =
+            if !self.cache.is_empty() { total_accesses / self.cache.len() as u64 } else { 0 };
 
         CacheStats {
             size: self.cache.len(),
@@ -123,9 +112,7 @@ pub struct ConcurrentCache<K, V> {
 impl<K: Clone + Eq + std::hash::Hash, V: Clone> ConcurrentCache<K, V> {
     /// Create a new concurrent cache
     pub fn new(capacity: usize) -> Self {
-        Self {
-            cache: Arc::new(RwLock::new(LruCache::new(capacity))),
-        }
+        Self { cache: Arc::new(RwLock::new(LruCache::new(capacity))) }
     }
 
     /// Get a value from cache
@@ -151,9 +138,7 @@ impl<K: Clone + Eq + std::hash::Hash, V: Clone> ConcurrentCache<K, V> {
 
 impl<K: Clone + Eq + std::hash::Hash, V: Clone> Clone for ConcurrentCache<K, V> {
     fn clone(&self) -> Self {
-        Self {
-            cache: Arc::clone(&self.cache),
-        }
+        Self { cache: Arc::clone(&self.cache) }
     }
 }
 
@@ -166,10 +151,7 @@ pub struct BatchProcessor {
 impl BatchProcessor {
     /// Create a new batch processor
     pub fn new(batch_size: usize, max_parallel: usize) -> Self {
-        Self {
-            batch_size,
-            max_parallel,
-        }
+        Self { batch_size, max_parallel }
     }
 
     /// Get optimal batch size based on workload
@@ -183,6 +165,9 @@ impl BatchProcessor {
 
     /// Calculate number of batches needed
     pub fn batch_count(&self, total_items: usize) -> usize {
+        if self.batch_size == 0 {
+            return if total_items > 0 { 1 } else { 0 };
+        }
         (total_items + self.batch_size - 1) / self.batch_size
     }
 
@@ -195,8 +180,8 @@ impl BatchProcessor {
 impl Default for BatchProcessor {
     fn default() -> Self {
         Self::new(
-            100,  // Process 100 items per batch
-            8,    // Use up to 8 parallel workers
+            100, // Process 100 items per batch
+            8,   // Use up to 8 parallel workers
         )
     }
 }
@@ -209,17 +194,13 @@ pub struct PerformanceMetrics {
 impl PerformanceMetrics {
     /// Create a new metrics collector
     pub fn new() -> Self {
-        Self {
-            operation_times: Arc::new(RwLock::new(HashMap::new())),
-        }
+        Self { operation_times: Arc::new(RwLock::new(HashMap::new())) }
     }
 
     /// Record an operation duration
     pub fn record(&self, operation: &str, duration: Duration) {
         let mut times = self.operation_times.write();
-        times.entry(operation.to_string())
-            .or_insert_with(Vec::new)
-            .push(duration);
+        times.entry(operation.to_string()).or_insert_with(Vec::new).push(duration);
     }
 
     /// Get average duration for an operation
@@ -254,13 +235,7 @@ impl PerformanceMetrics {
 
             metrics.insert(
                 operation.clone(),
-                MetricSummary {
-                    count: durations.len(),
-                    total,
-                    average: avg,
-                    min,
-                    max,
-                },
+                MetricSummary { count: durations.len(), total, average: avg, min, max },
             );
         }
 
@@ -281,9 +256,7 @@ impl Default for PerformanceMetrics {
 
 impl Clone for PerformanceMetrics {
     fn clone(&self) -> Self {
-        Self {
-            operation_times: Arc::clone(&self.operation_times),
-        }
+        Self { operation_times: Arc::clone(&self.operation_times) }
     }
 }
 
@@ -319,10 +292,7 @@ impl BloomFilter {
         let bits_count = Self::optimal_bits(expected_elements, false_positive_rate).max(1);
         let hash_count = Self::optimal_hashes(expected_elements, bits_count).max(1);
 
-        Self {
-            bits: vec![false; bits_count],
-            hash_count,
-        }
+        Self { bits: vec![false; bits_count], hash_count }
     }
 
     fn optimal_bits(n: usize, p: f64) -> usize {

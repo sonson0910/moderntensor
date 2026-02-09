@@ -93,6 +93,7 @@ pub fn register_staking_handlers(
 
     // staking_addStake - Add stake to validator
     // SECURITY: Verifies EVM balance and debits it atomically
+    // LOCK ORDER: validators → unified_state (consistent with removeStake)
     io.add_sync_method("staking_addStake", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
@@ -112,26 +113,21 @@ pub fn register_staking_handlers(
         let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
 
-        // SECURITY: Verify the caller has sufficient EVM balance
-        {
-            let state = state_for_add.read();
-            let balance = state.get_balance(&address);
-            if balance < amount {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    format!("Insufficient balance: have 0x{:x}, need 0x{:x}", balance, amount)
-                ));
-            }
-        }
-
-        // Debit EVM balance
-        {
-            let mut state = state_for_add.write();
-            let balance = state.get_balance(&address);
-            state.set_balance(address, balance.saturating_sub(amount));
-        }
-
+        // SECURITY: Acquire both locks in consistent order (validators → state)
+        // to prevent deadlock with removeStake. All checks and mutations happen
+        // atomically under both locks to eliminate TOCTOU races.
         let mut validator_set = validators_clone.write();
+        let mut state = state_for_add.write();
 
+        // Verify sufficient EVM balance
+        let balance = state.get_balance(&address);
+        if balance < amount {
+            return Err(jsonrpc_core::Error::invalid_params(
+                format!("Insufficient balance: have 0x{:x}, need 0x{:x}", balance, amount)
+            ));
+        }
+
+        // Update validator stake
         if let Some(validator) = validator_set.get_validator(&address) {
             let new_stake = validator.stake.checked_add(amount)
                 .ok_or_else(|| jsonrpc_core::Error::invalid_params("Stake overflow"))?;
@@ -145,6 +141,9 @@ pub fn register_staking_handlers(
                 .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
         }
 
+        // Debit EVM balance (after successful stake update)
+        state.set_balance(address, balance.saturating_sub(amount));
+
         Ok(Value::Bool(true))
     });
 
@@ -153,6 +152,7 @@ pub fn register_staking_handlers(
 
     // staking_removeStake - Remove stake from validator
     // SECURITY: Credits EVM balance back when unstaking
+    // LOCK ORDER: validators → unified_state (consistent with addStake)
     io.add_sync_method("staking_removeStake", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
@@ -172,7 +172,9 @@ pub fn register_staking_handlers(
         let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
 
+        // SECURITY: Acquire both locks in consistent order (validators → state)
         let mut validator_set = validators_clone.write();
+        let mut state = state_for_remove.write();
 
         if let Some(validator) = validator_set.get_validator(&address) {
             if validator.stake < amount {
@@ -190,12 +192,9 @@ pub fn register_staking_handlers(
                     .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
             }
 
-            // SECURITY: Credit back the unstaked amount to EVM balance
-            {
-                let mut state = state_for_remove.write();
-                let balance = state.get_balance(&address);
-                state.set_balance(address, balance.saturating_add(amount));
-            }
+            // Credit back the unstaked amount to EVM balance
+            let balance = state.get_balance(&address);
+            state.set_balance(address, balance.saturating_add(amount));
         } else {
             return Err(jsonrpc_core::Error::invalid_params("Validator not found"));
         }
@@ -282,16 +281,13 @@ pub fn register_staking_handlers(
         let copy_len = pubkey_bytes.len().min(32);
         public_key[..copy_len].copy_from_slice(&pubkey_bytes[..copy_len]);
 
-        // Check if validator already exists
-        {
-            let validator_set_read = validators_clone.read();
-            if validator_set_read.get_validator(&address).is_some() {
-                return Err(jsonrpc_core::Error::invalid_params("Validator already registered"));
-            }
+        // SECURITY: Use write lock for atomic check+insert (eliminates TOCTOU race)
+        let mut validator_set = validators_clone.write();
+        if validator_set.get_validator(&address).is_some() {
+            return Err(jsonrpc_core::Error::invalid_params("Validator already registered"));
         }
 
         // Add to validator set with epoch delay (active next epoch)
-        let mut validator_set = validators_clone.write();
         let new_validator = Validator {
             address,
             stake,
@@ -460,17 +456,6 @@ pub fn register_staking_handlers(
             .as_secs();
         let unlock_timestamp = now + lock_seconds;
 
-        // Check if already locked
-        {
-            let locks = LOCKED_STAKES.read();
-            if let Some((_, existing_unlock, _)) = locks.get(address.as_bytes()) {
-                if now < *existing_unlock {
-                    return Err(jsonrpc_core::Error::invalid_params(
-                        format!("Stake already locked until timestamp {}", existing_unlock)
-                    ));
-                }
-            }
-        }
         // Calculate bonus rate based on lock period (using LockBonusConfig logic)
         // Convert seconds to days for bonus calculation
         let lock_days = (lock_seconds / 86400) as u32; // 86400 seconds = 1 day
@@ -496,10 +481,20 @@ pub fn register_staking_handlers(
         let tx_hash = hasher.finalize();
         let tx_hash_hex = format!("0x{}", hex::encode(&tx_hash));
 
-        // Store lock info with proper bonus rate
+        // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
         {
             let mut locks = LOCKED_STAKES.write();
             let addr_bytes: [u8; 20] = *address.as_bytes();
+
+            // Check if already locked (under write lock)
+            if let Some((_, existing_unlock, _)) = locks.get(&addr_bytes) {
+                if now < *existing_unlock {
+                    return Err(jsonrpc_core::Error::invalid_params(
+                        format!("Stake already locked until timestamp {}", existing_unlock)
+                    ));
+                }
+            }
+
             locks.insert(addr_bytes, (amount, unlock_timestamp, bonus_rate));
 
             // Persist to blockchain DB for on-chain storage
@@ -576,22 +571,19 @@ pub fn register_staking_handlers(
             .as_secs();
         let unlock_timestamp = now + (lock_days * 24 * 60 * 60);
 
-        // Check if already locked
+        // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
         {
-            let locks = LOCKED_STAKES.read();
-            if let Some((_, existing_unlock, _)) = locks.get(address.as_bytes()) {
+            let mut locks = LOCKED_STAKES.write();
+            let addr_bytes: [u8; 20] = *address.as_bytes();
+
+            if let Some((_, existing_unlock, _)) = locks.get(&addr_bytes) {
                 if now < *existing_unlock {
                     return Err(jsonrpc_core::Error::invalid_params(
                         format!("Stake already locked until timestamp {}", existing_unlock)
                     ));
                 }
             }
-        }
 
-        // Store lock info
-        {
-            let mut locks = LOCKED_STAKES.write();
-            let addr_bytes: [u8; 20] = *address.as_bytes();
             locks.insert(addr_bytes, (amount, unlock_timestamp, bonus_rate));
         }
 
@@ -625,13 +617,10 @@ pub fn register_staking_handlers(
             .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
-        // Check lock status
-        let lock_info = {
-            let locks = LOCKED_STAKES.read();
-            locks.get(&addr_bytes).cloned()
-        };
+        // SECURITY: Atomic check+remove under single write lock (eliminates TOCTOU)
+        let mut locks = LOCKED_STAKES.write();
 
-        match lock_info {
+        match locks.get(&addr_bytes).cloned() {
             None => {
                 Err(jsonrpc_core::Error::invalid_params("No locked stake found for this address"))
             }
@@ -649,14 +638,10 @@ pub fn register_staking_handlers(
                         )
                     ))
                 } else {
-                    // Lock expired - allow unlock
-                    {
-                        let mut locks = LOCKED_STAKES.write();
-                        locks.remove(&addr_bytes);
-
-                        // Remove from blockchain DB
-                        let _ = db_for_unlock.remove_stake(&addr_bytes);
-                    }
+                    // Lock expired - allow unlock (already under write lock)
+                    locks.remove(&addr_bytes);
+                    // Remove from blockchain DB
+                    let _ = db_for_unlock.remove_stake(&addr_bytes);
 
                     // Calculate bonus amount
                     let bonus_amount = (amount * bonus_rate as u128) / 100;

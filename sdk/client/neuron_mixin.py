@@ -122,7 +122,7 @@ class NeuronMixin:
             List of (target_uid, weight) tuples
         """
         try:
-            result = self._rpc()._call_rpc("neuron_getWeights", [subnet_uid, neuron_uid])
+            result = self._rpc()._call_rpc("weight_getWeights", [subnet_uid, neuron_uid])
             if not result:
                 return []
             return [(w["uid"], w["weight"]) for w in result]
@@ -184,8 +184,12 @@ class NeuronMixin:
             Axon information (ip, port, protocol)
         """
         try:
-            result = self._rpc()._call_rpc("query_neuronAxon", [subnet_id, neuron_uid])
-            return result if result else {}
+            # Derive from neuron_get - extract axon_info field
+            neuron = self._rpc()._call_rpc("neuron_get", [subnet_id, neuron_uid])
+            if neuron:
+                axon = neuron.get("axon_info") or neuron.get("endpoint") or {}
+                return axon if isinstance(axon, dict) else {}
+            return {}
         except Exception as e:
             logger.error(f"Error getting axon for neuron {neuron_uid}: {e}")
             return {}
@@ -202,8 +206,12 @@ class NeuronMixin:
             Prometheus endpoint information
         """
         try:
-            result = self._rpc()._call_rpc("query_neuronPrometheus", [subnet_id, neuron_uid])
-            return result if result else {}
+            # Derive from neuron_get - extract prometheus_info field
+            neuron = self._rpc()._call_rpc("neuron_get", [subnet_id, neuron_uid])
+            if neuron:
+                prom = neuron.get("prometheus_info") or {}
+                return prom if isinstance(prom, dict) else {}
+            return {}
         except Exception as e:
             logger.error(f"Error getting prometheus for neuron {neuron_uid}: {e}")
             return {}
@@ -216,7 +224,8 @@ class NeuronMixin:
             Total neuron count
         """
         try:
-            result = self._rpc()._call_rpc("query_totalNeurons")
+            # Use neuron_count RPC (query_totalNeurons doesn't exist)
+            result = self._rpc()._call_rpc("query_neuronCount")
             return int(result) if result else 0
         except Exception as e:
             logger.error(f"Error getting total neurons: {e}")
@@ -252,7 +261,8 @@ class NeuronMixin:
             Emission rate
         """
         try:
-            result = self._rpc()._call_rpc("query_emission", [subnet_id, neuron_uid])
+            # Use query_subnetEmission (per-subnet emission)
+            result = self._rpc()._call_rpc("query_subnetEmission", [subnet_id])
             return float(result) if result else 0.0
         except Exception as e:
             logger.error(f"Error getting emission for neuron {neuron_uid}: {e}")
@@ -299,8 +309,12 @@ class NeuronMixin:
     def get_validator_trust(self, subnet_id: int, neuron_uid: int) -> float:
         """Get validator trust score for a neuron."""
         try:
-            result = self._rpc()._call_rpc("query_validatorTrust", [subnet_id, neuron_uid])
-            return float(result)
+            # Derive from neuron data - validator_trust field
+            neuron = self._rpc()._call_rpc("neuron_get", [subnet_id, neuron_uid])
+            if neuron:
+                vt = neuron.get("validator_trust", 0.0)
+                return float(vt) if vt is not None else 0.0
+            return 0.0
         except Exception as e:
             logger.error(f"Error getting validator trust for neuron {neuron_uid}: {e}")
             raise

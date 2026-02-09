@@ -453,7 +453,12 @@ impl GovernanceModule {
     /// Call periodically (e.g., once per epoch) to garbage-collect.
     pub fn cleanup_finalized(&self, current_block: u64, retain_blocks: u64) -> usize {
         let cutoff = current_block.saturating_sub(retain_blocks);
+
+        // SECURITY: Acquire locks in same order as vote() (voted → proposals)
+        // to prevent deadlock between concurrent vote() and cleanup_finalized().
+        let mut voted = self.voted.write();
         let mut proposals = self.proposals.write();
+
         let before = proposals.len();
         proposals.retain(|_, p| {
             // Keep if not in terminal state, or if created recently
@@ -467,7 +472,7 @@ impl GovernanceModule {
         // Also clean stale voted entries
         if removed > 0 {
             let remaining_ids: std::collections::HashSet<u64> = proposals.keys().copied().collect();
-            self.voted.write().retain(|(_, pid), _| remaining_ids.contains(pid));
+            voted.retain(|(_, pid), _| remaining_ids.contains(pid));
         }
 
         removed

@@ -79,10 +79,11 @@ impl Drop for KeyPair {
 
 impl Clone for KeyPair {
     fn clone(&self) -> Self {
-        // Reconstruct from raw secret bytes; SecretKey::from_slice is infallible
-        // for bytes that were already a valid key.
+        // SAFETY: SecretKey::from_slice is infallible for bytes that were
+        // already validated as a valid secp256k1 scalar. The only way this
+        // can fail is memory corruption, in which case panic is appropriate.
         let sk = SecretKey::from_slice(&self.secret_key.secret_bytes())
-            .expect("cloning a valid SecretKey");
+            .unwrap_or_else(|_| panic!("FATAL: KeyPair clone failed — possible memory corruption"));
         let pk = self.public_key; // PublicKey is Copy
         Self { secret_key: sk, public_key: pk }
     }

@@ -291,7 +291,9 @@ impl EclipseProtection {
                 score += (peer.behavior_score / 5) as u32; // Max +20
             } else {
                 // Negative behavior reduces trust significantly
-                let penalty = (peer.behavior_score.abs() / 2) as u32;
+                // SECURITY: Clamp to prevent i32::MIN.abs() overflow (i32::MIN.abs() = i32::MIN!)
+                let abs_score = if peer.behavior_score == i32::MIN { i32::MAX } else { peer.behavior_score.abs() };
+                let penalty = (abs_score / 2) as u32;
                 score = score.saturating_sub(penalty);
             }
 

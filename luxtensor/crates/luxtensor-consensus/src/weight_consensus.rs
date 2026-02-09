@@ -143,7 +143,7 @@ impl WeightProposal {
         if self.votes.is_empty() {
             return 0;
         }
-        ((self.approval_count() * 100) / self.votes.len()) as u8
+        ((self.approval_count() * 100) / self.votes.len()).min(100) as u8
     }
 
     /// Calculate stake-weighted approval percentage (0-100)
@@ -157,7 +157,7 @@ impl WeightProposal {
             return 0;
         }
         let approval_stake: u128 = self.votes.iter().filter(|v| v.approve).map(|v| v.stake).sum();
-        ((approval_stake * 100) / total_stake) as u8
+        ((approval_stake * 100) / total_stake).min(100) as u8
     }
 
     /// Check if voter has already voted
@@ -247,9 +247,11 @@ impl WeightConsensusManager {
         current_block: u64,
         validator_count: usize,
     ) -> Result<Hash, ConsensusError> {
-        // Check cooldown
-        let last = self.last_proposal.read().get(&proposer).copied();
-        if let Some(last_block) = last {
+        // SECURITY: Use write lock for cooldown check + update atomically.
+        // 🔧 FIX: Previously used read lock for check, then separate write lock for update,
+        // allowing concurrent calls to bypass the cooldown via TOCTOU race.
+        let mut last_proposal = self.last_proposal.write();
+        if let Some(last_block) = last_proposal.get(&proposer).copied() {
             if current_block < last_block + self.config.proposal_cooldown {
                 return Err(ConsensusError::ProposalCooldown);
             }
@@ -280,8 +282,9 @@ impl WeightConsensusManager {
         // Store proposal
         self.proposals.write().entry(subnet_uid).or_insert_with(Vec::new).push(proposal);
 
-        // Update last proposal time
-        self.last_proposal.write().insert(proposer, current_block);
+        // Update last proposal time (already holding write lock from cooldown check)
+        last_proposal.insert(proposer, current_block);
+        drop(last_proposal); // explicit drop
 
         info!("New weight proposal {:?} for subnet {} by {:?}", proposal_id, subnet_uid, proposer);
 

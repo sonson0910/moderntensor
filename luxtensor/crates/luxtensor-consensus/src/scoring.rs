@@ -349,8 +349,11 @@ impl ScoringManager {
                 + quality_score * self.config.quality_weight)
                 * self.config.max_score as f64;
 
-            metrics.score = (raw_score as u32)
-                .clamp(self.config.min_score, self.config.max_score);
+            metrics.score = if raw_score.is_nan() || raw_score < 0.0 {
+                self.config.min_score
+            } else {
+                (raw_score as u32).clamp(self.config.min_score, self.config.max_score)
+            };
         }
     }
 
@@ -374,8 +377,11 @@ impl ScoringManager {
                 + uptime_score * self.config.uptime_weight)
                 * self.config.max_score as f64;
 
-            metrics.score = (raw_score as u32)
-                .clamp(self.config.min_score, self.config.max_score);
+            metrics.score = if raw_score.is_nan() || raw_score < 0.0 {
+                self.config.min_score
+            } else {
+                (raw_score as u32).clamp(self.config.min_score, self.config.max_score)
+            };
         }
     }
 
@@ -387,13 +393,21 @@ impl ScoringManager {
         }
 
         for metrics in self.miner_metrics.values_mut() {
-            metrics.score = ((metrics.score as f64 * self.config.decay_factor) as u32)
-                .max(self.config.min_score);
+            let decayed = metrics.score as f64 * self.config.decay_factor;
+            metrics.score = if decayed.is_nan() || decayed < 0.0 {
+                self.config.min_score
+            } else {
+                (decayed as u32).max(self.config.min_score)
+            };
         }
 
         for metrics in self.validator_metrics.values_mut() {
-            metrics.score = ((metrics.score as f64 * self.config.decay_factor) as u32)
-                .max(self.config.min_score);
+            let decayed = metrics.score as f64 * self.config.decay_factor;
+            metrics.score = if decayed.is_nan() || decayed < 0.0 {
+                self.config.min_score
+            } else {
+                (decayed as u32).max(self.config.min_score)
+            };
         }
 
         self.last_decay = now;
@@ -445,7 +459,7 @@ impl ScoringManager {
                 crate::reward_distribution::MinerEpochStats::with_tasks(
                     *addr,
                     m.score as f64 / self.config.max_score as f64,  // Normalize to 0.0-1.0
-                    (m.tasks_completed.saturating_sub(m.gpu_tasks_completed as u64)) as u32,  // CPU tasks
+                    (m.tasks_completed.saturating_sub(m.gpu_tasks_completed as u64)).min(u32::MAX as u64) as u32,  // CPU tasks (clamped)
                     m.gpu_tasks_completed,
                     m.gpu_tasks_assigned,
                 )

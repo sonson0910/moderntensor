@@ -71,12 +71,17 @@ pub struct SubscriptionParams {
     pub result: serde_json::Value,
 }
 
+/// Maximum broadcast channel capacity — prevents OOM if consumers are slow
+const BROADCAST_CHANNEL_CAPACITY: usize = 4096;
+/// Maximum per-connection send buffer — drops messages for slow WebSocket clients
+const PER_CONNECTION_CAPACITY: usize = 1024;
+
 /// WebSocket RPC server
 pub struct WebSocketServer {
     subscriptions: Arc<RwLock<HashMap<String, Subscription>>>,
-    broadcast_tx: mpsc::UnboundedSender<BroadcastEvent>,
+    broadcast_tx: mpsc::Sender<BroadcastEvent>,
     /// `None` after `start()` has been called (consumed).
-    broadcast_rx: Arc<RwLock<Option<mpsc::UnboundedReceiver<BroadcastEvent>>>>,
+    broadcast_rx: Arc<RwLock<Option<mpsc::Receiver<BroadcastEvent>>>>,
 }
 
 /// A subscription
@@ -84,7 +89,7 @@ pub struct WebSocketServer {
 struct Subscription {
     _id: String,
     sub_type: SubscriptionType,
-    tx: mpsc::UnboundedSender<Message>,
+    tx: mpsc::Sender<Message>,
 }
 
 /// Event to broadcast to subscribers
@@ -92,7 +97,9 @@ struct Subscription {
 pub enum BroadcastEvent {
     NewBlock(RpcBlock),
     NewTransaction(RpcTransaction),
-    SyncStatus { syncing: bool },
+    SyncStatus {
+        syncing: bool,
+    },
     /// New logs from contract events
     NewLogs(Vec<crate::logs::LogEntry>),
 }
@@ -100,7 +107,8 @@ pub enum BroadcastEvent {
 impl WebSocketServer {
     /// Create a new WebSocket server
     pub fn new() -> Self {
-        let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
+        // SECURITY: Bounded channel prevents OOM from slow consumers or DoS
+        let (broadcast_tx, broadcast_rx) = mpsc::channel(BROADCAST_CHANNEL_CAPACITY);
 
         Self {
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
@@ -110,15 +118,14 @@ impl WebSocketServer {
     }
 
     /// Get a handle to send broadcast events
-    pub fn get_broadcast_sender(&self) -> mpsc::UnboundedSender<BroadcastEvent> {
+    pub fn get_broadcast_sender(&self) -> mpsc::Sender<BroadcastEvent> {
         self.broadcast_tx.clone()
     }
 
     /// Start the WebSocket server
     pub async fn start(self, addr: &str) -> Result<(), RpcError> {
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|e| RpcError::ServerError(e.to_string()))?;
+        let listener =
+            TcpListener::bind(addr).await.map_err(|e| RpcError::ServerError(e.to_string()))?;
 
         info!("WebSocket RPC server listening on {}", addr);
 
@@ -168,12 +175,12 @@ impl WebSocketServer {
         stream: TcpStream,
         subscriptions: Arc<RwLock<HashMap<String, Subscription>>>,
     ) -> Result<(), RpcError> {
-        let ws_stream = accept_async(stream)
-            .await
-            .map_err(|e| RpcError::ServerError(e.to_string()))?;
+        let ws_stream =
+            accept_async(stream).await.map_err(|e| RpcError::ServerError(e.to_string()))?;
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        // SECURITY: Bounded channel per connection — slow clients get dropped, not OOM
+        let (tx, mut rx) = mpsc::channel(PER_CONNECTION_CAPACITY);
 
         // Spawn a task to send messages from the channel to the WebSocket
         tokio::spawn(async move {
@@ -213,10 +220,10 @@ impl WebSocketServer {
     async fn handle_message(
         text: &str,
         subscriptions: &Arc<RwLock<HashMap<String, Subscription>>>,
-        tx: &mpsc::UnboundedSender<Message>,
+        tx: &mpsc::Sender<Message>,
     ) -> Result<(), RpcError> {
-        let request: serde_json::Value = serde_json::from_str(text)
-            .map_err(|e| RpcError::InvalidRequest(e.to_string()))?;
+        let request: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| RpcError::InvalidRequest(e.to_string()))?;
 
         let method = request["method"]
             .as_str()
@@ -231,14 +238,12 @@ impl WebSocketServer {
                     .ok_or_else(|| RpcError::InvalidRequest("Invalid params".to_string()))?;
 
                 if params.is_empty() {
-                    return Err(RpcError::InvalidRequest(
-                        "Missing subscription type".to_string(),
-                    ));
+                    return Err(RpcError::InvalidRequest("Missing subscription type".to_string()));
                 }
 
-                let sub_type_str = params[0]
-                    .as_str()
-                    .ok_or_else(|| RpcError::InvalidRequest("Invalid subscription type".to_string()))?;
+                let sub_type_str = params[0].as_str().ok_or_else(|| {
+                    RpcError::InvalidRequest("Invalid subscription type".to_string())
+                })?;
 
                 let sub_type = match sub_type_str {
                     "newHeads" => SubscriptionType::NewHeads,
@@ -284,6 +289,7 @@ impl WebSocketServer {
                     .map_err(|e| RpcError::SerializationError(e.to_string()))?;
 
                 tx.send(Message::Text(response_text))
+                    .await
                     .map_err(|e| RpcError::ServerError(e.to_string()))?;
 
                 info!("Created subscription {} for {:?}", sub_id, sub_type);
@@ -294,14 +300,12 @@ impl WebSocketServer {
                     .ok_or_else(|| RpcError::InvalidRequest("Invalid params".to_string()))?;
 
                 if params.is_empty() {
-                    return Err(RpcError::InvalidRequest(
-                        "Missing subscription ID".to_string(),
-                    ));
+                    return Err(RpcError::InvalidRequest("Missing subscription ID".to_string()));
                 }
 
-                let sub_id = params[0]
-                    .as_str()
-                    .ok_or_else(|| RpcError::InvalidRequest("Invalid subscription ID".to_string()))?;
+                let sub_id = params[0].as_str().ok_or_else(|| {
+                    RpcError::InvalidRequest("Invalid subscription ID".to_string())
+                })?;
 
                 let removed = subscriptions.write().await.remove(sub_id).is_some();
 
@@ -316,6 +320,7 @@ impl WebSocketServer {
                     .map_err(|e| RpcError::SerializationError(e.to_string()))?;
 
                 tx.send(Message::Text(response_text))
+                    .await
                     .map_err(|e| RpcError::ServerError(e.to_string()))?;
 
                 info!("Removed subscription {}", sub_id);
@@ -331,7 +336,7 @@ impl WebSocketServer {
     /// Handle broadcast events
     async fn handle_broadcasts(
         subscriptions: Arc<RwLock<HashMap<String, Subscription>>>,
-        mut broadcast_rx: mpsc::UnboundedReceiver<BroadcastEvent>,
+        mut broadcast_rx: mpsc::Receiver<BroadcastEvent>,
     ) {
         while let Some(event) = broadcast_rx.recv().await {
             let subscriptions = subscriptions.read().await;
@@ -346,14 +351,20 @@ impl WebSocketServer {
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
                                     result: serde_json::to_value(&block).unwrap_or_else(|e| {
-                                        tracing::warn!("Failed to serialize block for subscription: {}", e);
+                                        tracing::warn!(
+                                            "Failed to serialize block for subscription: {}",
+                                            e
+                                        );
                                         serde_json::Value::Null
                                     }),
                                 },
                             };
 
                             if let Ok(text) = serde_json::to_string(&notification) {
-                                let _ = sub.tx.send(Message::Text(text));
+                                // SECURITY: try_send avoids blocking broadcast loop for slow clients
+                                if let Err(e) = sub.tx.try_send(Message::Text(text)) {
+                                    warn!("Dropping block notification for sub {}: {}", sub_id, e);
+                                }
                             }
                         }
                     }
@@ -367,14 +378,19 @@ impl WebSocketServer {
                                 params: SubscriptionParams {
                                     subscription: sub_id.clone(),
                                     result: serde_json::to_value(&tx.hash).unwrap_or_else(|e| {
-                                        tracing::warn!("Failed to serialize tx hash for subscription: {}", e);
+                                        tracing::warn!(
+                                            "Failed to serialize tx hash for subscription: {}",
+                                            e
+                                        );
                                         serde_json::Value::Null
                                     }),
                                 },
                             };
 
                             if let Ok(text) = serde_json::to_string(&notification) {
-                                let _ = sub.tx.send(Message::Text(text));
+                                if let Err(e) = sub.tx.try_send(Message::Text(text)) {
+                                    warn!("Dropping tx notification for sub {}: {}", sub_id, e);
+                                }
                             }
                         }
                     }
@@ -392,7 +408,9 @@ impl WebSocketServer {
                             };
 
                             if let Ok(text) = serde_json::to_string(&notification) {
-                                let _ = sub.tx.send(Message::Text(text));
+                                if let Err(e) = sub.tx.try_send(Message::Text(text)) {
+                                    warn!("Dropping sync notification for sub {}: {}", sub_id, e);
+                                }
                             }
                         }
                     }
@@ -401,9 +419,8 @@ impl WebSocketServer {
                     for (sub_id, sub) in subscriptions.iter() {
                         if sub.sub_type == SubscriptionType::Logs {
                             // Convert logs to RPC format
-                            let rpc_logs: Vec<serde_json::Value> = logs.iter()
-                                .map(|log| log.to_rpc_log())
-                                .collect();
+                            let rpc_logs: Vec<serde_json::Value> =
+                                logs.iter().map(|log| log.to_rpc_log()).collect();
 
                             let notification = SubscriptionNotification {
                                 jsonrpc: "2.0".to_string(),
@@ -415,7 +432,9 @@ impl WebSocketServer {
                             };
 
                             if let Ok(text) = serde_json::to_string(&notification) {
-                                let _ = sub.tx.send(Message::Text(text));
+                                if let Err(e) = sub.tx.try_send(Message::Text(text)) {
+                                    warn!("Dropping logs notification for sub {}: {}", sub_id, e);
+                                }
                             }
                         }
                     }

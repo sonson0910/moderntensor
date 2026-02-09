@@ -222,64 +222,39 @@ class CommitRevealClient:
         return compute_commit_hash(weights, salt)
 
     def get_config(self) -> CommitRevealConfig:
-        """Get commit-reveal configuration from chain"""
+        """Get commit-reveal configuration from chain.
+
+        Note: commitReveal_getConfig RPC is not yet implemented on the
+        LuxTensor server. Returns default configuration.
+        """
         if self._config:
             return self._config
 
-        try:
-            result = self.client._call_rpc("commitReveal_getConfig", [])
-            self._config = CommitRevealConfig(
-                commit_window=result.get("commitWindow", 100),
-                reveal_window=result.get("revealWindow", 100),
-                min_commits=result.get("minCommits", 1),
-            )
-            return self._config
-        except Exception:
-            return CommitRevealConfig()
+        logger.warning(
+            "commitReveal_getConfig is not yet available on the server. "
+            "Using default CommitRevealConfig values."
+        )
+        self._config = CommitRevealConfig()
+        return self._config
 
     def get_epoch_state(self, subnet_uid: int) -> Optional[EpochState]:
         """
         Get current epoch state for subnet.
 
+        Note: commitReveal_getEpochState RPC is not yet implemented on the
+        LuxTensor server. Returns None until the feature is deployed.
+
         Args:
             subnet_uid: Subnet ID
 
         Returns:
-            EpochState or None if no active epoch
+            EpochState or None if feature not available
         """
-        try:
-            result = self.client._call_rpc(
-                "commitReveal_getEpochState",
-                [subnet_uid]
-            )
-
-            if not result:
-                return None
-
-            commits = [
-                WeightCommit(
-                    validator=c["validator"],
-                    subnet_uid=subnet_uid,
-                    commit_hash=c["commitHash"],
-                    committed_at=c["committedAt"],
-                    revealed=c.get("revealed", False),
-                )
-                for c in result.get("commits", [])
-            ]
-
-            return EpochState(
-                subnet_uid=subnet_uid,
-                epoch_number=result["epochNumber"],
-                phase=EpochPhase(result["phase"]),
-                commit_start_block=result["commitStartBlock"],
-                reveal_start_block=result["revealStartBlock"],
-                finalize_block=result["finalizeBlock"],
-                commits=commits,
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to get epoch state: {e}")
-            return None
+        logger.warning(
+            "commitReveal_getEpochState is not yet available on the server. "
+            "Commit-reveal feature is planned for a future release."
+        )
+        return None
 
     def get_current_phase(self, subnet_uid: int) -> Optional[EpochPhase]:
         """Get current phase for subnet"""
@@ -438,16 +413,16 @@ class CommitRevealClient:
         return state.commits if state else []
 
     def get_finalized_weights(self, subnet_uid: int) -> List[Tuple[int, int]]:
-        """Get finalized weights from last epoch"""
-        try:
-            result = self.client._call_rpc(
-                "commitReveal_getFinalizedWeights",
-                [subnet_uid]
-            )
-            return [(w["uid"], w["weight"]) for w in result]
-        except Exception as e:
-            logger.error(f"Failed to get finalized weights: {e}")
-            return []
+        """Get finalized weights from last epoch.
+
+        Note: commitReveal_getFinalizedWeights RPC is not yet implemented
+        on the LuxTensor server. Returns empty list.
+        """
+        logger.warning(
+            "commitReveal_getFinalizedWeights is not yet available on the server. "
+            "Use weight_getWeights RPC for current weights instead."
+        )
+        return []
 
     def has_committed(self, subnet_uid: int, validator: str) -> bool:
         """Check if validator has committed in current epoch"""

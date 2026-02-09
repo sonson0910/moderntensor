@@ -1,10 +1,10 @@
 use crate::error::ConsensusError;
-use crate::validator::ValidatorSet;
 use crate::halving::HalvingSchedule;
+use crate::validator::ValidatorSet;
 use luxtensor_core::types::{Address, Hash};
 use luxtensor_crypto::keccak256;
-use serde::{Deserialize, Serialize};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Configuration for PoS consensus
@@ -25,10 +25,10 @@ pub struct ConsensusConfig {
 impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
-            slot_duration: 12, // 12 seconds per block
-            min_stake: 32_000_000_000_000_000_000u128, // 32 tokens minimum
+            slot_duration: 12,                           // 12 seconds per block
+            min_stake: 32_000_000_000_000_000_000u128,   // 32 tokens minimum
             block_reward: 2_000_000_000_000_000_000u128, // 2 tokens per block (initial)
-            epoch_length: 32, // 32 slots per epoch
+            epoch_length: 32,                            // 32 slots per epoch
             halving_schedule: HalvingSchedule::default(),
         }
     }
@@ -109,10 +109,7 @@ impl ProofOfStake {
         let expected = self.select_validator(slot)?;
 
         if producer != &expected {
-            return Err(ConsensusError::InvalidProducer {
-                expected,
-                actual: *producer,
-            });
+            return Err(ConsensusError::InvalidProducer { expected, actual: *producer });
         }
 
         Ok(())
@@ -135,7 +132,7 @@ impl ProofOfStake {
     /// 🔧 FIX MC-1: Extracted so that `select_validator` can pass already-acquired
     /// snapshots, avoiding separate lock acquisitions that could race.
     fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>) -> Hash {
-        let epoch = slot / self.config.epoch_length;
+        let epoch = if self.config.epoch_length > 0 { slot / self.config.epoch_length } else { 0 };
 
         let mut data = Vec::with_capacity(80);
         data.extend_from_slice(&epoch.to_le_bytes());
@@ -164,7 +161,11 @@ impl ProofOfStake {
 
     /// Calculate and distribute block rewards with halving schedule
     /// This is the preferred method for production use
-    pub fn distribute_reward_with_height(&self, producer: &Address, block_height: u64) -> Result<u128, ConsensusError> {
+    pub fn distribute_reward_with_height(
+        &self,
+        producer: &Address,
+        block_height: u64,
+    ) -> Result<u128, ConsensusError> {
         let reward = self.get_reward_for_height(block_height);
 
         if reward == 0 {
@@ -186,7 +187,8 @@ impl ProofOfStake {
         crate::halving::HalvingInfo {
             initial_reward_mdt: schedule.initial_reward as f64 / 1e18,
             halving_interval_blocks: schedule.halving_interval,
-            halving_interval_years: (schedule.halving_interval as f64 * 12.0) / (365.25 * 24.0 * 3600.0),
+            halving_interval_years: (schedule.halving_interval as f64 * 12.0)
+                / (365.25 * 24.0 * 3600.0),
             max_halvings: schedule.max_halvings,
             estimated_total_emission_mdt: schedule.estimate_total_emission() as f64 / 1e18,
         }
@@ -266,7 +268,7 @@ impl ProofOfStake {
 
     /// Get slot from timestamp
     pub fn get_slot(&self, timestamp: u64, genesis_time: u64) -> u64 {
-        if timestamp < genesis_time {
+        if timestamp < genesis_time || self.config.slot_duration == 0 {
             return 0;
         }
         (timestamp - genesis_time) / self.config.slot_duration
@@ -346,8 +348,7 @@ mod tests {
         for i in 1..=3 {
             let address = create_test_address(i);
             let pubkey = [i; 32];
-            pos.add_validator(address, config.min_stake * (i as u128), pubkey)
-                .unwrap();
+            pos.add_validator(address, config.min_stake * (i as u128), pubkey).unwrap();
         }
 
         // Select validator for slot 0
@@ -421,16 +422,10 @@ mod tests {
         assert_eq!(pos.get_slot(genesis_time, genesis_time), 0);
 
         // After one slot duration
-        assert_eq!(
-            pos.get_slot(genesis_time + config.slot_duration, genesis_time),
-            1
-        );
+        assert_eq!(pos.get_slot(genesis_time + config.slot_duration, genesis_time), 1);
 
         // After multiple slot durations
-        assert_eq!(
-            pos.get_slot(genesis_time + config.slot_duration * 5, genesis_time),
-            5
-        );
+        assert_eq!(pos.get_slot(genesis_time + config.slot_duration * 5, genesis_time), 5);
     }
 
     #[test]

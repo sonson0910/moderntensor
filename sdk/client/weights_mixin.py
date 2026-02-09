@@ -85,8 +85,12 @@ class WeightsMixin:
             Rate limit in blocks
         """
         try:
-            result = self._rpc()._call_rpc("query_weightsSetRateLimit", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("weights_set_rate_limit", hp.get("weightsSetRateLimit", 0))
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting weights rate limit for subnet {subnet_id}: {e}")
             return 0
@@ -102,9 +106,12 @@ class WeightsMixin:
             Maximum weight as float (0.0 to 1.0)
         """
         try:
-            result = self._rpc()._call_rpc("query_maxWeightLimit", [subnet_id])
-            # Convert from u16 (0-65535) to float (0.0-1.0)
-            return float(result) / 65535.0 if result else 0.0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("max_weight_limit", hp.get("maxWeightLimit", 0))
+                return float(val) / 65535.0 if val else 0.0
+            return 0.0
         except Exception as e:
             logger.error(f"Error getting max weight limit for subnet {subnet_id}: {e}")
             return 0.0
@@ -120,8 +127,12 @@ class WeightsMixin:
             Minimum allowed weights count
         """
         try:
-            result = self._rpc()._call_rpc("query_minAllowedWeights", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("min_allowed_weights", hp.get("minAllowedWeights", 0))
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting min allowed weights for subnet {subnet_id}: {e}")
             return 0
@@ -156,7 +167,7 @@ class WeightsMixin:
         try:
             weights_array = [[uid, weight] for uid, weight in weights]
             result = self._rpc()._call_rpc(
-                "subnet_commitWeightsMerkle",
+                "weight_setWeights",
                 [subnet_id, weights_array, epoch, validator_address],
             )
             return result if result else {}

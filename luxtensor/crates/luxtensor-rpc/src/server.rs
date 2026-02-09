@@ -1,28 +1,33 @@
-use crate::{types::*, RpcError, Result, TransactionBroadcaster, NoOpBroadcaster, eth_rpc::{Mempool, register_eth_methods, register_aa_methods, register_log_methods}};
-use crate::rate_limiter::RateLimiter;
 use crate::logs::LogStore;
-use jsonrpc_core::{IoHandler, Params, Value};
-use serde_json::json;
-use jsonrpc_http_server::{Server, ServerBuilder};
-use luxtensor_core::{StateDB, Transaction, Hash, UnifiedStateDB};
-use luxtensor_storage::{BlockchainDB, MetagraphDB};
-use luxtensor_consensus::{ValidatorSet, CommitRevealManager, CommitRevealConfig, AILayerCircuitBreaker};
-use parking_lot::RwLock;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::HashMap;
-
-use tracing::{debug, info, warn};
-use crate::handlers::{
-    register_subnet_handlers, register_neuron_handlers,
-    register_staking_handlers, register_weight_handlers,
-    register_checkpoint_handlers
+use crate::rate_limiter::RateLimiter;
+use crate::{
+    eth_rpc::{register_aa_methods, register_eth_methods, register_log_methods, Mempool},
+    types::*,
+    NoOpBroadcaster, Result, RpcError, TransactionBroadcaster,
 };
-use std::path::PathBuf;
+use jsonrpc_core::{IoHandler, Params, Value};
+use jsonrpc_http_server::{Server, ServerBuilder};
+use luxtensor_consensus::{
+    AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, ValidatorSet,
+};
+use luxtensor_core::{Hash, StateDB, Transaction, UnifiedStateDB};
+use luxtensor_storage::{BlockchainDB, MetagraphDB};
+use parking_lot::RwLock;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use crate::ai_rpc::{register_ai_methods as register_ai_methods_new, AiRpcContext};
+use crate::handlers::{
+    register_checkpoint_handlers, register_neuron_handlers, register_staking_handlers,
+    register_subnet_handlers, register_weight_handlers,
+};
 use crate::helpers::{parse_address, parse_block_number, parse_block_number_with_latest};
-use crate::query_rpc::{QueryRpcContext, register_query_methods as register_query_methods_new};
-use crate::ai_rpc::{AiRpcContext, register_ai_methods as register_ai_methods_new};
-use crate::tx_rpc::{TxRpcContext, register_tx_methods};
+use crate::query_rpc::{register_query_methods as register_query_methods_new, QueryRpcContext};
+use crate::tx_rpc::{register_tx_methods, TxRpcContext};
+use std::path::PathBuf;
+use tracing::{debug, info, warn};
 
 /// JSON-RPC server for LuxTensor blockchain
 ///
@@ -97,7 +102,9 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             mempool: Arc::new(RwLock::new(Mempool::new())),
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"), // Default data directory
@@ -108,12 +115,12 @@ impl RpcServer {
     }
 
     /// Create a new RPC server for testing (uses temp storage)
+    #[cfg(test)]
     pub fn new_for_testing(db: Arc<BlockchainDB>) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
-        let metagraph = Arc::new(
-            MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
-        );
-        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 8898)  // LuxTensor devnet chain_id
+        let metagraph =
+            Arc::new(MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB"));
+        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 8898) // LuxTensor devnet chain_id
     }
 
     /// Get mempool reference for block production polling
@@ -137,15 +144,15 @@ impl RpcServer {
     }
 
     /// Create a new RPC server for testing with external mempool
+    #[cfg(test)]
     pub fn new_for_testing_with_mempool(
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
     ) -> Self {
         let chain_id = 8898_u64; // LuxTensor devnet chain_id
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
-        let metagraph = Arc::new(
-            MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB")
-        );
+        let metagraph =
+            Arc::new(MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB"));
 
         Self {
             db,
@@ -158,7 +165,9 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster: Arc::new(NoOpBroadcaster),
             mempool,
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
@@ -178,9 +187,22 @@ impl RpcServer {
         chain_id: u64,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
-        let metagraph = Arc::new(
-            MetagraphDB::open(&temp_dir).expect("Failed to create MetagraphDB")
-        );
+        let metagraph = Arc::new(MetagraphDB::open(&temp_dir).unwrap_or_else(|e| {
+            tracing::error!(
+                "MetagraphDB::open failed at {:?}: {} — falling back to in-memory temp",
+                temp_dir,
+                e
+            );
+            // Retry with a unique fallback path
+            let fallback =
+                std::env::temp_dir().join(format!("luxtensor_fb_{}", std::process::id()));
+            MetagraphDB::open(&fallback)
+                .unwrap_or_else(|e2| {
+                    // SECURITY: Clean exit instead of panic to avoid stack-unwind side effects
+                    tracing::error!("FATAL: MetagraphDB fallback also failed: {} — shutting down", e2);
+                    std::process::exit(1);
+                })
+        }));
 
         Self {
             db,
@@ -193,7 +215,9 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             mempool,
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
@@ -214,9 +238,21 @@ impl RpcServer {
         chain_id: u64,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
-        let metagraph = Arc::new(
-            MetagraphDB::open(&temp_dir).expect("Failed to create MetagraphDB")
-        );
+        let metagraph = Arc::new(MetagraphDB::open(&temp_dir).unwrap_or_else(|e| {
+            tracing::error!(
+                "MetagraphDB::open failed at {:?}: {} — falling back to in-memory temp",
+                temp_dir,
+                e
+            );
+            let fallback =
+                std::env::temp_dir().join(format!("luxtensor_fb_{}", std::process::id()));
+            MetagraphDB::open(&fallback)
+                .unwrap_or_else(|e2| {
+                    // SECURITY: Clean exit instead of panic to avoid stack-unwind side effects
+                    tracing::error!("FATAL: MetagraphDB fallback also failed: {} — shutting down", e2);
+                    std::process::exit(1);
+                })
+        }));
 
         Self {
             db,
@@ -229,7 +265,9 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             mempool,
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: temp_dir,
@@ -261,7 +299,9 @@ impl RpcServer {
             ai_tasks: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
             mempool: Arc::new(RwLock::new(Mempool::new())),
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(CommitRevealConfig::default()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
             data_dir: PathBuf::from("./data"),
@@ -276,15 +316,18 @@ impl RpcServer {
         let mut cache = HashMap::new();
         if let Ok(subnets) = metagraph.get_all_subnets() {
             for subnet in subnets {
-                cache.insert(subnet.id, SubnetInfo {
-                    id: subnet.id,
-                    name: subnet.name.clone(),
-                    owner: format!("0x{}", hex::encode(subnet.owner)),
-                    emission_rate: subnet.emission_rate,
-                    participant_count: 0,
-                    total_stake: 0,
-                    created_at: subnet.created_at,
-                });
+                cache.insert(
+                    subnet.id,
+                    SubnetInfo {
+                        id: subnet.id,
+                        name: subnet.name.clone(),
+                        owner: format!("0x{}", hex::encode(subnet.owner)),
+                        emission_rate: subnet.emission_rate,
+                        participant_count: 0,
+                        total_stake: 0,
+                        created_at: subnet.created_at,
+                    },
+                );
             }
         }
         cache
@@ -299,22 +342,25 @@ impl RpcServer {
                 if let Ok(neurons) = metagraph.get_neurons_by_subnet(subnet.id) {
                     for neuron in neurons {
                         let trust_val = neuron.trust as f64 / 65535.0;
-                        cache.insert((neuron.subnet_id, neuron.uid), NeuronInfo {
-                            uid: neuron.uid,
-                            address: format!("0x{}", hex::encode(neuron.hotkey)),
-                            subnet_id: neuron.subnet_id,
-                            stake: neuron.stake,
-                            trust: trust_val,
-                            // Consensus is derived from trust after Yuma consensus.
-                            // NeuronData currently stores trust only; when the consensus
-                            // engine produces a separate consensus score, pipe it through.
-                            consensus: trust_val,
-                            rank: neuron.rank as u64,
-                            incentive: neuron.incentive as f64 / 65535.0,
-                            dividends: neuron.dividends as f64 / 65535.0,
-                            active: neuron.active,
-                            endpoint: Some(neuron.endpoint),
-                        });
+                        cache.insert(
+                            (neuron.subnet_id, neuron.uid),
+                            NeuronInfo {
+                                uid: neuron.uid,
+                                address: format!("0x{}", hex::encode(neuron.hotkey)),
+                                subnet_id: neuron.subnet_id,
+                                stake: neuron.stake,
+                                trust: trust_val,
+                                // Consensus is derived from trust after Yuma consensus.
+                                // NeuronData currently stores trust only; when the consensus
+                                // engine produces a separate consensus score, pipe it through.
+                                consensus: trust_val,
+                                rank: neuron.rank as u64,
+                                incentive: neuron.incentive as f64 / 65535.0,
+                                dividends: neuron.dividends as f64 / 65535.0,
+                                active: neuron.active,
+                                endpoint: Some(neuron.endpoint),
+                            },
+                        );
                     }
                 }
             }
@@ -343,9 +389,20 @@ impl RpcServer {
         self.register_account_methods(&mut io);
 
         // Register modular handlers (with DB persistence)
-        register_staking_handlers(&mut io, self.validators.clone(), self.db.clone(), self.chain_id(), self.unified_state.clone());
+        register_staking_handlers(
+            &mut io,
+            self.validators.clone(),
+            self.db.clone(),
+            self.chain_id(),
+            self.unified_state.clone(),
+        );
         register_subnet_handlers(&mut io, self.subnets.clone(), self.db.clone());
-        register_neuron_handlers(&mut io, self.neurons.clone(), self.subnets.clone(), self.db.clone());
+        register_neuron_handlers(
+            &mut io,
+            self.neurons.clone(),
+            self.subnets.clone(),
+            self.db.clone(),
+        );
         register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
 
         // Register checkpoint handlers for fast sync
@@ -405,7 +462,7 @@ impl RpcServer {
 
         // system_health - Return node health status (for monitoring and load balancers)
         let db_for_health = self.db.clone();
-        let unified_for_health = self.unified_state.clone();  // C1 Phase 2B: Use unified_state
+        let unified_for_health = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
         io.add_sync_method("system_health", move |_params: Params| {
             // Get current block height
             let block_height = {
@@ -415,7 +472,9 @@ impl RpcServer {
                     match db_for_health.get_block_by_height(ceiling) {
                         Ok(Some(_)) => {
                             ceiling *= 2;
-                            if ceiling > 1_000_000 { break; }
+                            if ceiling > 1_000_000 {
+                                break;
+                            }
                         }
                         Ok(None) => break,
                         Err(_) => break,
@@ -449,7 +508,7 @@ impl RpcServer {
 
         // sync_getSyncStatus - Return current sync status for state sync protocol
         let db_for_sync = self.db.clone();
-        let unified_for_sync = self.unified_state.clone();  // C1 Phase 2B: Use unified_state
+        let unified_for_sync = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
         io.add_sync_method("sync_getSyncStatus", move |_params: Params| {
             let current_block = unified_for_sync.read().block_number();
             let highest_block = {
@@ -481,16 +540,21 @@ impl RpcServer {
 
         // Register Ethereum-compatible methods (eth_*)
         // Uses mempool for pending txs, unified_state for state reads, db for confirmed tx lookup
-        register_eth_methods(&mut io, self.mempool.clone(), self.unified_state.clone(), self.db.clone());
+        register_eth_methods(
+            &mut io,
+            self.mempool.clone(),
+            self.unified_state.clone(),
+            self.db.clone(),
+            self.broadcaster.clone(),
+        );
 
         // Register log query methods (eth_getLogs, eth_newFilter, etc.)
         let log_store = Arc::new(RwLock::new(LogStore::new(10_000))); // Keep logs for last 10K blocks
         register_log_methods(&mut io, log_store, self.unified_state.clone());
 
         // Register ERC-4337 Account Abstraction methods (eth_sendUserOperation, etc.)
-        let entry_point = Arc::new(RwLock::new(
-            luxtensor_contracts::EntryPoint::new(self.chain_id())
-        ));
+        let entry_point =
+            Arc::new(RwLock::new(luxtensor_contracts::EntryPoint::new(self.chain_id())));
         register_aa_methods(&mut io, entry_point);
 
         // Register transaction methods with P2P broadcasting (eth_sendTransaction, eth_getTransactionReceipt)
@@ -499,7 +563,7 @@ impl RpcServer {
         let tx_ctx = TxRpcContext::new(
             self.mempool.clone(),
             self.pending_txs.clone(),
-            self.unified_state.clone(),  // UNIFIED: consistent with eth_* handlers
+            self.unified_state.clone(), // UNIFIED: consistent with eth_* handlers
             self.broadcaster.clone(),
             self.db.clone(),
         );
@@ -507,23 +571,25 @@ impl RpcServer {
 
         // Start HTTP server with optimized settings
         let thread_count = if threads > 0 { threads } else { 4 };
-        let mut builder = ServerBuilder::new(io)
-            .threads(thread_count)
-            .max_request_body_size(2 * 1024 * 1024); // 2 MB max request (reduced from 16 MB)
+        let mut builder =
+            ServerBuilder::new(io).threads(thread_count).max_request_body_size(2 * 1024 * 1024); // 2 MB max request (reduced from 16 MB)
 
         // Apply CORS origins from config
         if !cors_origins.is_empty() {
             builder = builder.cors(jsonrpc_http_server::DomainsValidation::AllowOnly(
-                cors_origins.iter().map(|s| {
-                    jsonrpc_http_server::AccessControlAllowOrigin::Value(s.clone().into())
-                }).collect(),
+                cors_origins
+                    .iter()
+                    .map(|s| jsonrpc_http_server::AccessControlAllowOrigin::Value(s.clone().into()))
+                    .collect(),
             ));
         }
 
         let server = builder
-            .start_http(&addr.parse().map_err(|e: std::net::AddrParseError| {
-                RpcError::ServerError(e.to_string())
-            })?)
+            .start_http(
+                &addr
+                    .parse()
+                    .map_err(|e: std::net::AddrParseError| RpcError::ServerError(e.to_string()))?,
+            )
             .map_err(|e| RpcError::ServerError(e.to_string()))?;
 
         Ok(server)
@@ -564,7 +630,9 @@ impl RpcServer {
                 match db_for_block_num.get_block_by_height(ceiling) {
                     Ok(Some(_)) => {
                         ceiling *= 2;
-                        if ceiling > 1_000_000 { break; }
+                        if ceiling > 1_000_000 {
+                            break;
+                        }
                     }
                     Ok(None) => break,
                     Err(_) => return Err(jsonrpc_core::Error::internal_error()),
@@ -601,13 +669,14 @@ impl RpcServer {
             // Resolve "latest"/"pending" to the actual chain tip height
             let latest = {
                 let ub = unified_for_get_block.read().block_number();
-                if ub > 0 { ub } else { cached_for_get_block.load(Ordering::Acquire) }
+                if ub > 0 {
+                    ub
+                } else {
+                    cached_for_get_block.load(Ordering::Acquire)
+                }
             };
             let height = parse_block_number_with_latest(&parsed[0], latest)?;
-            let _include_txs = parsed
-                .get(1)
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let _include_txs = parsed.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
 
             match db_for_get_block.get_block_by_height(height) {
                 Ok(Some(block)) => {
@@ -634,9 +703,7 @@ impl RpcServer {
                 .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
 
             if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    "Hash must be 32 bytes",
-                ));
+                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
             }
 
             let mut hash = [0u8; 32];
@@ -661,9 +728,7 @@ impl RpcServer {
         io.add_sync_method("eth_getTransactionByHash", move |params: Params| {
             let parsed: Vec<String> = params.parse()?;
             if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    "Missing transaction hash",
-                ));
+                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
             }
 
             let hash_str = parsed[0].trim_start_matches("0x");
@@ -671,9 +736,7 @@ impl RpcServer {
                 .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
 
             if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    "Hash must be 32 bytes",
-                ));
+                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
             }
 
             let mut hash = [0u8; 32];
@@ -693,8 +756,7 @@ impl RpcServer {
             match db.get_transaction(&hash) {
                 Ok(Some(tx)) => {
                     let rpc_tx = RpcTransaction::from(tx);
-                    serde_json::to_value(rpc_tx)
-                        .map_err(|_| jsonrpc_core::Error::internal_error())
+                    serde_json::to_value(rpc_tx).map_err(|_| jsonrpc_core::Error::internal_error())
                 }
                 Ok(None) => Ok(Value::Null),
                 Err(_) => Err(jsonrpc_core::Error::internal_error()),
@@ -797,7 +859,7 @@ impl RpcServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use luxtensor_core::{Block, BlockHeader, Transaction, Address};
+    use luxtensor_core::{Address, Block, BlockHeader, Transaction};
     use luxtensor_storage::BlockchainDB;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -872,15 +934,8 @@ mod tests {
 
     #[test]
     fn test_rpc_transaction_conversion() {
-        let tx = Transaction::new(
-            1,
-            Address::zero(),
-            Some(Address::zero()),
-            1000,
-            1,
-            21000,
-            vec![],
-        );
+        let tx =
+            Transaction::new(1, Address::zero(), Some(Address::zero()), 1000, 1, 21000, vec![]);
 
         let rpc_tx = RpcTransaction::from(tx);
         assert_eq!(rpc_tx.nonce, "0x1");

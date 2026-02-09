@@ -55,6 +55,14 @@ pub struct MultisigWallet {
 impl MultisigWallet {
     /// Create a new multisig wallet
     pub fn new(signers: Vec<Address>, threshold: u8, name: Option<String>, block_timestamp: u64) -> Result<Self> {
+        // Validate signer count fits in u8
+        if signers.len() > u8::MAX as usize {
+            return Err(MultisigError::InvalidThreshold {
+                threshold,
+                total: u8::MAX,
+            });
+        }
+
         // Validate threshold
         if threshold == 0 || threshold as usize > signers.len() {
             return Err(MultisigError::InvalidThreshold {

@@ -21,13 +21,13 @@
 //! - [`ReadyTransaction`] - Transaction ready for block inclusion
 //! - [`DeployedContract`] - Contract metadata
 
-use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
-use std::sync::Arc;
+use jsonrpc_core::{Error as RpcError, ErrorCode, IoHandler, Params};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use sha3::{Digest, Keccak256};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
 // ============================================================================
@@ -41,8 +41,8 @@ use tracing::info;
 struct RlpDecodedTx {
     chain_id: u64,
     nonce: u64,
-    gas_price: u64,       // legacy + EIP-2930
-    max_fee_per_gas: u64, // EIP-1559 only
+    gas_price: u64,                // legacy + EIP-2930
+    max_fee_per_gas: u64,          // EIP-1559 only
     max_priority_fee_per_gas: u64, // EIP-1559 only
     gas_limit: u64,
     to: Option<Address>,
@@ -85,7 +85,8 @@ fn rlp_decode_item(data: &[u8]) -> Result<(Vec<u8>, usize), String> {
         let start = 8 - len_of_len;
         len_bytes[start..].copy_from_slice(&data[1..1 + len_of_len]);
         let len = u64::from_be_bytes(len_bytes) as usize;
-        let total = (1usize + len_of_len).checked_add(len)
+        let total = (1usize + len_of_len)
+            .checked_add(len)
             .ok_or_else(|| "RLP long string length overflow".to_string())?;
         if data.len() < total {
             return Err("RLP long string data truncated".into());
@@ -126,7 +127,8 @@ fn rlp_list_info(data: &[u8]) -> Result<(usize, usize), String> {
         let start = 8 - len_of_len;
         len_bytes[start..].copy_from_slice(&data[1..1 + len_of_len]);
         let len = u64::from_be_bytes(len_bytes) as usize;
-        let total = (1usize + len_of_len).checked_add(len)
+        let total = (1usize + len_of_len)
+            .checked_add(len)
             .ok_or_else(|| "RLP list length overflow".to_string())?;
         if data.len() < total {
             return Err("RLP list payload truncated".into());
@@ -266,7 +268,12 @@ fn rlp_item_to_32(item: &[u8]) -> [u8; 32] {
 /// msg_hash: 32-byte Keccak256 of the signing payload
 /// v: recovery ID (0 or 1 after EIP-155 normalization)
 /// r, s: 32-byte signature components
-fn ecrecover_address(msg_hash: &[u8; 32], v: u8, r: &[u8; 32], s: &[u8; 32]) -> Result<Address, String> {
+fn ecrecover_address(
+    msg_hash: &[u8; 32],
+    v: u8,
+    r: &[u8; 32],
+    s: &[u8; 32],
+) -> Result<Address, String> {
     use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
     // Build the 64-byte compact signature (r || s)
@@ -274,8 +281,8 @@ fn ecrecover_address(msg_hash: &[u8; 32], v: u8, r: &[u8; 32], s: &[u8; 32]) -> 
     sig_bytes[..32].copy_from_slice(r);
     sig_bytes[32..].copy_from_slice(s);
 
-    let signature = Signature::from_slice(&sig_bytes)
-        .map_err(|e| format!("Invalid signature: {}", e))?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|e| format!("Invalid signature: {}", e))?;
     let recovery_id = RecoveryId::new(v != 0, false);
 
     let verifying_key = VerifyingKey::recover_from_prehash(msg_hash, &signature, recovery_id)
@@ -626,10 +633,7 @@ const MAX_TX_QUEUE: usize = 5_000;
 impl Mempool {
     /// Create a new empty mempool
     pub fn new() -> Self {
-        Self {
-            pending_txs: HashMap::new(),
-            tx_queue: Arc::new(RwLock::new(Vec::new())),
-        }
+        Self { pending_txs: HashMap::new(), tx_queue: Arc::new(RwLock::new(Vec::new())) }
     }
 
     /// Get and clear pending transactions for block production
@@ -646,8 +650,11 @@ impl Mempool {
             tracing::warn!("TX queue full ({} txs), rejecting transaction", MAX_TX_QUEUE);
             return false;
         }
-        tracing::debug!("📥 queue_transaction: Queueing TX from 0x{} nonce={}",
-                      hex::encode(&tx.from), tx.nonce);
+        tracing::debug!(
+            "📥 queue_transaction: Queueing TX from 0x{} nonce={}",
+            hex::encode(&tx.from),
+            tx.nonce
+        );
         queue.push(tx);
         tracing::debug!("📥 queue_transaction: Queue size now = {}", queue.len());
         true
@@ -662,7 +669,10 @@ impl Mempool {
     /// SECURITY: Enforces MAX_MEMPOOL_PENDING to prevent unbounded memory growth
     pub fn add_pending(&mut self, tx_hash: TxHash, tx: PendingTransaction) -> bool {
         if self.pending_txs.len() >= MAX_MEMPOOL_PENDING {
-            tracing::warn!("Mempool full ({} txs), rejecting pending transaction", MAX_MEMPOOL_PENDING);
+            tracing::warn!(
+                "Mempool full ({} txs), rejecting pending transaction",
+                MAX_MEMPOOL_PENDING
+            );
             return false;
         }
         self.pending_txs.insert(tx_hash, tx);
@@ -713,7 +723,7 @@ pub fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
 
     // RLP-encode [from, nonce] — simplified canonical encoding
     let mut data = Vec::with_capacity(64);
-    data.extend_from_slice(b"TX_HASH_V2:");  // domain separator prevents cross-protocol replay
+    data.extend_from_slice(b"TX_HASH_V2:"); // domain separator prevents cross-protocol replay
     data.extend_from_slice(from);
     data.extend_from_slice(&nonce.to_be_bytes());
     keccak256(&data)
@@ -726,7 +736,7 @@ fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
     use luxtensor_crypto::keccak256;
 
     let mut data = Vec::with_capacity(64);
-    data.extend_from_slice(b"CONTRACT_ADDR:");  // domain separator
+    data.extend_from_slice(b"CONTRACT_ADDR:"); // domain separator
     data.extend_from_slice(deployer);
     data.extend_from_slice(&nonce.to_be_bytes());
     let hash = keccak256(&data);
@@ -743,11 +753,13 @@ fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
 /// - `io`: The JSON-RPC IO handler
 /// - `mempool`: Transaction mempool (pending_txs, tx_queue)
 /// - `unified_state`: Primary state source for reads (chain_id, nonces, balances, code, storage)
+/// - `broadcaster`: P2P transaction broadcaster for relaying RPC-submitted transactions
 pub fn register_eth_methods(
     io: &mut IoHandler,
     mempool: Arc<RwLock<Mempool>>,
     unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
     db: Arc<luxtensor_storage::BlockchainDB>,
+    broadcaster: Arc<dyn crate::TransactionBroadcaster>,
 ) {
     // eth_chainId - Route to UnifiedStateDB
     let state = unified_state.clone();
@@ -763,13 +775,11 @@ pub fn register_eth_methods(
     let state = unified_state.clone();
     io.add_sync_method("eth_getBalance", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let address_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing address".to_string(),
-                data: None,
-            })?;
+        let address_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing address".to_string(),
+            data: None,
+        })?;
 
         let address = hex_to_address(address_str).ok_or_else(|| RpcError {
             code: ErrorCode::InvalidParams,
@@ -786,13 +796,11 @@ pub fn register_eth_methods(
     let state = unified_state.clone();
     io.add_sync_method("eth_getTransactionCount", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let address_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing address".to_string(),
-                data: None,
-            })?;
+        let address_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing address".to_string(),
+            data: None,
+        })?;
 
         let address = hex_to_address(address_str).ok_or_else(|| RpcError {
             code: ErrorCode::InvalidParams,
@@ -829,15 +837,20 @@ pub fn register_eth_methods(
             }
         };
 
-        let from_str = call_obj.get("from")
+        let from_str = call_obj
+            .get("from")
             .and_then(|v| v.as_str())
             .unwrap_or("0x0000000000000000000000000000000000000000");
         let to_str = call_obj.get("to").and_then(|v| v.as_str());
         let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("0x");
         let value_str = call_obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
 
-        let from_addr = hex_to_address(from_str)
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params(format!("Invalid 'from' address format: {}", from_str)))?;
+        let from_addr = hex_to_address(from_str).ok_or_else(|| {
+            jsonrpc_core::Error::invalid_params(format!(
+                "Invalid 'from' address format: {}",
+                from_str
+            ))
+        })?;
         let data = {
             let s = data_hex.strip_prefix("0x").unwrap_or(data_hex);
             hex::decode(s).unwrap_or_default()
@@ -873,7 +886,8 @@ pub fn register_eth_methods(
                     // Fund the caller and deploy code so the EVM sees the correct state
                     {
                         let state_r = state_for_estimate.read();
-                        let caller_balance = state_r.get_balance(&luxtensor_core::Address::from(from_addr));
+                        let caller_balance =
+                            state_r.get_balance(&luxtensor_core::Address::from(from_addr));
                         executor.fund_account(
                             &luxtensor_core::Address::from(from_addr),
                             caller_balance,
@@ -915,7 +929,10 @@ pub fn register_eth_methods(
         }
 
         // Fallback: analytic estimate
-        let estimated = base_gas + create_gas + calldata_gas + if is_create { data.len() as u64 * 200 } else { 50_000 };
+        let estimated = base_gas
+            + create_gas
+            + calldata_gas
+            + if is_create { data.len() as u64 * 200 } else { 50_000 };
         Ok(json!(format!("0x{:x}", estimated)))
     });
 
@@ -1016,20 +1033,16 @@ pub fn register_eth_methods(
         })?;
 
         // Parse call parameters
-        let from_str = call_obj.get("from")
+        let from_str = call_obj
+            .get("from")
             .and_then(|v| v.as_str())
             .unwrap_or("0x0000000000000000000000000000000000000000");
 
-        let to_str = call_obj.get("to")
-            .and_then(|v| v.as_str());
+        let to_str = call_obj.get("to").and_then(|v| v.as_str());
 
-        let data_hex = call_obj.get("data")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0x");
+        let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("0x");
 
-        let value_str = call_obj.get("value")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0x0");
+        let value_str = call_obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
 
         // Parse addresses
         let from_addr = hex_to_address(from_str).unwrap_or([0u8; 20]);
@@ -1038,7 +1051,7 @@ pub fn register_eth_methods(
             Some(addr_str) => match hex_to_address(addr_str) {
                 None => return Ok(json!("0x")),
                 Some(addr) => addr,
-            }
+            },
         };
 
         // Parse data
@@ -1069,14 +1082,8 @@ pub fn register_eth_methods(
         // Execute call using EvmExecutor seeded with real state
         let executor = luxtensor_contracts::EvmExecutor::default();
         // Fund caller and deploy target code so the EVM operates on correct state
-        executor.fund_account(
-            &luxtensor_core::Address::from(from_addr),
-            caller_balance,
-        );
-        executor.deploy_code(
-            &luxtensor_core::Address::from(to_addr),
-            contract_code.clone(),
-        );
+        executor.fund_account(&luxtensor_core::Address::from(from_addr), caller_balance);
+        executor.deploy_code(&luxtensor_core::Address::from(to_addr), contract_code.clone());
 
         // Get current timestamp
         let timestamp = std::time::SystemTime::now()
@@ -1096,9 +1103,7 @@ pub fn register_eth_methods(
             timestamp,
             1, // gas_price for eth_call
         ) {
-            Ok((output, _gas_used, _logs)) => {
-                Ok(json!(format!("0x{}", hex::encode(output))))
-            }
+            Ok((output, _gas_used, _logs)) => Ok(json!(format!("0x{}", hex::encode(output)))),
             Err(e) => {
                 // Log error but return empty for compatibility
                 tracing::warn!("eth_call execution error: {:?}", e);
@@ -1111,13 +1116,11 @@ pub fn register_eth_methods(
     let state = unified_state.clone();
     io.add_sync_method("eth_getCode", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let address_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing address".to_string(),
-                data: None,
-            })?;
+        let address_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing address".to_string(),
+            data: None,
+        })?;
 
         let address = hex_to_address(address_str).ok_or_else(|| RpcError {
             code: ErrorCode::InvalidParams,
@@ -1140,9 +1143,7 @@ pub fn register_eth_methods(
     // SECURITY: Returns empty array. Previously returned hardcoded Hardhat default
     // addresses with publicly-known private keys, which would allow anyone to
     // steal funds sent to those addresses.
-    io.add_sync_method("eth_accounts", move |_params: Params| {
-        Ok(json!([]))
-    });
+    io.add_sync_method("eth_accounts", move |_params: Params| Ok(json!([])));
 
     // net_version - Route to UnifiedStateDB
     let state = unified_state.clone();
@@ -1156,15 +1157,14 @@ pub fn register_eth_methods(
     // Full MetaMask / ethers.js / web3.js compatibility
     let mp_for_sendraw = mempool.clone();
     let unified_for_sendraw = unified_state.clone();
+    let broadcaster_for_sendraw = broadcaster.clone();
     io.add_sync_method("eth_sendRawTransaction", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let raw_tx = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing raw transaction".to_string(),
-                data: None,
-            })?;
+        let raw_tx = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing raw transaction".to_string(),
+            data: None,
+        })?;
 
         // Decode hex raw transaction
         let raw_tx = raw_tx.strip_prefix("0x").unwrap_or(raw_tx);
@@ -1203,7 +1203,8 @@ pub fn register_eth_methods(
         let v = decoded.v as u8;
         let tx_hash = decoded.signing_hash; // keccak256 of full raw bytes
 
-        info!("📝 RLP decoded TX type={} from=0x{} nonce={} to={} value={} gas={}",
+        info!(
+            "📝 RLP decoded TX type={} from=0x{} nonce={} to={} value={} gas={}",
             decoded.tx_type,
             hex::encode(&from),
             nonce,
@@ -1217,7 +1218,10 @@ pub fn register_eth_methods(
         if decoded.chain_id != 0 && decoded.chain_id != expected_chain_id {
             return Err(RpcError {
                 code: ErrorCode::ServerError(-32000),
-                message: format!("chain ID mismatch: expected {} got {}", expected_chain_id, decoded.chain_id),
+                message: format!(
+                    "chain ID mismatch: expected {} got {}",
+                    expected_chain_id, decoded.chain_id
+                ),
                 data: None,
             });
         }
@@ -1248,17 +1252,8 @@ pub fn register_eth_methods(
         }
 
         // Create ReadyTransaction with signature
-        let ready_tx = ReadyTransaction {
-            nonce,
-            from,
-            to,
-            value,
-            data: data.clone(),
-            gas,
-            r,
-            s,
-            v,
-        };
+        let ready_tx =
+            ReadyTransaction { nonce, from, to, value, data: data.clone(), gas, r, s, v };
 
         let mut mempool_guard = mp_for_sendraw.write();
 
@@ -1268,7 +1263,7 @@ pub fn register_eth_methods(
             from,
             to,
             value,
-            data,
+            data: data.clone(),
             gas,
             nonce,
             executed: false,
@@ -1293,6 +1288,31 @@ pub fn register_eth_methods(
             });
         }
 
+        // Broadcast to P2P network for multi-node propagation
+        {
+            let to_addr = to.map(luxtensor_core::Address::from);
+            let mut core_tx = luxtensor_core::Transaction::with_chain_id(
+                expected_chain_id,
+                nonce,
+                luxtensor_core::Address::from(from),
+                to_addr,
+                value,
+                decoded.gas_price,
+                gas,
+                data,
+            );
+            // Preserve original ECDSA signature from the signed transaction
+            core_tx.v = v;
+            core_tx.r = r;
+            core_tx.s = s;
+
+            if let Err(e) = broadcaster_for_sendraw.broadcast(&core_tx) {
+                tracing::warn!("Failed to broadcast raw transaction to P2P: {}", e);
+            } else {
+                info!("📡 Raw transaction broadcasted to P2P network: {}", hash_to_hex(&tx_hash));
+            }
+        }
+
         info!("📥 Received signed raw transaction: {}", hash_to_hex(&tx_hash));
         Ok(json!(hash_to_hex(&tx_hash)))
     });
@@ -1305,14 +1325,10 @@ pub fn register_eth_methods(
     });
 
     // eth_mining - Returns whether client is mining
-    io.add_sync_method("eth_mining", move |_params: Params| {
-        Ok(json!(false))
-    });
+    io.add_sync_method("eth_mining", move |_params: Params| Ok(json!(false)));
 
     // eth_hashrate - Returns hashrate
-    io.add_sync_method("eth_hashrate", move |_params: Params| {
-        Ok(json!("0x0"))
-    });
+    io.add_sync_method("eth_hashrate", move |_params: Params| Ok(json!("0x0")));
 
     // eth_coinbase - Returns coinbase address
     io.add_sync_method("eth_coinbase", move |_params: Params| {
@@ -1336,7 +1352,11 @@ pub fn register_eth_methods(
         // Parse address
         let addr_bytes = match hex_to_address(&parsed[0]) {
             Some(a) => a,
-            None => return Ok(json!("0x0000000000000000000000000000000000000000000000000000000000000000")),
+            None => {
+                return Ok(json!(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ))
+            }
         };
 
         // Parse slot (32 bytes)
@@ -1356,9 +1376,7 @@ pub fn register_eth_methods(
     });
 
     // net_listening - Returns whether node is listening
-    io.add_sync_method("net_listening", move |_params: Params| {
-        Ok(json!(true))
-    });
+    io.add_sync_method("net_listening", move |_params: Params| Ok(json!(true)));
 
     // web3_sha3 - Returns Keccak-256 hash
     io.add_sync_method("web3_sha3", move |params: Params| {
@@ -1450,13 +1468,11 @@ pub fn register_eth_methods(
     let db_for_gettx = db.clone();
     io.add_sync_method("eth_getTransactionByHash", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let hash_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing transaction hash".to_string(),
-                data: None,
-            })?;
+        let hash_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing transaction hash".to_string(),
+            data: None,
+        })?;
 
         let hash_str = hash_str.strip_prefix("0x").unwrap_or(hash_str);
         let hash_bytes = hex::decode(hash_str).map_err(|_| RpcError {
@@ -1545,7 +1561,9 @@ pub fn register_eth_methods(
                                 break;
                             }
                         }
-                        if found.0.is_some() { break; }
+                        if found.0.is_some() {
+                            break;
+                        }
                     }
                 }
                 found
@@ -1579,9 +1597,7 @@ pub fn register_eth_methods(
     let unified_for_block = unified_state.clone();
     io.add_sync_method("eth_getBlockByNumber", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let block_tag = p.get(0)
-            .and_then(|v| v.as_str())
-            .unwrap_or("latest");
+        let block_tag = p.get(0).and_then(|v| v.as_str()).unwrap_or("latest");
 
         let state = unified_for_block.read();
         let block_number = if block_tag == "latest" || block_tag == "pending" {
@@ -1627,7 +1643,8 @@ pub fn register_eth_methods(
         let p: Vec<serde_json::Value> = params.parse()?;
 
         // Parse block_count (first param)
-        let block_count = p.get(0)
+        let block_count = p
+            .get(0)
             .and_then(|v| {
                 if let Some(n) = v.as_u64() {
                     Some(n)
@@ -1655,9 +1672,7 @@ pub fn register_eth_methods(
         }
 
         // Parse newest_block (second param)
-        let newest_block_tag = p.get(1)
-            .and_then(|v| v.as_str())
-            .unwrap_or("latest");
+        let newest_block_tag = p.get(1).and_then(|v| v.as_str()).unwrap_or("latest");
 
         let state_guard = unified_for_fee.read();
         let current_block = state_guard.block_number();
@@ -1673,13 +1688,10 @@ pub fn register_eth_methods(
         };
 
         // reward_percentiles (third param) — optional array of floats
-        let _reward_percentiles: Vec<f64> = p.get(2)
+        let _reward_percentiles: Vec<f64> = p
+            .get(2)
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_f64())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_default();
 
         // Calculate the oldest block we'll report
@@ -1699,11 +1711,7 @@ pub fn register_eth_methods(
             if let Ok(Some(block)) = db_for_fee.get_block_by_height(height) {
                 let gas_used = block.header.gas_used;
                 let gas_limit = block.header.gas_limit;
-                let ratio = if gas_limit > 0 {
-                    gas_used as f64 / gas_limit as f64
-                } else {
-                    0.0
-                };
+                let ratio = if gas_limit > 0 { gas_used as f64 / gas_limit as f64 } else { 0.0 };
                 gas_used_ratio.push(ratio);
                 // Use default_base_fee since we don't persist per-block base fee
                 base_fee_per_gas.push(format!("0x{:x}", default_base_fee));
@@ -1721,8 +1729,10 @@ pub fn register_eth_methods(
         // (includes the predicted next base fee)
         base_fee_per_gas.push(format!("0x{:x}", default_base_fee));
 
-        info!("eth_feeHistory: block_count={}, oldest=0x{:x}, newest=0x{:x}",
-            block_count, oldest_block, newest_block);
+        info!(
+            "eth_feeHistory: block_count={}, oldest=0x{:x}, newest=0x{:x}",
+            block_count, oldest_block, newest_block
+        );
 
         Ok(json!({
             "oldestBlock": format!("0x{:x}", oldest_block),
@@ -1847,9 +1857,7 @@ pub fn register_eth_methods(
     io.add_sync_method("eth_getBlockTransactionCountByNumber", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
 
-        let block_tag = p.get(0)
-            .and_then(|v| v.as_str())
-            .unwrap_or("latest");
+        let block_tag = p.get(0).and_then(|v| v.as_str()).unwrap_or("latest");
 
         let state_guard = unified_for_txcount.read();
         let current_block = state_guard.block_number();
@@ -1867,7 +1875,10 @@ pub fn register_eth_methods(
         match db_for_txcount.get_block_by_height(block_number) {
             Ok(Some(block)) => {
                 let count = block.transactions.len();
-                info!("eth_getBlockTransactionCountByNumber: block={} count={}", block_number, count);
+                info!(
+                    "eth_getBlockTransactionCountByNumber: block={} count={}",
+                    block_number, count
+                );
                 Ok(json!(format!("0x{:x}", count)))
             }
             Ok(None) => {
@@ -1889,7 +1900,6 @@ pub fn register_log_methods(
     log_store: Arc<RwLock<crate::logs::LogStore>>,
     unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
 ) {
-
     // eth_getLogs - Query historical logs
     let store = log_store.clone();
     let state = unified_state.clone();
@@ -1905,9 +1915,7 @@ pub fn register_log_methods(
         let current_block = state.read().block_number();
         let logs = store.read().get_logs(&filter, current_block);
 
-        let rpc_logs: Vec<serde_json::Value> = logs.iter()
-            .map(|log| log.to_rpc_log())
-            .collect();
+        let rpc_logs: Vec<serde_json::Value> = logs.iter().map(|log| log.to_rpc_log()).collect();
 
         Ok(json!(rpc_logs))
     });
@@ -1935,20 +1943,17 @@ pub fn register_log_methods(
     let state = unified_state.clone();
     io.add_sync_method("eth_getFilterChanges", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let filter_id = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing filter ID".to_string(),
-                data: None,
-            })?;
+        let filter_id = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing filter ID".to_string(),
+            data: None,
+        })?;
 
         let current_block = state.read().block_number();
         match store.read().get_filter_changes(filter_id, current_block) {
             Some(logs) => {
-                let rpc_logs: Vec<serde_json::Value> = logs.iter()
-                    .map(|log| log.to_rpc_log())
-                    .collect();
+                let rpc_logs: Vec<serde_json::Value> =
+                    logs.iter().map(|log| log.to_rpc_log()).collect();
                 Ok(json!(rpc_logs))
             }
             None => Err(RpcError {
@@ -1964,13 +1969,11 @@ pub fn register_log_methods(
     let state = unified_state.clone();
     io.add_sync_method("eth_getFilterLogs", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let filter_id = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing filter ID".to_string(),
-                data: None,
-            })?;
+        let filter_id = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing filter ID".to_string(),
+            data: None,
+        })?;
 
         let current_block = state.read().block_number();
         let store_read = store.read();
@@ -1979,9 +1982,8 @@ pub fn register_log_methods(
         // This requires access to the filter itself
         match store_read.get_filter_changes(filter_id, current_block) {
             Some(logs) => {
-                let rpc_logs: Vec<serde_json::Value> = logs.iter()
-                    .map(|log| log.to_rpc_log())
-                    .collect();
+                let rpc_logs: Vec<serde_json::Value> =
+                    logs.iter().map(|log| log.to_rpc_log()).collect();
                 Ok(json!(rpc_logs))
             }
             None => Err(RpcError {
@@ -1996,13 +1998,11 @@ pub fn register_log_methods(
     let store = log_store.clone();
     io.add_sync_method("eth_uninstallFilter", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let filter_id = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing filter ID".to_string(),
-                data: None,
-            })?;
+        let filter_id = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing filter ID".to_string(),
+            data: None,
+        })?;
 
         let removed = store.read().uninstall_filter(filter_id);
         Ok(json!(removed))
@@ -2016,10 +2016,8 @@ pub fn register_log_methods(
     io.add_sync_method("eth_newBlockFilter", move |_params: Params| {
         let current_block = state_for_bf.read().block_number();
         // Create a log filter that tracks new blocks (empty filter = all logs)
-        let filter = crate::logs::LogFilter {
-            from_block: Some(current_block + 1),
-            ..Default::default()
-        };
+        let filter =
+            crate::logs::LogFilter { from_block: Some(current_block + 1), ..Default::default() };
         let filter_id = store_for_bf.read().new_filter(filter, current_block);
         info!("eth_newBlockFilter: created filter_id={} at block={}", filter_id, current_block);
         Ok(json!(filter_id))
@@ -2033,12 +2031,13 @@ pub fn register_log_methods(
     io.add_sync_method("eth_newPendingTransactionFilter", move |_params: Params| {
         let current_block = state_for_ptf.read().block_number();
         // Create a filter tracking from current block onward
-        let filter = crate::logs::LogFilter {
-            from_block: Some(current_block),
-            ..Default::default()
-        };
+        let filter =
+            crate::logs::LogFilter { from_block: Some(current_block), ..Default::default() };
         let filter_id = store_for_ptf.read().new_filter(filter, current_block);
-        info!("eth_newPendingTransactionFilter: created filter_id={} at block={}", filter_id, current_block);
+        info!(
+            "eth_newPendingTransactionFilter: created filter_id={} at block={}",
+            filter_id, current_block
+        );
         Ok(json!(filter_id))
     });
 
@@ -2087,7 +2086,8 @@ fn parse_log_filter(obj: &serde_json::Value) -> Result<crate::logs::LogFilter, R
             } else if let Some(topic_str) = topic.as_str() {
                 topic_filters.push(Some(vec![parse_hash(topic_str)?]));
             } else if let Some(arr) = topic.as_array() {
-                let hashes: Vec<[u8; 32]> = arr.iter()
+                let hashes: Vec<[u8; 32]> = arr
+                    .iter()
                     .filter_map(|v| v.as_str())
                     .filter_map(|s| parse_hash(s).ok())
                     .collect();
@@ -2176,13 +2176,11 @@ pub fn register_aa_methods(
             data: None,
         })?;
 
-        let _entry_point_addr = p.get(1)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing entry point address".to_string(),
-                data: None,
-            })?;
+        let _entry_point_addr = p.get(1).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing entry point address".to_string(),
+            data: None,
+        })?;
 
         // Parse user operation
         let user_op = parse_user_operation(user_op_json)?;
@@ -2236,13 +2234,11 @@ pub fn register_aa_methods(
     io.add_sync_method("eth_getUserOperationReceipt", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
 
-        let op_hash_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing operation hash".to_string(),
-                data: None,
-            })?;
+        let op_hash_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing operation hash".to_string(),
+            data: None,
+        })?;
 
         let op_hash = parse_hash(op_hash_str)?;
         let entry_point = ep.read();
@@ -2279,13 +2275,11 @@ pub fn register_aa_methods(
     let ep = entry_point.clone();
     io.add_sync_method("eth_getUserOperationByHash", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
-        let op_hash_str = p.get(0)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RpcError {
-                code: ErrorCode::InvalidParams,
-                message: "Missing operation hash".to_string(),
-                data: None,
-            })?;
+        let op_hash_str = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Missing operation hash".to_string(),
+            data: None,
+        })?;
 
         let op_hash = parse_hash(op_hash_str)?;
         let entry_point = ep.read();
@@ -2316,18 +2310,19 @@ pub fn register_aa_methods(
 }
 
 /// Parse a UserOperation from JSON
-fn parse_user_operation(obj: &serde_json::Value) -> Result<luxtensor_contracts::UserOperation, RpcError> {
+fn parse_user_operation(
+    obj: &serde_json::Value,
+) -> Result<luxtensor_contracts::UserOperation, RpcError> {
     use luxtensor_contracts::UserOperation;
 
-    let sender = obj.get("sender")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing sender".to_string(),
-            data: None,
-        })?;
+    let sender = obj.get("sender").and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+        code: ErrorCode::InvalidParams,
+        message: "Missing sender".to_string(),
+        data: None,
+    })?;
 
-    let nonce = obj.get("nonce")
+    let nonce = obj
+        .get("nonce")
         .and_then(|v| v.as_str())
         .and_then(|s| {
             let s = s.strip_prefix("0x").unwrap_or(s);
@@ -2473,11 +2468,7 @@ mod tests {
 
     #[test]
     fn test_rlp_list_roundtrip() {
-        let items = vec![
-            rlp_encode_u64(42),
-            rlp_encode_bytes(b"hello"),
-            rlp_encode_bytes(&[]),
-        ];
+        let items = vec![rlp_encode_u64(42), rlp_encode_bytes(b"hello"), rlp_encode_bytes(&[])];
         let encoded = rlp_encode_list(&items);
         assert!(encoded[0] >= 0xc0);
         let (payload_offset, payload_len) = rlp_list_info(&encoded).unwrap();
@@ -2559,11 +2550,8 @@ mod tests {
     #[test]
     fn test_decode_eip1559_too_few_items() {
         // Type 2 prefix + list with only 3 items (needs 12)
-        let bogus_list = rlp_encode_list(&[
-            rlp_encode_u64(1),
-            rlp_encode_u64(0),
-            rlp_encode_u64(100),
-        ]);
+        let bogus_list =
+            rlp_encode_list(&[rlp_encode_u64(1), rlp_encode_u64(0), rlp_encode_u64(100)]);
         let mut raw = vec![0x02u8];
         raw.extend_from_slice(&bogus_list);
         assert!(decode_rlp_transaction(&raw).is_err());
@@ -2571,10 +2559,7 @@ mod tests {
 
     #[test]
     fn test_decode_eip2930_too_few_items() {
-        let bogus_list = rlp_encode_list(&[
-            rlp_encode_u64(1),
-            rlp_encode_u64(0),
-        ]);
+        let bogus_list = rlp_encode_list(&[rlp_encode_u64(1), rlp_encode_u64(0)]);
         let mut raw = vec![0x01u8];
         raw.extend_from_slice(&bogus_list);
         assert!(decode_rlp_transaction(&raw).is_err());
@@ -2656,20 +2641,20 @@ mod tests {
     fn test_rlp_fuzz_random_patterns() {
         // These are carefully crafted adversarial patterns
         let patterns: Vec<Vec<u8>> = vec![
-            vec![0xc0],                     // empty list
-            vec![0x80],                     // empty string
-            vec![0xf8, 0x00],              // long list, 0 length
-            vec![0xb8, 0x00],              // long string, 0 length
-            vec![0xf8, 0xff],              // long list, claims 255 bytes but none follow
-            vec![0xb8, 0xff],              // long string, claims 255
+            vec![0xc0],                   // empty list
+            vec![0x80],                   // empty string
+            vec![0xf8, 0x00],             // long list, 0 length
+            vec![0xb8, 0x00],             // long string, 0 length
+            vec![0xf8, 0xff],             // long list, claims 255 bytes but none follow
+            vec![0xb8, 0xff],             // long string, claims 255
             vec![0xc1, 0xc1, 0xc1, 0xc0], // nested lists
-            vec![0xc0; 100],               // 100 empty lists
-            vec![0x01; 100],               // 100 "type 1" bytes
-            vec![0x02; 100],               // 100 "type 2" bytes
+            vec![0xc0; 100],              // 100 empty lists
+            vec![0x01; 100],              // 100 "type 1" bytes
+            vec![0x02; 100],              // 100 "type 2" bytes
             // Legacy tx with random garbage as RLP items
             vec![0xc9, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
             // Overlong length encodings
-            vec![0xb8, 0x01, 0x00],        // claims 1 byte, has 1 zero
+            vec![0xb8, 0x01, 0x00],       // claims 1 byte, has 1 zero
             vec![0xf9, 0x00, 0x01, 0x80], // long list len=1, contains empty string
         ];
 

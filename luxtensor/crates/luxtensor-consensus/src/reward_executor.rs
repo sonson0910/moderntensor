@@ -173,13 +173,14 @@ impl RewardExecutor {
         // 🔧 FIX: Use DistributionConfig BPS ratios for proper allocation
         // Instead of hardcoded 55/30/15 splits, use the config for all pools
         // This ensures delegators, DAO, and community ecosystem get their shares
+        // SECURITY: Use checked_mul to prevent overflow when total_emission is large
         let config = &self.distributor.config();
-        let miner_pool = (total_emission * config.miner_share_bps as u128) / 10_000;
-        let validator_pool = (total_emission * config.validator_share_bps as u128) / 10_000;
-        let delegator_pool = (total_emission * config.delegator_share_bps as u128) / 10_000;
-        let subnet_pool = (total_emission * config.subnet_owner_share_bps as u128) / 10_000;
-        let dao_pool = (total_emission * config.dao_share_bps as u128) / 10_000;
-        let community_pool = (total_emission * config.community_ecosystem_share_bps as u128) / 10_000;
+        let miner_pool = total_emission.checked_mul(config.miner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let validator_pool = total_emission.checked_mul(config.validator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let delegator_pool = total_emission.checked_mul(config.delegator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let subnet_pool = total_emission.checked_mul(config.subnet_owner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let dao_pool = total_emission.checked_mul(config.dao_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        let community_pool = total_emission.checked_mul(config.community_ecosystem_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
 
         // Distribute miner rewards with task-based GPU verification
         let miner_distribution = self.distributor.distribute_by_epoch_stats(

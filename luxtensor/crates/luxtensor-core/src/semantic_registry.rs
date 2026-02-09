@@ -10,7 +10,10 @@
 
 use crate::hnsw::{HnswVectorStore, HnswError};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+// SECURITY: Use parking_lot::RwLock (non-poisoning) for consistency with the rest of the codebase.
+// std::sync::RwLock would brick the registry permanently if any write-holding thread panics.
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 /// Domain categories for semantic namespacing
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,8 +151,7 @@ impl SemanticRegistry {
 
         // Check quota
         {
-            let usage = self.usage.read()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let usage = self.usage.read();
             let current = usage.get(&owner).copied().unwrap_or(0);
             if current >= self.quota_per_address {
                 return Err(RegistryError::QuotaExceeded);
@@ -161,8 +163,7 @@ impl SemanticRegistry {
 
         // Generate global ID
         let global_id = {
-            let mut counter = self.next_id.write()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let mut counter = self.next_id.write();
             let id = *counter;
             *counter += 1;
             id
@@ -170,8 +171,7 @@ impl SemanticRegistry {
 
         // Insert into domain store
         {
-            let mut store_guard = store.write()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let mut store_guard = store.write();
             store_guard.insert(global_id, vector)
                 .map_err(|e| RegistryError::HnswError(e))?;
         }
@@ -187,8 +187,7 @@ impl SemanticRegistry {
 
         // Register in global index
         {
-            let mut registry = self.registry.write()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let mut registry = self.registry.write();
             registry.insert(global_id, RegistryEntry {
                 vector_id: global_id,
                 metadata,
@@ -197,8 +196,7 @@ impl SemanticRegistry {
 
         // Update usage
         {
-            let mut usage = self.usage.write()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let mut usage = self.usage.write();
             *usage.entry(owner).or_insert(0) += 1;
         }
 
@@ -209,8 +207,7 @@ impl SemanticRegistry {
     pub fn lookup(&self, global_id: u64) -> Result<Option<(Vec<f32>, VectorMetadata)>, RegistryError> {
         // Get registry entry
         let entry = {
-            let registry = self.registry.read()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let registry = self.registry.read();
             registry.get(&global_id).cloned()
         };
 
@@ -223,8 +220,7 @@ impl SemanticRegistry {
         let store = self.stores.get(&entry.metadata.domain)
             .ok_or(RegistryError::DomainNotFound)?;
 
-        let store_guard = store.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let store_guard = store.read();
 
         let vector = store_guard.get_vector(global_id);
 
@@ -244,8 +240,7 @@ impl SemanticRegistry {
         let store = self.stores.get(&domain)
             .ok_or(RegistryError::DomainNotFound)?;
 
-        let store_guard = store.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let store_guard = store.read();
 
         store_guard.search(query, k)
             .map_err(|e| RegistryError::HnswError(e))
@@ -260,8 +255,7 @@ impl SemanticRegistry {
         let mut all_results: Vec<(u64, f32, SemanticDomain)> = Vec::new();
 
         for (domain, store) in &self.stores {
-            let store_guard = store.read()
-                .map_err(|_| RegistryError::LockPoisoned)?;
+            let store_guard = store.read();
 
             let results = store_guard.search(query, k)
                 .map_err(|e| RegistryError::HnswError(e))?;
@@ -280,16 +274,14 @@ impl SemanticRegistry {
 
     /// Get metadata for a vector
     pub fn get_metadata(&self, global_id: u64) -> Result<Option<VectorMetadata>, RegistryError> {
-        let registry = self.registry.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let registry = self.registry.read();
 
         Ok(registry.get(&global_id).map(|e| e.metadata.clone()))
     }
 
     /// Check if a vector is expired
     pub fn is_expired(&self, global_id: u64, current_block: u64) -> Result<bool, RegistryError> {
-        let registry = self.registry.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let registry = self.registry.read();
 
         match registry.get(&global_id) {
             Some(entry) => {
@@ -305,8 +297,7 @@ impl SemanticRegistry {
 
     /// Get storage usage for an address
     pub fn get_usage(&self, owner: &[u8; 20]) -> Result<usize, RegistryError> {
-        let usage = self.usage.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let usage = self.usage.read();
         Ok(usage.get(owner).copied().unwrap_or(0))
     }
 
@@ -318,8 +309,7 @@ impl SemanticRegistry {
 
     /// Get total vector count across all domains
     pub fn total_vectors(&self) -> Result<usize, RegistryError> {
-        let registry = self.registry.read()
-            .map_err(|_| RegistryError::LockPoisoned)?;
+        let registry = self.registry.read();
         Ok(registry.len())
     }
 
@@ -327,8 +317,7 @@ impl SemanticRegistry {
     pub fn domain_vector_count(&self, domain: SemanticDomain) -> Result<usize, RegistryError> {
         match self.stores.get(&domain) {
             Some(store) => {
-                let store_guard = store.read()
-                    .map_err(|_| RegistryError::LockPoisoned)?;
+                let store_guard = store.read();
                 Ok(store_guard.len())
             }
             None => Ok(0),
@@ -363,8 +352,6 @@ pub enum RegistryError {
     QuotaExceeded,
     /// Domain not found
     DomainNotFound,
-    /// RwLock poisoned
-    LockPoisoned,
     /// Underlying HNSW error
     HnswError(HnswError),
 }
@@ -377,7 +364,6 @@ impl std::fmt::Display for RegistryError {
             }
             RegistryError::QuotaExceeded => write!(f, "Storage quota exceeded"),
             RegistryError::DomainNotFound => write!(f, "Domain not found"),
-            RegistryError::LockPoisoned => write!(f, "Lock poisoned"),
             RegistryError::HnswError(e) => write!(f, "HNSW error: {}", e),
         }
     }

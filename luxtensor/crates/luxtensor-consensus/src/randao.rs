@@ -4,7 +4,7 @@
 //! Each validator contributes entropy by revealing their precommitment,
 //! and the cumulative mix provides unpredictable randomness for consensus.
 
-use luxtensor_core::types::{Hash, Address};
+use luxtensor_core::types::{Address, Hash};
 use luxtensor_crypto::keccak256;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
@@ -23,8 +23,8 @@ pub struct RandaoConfig {
 impl Default for RandaoConfig {
     fn default() -> Self {
         Self {
-            min_reveals_for_epoch: 3,      // At least 3 validators must reveal
-            max_reveals_per_epoch: 1000,   // Cap on reveals per epoch
+            min_reveals_for_epoch: 3,       // At least 3 validators must reveal
+            max_reveals_per_epoch: 1000,    // Cap on reveals per epoch
             missing_reveal_penalty_bps: 10, // 0.1% penalty for missing reveal
         }
     }
@@ -104,22 +104,17 @@ impl RandaoMixer {
         validator: Address,
         commitment: Hash,
     ) -> Result<(), RandaoError> {
-        // Check if validator already committed
-        {
-            let commitments = self.commitments.read();
-            if commitments.contains_key(&validator) {
-                return Err(RandaoError::DuplicateCommitment(validator));
-            }
-        }
-
         // Reject zero commitment (trivially forgeable)
         if commitment == [0u8; 32] {
             return Err(RandaoError::InvalidReveal);
         }
 
-        // Store commitment
+        // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
         {
             let mut commitments = self.commitments.write();
+            if commitments.contains_key(&validator) {
+                return Err(RandaoError::DuplicateCommitment(validator));
+            }
             commitments.insert(validator, commitment);
         }
 
@@ -190,11 +185,7 @@ impl RandaoMixer {
         // Record the reveal
         {
             let mut reveals = self.current_epoch_reveals.write();
-            reveals.push(ValidatorReveal {
-                validator,
-                reveal,
-                block_number,
-            });
+            reveals.push(ValidatorReveal { validator, reveal, block_number });
         }
 
         // Mark validator as revealed
@@ -219,9 +210,15 @@ impl RandaoMixer {
     /// Finalize the current epoch and return the final RANDAO mix
     /// Advances to next epoch
     pub fn finalize_epoch(&self) -> Result<Hash, RandaoError> {
-        let reveal_count = self.reveal_count();
+        // SECURITY: Acquire mix_lock FIRST, then check reveal_count inside the lock.
+        // 🔧 FIX: Previously, reveal_count was checked BEFORE acquiring the lock,
+        // allowing two concurrent callers to both pass the check, then serialize
+        // on the lock. The second caller would finalize an empty epoch (double-finalization).
+        let _mix_guard = self.mix_lock.lock();
 
-        // Check minimum reveals
+        let reveal_count = self.current_epoch_reveals.read().len();
+
+        // Check minimum reveals (inside lock to prevent TOCTOU race)
         if reveal_count < self.config.min_reveals_for_epoch {
             return Err(RandaoError::InsufficientReveals {
                 have: reveal_count,
@@ -400,10 +397,7 @@ mod tests {
 
     #[test]
     fn test_epoch_finalization() {
-        let config = RandaoConfig {
-            min_reveals_for_epoch: 2,
-            ..Default::default()
-        };
+        let config = RandaoConfig { min_reveals_for_epoch: 2, ..Default::default() };
         let mixer = RandaoMixer::new(config, [0u8; 32]);
 
         // Not enough reveals

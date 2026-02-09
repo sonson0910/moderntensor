@@ -265,7 +265,7 @@ impl RootSubnetState {
         if total_weighted > 0 {
             for netuid in self.subnets.keys() {
                 let weighted = shares.get(netuid).copied().unwrap_or(0);
-                let share_bps = ((weighted * 10000) / total_weighted) as u16;
+                let share_bps = ((weighted * 10000) / total_weighted).min(10000) as u16;
                 self.emission_shares.insert(*netuid, share_bps);
             }
         }

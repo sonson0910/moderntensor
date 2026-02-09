@@ -498,7 +498,7 @@ class NeuronChecker:
         """
         try:
             weights = self.client._call_rpc(
-                "subnet_getWeights",
+                "weight_getWeights",
                 [subnet_uid, validator_uid]
             )
             # Convert u16 to float
@@ -514,7 +514,7 @@ class NeuronChecker:
     def _get_all_neurons(self, subnet_uid: int) -> List[Dict]:
         """Get all neurons from RPC"""
         try:
-            return self.client._call_rpc("subnet_getNeurons", [subnet_uid])
+            return self.client._call_rpc("neuron_getAll", [subnet_uid])
         except Exception:
             return []
 

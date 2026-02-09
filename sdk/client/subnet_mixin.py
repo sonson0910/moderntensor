@@ -211,8 +211,12 @@ class SubnetMixin:
             True if registration allowed, False otherwise
         """
         try:
-            result = self._rpc()._call_rpc("query_subnetRegistrationAllowed", [subnet_id])
-            return bool(result)
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("registration_allowed", hp.get("registrationAllowed"))
+                return bool(val) if val is not None else True
+            return True
         except Exception as e:
             logger.error(f"Error checking registration allowed for subnet {subnet_id}: {e}")
             return False
@@ -228,7 +232,8 @@ class SubnetMixin:
             Network metadata including URLs, descriptions, etc.
         """
         try:
-            result = self._rpc()._call_rpc("query_subnetNetworkMetadata", [subnet_id])
+            # Derive from subnet_getInfo
+            result = self._rpc()._call_rpc("subnet_getInfo", [subnet_id])
             return result if result else {}
         except Exception as e:
             logger.error(f"Error getting network metadata for subnet {subnet_id}: {e}")
@@ -245,8 +250,11 @@ class SubnetMixin:
             Number of subnetworks
         """
         try:
-            result = self._rpc()._call_rpc("query_subnetworkN", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getInfo → participant_count
+            info = self._rpc()._call_rpc("subnet_getInfo", [subnet_id])
+            if info:
+                return int(info.get("participant_count", info.get("participantCount", 0)))
+            return 0
         except Exception as e:
             logger.error(f"Error getting subnetwork N for subnet {subnet_id}: {e}")
             return 0
@@ -259,7 +267,7 @@ class SubnetMixin:
             Number of subnets
         """
         try:
-            result = self._rpc()._call_rpc("query_totalSubnets")
+            result = self._rpc()._call_rpc("subnet_getCount", [])
             return int(result) if result else 0
         except Exception as e:
             logger.error(f"Error getting total subnets: {e}")
@@ -273,8 +281,11 @@ class SubnetMixin:
             Maximum subnets
         """
         try:
-            result = self._rpc()._call_rpc("query_maxSubnets")
-            return int(result) if result else 0
+            # Derive from subnet_getConfig for root subnet
+            config = self._rpc()._call_rpc("subnet_getConfig", [0])
+            if config:
+                return int(config.get("max_subnets", config.get("maxSubnets", 0)))
+            return 0
         except Exception as e:
             logger.error(f"Error getting max subnets: {e}")
             return 0
@@ -313,7 +324,7 @@ class SubnetMixin:
         try:
             # Convert int keys to strings for JSON
             weights_json = {str(k): v for k, v in weights.items()}
-            result = self._rpc()._call_rpc("subnet_setWeights", [validator, weights_json])
+            result = self._rpc()._call_rpc("weight_setWeights", [validator, weights_json])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to set subnet weights: {e}")
@@ -332,8 +343,12 @@ class SubnetMixin:
             Activity cutoff in blocks
         """
         try:
-            result = self._rpc()._call_rpc("query_activityCutoff", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("activity_cutoff", hp.get("activityCutoff", 0))
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting activity cutoff for subnet {subnet_id}: {e}")
             return 0
@@ -349,8 +364,12 @@ class SubnetMixin:
             Difficulty value
         """
         try:
-            result = self._rpc()._call_rpc("query_difficulty", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("difficulty", 0)
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting difficulty for subnet {subnet_id}: {e}")
             return 0
@@ -366,8 +385,12 @@ class SubnetMixin:
             Burn cost in tokens
         """
         try:
-            result = self._rpc()._call_rpc("query_burnCost", [subnet_id])
-            return int(result) if result else 0
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("burn_cost", hp.get("burnCost", 0))
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting burn cost for subnet {subnet_id}: {e}")
             return 0

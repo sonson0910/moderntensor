@@ -80,7 +80,12 @@ impl SubnetInfo {
 
     /// Set emission share from float
     pub fn set_emission_share(&mut self, share: f64) {
-        self.emission_share_bps = (share * 10000.0).min(10000.0).max(0.0) as u16;
+        // SECURITY: NaN propagates unpredictably through min/max, guard explicitly
+        if share.is_nan() || share < 0.0 {
+            self.emission_share_bps = 0;
+        } else {
+            self.emission_share_bps = (share * 10000.0).min(10000.0) as u16;
+        }
     }
 }
 

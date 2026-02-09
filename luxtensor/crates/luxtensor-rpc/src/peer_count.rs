@@ -15,10 +15,10 @@ pub fn increment_peer_count() {
 
 /// Decrement peer count (called on PeerDisconnected)
 pub fn decrement_peer_count() {
-    let current = PEER_COUNT.load(Ordering::SeqCst);
-    if current > 0 {
-        PEER_COUNT.fetch_sub(1, Ordering::SeqCst);
-    }
+    // SECURITY: Atomic compare-and-swap to prevent underflow race
+    let _ = PEER_COUNT.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+        if v > 0 { Some(v - 1) } else { Some(0) }
+    });
 }
 
 /// Get current peer count

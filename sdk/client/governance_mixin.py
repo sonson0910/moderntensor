@@ -66,7 +66,10 @@ class GovernanceMixin:
             Proposal details
         """
         try:
-            return self._rpc()._call_rpc("governance_getProposal", [proposal_id])
+            raise NotImplementedError(
+                "governance_getProposal is not available on LuxTensor server. "
+                "Governance features are not yet implemented."
+            )
         except Exception as e:
             logger.error(f"Error getting proposal {proposal_id}: {e}")
             raise
@@ -79,7 +82,10 @@ class GovernanceMixin:
             List of proposal objects
         """
         try:
-            return self._rpc()._call_rpc("governance_getProposals")
+            raise NotImplementedError(
+                "governance_getProposals is not available on LuxTensor server. "
+                "Governance features are not yet implemented."
+            )
         except Exception as e:
             logger.error(f"Error getting proposals: {e}")
             raise
@@ -92,8 +98,10 @@ class GovernanceMixin:
             List of senate member addresses
         """
         try:
-            result = self._rpc()._call_rpc("query_senateMembers")
-            return result
+            raise NotImplementedError(
+                "query_senateMembers is not available on LuxTensor server. "
+                "Governance features are not yet implemented."
+            )
         except Exception as e:
             logger.error(f"Error getting senate members: {e}")
             raise

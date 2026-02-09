@@ -48,8 +48,13 @@ class RegistrationMixin:
             Registration cost in tokens
         """
         try:
-            result = self._rpc()._call_rpc("query_registrationCost", [subnet_id])
-            return int(result)
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                cost = hp.get("registration_cost", hp.get("registrationCost",
+                       hp.get("burn_cost", hp.get("burnCost", 0))))
+                return int(cost) if cost else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting registration cost for subnet {subnet_id}: {e}")
             raise
@@ -65,8 +70,13 @@ class RegistrationMixin:
             Maximum registrations per block
         """
         try:
-            result = self._rpc()._call_rpc("query_maxRegistrationsPerBlock", [subnet_id])
-            return int(result)
+            # Derive from subnet_getHyperparameters
+            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if hp:
+                val = hp.get("max_registrations_per_block",
+                      hp.get("maxRegistrationsPerBlock", 0))
+                return int(val) if val else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting max registrations per block for subnet {subnet_id}: {e}")
             raise
@@ -148,7 +158,7 @@ class RegistrationMixin:
             }
 
             # Submit transaction to register axon
-            result = self._rpc()._call_rpc("tx_serveAxon", [subnet_id, axon_info])
+            result = self._rpc()._call_rpc("neuron_register", [subnet_id, axon_info])
 
             logger.info(f"Registered axon for subnet {subnet_id} at {ip}:{port}")
             return result

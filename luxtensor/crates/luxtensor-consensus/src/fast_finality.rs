@@ -201,21 +201,23 @@ impl FastFinality {
 
         if entry.total_stake >= required_stake {
             entry.finalized = true;
+            let pct = if total_stake > 0 { (entry.total_stake * 100) / total_stake } else { 0 };
             info!(
                 "Block {} reached fast finality with {}/{} stake ({}%)",
                 hex::encode(&block_hash),
                 entry.total_stake,
                 total_stake,
-                (entry.total_stake * 100) / total_stake
+                pct
             );
             Ok(true)
         } else {
+            let pct = if total_stake > 0 { (entry.total_stake * 100) / total_stake } else { 0 };
             debug!(
                 "Block {} has {}/{} stake ({}%), needs {}% for finality",
                 hex::encode(&block_hash),
                 entry.total_stake,
                 total_stake,
-                (entry.total_stake * 100) / total_stake,
+                pct,
                 self.finality_threshold_percent
             );
             Ok(false)
@@ -237,7 +239,7 @@ impl FastFinality {
             if total_stake == 0 {
                 0
             } else {
-                ((s.total_stake * 100) / total_stake) as u8
+                ((s.total_stake * 100) / total_stake).min(100) as u8
             }
         })
     }

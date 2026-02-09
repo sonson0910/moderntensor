@@ -2,8 +2,8 @@
 // 4 Tiers: Light Node, Full Node, Validator, Super Validator
 // Enhanced with GPU bonus and logarithmic stake curve for fair economics
 
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
 
 /// Calculate effective stake using logarithmic curve for whale protection
 /// This ensures diminishing returns for very large stakes:
@@ -37,17 +37,19 @@ pub fn logarithmic_stake(stake: u128) -> u128 {
 
     // SECURITY: Clamp f64 before casting to u128 to avoid NaN/negative
     let raw = stake_f * effective_factor;
-    if raw.is_nan() || raw < 0.0 { 0u128 }
-    else if raw > u128::MAX as f64 { u128::MAX }
-    else { raw as u128 }
+    if raw.is_nan() || raw < 0.0 {
+        0u128
+    } else if raw > u128::MAX as f64 {
+        u128::MAX
+    } else {
+        raw as u128
+    }
 }
 
-
-
 /// Minimum stake requirements for each tier (in base units)
-pub const LIGHT_NODE_STAKE: u128 = 0;                    // No stake required
-pub const FULL_NODE_STAKE: u128 = 10_000_000_000_000_000_000;   // 10 MDT
-pub const VALIDATOR_STAKE: u128 = 100_000_000_000_000_000_000;  // 100 MDT
+pub const LIGHT_NODE_STAKE: u128 = 0; // No stake required
+pub const FULL_NODE_STAKE: u128 = 10_000_000_000_000_000_000; // 10 MDT
+pub const VALIDATOR_STAKE: u128 = 100_000_000_000_000_000_000; // 100 MDT
 pub const SUPER_VALIDATOR_STAKE: u128 = 1_000_000_000_000_000_000_000; // 1000 MDT
 
 /// Node tier levels
@@ -90,9 +92,9 @@ impl NodeTier {
     /// Get reward share for this tier
     pub fn emission_share(&self) -> f64 {
         match self {
-            NodeTier::LightNode => 0.0,      // No emission, only tx fees
-            NodeTier::FullNode => 0.02,      // 2% infrastructure
-            NodeTier::Validator => 0.28,     // 28% validation
+            NodeTier::LightNode => 0.0,       // No emission, only tx fees
+            NodeTier::FullNode => 0.02,       // 2% infrastructure
+            NodeTier::Validator => 0.28,      // 28% validation
             NodeTier::SuperValidator => 0.28, // Same as validator + priority fees
         }
     }
@@ -140,9 +142,9 @@ impl GpuCapability {
     /// Get GPU bonus multiplier (capped at 40%)
     pub fn bonus_multiplier(&self) -> f64 {
         match self {
-            GpuCapability::None => 1.0,        // No bonus
-            GpuCapability::Basic => 1.20,      // +20%
-            GpuCapability::Advanced => 1.30,   // +30%
+            GpuCapability::None => 1.0,          // No bonus
+            GpuCapability::Basic => 1.20,        // +20%
+            GpuCapability::Advanced => 1.30,     // +30%
             GpuCapability::Professional => 1.40, // +40% (capped)
         }
     }
@@ -159,9 +161,9 @@ pub struct NodeInfo {
     pub address: [u8; 20],
     pub tier: NodeTier,
     pub stake: u128,
-    pub registered_at: u64,  // block height
-    pub last_active: u64,    // block height
-    pub uptime_score: f64,   // 0.0 - 1.0
+    pub registered_at: u64, // block height
+    pub last_active: u64,   // block height
+    pub uptime_score: f64,  // 0.0 - 1.0
     pub blocks_produced: u64,
     pub tx_relayed: u64,
     /// GPU capability for AI tasks
@@ -187,11 +189,13 @@ impl NodeInfo {
     }
 
     /// Create node with GPU capability
-    pub fn new_with_gpu(address: [u8; 20], stake: u128, block_height: u64, gpu: GpuCapability) -> Self {
-        Self {
-            gpu,
-            ..Self::new(address, stake, block_height)
-        }
+    pub fn new_with_gpu(
+        address: [u8; 20],
+        stake: u128,
+        block_height: u64,
+        gpu: GpuCapability,
+    ) -> Self {
+        Self { gpu, ..Self::new(address, stake, block_height) }
     }
 
     /// Calculate effective stake using logarithmic curve for whale protection
@@ -206,9 +210,13 @@ impl NodeInfo {
         let base = self.effective_stake();
         // SECURITY: Clamp f64 before casting to u128
         let raw = base as f64 * self.gpu.bonus_multiplier();
-        if raw.is_nan() || raw < 0.0 { 0u128 }
-        else if raw > u128::MAX as f64 { u128::MAX }
-        else { raw as u128 }
+        if raw.is_nan() || raw < 0.0 {
+            0u128
+        } else if raw > u128::MAX as f64 {
+            u128::MAX
+        } else {
+            raw as u128
+        }
     }
 
     /// Set GPU capability
@@ -253,25 +261,29 @@ pub struct NodeRegistry {
 
 impl NodeRegistry {
     pub fn new() -> Self {
-        Self {
-            nodes: RwLock::new(HashMap::new()),
-            nodes_by_tier: RwLock::new(HashMap::new()),
-        }
+        Self { nodes: RwLock::new(HashMap::new()), nodes_by_tier: RwLock::new(HashMap::new()) }
     }
 
     /// Register a new node
-    pub fn register(&self, address: [u8; 20], stake: u128, block_height: u64) -> Result<NodeTier, &'static str> {
+    /// SECURITY: Hold nodes.write() across both map inserts to prevent ghost entries
+    /// from concurrent register/unregister races.
+    pub fn register(
+        &self,
+        address: [u8; 20],
+        stake: u128,
+        block_height: u64,
+    ) -> Result<NodeTier, &'static str> {
         let node = NodeInfo::new(address, stake, block_height);
         let tier = node.tier;
 
-        // Add to nodes map
-        self.nodes.write().insert(address, node);
+        // Add to nodes map — hold lock across both inserts
+        let mut nodes = self.nodes.write();
+        nodes.insert(address, node);
 
-        // Add to tier index
-        self.nodes_by_tier.write()
-            .entry(tier)
-            .or_insert_with(Vec::new)
-            .push(address);
+        // Add to tier index while still holding nodes lock
+        self.nodes_by_tier.write().entry(tier).or_insert_with(Vec::new).push(address);
+
+        drop(nodes); // explicit drop for clarity
 
         Ok(tier)
     }
@@ -290,9 +302,7 @@ impl NodeRegistry {
                 if let Some(list) = by_tier.get_mut(&old_tier) {
                     list.retain(|a| a != &address);
                 }
-                by_tier.entry(new_tier)
-                    .or_insert_with(Vec::new)
-                    .push(address);
+                by_tier.entry(new_tier).or_insert_with(Vec::new).push(address);
             }
 
             Some(new_tier)
@@ -302,13 +312,15 @@ impl NodeRegistry {
     }
 
     /// Unregister a node
+    /// SECURITY: Hold nodes.write() across both map removals to prevent
+    /// ghost entries from concurrent register/unregister races.
     pub fn unregister(&self, address: [u8; 20]) -> Option<NodeInfo> {
-        let node = self.nodes.write().remove(&address);
+        let mut nodes = self.nodes.write();
+        let node = nodes.remove(&address);
         if let Some(ref n) = node {
-            self.nodes_by_tier.write()
-                .get_mut(&n.tier)
-                .map(|list| list.retain(|a| a != &address));
+            self.nodes_by_tier.write().get_mut(&n.tier).map(|list| list.retain(|a| a != &address));
         }
+        drop(nodes); // explicit drop after both maps updated
         node
     }
 
@@ -323,16 +335,14 @@ impl NodeRegistry {
     }
 
     /// Get all nodes in a tier
+    /// LOCK ORDER: nodes → nodes_by_tier (consistent with update_stake/register)
     pub fn get_by_tier(&self, tier: NodeTier) -> Vec<NodeInfo> {
-        let by_tier = self.nodes_by_tier.read();
         let nodes = self.nodes.read();
+        let by_tier = self.nodes_by_tier.read();
 
-        by_tier.get(&tier)
-            .map(|addrs| {
-                addrs.iter()
-                    .filter_map(|a| nodes.get(a).cloned())
-                    .collect()
-            })
+        by_tier
+            .get(&tier)
+            .map(|addrs| addrs.iter().filter_map(|a| nodes.get(a).cloned()).collect())
             .unwrap_or_default()
     }
 
@@ -360,7 +370,9 @@ impl NodeRegistry {
     pub fn count_by_tier(&self) -> HashMap<NodeTier, usize> {
         let by_tier = self.nodes_by_tier.read();
         let mut counts = HashMap::new();
-        for tier in [NodeTier::LightNode, NodeTier::FullNode, NodeTier::Validator, NodeTier::SuperValidator] {
+        for tier in
+            [NodeTier::LightNode, NodeTier::FullNode, NodeTier::Validator, NodeTier::SuperValidator]
+        {
             counts.insert(tier, by_tier.get(&tier).map(|v| v.len()).unwrap_or(0));
         }
         counts

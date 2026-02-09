@@ -126,8 +126,14 @@ class UtilsMixin:
     def get_network_info(self) -> Dict[str, Any]:
         """Get comprehensive network information."""
         try:
-            result = self._rpc()._call_rpc("query_networkInfo")
-            return result
+            # Compose network info from multiple RPC calls
+            health = self.health_check()  # type: ignore[attr-defined]
+            return {
+                "block_number": health.get("block_number", 0),
+                "peer_count": health.get("peer_count", 0),
+                "syncing": health.get("syncing", False),
+                "version": health.get("version", "unknown"),
+            }
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
             raise
@@ -135,7 +141,7 @@ class UtilsMixin:
     def get_network_version(self) -> str:
         """Get network protocol version."""
         try:
-            return self._rpc()._call_rpc("system_version")
+            return self._rpc()._call_rpc("web3_clientVersion", [])
         except Exception as e:
             logger.error(f"Error getting network version: {e}")
             raise
@@ -143,7 +149,8 @@ class UtilsMixin:
     def get_peer_count(self) -> int:
         """Get number of connected peers."""
         try:
-            return int(self._rpc()._call_rpc("system_peerCount"))
+            result = self._rpc()._call_rpc("net_peerCount", [])
+            return int(result, 16) if isinstance(result, str) and result.startswith("0x") else int(result)
         except Exception as e:
             logger.error(f"Error getting peer count: {e}")
             raise
@@ -174,14 +181,14 @@ class UtilsMixin:
     def get_network_state_summary(self) -> Dict[str, Any]:
         """Get a comprehensive summary of network state."""
         try:
-            return {
+            summary: Dict[str, Any] = {
                 "block_number": self.get_block_number(),  # type: ignore[attr-defined]
                 "total_subnets": self.get_total_subnets(),  # type: ignore[attr-defined]
                 "total_neurons": self.get_total_neurons(),  # type: ignore[attr-defined]
                 "total_stake": self.get_total_stake(),  # type: ignore[attr-defined]
-                "total_issuance": self.get_total_issuance(),  # type: ignore[attr-defined]
                 "network_info": self.get_network_info(),  # type: ignore[attr-defined]
             }
+            return summary
         except Exception as e:
             logger.error(f"Error getting network state summary: {e}")
             raise
@@ -211,7 +218,7 @@ class UtilsMixin:
     def get_root_validators(self) -> List[str]:
         """Get list of root network validators."""
         try:
-            result = self._rpc()._call_rpc("query_rootValidators")
+            result = self._rpc()._call_rpc("subnet_getRootValidators", [])
             return result if result else []
         except Exception as e:
             logger.error(f"Error getting root validators: {e}")
@@ -220,8 +227,9 @@ class UtilsMixin:
     def get_root_validator_count(self) -> int:
         """Get count of root network validators."""
         try:
-            result = self._rpc()._call_rpc("query_rootValidatorCount")
-            return int(result)
+            # Derive from subnet_getRootValidators
+            validators = self._rpc()._call_rpc("subnet_getRootValidators", [])
+            return len(validators) if validators else 0
         except Exception as e:
             logger.error(f"Error getting root validator count: {e}")
             raise
@@ -229,8 +237,14 @@ class UtilsMixin:
     def is_root_validator(self, hotkey: str) -> bool:
         """Check if hotkey is a root validator."""
         try:
-            result = self._rpc()._call_rpc("query_isRootValidator", [hotkey])
-            return bool(result)
+            # Derive from subnet_getRootValidators
+            validators = self._rpc()._call_rpc("subnet_getRootValidators", [])
+            if validators:
+                for v in validators:
+                    addr = v if isinstance(v, str) else v.get("address", v.get("hotkey", ""))
+                    if addr and addr.lower() == hotkey.lower():
+                        return True
+            return False
         except Exception as e:
             logger.error(f"Error checking root validator status: {e}")
             raise
@@ -238,7 +252,7 @@ class UtilsMixin:
     def get_root_config(self) -> Dict[str, Any]:
         """Get root network configuration."""
         try:
-            result = self._rpc()._call_rpc("query_rootConfig")
+            result = self._rpc()._call_rpc("subnet_getConfig", [0])
             return result
         except Exception as e:
             logger.error(f"Error getting root config: {e}")
@@ -247,7 +261,7 @@ class UtilsMixin:
     def get_root_network_validators(self) -> List[Dict[str, Any]]:
         """Get detailed root network validator information."""
         try:
-            result = self._rpc()._call_rpc("query_rootNetworkValidators")
+            result = self._rpc()._call_rpc("subnet_getRootValidators", [])
             return result if result else []
         except Exception as e:
             logger.error(f"Error getting root network validators: {e}")
@@ -258,7 +272,7 @@ class UtilsMixin:
     def get_validators(self, subnet_id: int) -> List[int]:
         """Get list of validator UIDs for a subnet."""
         try:
-            result = self._rpc()._call_rpc("query_validators", [subnet_id])
+            result = self._rpc()._call_rpc("staking_getValidators", [subnet_id])
             return result if result else []
         except Exception as e:
             logger.error(f"Error getting validators for subnet {subnet_id}: {e}")
@@ -267,8 +281,11 @@ class UtilsMixin:
     def has_validator_permit(self, subnet_id: int, neuron_uid: int) -> bool:
         """Check if neuron has validator permit."""
         try:
-            result = self._rpc()._call_rpc("query_validatorPermit", [subnet_id, neuron_uid])
-            return bool(result)
+            # Derive from neuron_get - check validator_permit field
+            neuron = self._rpc()._call_rpc("neuron_get", [subnet_id, neuron_uid])
+            if neuron:
+                return bool(neuron.get("validator_permit", False))
+            return False
         except Exception as e:
             logger.error(f"Error checking validator permit: {e}")
             raise
@@ -276,7 +293,7 @@ class UtilsMixin:
     def get_validator_status(self, hotkey: str) -> Dict[str, Any]:
         """Get comprehensive validator status."""
         try:
-            result = self._rpc()._call_rpc("query_validatorStatus", [hotkey])
+            result = self._rpc()._call_rpc("lux_getValidatorStatus", [hotkey])
             return result
         except Exception as e:
             logger.error(f"Error getting validator status: {e}")
@@ -289,8 +306,9 @@ class UtilsMixin:
     ) -> List[Dict[str, Any]]:
         """Get transfer history for an address."""
         try:
-            result = self._rpc()._call_rpc("query_transferHistory", [address, limit])
-            return result if result else []
+            # Transfer history not available as direct RPC on LuxTensor server
+            logger.warning("Transfer history not available on LuxTensor server")
+            return []
         except Exception as e:
             logger.error(f"Error getting transfer history: {e}")
             raise
@@ -300,8 +318,9 @@ class UtilsMixin:
     ) -> List[Dict[str, Any]]:
         """Get transactions for an address."""
         try:
-            result = self._rpc()._call_rpc("query_transactionsForAddress", [address, limit])
-            return result if result else []
+            # Transaction query for address not available as direct RPC
+            logger.warning("Transaction query for address not available on LuxTensor server")
+            return []
         except Exception as e:
             logger.error(f"Error getting transactions for address: {e}")
             raise

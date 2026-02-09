@@ -322,8 +322,13 @@ class StakingMixin:
             Delegate information
         """
         try:
-            result = self._rpc()._call_rpc("query_delegateInfo", [hotkey])
-            return result if result else {}
+            # Derive from staking_getDelegates
+            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
+            if delegates:
+                for d in delegates:
+                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                        return d
+            return {}
         except Exception as e:
             logger.error(f"Error getting delegate info for {hotkey}: {e}")
             return {}
@@ -339,8 +344,14 @@ class StakingMixin:
             Commission rate (0-1, e.g., 0.18 = 18%)
         """
         try:
-            result = self._rpc()._call_rpc("query_delegateTake", [hotkey])
-            return float(result) if result else 0.0
+            # Derive from staking_getDelegates
+            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
+            if delegates:
+                for d in delegates:
+                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                        take = d.get("take", d.get("commission", 0.0))
+                        return float(take) if take else 0.0
+            return 0.0
         except Exception as e:
             logger.error(f"Error getting delegate take for {hotkey}: {e}")
             return 0.0
@@ -356,8 +367,13 @@ class StakingMixin:
             True if is delegate, False otherwise
         """
         try:
-            result = self._rpc()._call_rpc("query_isDelegate", [hotkey])
-            return bool(result)
+            # Derive from staking_getDelegates
+            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
+            if delegates:
+                for d in delegates:
+                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                        return True
+            return False
         except Exception as e:
             logger.error(f"Error checking if {hotkey} is delegate: {e}")
             return False
@@ -374,8 +390,9 @@ class StakingMixin:
             List of stake events
         """
         try:
-            result = self._rpc()._call_rpc("query_stakeHistory", [address, limit])
-            return result if result else []
+            # Stake history not available as direct RPC on LuxTensor server
+            logger.warning("Stake history is not available on LuxTensor server")
+            return []
         except Exception as e:
             logger.error(f"Error getting stake history for {address}: {e}")
             return []
@@ -392,8 +409,14 @@ class StakingMixin:
     def get_nominators(self, hotkey: str) -> List[str]:
         """Get list of nominators for a delegate."""
         try:
-            result = self._rpc()._call_rpc("query_nominators", [hotkey])
-            return result
+            # Derive from staking_getDelegates
+            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
+            if delegates:
+                for d in delegates:
+                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                        nominators = d.get("nominators", [])
+                        return nominators if isinstance(nominators, list) else []
+            return []
         except Exception as e:
             logger.error(f"Error getting nominators for {hotkey}: {e}")
             raise

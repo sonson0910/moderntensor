@@ -82,7 +82,7 @@ class StakeClient(BaseRpcClient):
             Dict mapping hotkey -> stake amount
         """
         try:
-            result = self._call_rpc("staking_getAllStakeForColdkey", [coldkey])
+            result = self._call_rpc("staking_getAllStakesForColdkey", [coldkey])
             if result:
                 return {k: self._hex_to_int(v) for k, v in result.items()}
             return {}

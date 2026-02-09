@@ -96,6 +96,10 @@ impl EmissionController {
 
     /// Calculate base emission for a block height (before utility adjustment)
     pub fn base_emission(&self, block_height: u64) -> u128 {
+        // SECURITY: Guard against zero halving_interval (misconfigured config)
+        if self.config.halving_interval == 0 {
+            return self.config.initial_emission.max(self.config.min_emission);
+        }
         // Calculate how many halvings have occurred
         let halvings = block_height / self.config.halving_interval;
 
@@ -129,8 +133,8 @@ impl EmissionController {
         let adjustment_bps = 10_000i64 + (utility_bps - 10_000) * weight / 100;
         let adjustment_bps = adjustment_bps.max(0) as u128;
 
-        // Apply adjustment using integer math
-        let adjusted = base * adjustment_bps / 10_000;
+        // Apply adjustment using integer math (checked to prevent overflow)
+        let adjusted = base.checked_mul(adjustment_bps).unwrap_or(u128::MAX) / 10_000;
 
         // Ensure we don't exceed remaining supply
         let remaining = self.config.max_supply.saturating_sub(self.current_supply);
@@ -145,7 +149,11 @@ impl EmissionController {
         self.current_supply = self.current_supply.saturating_add(emission);
 
         // Check for halving
-        let halving_epoch_u64 = block_height / self.config.halving_interval;
+        let halving_epoch_u64 = if self.config.halving_interval > 0 {
+            block_height / self.config.halving_interval
+        } else {
+            0
+        };
         let new_halving_epoch = halving_epoch_u64.min(u32::MAX as u64) as u32;
         let halving_occurred = new_halving_epoch > self.halving_epoch;
         if halving_occurred {

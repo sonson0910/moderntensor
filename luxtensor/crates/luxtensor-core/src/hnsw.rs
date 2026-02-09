@@ -386,7 +386,8 @@ impl HnswIndex {
 
     fn random_layer(&self, id: u64) -> usize {
         let hash = Self::hash_u64(id);
-        let uniform = (hash as f64) / (u64::MAX as f64);
+        // SECURITY: Clamp uniform to [EPSILON, 1.0] to prevent ln(0) = -inf → usize::MAX
+        let uniform = ((hash as f64) / (u64::MAX as f64)).max(f64::EPSILON).min(1.0);
         let layer = (-uniform.ln() * self.config.ml).floor() as usize;
         layer.min(self.config.max_layer)
     }

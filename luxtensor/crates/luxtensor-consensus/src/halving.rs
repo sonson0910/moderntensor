@@ -52,12 +52,16 @@ impl Default for HalvingSchedule {
 
 impl HalvingSchedule {
     /// Create a new halving schedule with custom parameters
+    ///
+    /// # Panics
+    /// Panics if `halving_interval` is 0 — this is a fatal configuration error.
     pub fn new(
         initial_reward: u128,
         halving_interval: u64,
         minimum_reward: u128,
         max_halvings: u32,
     ) -> Self {
+        assert!(halving_interval > 0, "FATAL: halving_interval must be > 0");
         Self { initial_reward, halving_interval, minimum_reward, max_halvings }
     }
 
@@ -71,7 +75,12 @@ impl HalvingSchedule {
     /// - Block 8,760,000:  0.12 MDT (first halving)
     /// - Block 17,520,000: 0.06 MDT (second halving)
     pub fn calculate_reward(&self, block_height: u64) -> u128 {
-        let halvings = (block_height / self.halving_interval) as u32;
+        // SECURITY: Guard against zero halving_interval
+        if self.halving_interval == 0 {
+            return self.initial_reward;
+        }
+        // SECURITY: Compute min BEFORE u32 cast to avoid truncation at extreme block heights
+        let halvings = (block_height / self.halving_interval).min(self.max_halvings as u64) as u32;
 
         // Cap at max halvings
         let effective_halvings = halvings.min(self.max_halvings);
@@ -95,7 +104,11 @@ impl HalvingSchedule {
 
     /// Get the current halving era (0 = before first halving)
     pub fn get_halving_era(&self, block_height: u64) -> u32 {
-        ((block_height / self.halving_interval) as u32).min(self.max_halvings)
+        if self.halving_interval == 0 {
+            return 0;
+        }
+        // SECURITY: Compute min before cast to prevent u64→u32 truncation
+        (block_height / self.halving_interval).min(self.max_halvings as u64) as u32
     }
 
     /// Calculate remaining blocks until next halving

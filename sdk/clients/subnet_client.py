@@ -41,7 +41,7 @@ class SubnetClient(BaseRpcClient):
             List of subnet info
         """
         try:
-            result = self._call_rpc("subnet_list", [])
+            result = self._call_rpc("subnet_getAll", [])
             return result if result else []
         except Exception as e:
             logger.warning(f"Failed to get subnets: {e}")
@@ -71,7 +71,7 @@ class SubnetClient(BaseRpcClient):
             Number of subnets
         """
         try:
-            result = self._call_rpc("subnet_count", [])
+            result = self._call_rpc("subnet_getCount", [])
             return result if result else 0
         except Exception as e:
             logger.warning(f"Failed to get subnet count: {e}")
@@ -131,10 +131,13 @@ class SubnetClient(BaseRpcClient):
         return self._get_param(subnet_id, "kappa", 0.0)
 
     def _get_param(self, subnet_id: int, param: str, default: Any) -> Any:
-        """Helper to get single hyperparameter"""
+        """Helper to get single hyperparameter from subnet_getHyperparameters"""
         try:
-            result = self._call_rpc(f"subnet_get{param.capitalize()}", [subnet_id])
-            return result if result is not None else default
+            result = self._call_rpc("subnet_getHyperparameters", [subnet_id])
+            if result and isinstance(result, dict):
+                # Try both camelCase and snake_case keys
+                return result.get(param, result.get(param.lower(), default))
+            return default
         except Exception as e:
             logger.warning(f"Failed to get {param}: {e}")
             return default

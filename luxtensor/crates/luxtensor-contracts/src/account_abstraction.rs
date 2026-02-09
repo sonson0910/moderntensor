@@ -312,7 +312,7 @@ impl EntryPoint {
 
         Ok(SimulationResult {
             pre_op_gas,
-            prefund: (user_op.required_gas() as u128) * (user_op.max_fee_per_gas as u128),
+            prefund: (user_op.required_gas() as u128).saturating_mul(user_op.max_fee_per_gas as u128),
             valid_after: 0,
             valid_until: u64::MAX,
         })

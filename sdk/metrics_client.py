@@ -107,28 +107,50 @@ class MetricsClient:
         """
         Fetch metrics from Luxtensor node.
 
+        Composes metrics from system_health, eth_blockNumber, and net_peerCount
+        RPCs since there is no single system_metrics endpoint.
+
         Returns:
             NodeMetrics dataclass
         """
         import requests
 
-        response = requests.post(
-            self.node_url,
-            json={
-                "jsonrpc": "2.0",
-                "method": "system_metrics",
-                "params": [],
-                "id": 1
-            },
-            timeout=10
+        def _rpc_call(method: str, params: list = None) -> Any:
+            response = requests.post(
+                self.node_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": params or [],
+                    "id": 1
+                },
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            if "error" in result:
+                raise Exception(f"RPC error ({method}): {result['error']}")
+            return result.get("result")
+
+        # Fetch from multiple endpoints
+        health = _rpc_call("system_health") or {}
+        block_hex = _rpc_call("eth_blockNumber") or "0x0"
+        peer_count_hex = _rpc_call("net_peerCount") or "0x0"
+
+        block_height = int(block_hex, 16) if isinstance(block_hex, str) else int(block_hex)
+        peer_count = int(peer_count_hex, 16) if isinstance(peer_count_hex, str) else int(peer_count_hex)
+
+        return NodeMetrics(
+            block_height=block_height,
+            peer_count=peer_count,
+            tx_count=health.get("txCount", 0),
+            mempool_size=health.get("mempoolSize", 0),
+            total_stake=int(health.get("totalStake", "0")),
+            avg_block_time_ms=health.get("avgBlockTimeMs", 0.0),
+            last_block_time_ms=health.get("lastBlockTimeMs", 0),
+            uptime_secs=health.get("uptimeSecs", 0),
+            tx_throughput=health.get("txThroughput", 0.0),
         )
-        response.raise_for_status()
-        result = response.json()
-
-        if "error" in result:
-            raise Exception(f"RPC error: {result['error']}")
-
-        return NodeMetrics.from_dict(result.get("result", {}))
 
     def get_indexer_metrics(self) -> IndexerMetrics:
         """
