@@ -202,3 +202,26 @@ hotkey*
 # Sphinx build directory
 docs/api/_build/
 validator_state.json
+
+# Build logs
+build_*.txt
+build_log*.txt
+
+# Test results
+test_results_*.txt
+test_output*.txt
+
+# Benchmark results
+benchmark_*.txt
+
+# Ruff output
+ruff_*.txt
+
+# Debug/temp scripts
+debug_*.py
+quick_test*.py
+simple_test*.py
+final_test*.py
+analyze_*.py
+find_missing*.py
+cli_analysis_output*.txt
