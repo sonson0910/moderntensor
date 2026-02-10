@@ -29,3 +29,14 @@ Thumbs.db
 
 # environment
 .env
+
+# Build logs
+build_*.txt
+build_log*.txt
+
+# Test results
+test_results_*.txt
+test_output*.txt
+
+# Benchmark results
+benchmark_*.txt
