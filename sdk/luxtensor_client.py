@@ -600,43 +600,49 @@ class LuxtensorClient(
         self._deprecated("get_total_stake", "client.stakes.get_total_stake()")
         return self.stakes.get_total_stake()
 
-    def stake(self, address: str, amount: int) -> Dict[str, Any]:
+    def stake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Stake tokens as a validator.
 
         Args:
             address: Validator address (0x...)
             amount: Amount to stake in base units
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded secp256k1 signature of
+                       "stake:{hex_address}:{amount}" using personal_sign format
 
         Returns:
             Result with success status and new stake amount
         """
         try:
-            result = self._call_rpc("staking_stake", [address, str(amount)])
+            result = self._call_rpc("staking_stake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to stake for {address}: {e}")
             return {"success": False, "error": str(e)}
 
-    def unstake(self, address: str, amount: int) -> Dict[str, Any]:
+    def unstake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Unstake tokens from validator position.
 
         Args:
             address: Validator address (0x...)
             amount: Amount to unstake in base units
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded secp256k1 signature of
+                       "unstake:{hex_address}:{amount}" using personal_sign format
 
         Returns:
             Result with success status and remaining stake
         """
         try:
-            result = self._call_rpc("staking_unstake", [address, str(amount)])
+            result = self._call_rpc("staking_unstake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to unstake for {address}: {e}")
             return {"success": False, "error": str(e)}
 
-    def delegate(self, delegator: str, validator: str, amount: int, lock_days: int = 0) -> Dict[str, Any]:
+    def delegate(self, delegator: str, validator: str, amount: int, timestamp: int, signature: str, lock_days: int = 0) -> Dict[str, Any]:
         """
         Delegate tokens to a validator.
 
@@ -644,30 +650,40 @@ class LuxtensorClient(
             delegator: Delegator address (0x...)
             validator: Validator address to delegate to (0x...)
             amount: Amount to delegate in base units
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded secp256k1 signature of
+                       "delegate:{hex_delegator}:{hex_validator}:{amount}"
+                       using personal_sign format
             lock_days: Optional lock period for bonus rewards (0, 30, 90, 180, 365)
 
         Returns:
             Result with success status and delegation info
         """
         try:
-            result = self._call_rpc("staking_delegate", [delegator, validator, str(amount), str(lock_days)])
+            params = [delegator, validator, str(amount), str(timestamp), signature]
+            if lock_days > 0:
+                params.append(str(lock_days))
+            result = self._call_rpc("staking_delegate", params)
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to delegate from {delegator} to {validator}: {e}")
             return {"success": False, "error": str(e)}
 
-    def undelegate(self, delegator: str) -> Dict[str, Any]:
+    def undelegate(self, delegator: str, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Remove delegation and return tokens.
 
         Args:
             delegator: Delegator address (0x...)
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded secp256k1 signature of
+                       "undelegate:{hex_delegator}" using personal_sign format
 
         Returns:
             Result with success status and returned amount
         """
         try:
-            result = self._call_rpc("staking_undelegate", [delegator])
+            result = self._call_rpc("staking_undelegate", [delegator, str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to undelegate for {delegator}: {e}")

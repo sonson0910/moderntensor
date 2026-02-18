@@ -64,8 +64,8 @@ def send_tx(
         print_info(f"Recipient: {recipient}")
         print_info(f"Amount: {amount} MDT")
 
-        # Convert MDT to base units (1 MDT = 1e9 base units)
-        value_base_units = int(amount * 1_000_000_000)
+        # Convert MDT to base units (1 MDT = 1e18 base units)
+        value_base_units = int(amount * 10**18)
 
         # Load wallet
         wallet_path = Path(base_dir) if base_dir else get_default_wallet_path()
@@ -129,7 +129,7 @@ def send_tx(
 
         # Check balance
         balance = client.get_balance(from_address)
-        balance_mdt = balance / 1_000_000_000
+        balance_mdt = balance / 10**18
         print_info(f"Current balance: {balance_mdt} MDT")
 
         # Calculate total cost
@@ -137,7 +137,7 @@ def send_tx(
         total_cost = value_base_units + total_fee
 
         if balance < total_cost:
-            print_error(f"Insufficient balance. Need {total_cost / 1_000_000_000} MDT, have {balance_mdt} MDT")
+            print_error(f"Insufficient balance. Need {total_cost / 10**18} MDT, have {balance_mdt} MDT")
             return
 
         # Show transaction details
@@ -148,8 +148,8 @@ def send_tx(
         details_table.add_row("Amount", f"{amount} MDT ({value_base_units} base units)")
         details_table.add_row("Gas Price", str(gas_price))
         details_table.add_row("Gas Limit", str(gas_limit))
-        details_table.add_row("Max Fee", f"{total_fee / 1_000_000_000} MDT ({total_fee} base units)")
-        details_table.add_row("Total Cost", f"{total_cost / 1_000_000_000} MDT")
+        details_table.add_row("Max Fee", f"{total_fee / 10**18} MDT ({total_fee} base units)")
+        details_table.add_row("Total Cost", f"{total_cost / 10**18} MDT")
         details_table.add_row("Network", network)
         details_table.add_row("Chain ID", str(network_config.chain_id))
         console.print(details_table)
@@ -166,6 +166,7 @@ def send_tx(
         # Create and sign transaction using Luxtensor transaction format
         from sdk.transactions import LuxtensorTransaction
         tx = LuxtensorTransaction(
+            chain_id=network_config.chain_id,
             nonce=nonce,
             from_address=from_address,
             to_address=recipient,
@@ -247,7 +248,7 @@ def tx_status(tx_hash: str, network: str):
 
         # Value
         value = int(tx_data.get('value', 0), 16) if isinstance(tx_data.get('value'), str) else tx_data.get('value', 0)
-        value_mdt = value / 1_000_000_000
+        value_mdt = value / 10**18
         info_table.add_row("Value", f"{value_mdt} MDT ({value} base units)")
 
         # Gas info
@@ -288,7 +289,7 @@ def tx_status(tx_hash: str, network: str):
 
             # Fee
             fee = gas_used * gas_price
-            fee_mdt = fee / 1_000_000_000
+            fee_mdt = fee / 10**18
             receipt_table.add_row("Fee Paid", f"{fee_mdt} MDT ({fee} base units)")
 
             # Block hash
@@ -395,7 +396,7 @@ def tx_history(coldkey: str, hotkey: str, base_dir: Optional[str], network: str,
             value = tx.get('value', 0)
             if isinstance(value, str):
                 value = int(value, 16) if value.startswith('0x') else int(value)
-            value_mdt = value / 1_000_000_000
+            value_mdt = value / 10**18
 
             status = tx.get('status', 'unknown')
             if status == 1 or status == '0x1' or status == 'success':

@@ -108,7 +108,7 @@ NETWORKS = {
     'mainnet': NetworkConfig(
         name='mainnet',
         rpc_url='https://mainnet.luxtensor.io',
-        chain_id=8899,
+        chain_id=8898,
         explorer_url='https://explorer.luxtensor.io'
     ),
     'testnet': NetworkConfig(

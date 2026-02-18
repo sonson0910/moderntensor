@@ -94,37 +94,41 @@ class StakeClient(BaseRpcClient):
     # Staking Actions
     # ========================================================================
 
-    def stake(self, address: str, amount: int) -> Dict[str, Any]:
+    def stake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Stake tokens as a validator.
 
         Args:
             address: Validator address
             amount: Amount to stake in base units
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded signature of "stake:{hex_addr}:{amount}"
 
         Returns:
             Result with success status
         """
         try:
-            result = self._call_rpc("staking_stake", [address, str(amount)])
+            result = self._call_rpc("staking_stake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to stake for {address}: {e}")
             return {"success": False, "error": str(e)}
 
-    def unstake(self, address: str, amount: int) -> Dict[str, Any]:
+    def unstake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Unstake tokens.
 
         Args:
             address: Validator address
             amount: Amount to unstake
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded signature of "unstake:{hex_addr}:{amount}"
 
         Returns:
             Result with success status
         """
         try:
-            result = self._call_rpc("staking_unstake", [address, str(amount)])
+            result = self._call_rpc("staking_unstake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to unstake for {address}: {e}")
@@ -135,7 +139,8 @@ class StakeClient(BaseRpcClient):
     # ========================================================================
 
     def delegate(
-        self, delegator: str, validator: str, amount: int, lock_days: int = 0
+        self, delegator: str, validator: str, amount: int,
+        timestamp: int, signature: str, lock_days: int = 0
     ) -> Dict[str, Any]:
         """
         Delegate tokens to a validator.
@@ -144,33 +149,38 @@ class StakeClient(BaseRpcClient):
             delegator: Delegator address
             validator: Validator address
             amount: Amount to delegate
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded signature of
+                       "delegate:{hex_delegator}:{hex_validator}:{amount}"
             lock_days: Lock period for bonus (0, 30, 90, 180, 365)
 
         Returns:
             Result with success status
         """
         try:
-            result = self._call_rpc(
-                "staking_delegate",
-                [delegator, validator, str(amount), str(lock_days)]
-            )
+            params = [delegator, validator, str(amount), str(timestamp), signature]
+            if lock_days > 0:
+                params.append(str(lock_days))
+            result = self._call_rpc("staking_delegate", params)
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to delegate: {e}")
             return {"success": False, "error": str(e)}
 
-    def undelegate(self, delegator: str) -> Dict[str, Any]:
+    def undelegate(self, delegator: str, timestamp: int, signature: str) -> Dict[str, Any]:
         """
         Remove delegation.
 
         Args:
             delegator: Delegator address
+            timestamp: Unix timestamp (must be within 5 min of server time)
+            signature: Hex-encoded signature of "undelegate:{hex_delegator}"
 
         Returns:
             Result with success status
         """
         try:
-            result = self._call_rpc("staking_undelegate", [delegator])
+            result = self._call_rpc("staking_undelegate", [delegator, str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to undelegate: {e}")

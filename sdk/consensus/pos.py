@@ -64,11 +64,16 @@ class HalvingSchedule:
 
 @dataclass
 class ConsensusConfig:
-    """Configuration for PoS consensus."""
+    """Configuration for PoS consensus.
+
+    Default values match luxtensor-consensus/src/pos.rs ConsensusConfig defaults.
+    Note: The node runtime may override epoch_length to 100 via config.toml.
+    The staking RPC enforces a separate MIN_VALIDATOR_STAKE of 1 MDT.
+    """
     slot_duration: int = 12  # 12 seconds per slot
-    min_stake: int = 32_000_000_000_000_000_000  # 32 tokens
-    block_reward: int = 2_000_000_000_000_000_000  # 2 tokens (initial)
-    epoch_length: int = 32  # 32 slots per epoch
+    min_stake: int = 32_000_000_000_000_000_000  # 32 MDT (18 decimals)
+    block_reward: int = 2_000_000_000_000_000_000  # 2 MDT (initial, subject to halving)
+    epoch_length: int = 32  # 32 slots per epoch (node config may override to 100)
     halving_schedule: HalvingSchedule = field(default_factory=HalvingSchedule)
 
 

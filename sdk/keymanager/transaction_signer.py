@@ -53,7 +53,7 @@ class TransactionSigner:
             gas_price: Gas price (in base units)
             gas_limit: Gas limit (default 21000 for simple transfer)
             data: Transaction data (default empty for simple transfer)
-            chain_id: Chain ID (8899 mainnet, 9999 testnet, 8898 devnet)
+            chain_id: Chain ID (8898 mainnet, 9999 testnet, 8898 devnet)
 
         Returns:
             Transaction dictionary

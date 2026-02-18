@@ -25,7 +25,7 @@ from typing import List, Dict, Optional
 
 # Configuration
 DEFAULT_RPC = "http://localhost:8545"
-DEFAULT_CHAIN_ID = 8899
+DEFAULT_CHAIN_ID = 8898
 
 # Test accounts
 TEST_ACCOUNTS = [

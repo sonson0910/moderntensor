@@ -67,6 +67,42 @@ def derive_address_from_private_key(private_key: str) -> str:
     return '0x' + address_bytes.hex()
 
 
+def sign_staking_message(private_key: str, message: str) -> str:
+    """
+    Sign a staking RPC message using Ethereum personal_sign format.
+
+    Matches the Rust ``verify_caller_signature`` implementation which uses:
+      prefix = "\\x19Ethereum Signed Message:\\n{len}"
+      hash   = keccak256(prefix + message)
+
+    Args:
+        private_key: Hex-encoded private key (with or without 0x prefix)
+        message: Plain-text message to sign (e.g. "stake:{addr}:{amount}")
+
+    Returns:
+        Hex-encoded 64-byte signature string (without 0x prefix)
+    """
+    if private_key.startswith('0x'):
+        private_key = private_key[2:]
+
+    private_key_bytes = bytes.fromhex(private_key)
+    signing_key = SigningKey.from_string(private_key_bytes, curve=SECP256k1)
+
+    # Ethereum personal_sign prefix (matching Rust helpers.rs)
+    prefix = f"\x19Ethereum Signed Message:\n{len(message)}"
+    prefixed_msg = prefix.encode('utf-8') + message.encode('utf-8')
+    message_hash = keccak256(prefixed_msg)
+
+    # Sign with deterministic k (RFC 6979)
+    signature = signing_key.sign_digest_deterministic(
+        message_hash,
+        hashfunc=hashlib.sha256,
+        sigencode=util.sigencode_string,
+    )
+
+    return signature.hex()
+
+
 @dataclass
 class LuxtensorTransaction:
     """
@@ -205,7 +241,7 @@ def create_transfer_transaction(
         ...     amount=1000000000,  # 1 MDT
         ...     nonce=0,
         ...     private_key="0x...",
-        ...     chain_id=8899  # mainnet
+        ...     chain_id=8898  # mainnet
         ... )
         >>> client.submit_transaction(tx)
     """

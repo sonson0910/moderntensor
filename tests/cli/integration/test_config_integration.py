@@ -31,7 +31,7 @@ class TestCLIConfig:
     def test_create_default_config(self):
         """Test creating default configuration."""
         config = CLIConfig()
-        
+
         # Should have default values
         assert config is not None
         assert config.network is not None
@@ -41,7 +41,7 @@ class TestCLIConfig:
         """Test converting config to dictionary."""
         config = CLIConfig()
         config_dict = config.to_dict()
-        
+
         assert 'network' in config_dict
         assert 'wallet' in config_dict
         assert 'verbosity' in config_dict
@@ -56,9 +56,9 @@ class TestCLIConfig:
             },
             'verbosity': 2
         }
-        
+
         config = CLIConfig.from_dict(test_config_dict)
-        
+
         assert config.network.name == 'testnet'
         assert config.network.rpc_url == 'https://test.example.com'
         assert config.verbosity == 2
@@ -67,7 +67,7 @@ class TestCLIConfig:
         """Test getting network configuration."""
         # Get testnet config
         network_config = get_network_config('testnet')
-        
+
         assert isinstance(network_config, NetworkConfig)
         assert network_config.name == 'testnet'
         assert network_config.rpc_url is not None
@@ -77,18 +77,18 @@ class TestCLIConfig:
         config = CLIConfig()
         config.network.name = 'mainnet'
         config.verbosity = 3
-        
+
         # Save to file
         config_dict = config.to_dict()
         with open(self.config_path, 'w') as f:
             yaml.dump(config_dict, f)
-        
+
         # Load from file
         with open(self.config_path, 'r') as f:
             loaded_dict = yaml.safe_load(f)
-        
+
         loaded_config = CLIConfig.from_dict(loaded_dict)
-        
+
         assert loaded_config.network.name == 'mainnet'
         assert loaded_config.verbosity == 3
 
@@ -116,16 +116,16 @@ class TestCLIConfigIntegration:
                 'rpc_url': 'https://test.example.com'
             }
         }
-        
+
         with open(self.config_path, 'w') as f:
             yaml.dump(test_config, f)
-        
+
         # Run CLI command with config
         result = self.runner.invoke(cli, [
             '--config', str(self.config_path),
             'utils', 'version'
         ])
-        
+
         assert result.exit_code == 0
 
     def test_cli_without_config(self):
@@ -159,14 +159,14 @@ class TestNetworkConfiguration:
         """Test testnet configuration."""
         config = get_network_config('testnet')
         assert config.name == 'testnet'
-        assert config.chain_id == 2
+        assert config.chain_id == 9999
         assert 'testnet' in config.rpc_url.lower()
 
     def test_mainnet_config(self):
         """Test mainnet configuration."""
         config = get_network_config('mainnet')
         assert config.name == 'mainnet'
-        assert config.chain_id == 1
+        assert config.chain_id == 8898
 
     def test_local_config(self):
         """Test local configuration."""

@@ -27,7 +27,7 @@ class TransactionInfo(BaseModel):
     gas_used: int = Field(default=0, description="Actual gas used", ge=0)
 
     # Chain & Nonce
-    chain_id: int = Field(default=8898, description="Chain ID (8899=mainnet, 9999=testnet, 8898=devnet)")
+    chain_id: int = Field(default=8898, description="Chain ID (8898=mainnet, 9999=testnet, 8898=devnet)")
     nonce: int = Field(default=0, description="Sender nonce", ge=0)
 
     # Data

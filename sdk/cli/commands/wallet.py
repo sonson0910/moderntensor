@@ -30,7 +30,7 @@ from sdk.cli.utils import (
 from sdk.cli.config import get_network_config
 
 # Constants
-MDT_TO_BASE_UNITS = 1_000_000_000  # 1 MDT = 1 billion base units
+MDT_TO_BASE_UNITS = 10**18  # 1 MDT = 10^18 base units (wei)
 DEFAULT_GAS_PRICE = 1_000_000_000  # 1 Gwei
 
 

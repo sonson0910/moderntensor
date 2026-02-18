@@ -20,6 +20,7 @@ from .transactions import (
     LuxtensorTransaction,
     create_transfer_transaction,
     sign_transaction,
+    sign_staking_message,
     verify_transaction_signature,
     encode_transaction_for_rpc,
 )
@@ -138,6 +139,7 @@ __all__ = [
     "LuxtensorTransaction",
     "create_transfer_transaction",
     "sign_transaction",
+    "sign_staking_message",
     "verify_transaction_signature",
     "encode_transaction_for_rpc",
     # WebSocket

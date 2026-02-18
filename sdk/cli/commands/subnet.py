@@ -17,8 +17,8 @@ from sdk.cli.utils import (
 from sdk.cli.config import get_network_config
 
 # Constants
-MDT_TO_BASE_UNITS = 1_000_000_000
-DEFAULT_GAS_PRICE = 1_000_000_000
+MDT_TO_BASE_UNITS = 10**18  # 1 MDT = 10^18 base units (wei)
+DEFAULT_GAS_PRICE = 1_000_000_000  # 1 Gwei
 
 
 @click.group(name='subnet', short_help='Manage subnets')

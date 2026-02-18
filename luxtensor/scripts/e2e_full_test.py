@@ -173,11 +173,11 @@ class SimpleRpcClient:
     def get_stake(self, address: str) -> Dict:
         return self.call("staking_getValidator", [address])
 
-    def stake(self, amount: str) -> Dict:
-        return self.call("staking_stake", [amount])
+    def stake(self, address: str, amount: str, timestamp: str, signature: str) -> Dict:
+        return self.call("staking_stake", [address, amount, timestamp, signature])
 
-    def unstake(self, amount: str) -> Dict:
-        return self.call("staking_unstake", [amount])
+    def unstake(self, address: str, amount: str, timestamp: str, signature: str) -> Dict:
+        return self.call("staking_unstake", [address, amount, timestamp, signature])
 
     # Subnet/Neuron methods
     def register_neuron(self, subnet_id: int, address: str) -> Dict:
@@ -642,7 +642,7 @@ class E2ETestSuite:
 
         # Test 3: Invalid unstake (try to unstake when no stake)
         try:
-            result = client.unstake("999999999999999999999999")
+            result = client.unstake("0x0000000000000000000000000000000000000000", "999999999999999999999999", "0", "0x00")
             # If it doesn't error, that's unexpected but not critical
             self.results.record_pass("invalid_unstake_handled")
         except Exception as e:

@@ -54,7 +54,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         mtcli stake add --coldkey my_coldkey --hotkey miner_hk --amount 5000 --network mainnet
 
     Note:
-        - Amount is in MDT tokens (1 MDT = 1,000,000,000 base units)
+        - Amount is in MDT tokens (1 MDT = 10^18 base units / wei)
         - Minimum stake may be required (check network requirements)
         - Transaction will require gas fees
     """
@@ -65,7 +65,7 @@ def add_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[str],
         print_info(f"Adding stake: {amount} MDT to hotkey '{hotkey}'")
 
         # Convert MDT to base units
-        amount_base = int(amount * 1_000_000_000)
+        amount_base = int(amount * 10**18)
 
         # Get network config
         net_config = get_network_config(network)
@@ -176,7 +176,7 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         print_info(f"Removing stake: {amount} MDT from hotkey '{hotkey}'")
 
         # Convert MDT to base units
-        amount_base = int(amount * 1_000_000_000)
+        amount_base = int(amount * 10**18)
 
         # Get network config
         net_config = get_network_config(network)
@@ -194,7 +194,7 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         current_stake = client.get_stake(hotkey_address)
 
         if current_stake < amount_base:
-            print_error(f"Insufficient stake. Current: {current_stake / 1e9} MDT, Requested: {amount} MDT")
+            print_error(f"Insufficient stake. Current: {current_stake / 1e18} MDT, Requested: {amount} MDT")
             return
 
         # Derive hotkey to get private key
@@ -241,8 +241,8 @@ def remove_stake(coldkey: str, hotkey: str, amount: float, base_dir: Optional[st
         table.add_row("From:", from_address)
         table.add_row("Hotkey:", hotkey_address)
         table.add_row("Amount:", f"{amount} MDT ({amount_base} base units)")
-        table.add_row("Current Stake:", f"{current_stake / 1e9} MDT")
-        table.add_row("Remaining:", f"{(current_stake - amount_base) / 1e9} MDT")
+        table.add_row("Current Stake:", f"{current_stake / 1e18} MDT")
+        table.add_row("Remaining:", f"{(current_stake - amount_base) / 1e18} MDT")
         console.print(table)
         console.print()
 
@@ -417,9 +417,9 @@ def stake_info(coldkey: str, hotkey: str, base_dir: Optional[str], network: str)
         table.add_row("[bold]Address:[/bold]", hotkey_address)
         table.add_row("[bold]Network:[/bold]", network)
         table.add_row("", "")
-        table.add_row("[bold yellow]Current Stake:[/bold yellow]", f"{stake_amount / 1e9:.6f} MDT")
-        table.add_row("[bold]Account Balance:[/bold]", f"{balance / 1e9:.6f} MDT")
-        table.add_row("[bold]Total Holdings:[/bold]", f"{(stake_amount + balance) / 1e9:.6f} MDT")
+        table.add_row("[bold yellow]Current Stake:[/bold yellow]", f"{stake_amount / 1e18:.6f} MDT")
+        table.add_row("[bold]Account Balance:[/bold]", f"{balance / 1e18:.6f} MDT")
+        table.add_row("[bold]Total Holdings:[/bold]", f"{(stake_amount + balance) / 1e18:.6f} MDT")
 
         console.print(table)
         console.print()
@@ -492,7 +492,7 @@ def list_stakes(network: str, limit: int):
             # Parse validator data (structure depends on actual API)
             address = validator.get('address', 'N/A')[:16] + "..."
             stake = validator.get('stake', 0)
-            stake_mdt = stake / 1e9
+            stake_mdt = stake / 1e18
             status = "🟢 Active" if validator.get('active', False) else "🔴 Inactive"
 
             table.add_row(
@@ -507,7 +507,7 @@ def list_stakes(network: str, limit: int):
 
         # Total stake
         total_stake = sum(v.get('stake', 0) for v in validators)
-        print_info(f"Total stake (top {len(validators)}): {total_stake / 1e9:.2f} MDT")
+        print_info(f"Total stake (top {len(validators)}): {total_stake / 1e18:.2f} MDT")
 
     except Exception as e:
         print_error(f"Failed to list validators: {str(e)}")

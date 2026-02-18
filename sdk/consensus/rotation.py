@@ -28,8 +28,12 @@ class ValidatorInfo:
 
 @dataclass
 class RotationConfig:
-    """Configuration for validator rotation."""
-    # Number of slots per epoch
+    """Configuration for validator rotation.
+
+    Default values match luxtensor-consensus/src/rotation.rs RotationConfig defaults.
+    Note: The node runtime may override epoch_length to 100 via config.toml.
+    """
+    # Number of slots per epoch (node config may override to 100)
     epoch_length: int = 32
     # Epochs a validator must wait before joining
     activation_delay_epochs: int = 2
@@ -37,7 +41,7 @@ class RotationConfig:
     exit_delay_epochs: int = 2
     # Maximum number of validators in the active set
     max_validators: int = 100
-    # Minimum stake required (32 tokens in wei)
+    # Minimum stake required (32 MDT, 18 decimals)
     min_stake: int = 32_000_000_000_000_000_000
 
 
