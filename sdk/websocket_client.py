@@ -77,6 +77,8 @@ class LuxtensorWebSocket:
         ws_url: str = "ws://localhost:8546",
         reconnect_delay: float = 5.0,
         max_reconnect_attempts: int = 10,
+        ping_interval: float = 20.0,
+        ping_timeout: float = 10.0,
     ):
         """
         Initialize WebSocket client.
@@ -85,10 +87,14 @@ class LuxtensorWebSocket:
             ws_url: Luxtensor WebSocket endpoint
             reconnect_delay: Seconds between reconnection attempts
             max_reconnect_attempts: Maximum reconnection attempts (0 = infinite)
+            ping_interval: Seconds between heartbeat pings (0 = disabled)
+            ping_timeout: Seconds to wait for a pong response before closing
         """
         self.ws_url = ws_url
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_attempts = max_reconnect_attempts
+        self.ping_interval = ping_interval
+        self.ping_timeout = ping_timeout
 
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._running = False
@@ -298,7 +304,11 @@ class LuxtensorWebSocket:
             try:
                 logger.info(f"Connecting to {self.ws_url}...")
 
-                async with websockets.connect(self.ws_url) as ws:
+                async with websockets.connect(
+                    self.ws_url,
+                    ping_interval=self.ping_interval if self.ping_interval > 0 else None,
+                    ping_timeout=self.ping_timeout if self.ping_timeout > 0 else None,
+                ) as ws:
                     self._ws = ws
                     attempt = 0
                     logger.info("WebSocket connected")

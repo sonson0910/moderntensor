@@ -4,8 +4,11 @@ Luxtensor Metrics Client
 Provides methods to fetch and display node and indexer metrics.
 """
 
+import logging
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -195,15 +198,15 @@ class MetricsClient:
         """Print formatted status of node and indexer."""
         try:
             node = self.get_node_metrics()
-            print(f"🔗 Node: {node}")
+            logger.info(f"Node: {node}")
         except Exception as e:
-            print(f"❌ Node error: {e}")
+            logger.error(f"Node error: {e}")
 
         try:
             indexer = self.get_indexer_metrics()
-            print(f"📊 Indexer: {indexer}")
+            logger.info(f"Indexer: {indexer}")
         except Exception as e:
-            print(f"❌ Indexer error: {e}")
+            logger.error(f"Indexer error: {e}")
 
 
 if __name__ == "__main__":

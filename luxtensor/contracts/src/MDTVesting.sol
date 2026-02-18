@@ -322,12 +322,19 @@ contract MDTVesting is Ownable, ReentrancyGuard {
 
     /**
      * @notice Emergency withdraw (only unused tokens)
+     * L-4 FIX: Guard against underflow and address(0) owner after renounceOwnership
      */
     function emergencyWithdraw() external onlyOwner {
-        uint256 balance = token.balanceOf(address(this));
-        uint256 uncommitted = balance - (totalAllocated - totalClaimed);
+        // L-4 FIX: Verify owner is not address(0) — guards against use after renounceOwnership()
+        require(owner() != address(0), "Owner renounced, cannot withdraw");
 
-        require(uncommitted > 0, "No uncommitted tokens");
+        uint256 balance = token.balanceOf(address(this));
+        uint256 committed = totalAllocated > totalClaimed
+            ? totalAllocated - totalClaimed
+            : 0;
+        require(balance > committed, "No uncommitted tokens");
+        uint256 uncommitted = balance - committed;
+
         token.safeTransfer(owner(), uncommitted);
     }
 }

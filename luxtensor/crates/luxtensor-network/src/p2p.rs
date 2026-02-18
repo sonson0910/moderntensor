@@ -273,8 +273,22 @@ impl P2PNode {
         }
 
         // Parse message with size limit to prevent DoS
-        let message: NetworkMessage = crate::messages::deserialize_message(&data)
-            .map_err(|e| NetworkError::DeserializationFailed(e.to_string()))?;
+        // M-2 FIX: Record failure on deserialization error → builds ban scoring
+        let message: NetworkMessage = match crate::messages::deserialize_message(&data) {
+            Ok(msg) => msg,
+            Err(e) => {
+                if let Some(peer_id) = source {
+                    if let Some(peer) = self.peer_manager.get_peer_mut(&peer_id) {
+                        peer.record_failure();
+                    }
+                    warn!(
+                        "Deserialization failed from peer {}: {} (reputation penalized)",
+                        peer_id, e
+                    );
+                }
+                return Err(NetworkError::DeserializationFailed(e.to_string()));
+            }
+        };
 
         debug!(
             "Received {} from {:?} on topic {}",

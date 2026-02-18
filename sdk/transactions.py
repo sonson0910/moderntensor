@@ -13,6 +13,10 @@ import hashlib
 from Crypto.Hash import keccak
 from ecdsa import SigningKey, SECP256k1, util
 
+# Default chain ID for Luxtensor devnet
+# Override via the chain_id parameter when creating transactions
+DEFAULT_CHAIN_ID = 8898
+
 
 def keccak256(data: bytes) -> bytes:
     """
@@ -175,7 +179,7 @@ def create_transfer_transaction(
     gas_price: int = 50,
     gas_limit: int = 21000,
     data: bytes = b'',
-    chain_id: int = 8898
+    chain_id: int = DEFAULT_CHAIN_ID
 ) -> Dict[str, Any]:
     """
     Create and sign a transfer transaction for Luxtensor blockchain.

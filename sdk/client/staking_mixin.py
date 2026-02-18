@@ -5,6 +5,7 @@ Provides staking query methods.
 """
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from .constants import HEX_ZERO
@@ -13,6 +14,9 @@ if TYPE_CHECKING:
     from .protocols import RPCProvider
 
 logger = logging.getLogger(__name__)
+
+# Default TTL for delegate cache (seconds)
+_DELEGATE_CACHE_TTL = 30
 
 
 class StakingMixin:
@@ -54,6 +58,50 @@ class StakingMixin:
             """At runtime, return self (duck typing)."""
             return self
 
+    # ------------------------------------------------------------------
+    # Internal: Delegate Cache (fixes N+1 queries — C2)
+    # ------------------------------------------------------------------
+
+    _delegates_cache: Optional[List[Dict[str, Any]]] = None
+    _delegates_cache_time: float = 0.0
+
+    def _get_cached_delegates(self, ttl_seconds: int = _DELEGATE_CACHE_TTL) -> List[Dict[str, Any]]:
+        """
+        Get delegates with TTL-based caching.
+
+        Avoids the N+1 query problem where get_delegate_info(),
+        get_delegate_take(), is_delegate(), and get_nominators() each
+        make a separate RPC call to fetch the full delegate list.
+
+        Args:
+            ttl_seconds: Cache time-to-live in seconds (default: 30)
+
+        Returns:
+            List of delegate info dicts
+        """
+        now = time.monotonic()
+        if self._delegates_cache is not None and (now - self._delegates_cache_time) < ttl_seconds:
+            return self._delegates_cache
+
+        try:
+            result = self._rpc()._call_rpc("staking_getDelegates", [])
+            self._delegates_cache = result if result else []
+            self._delegates_cache_time = now
+            return self._delegates_cache
+        except Exception as e:
+            logger.warning(f"Failed to fetch delegates: {e}")
+            # Return stale cache if available, otherwise empty
+            return self._delegates_cache if self._delegates_cache is not None else []
+
+    def invalidate_delegate_cache(self) -> None:
+        """Invalidate the delegate cache (call after stake/unstake mutations)."""
+        self._delegates_cache = None
+        self._delegates_cache_time = 0.0
+
+    # ------------------------------------------------------------------
+    # Query Methods
+    # ------------------------------------------------------------------
+
     def get_stake(self, address: str) -> int:
         """
         Get staked amount for address.
@@ -63,15 +111,12 @@ class StakingMixin:
 
         Returns:
             Staked amount in base units
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("staking_getStake", [address])
-            if isinstance(result, str):
-                return int(result, 16) if result.startswith("0x") else int(result)
-            return result if result else 0
-        except Exception as e:
-            logger.warning(f"Failed to get stake for {address}: {e}")
-            return 0
+        result = self._rpc()._call_rpc("staking_getStake", [address])
+        return self._rpc()._parse_hex_int(result)
 
     def get_total_stake(self) -> int:
         """
@@ -79,15 +124,12 @@ class StakingMixin:
 
         Returns:
             Total stake amount in base units
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("staking_getTotalStake", [])
-            if isinstance(result, str):
-                return int(result, 16) if result.startswith("0x") else int(result)
-            return result if result else 0
-        except Exception as e:
-            logger.warning(f"Failed to get total stake: {e}")
-            return 0
+        result = self._rpc()._call_rpc("staking_getTotalStake", [])
+        return self._rpc()._parse_hex_int(result)
 
     def get_stake_for_coldkey_and_hotkey(self, coldkey: str, hotkey: str) -> int:
         """
@@ -99,15 +141,12 @@ class StakingMixin:
 
         Returns:
             Stake amount
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("staking_getStakeForPair", [coldkey, hotkey])
-            if isinstance(result, str):
-                return int(result, 16) if result.startswith("0x") else int(result)
-            return result if result else 0
-        except Exception as e:
-            logger.warning(f"Failed to get stake for pair: {e}")
-            return 0
+        result = self._rpc()._call_rpc("staking_getStakeForPair", [coldkey, hotkey])
+        return self._rpc()._parse_hex_int(result)
 
     def get_all_stakes_for_coldkey(self, coldkey: str) -> Dict[str, int]:
         """
@@ -118,13 +157,12 @@ class StakingMixin:
 
         Returns:
             Dict of hotkey -> stake amount
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("staking_getAllStakesForColdkey", [coldkey])
-            return result if result else {}
-        except Exception as e:
-            logger.warning(f"Failed to get stakes for coldkey: {e}")
-            return {}
+        result = self._rpc()._call_rpc("staking_getAllStakesForColdkey", [coldkey])
+        return result if result else {}
 
     def get_delegates(self) -> List[Dict[str, Any]]:
         """
@@ -132,15 +170,16 @@ class StakingMixin:
 
         Returns:
             List of delegate info
-        """
-        try:
-            result = self._rpc()._call_rpc("staking_getDelegates", [])
-            return result if result else []
-        except Exception as e:
-            logger.warning(f"Failed to get delegates: {e}")
-            return []
 
+        Raises:
+            Exception: If RPC call fails
+        """
+        result = self._rpc()._call_rpc("staking_getDelegates", [])
+        return result if result else []
+
+    # ------------------------------------------------------------------
     # Transaction Methods
+    # ------------------------------------------------------------------
 
     def stake(self, address: str, amount: int) -> Dict[str, Any]:
         """
@@ -155,6 +194,7 @@ class StakingMixin:
         """
         try:
             result = self._rpc()._call_rpc("staking_stake", [address, str(amount)])
+            self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to stake for {address}: {e}")
@@ -173,6 +213,7 @@ class StakingMixin:
         """
         try:
             result = self._rpc()._call_rpc("staking_unstake", [address, str(amount)])
+            self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to unstake for {address}: {e}")
@@ -197,6 +238,7 @@ class StakingMixin:
             result = self._rpc()._call_rpc(
                 "staking_delegate", [delegator, validator, str(amount), str(lock_days)]
             )
+            self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to delegate from {delegator} to {validator}: {e}")
@@ -214,32 +256,42 @@ class StakingMixin:
         """
         try:
             result = self._rpc()._call_rpc("staking_undelegate", [delegator])
+            self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to undelegate for {delegator}: {e}")
             return {"success": False, "error": str(e)}
 
-    # Advanced Query Methods
+    # ------------------------------------------------------------------
+    # Batch Query — uses JSON-RPC batch call (C3)
+    # ------------------------------------------------------------------
 
     def batch_get_stakes(self, coldkey_hotkey_pairs: List[tuple]) -> List[int]:
         """
-        Get stakes for multiple coldkey-hotkey pairs.
+        Get stakes for multiple coldkey-hotkey pairs using batch RPC.
+
+        Sends all requests in a single HTTP call instead of sequential loops.
 
         Args:
             coldkey_hotkey_pairs: List of (coldkey, hotkey) tuples
 
         Returns:
-            List of stake amounts
+            List of stake amounts (0 for any that failed)
         """
-        results = []
-        for coldkey, hotkey in coldkey_hotkey_pairs:
-            try:
-                stake = self.get_stake_for_coldkey_and_hotkey(coldkey, hotkey)
-                results.append(stake)
-            except Exception as e:
-                logger.warning(f"Error getting stake for {coldkey}-{hotkey}: {e}")
-                results.append(0)
-        return results
+        if not coldkey_hotkey_pairs:
+            return []
+
+        requests = [
+            {"method": "staking_getStakeForPair", "params": [coldkey, hotkey]}
+            for coldkey, hotkey in coldkey_hotkey_pairs
+        ]
+
+        results = self._rpc()._call_rpc_batch(requests)
+        return [self._rpc()._parse_hex_int(r) for r in results]
+
+    # ------------------------------------------------------------------
+    # Advanced Query Methods
+    # ------------------------------------------------------------------
 
     def get_all_stake_for_coldkey(self, coldkey: str) -> Dict[str, int]:
         """
@@ -250,13 +302,12 @@ class StakingMixin:
 
         Returns:
             Dictionary mapping hotkey to stake amount
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("query_allStakeForColdkey", [coldkey])
-            return result if result else {}
-        except Exception as e:
-            logger.error(f"Error getting all stakes for coldkey {coldkey}: {e}")
-            return {}
+        result = self._rpc()._call_rpc("query_allStakeForColdkey", [coldkey])
+        return result if result else {}
 
     def get_all_stake_for_hotkey(self, hotkey: str) -> Dict[str, int]:
         """
@@ -267,13 +318,12 @@ class StakingMixin:
 
         Returns:
             Dictionary mapping coldkey to stake amount
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("query_allStakeForHotkey", [hotkey])
-            return result if result else {}
-        except Exception as e:
-            logger.error(f"Error getting all stakes for hotkey {hotkey}: {e}")
-            return {}
+        result = self._rpc()._call_rpc("query_allStakeForHotkey", [hotkey])
+        return result if result else {}
 
     def get_total_stake_for_coldkey(self, coldkey: str) -> int:
         """
@@ -284,13 +334,12 @@ class StakingMixin:
 
         Returns:
             Total stake amount
+
+        Raises:
+            Exception: If RPC call fails
         """
-        try:
-            result = self._rpc()._call_rpc("query_totalStakeForColdkey", [coldkey])
-            return int(result) if result else 0
-        except Exception as e:
-            logger.error(f"Error getting total stake for coldkey {coldkey}: {e}")
-            return 0
+        result = self._rpc()._call_rpc("query_totalStakeForColdkey", [coldkey])
+        return int(result) if result else 0
 
     def get_total_stake_for_hotkey(self, hotkey: str) -> int:
         """
@@ -301,19 +350,22 @@ class StakingMixin:
 
         Returns:
             Total stake amount
-        """
-        try:
-            result = self._rpc()._call_rpc("query_totalStakeForHotkey", [hotkey])
-            return int(result) if result else 0
-        except Exception as e:
-            logger.error(f"Error getting total stake for hotkey {hotkey}: {e}")
-            return 0
 
-    # Delegate Methods
+        Raises:
+            Exception: If RPC call fails
+        """
+        result = self._rpc()._call_rpc("query_totalStakeForHotkey", [hotkey])
+        return int(result) if result else 0
+
+    # ------------------------------------------------------------------
+    # Delegate Methods — uses cached delegates (C2)
+    # ------------------------------------------------------------------
 
     def get_delegate_info(self, hotkey: str) -> Dict[str, Any]:
         """
         Get information about a specific delegate.
+
+        Uses cached delegate list to avoid N+1 RPC queries.
 
         Args:
             hotkey: Delegate hotkey address
@@ -321,21 +373,17 @@ class StakingMixin:
         Returns:
             Delegate information
         """
-        try:
-            # Derive from staking_getDelegates
-            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
-            if delegates:
-                for d in delegates:
-                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
-                        return d
-            return {}
-        except Exception as e:
-            logger.error(f"Error getting delegate info for {hotkey}: {e}")
-            return {}
+        delegates = self._get_cached_delegates()
+        for d in delegates:
+            if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                return d
+        return {}
 
     def get_delegate_take(self, hotkey: str) -> float:
         """
         Get delegate commission rate (take).
+
+        Uses cached delegate list to avoid N+1 RPC queries.
 
         Args:
             hotkey: Delegate hotkey address
@@ -343,22 +391,18 @@ class StakingMixin:
         Returns:
             Commission rate (0-1, e.g., 0.18 = 18%)
         """
-        try:
-            # Derive from staking_getDelegates
-            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
-            if delegates:
-                for d in delegates:
-                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
-                        take = d.get("take", d.get("commission", 0.0))
-                        return float(take) if take else 0.0
-            return 0.0
-        except Exception as e:
-            logger.error(f"Error getting delegate take for {hotkey}: {e}")
-            return 0.0
+        delegates = self._get_cached_delegates()
+        for d in delegates:
+            if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                take = d.get("take", d.get("commission", 0.0))
+                return float(take) if take else 0.0
+        return 0.0
 
     def is_delegate(self, hotkey: str) -> bool:
         """
         Check if a hotkey is a delegate.
+
+        Uses cached delegate list to avoid N+1 RPC queries.
 
         Args:
             hotkey: Hotkey address
@@ -366,17 +410,11 @@ class StakingMixin:
         Returns:
             True if is delegate, False otherwise
         """
-        try:
-            # Derive from staking_getDelegates
-            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
-            if delegates:
-                for d in delegates:
-                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
-                        return True
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if {hotkey} is delegate: {e}")
-            return False
+        delegates = self._get_cached_delegates()
+        return any(
+            d.get("hotkey") == hotkey or d.get("address") == hotkey
+            for d in delegates
+        )
 
     def get_stake_history(self, address: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -388,54 +426,40 @@ class StakingMixin:
 
         Returns:
             List of stake events
+
+        Raises:
+            NotImplementedError: This endpoint is not yet available on LuxTensor server
         """
-        try:
-            # Stake history not available as direct RPC on LuxTensor server
-            logger.warning("Stake history is not available on LuxTensor server")
-            return []
-        except Exception as e:
-            logger.error(f"Error getting stake history for {address}: {e}")
-            return []
+        raise NotImplementedError(
+            "Stake history is not yet available on the LuxTensor RPC server. "
+            "Track this feature at https://github.com/moderntensor/luxtensor/issues"
+        )
 
     def get_delegation(self, delegator: str) -> Optional[Dict[str, Any]]:
         """Get delegation info for a delegator."""
-        try:
-            result = self._rpc()._call_rpc("staking_getDelegation", [delegator])
-            return result
-        except Exception as e:
-            logger.warning(f"Failed to get delegation for {delegator}: {e}")
-            return None
+        return self._rpc()._safe_call_rpc("staking_getDelegation", [delegator])
 
     def get_nominators(self, hotkey: str) -> List[str]:
-        """Get list of nominators for a delegate."""
-        try:
-            # Derive from staking_getDelegates
-            delegates = self._rpc()._call_rpc("staking_getDelegates", [])
-            if delegates:
-                for d in delegates:
-                    if d.get("hotkey") == hotkey or d.get("address") == hotkey:
-                        nominators = d.get("nominators", [])
-                        return nominators if isinstance(nominators, list) else []
-            return []
-        except Exception as e:
-            logger.error(f"Error getting nominators for {hotkey}: {e}")
-            raise
+        """
+        Get list of nominators for a delegate.
+
+        Uses cached delegate list to avoid N+1 RPC queries.
+        """
+        delegates = self._get_cached_delegates()
+        for d in delegates:
+            if d.get("hotkey") == hotkey or d.get("address") == hotkey:
+                nominators = d.get("nominators", [])
+                return nominators if isinstance(nominators, list) else []
+        return []
 
     def get_staking_minimums(self) -> Dict[str, int]:
         """Get minimum staking requirements."""
-        try:
-            result = self._rpc()._call_rpc("staking_getMinimums", [])
-            minimums = {}
-            if result:
-                min_stake = result.get("minValidatorStake", HEX_ZERO)
-                min_del = result.get("minDelegation", HEX_ZERO)
-                minimums["minValidatorStake"] = (
-                    int(min_stake, 16) if min_stake.startswith("0x") else int(min_stake)
-                )
-                minimums["minDelegation"] = (
-                    int(min_del, 16) if min_del.startswith("0x") else int(min_del)
-                )
-            return minimums
-        except Exception as e:
-            logger.warning(f"Failed to get staking minimums: {e}")
+        result = self._rpc()._safe_call_rpc("staking_getMinimums", [])
+        if not result:
             return {"minValidatorStake": 0, "minDelegation": 0}
+
+        parse = self._rpc()._parse_hex_int
+        return {
+            "minValidatorStake": parse(result.get("minValidatorStake", HEX_ZERO)),
+            "minDelegation": parse(result.get("minDelegation", HEX_ZERO)),
+        }

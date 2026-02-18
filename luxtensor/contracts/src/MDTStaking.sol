@@ -140,6 +140,12 @@ contract MDTStaking is Ownable, ReentrancyGuard {
         uint256 bonus = (stake.amount * stake.bonusRate) / 10000;
         uint256 totalReturn = stake.amount + bonus;
 
+        // M-4 FIX: Verify contract has sufficient balance for principal + bonus
+        require(
+            token.balanceOf(address(this)) >= totalReturn,
+            "Insufficient bonus pool balance"
+        );
+
         stake.withdrawn = true;
         totalStaked -= stake.amount;
         totalBonusPaid += bonus;

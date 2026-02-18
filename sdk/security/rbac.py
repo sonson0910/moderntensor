@@ -7,6 +7,7 @@ across the ModernTensor network.
 
 import logging
 import functools
+import threading
 from typing import Set, Dict, Optional, List
 from enum import Enum
 from dataclasses import dataclass, field
@@ -251,7 +252,8 @@ class AccessControl:
     """
 
     def __init__(self):
-        """Initialize access control."""
+        """Initialize access control with thread-safe locking."""
+        self._lock = threading.RLock()
         self.role_manager = RoleManager()
         self.users: Dict[str, User] = {}
         self._permission_cache: Dict[str, Set[Permission]] = {}
@@ -275,19 +277,20 @@ class AccessControl:
         Returns:
             Created user
         """
-        if uid in self.users:
-            raise ValueError(f"User {uid} already exists")
+        with self._lock:
+            if uid in self.users:
+                raise ValueError(f"User {uid} already exists")
 
-        user = User(
-            uid=uid,
-            roles=set(roles or []),
-            metadata=metadata or {},
-        )
+            user = User(
+                uid=uid,
+                roles=set(roles or []),
+                metadata=metadata or {},
+            )
 
-        self.users[uid] = user
-        logger.info(f"Created user {uid} with roles: {[r.value for r in user.roles]}")
+            self.users[uid] = user
+            logger.info(f"Created user {uid} with roles: {[r.value for r in user.roles]}")
 
-        return user
+            return user
 
     def get_user(self, uid: str) -> Optional[User]:
         """
@@ -308,10 +311,11 @@ class AccessControl:
         Args:
             uid: User identifier
         """
-        if uid in self.users:
-            del self.users[uid]
-            self._invalidate_cache(uid)
-            logger.info(f"Deleted user {uid}")
+        with self._lock:
+            if uid in self.users:
+                del self.users[uid]
+                self._invalidate_cache(uid)
+                logger.info(f"Deleted user {uid}")
 
     def assign_role(self, uid: str, role: Role):
         """
@@ -321,13 +325,14 @@ class AccessControl:
             uid: User identifier
             role: Role to assign
         """
-        user = self.get_user(uid)
-        if not user:
-            raise ValueError(f"User {uid} not found")
+        with self._lock:
+            user = self.get_user(uid)
+            if not user:
+                raise ValueError(f"User {uid} not found")
 
-        user.add_role(role)
-        self._invalidate_cache(uid)
-        logger.info(f"Assigned role {role.value} to user {uid}")
+            user.add_role(role)
+            self._invalidate_cache(uid)
+            logger.info(f"Assigned role {role.value} to user {uid}")
 
     def revoke_role(self, uid: str, role: Role):
         """
@@ -337,13 +342,14 @@ class AccessControl:
             uid: User identifier
             role: Role to revoke
         """
-        user = self.get_user(uid)
-        if not user:
-            raise ValueError(f"User {uid} not found")
+        with self._lock:
+            user = self.get_user(uid)
+            if not user:
+                raise ValueError(f"User {uid} not found")
 
-        user.remove_role(role)
-        self._invalidate_cache(uid)
-        logger.info(f"Revoked role {role.value} from user {uid}")
+            user.remove_role(role)
+            self._invalidate_cache(uid)
+            logger.info(f"Revoked role {role.value} from user {uid}")
 
     def grant_permission(self, uid: str, permission: Permission):
         """
@@ -353,13 +359,14 @@ class AccessControl:
             uid: User identifier
             permission: Permission to grant
         """
-        user = self.get_user(uid)
-        if not user:
-            raise ValueError(f"User {uid} not found")
+        with self._lock:
+            user = self.get_user(uid)
+            if not user:
+                raise ValueError(f"User {uid} not found")
 
-        user.custom_permissions.add(permission)
-        self._invalidate_cache(uid)
-        logger.info(f"Granted permission {permission.value} to user {uid}")
+            user.custom_permissions.add(permission)
+            self._invalidate_cache(uid)
+            logger.info(f"Granted permission {permission.value} to user {uid}")
 
     def revoke_permission(self, uid: str, permission: Permission):
         """
@@ -369,13 +376,14 @@ class AccessControl:
             uid: User identifier
             permission: Permission to revoke
         """
-        user = self.get_user(uid)
-        if not user:
-            raise ValueError(f"User {uid} not found")
+        with self._lock:
+            user = self.get_user(uid)
+            if not user:
+                raise ValueError(f"User {uid} not found")
 
-        user.custom_permissions.discard(permission)
-        self._invalidate_cache(uid)
-        logger.info(f"Revoked permission {permission.value} from user {uid}")
+            user.custom_permissions.discard(permission)
+            self._invalidate_cache(uid)
+            logger.info(f"Revoked permission {permission.value} from user {uid}")
 
     def get_user_permissions(self, uid: str) -> Set[Permission]:
         """
@@ -387,29 +395,30 @@ class AccessControl:
         Returns:
             Set of permissions
         """
-        # Check cache
-        if uid in self._permission_cache:
-            cache_time = self._cache_timestamps.get(uid)
-            if cache_time and datetime.now(timezone.utc) - cache_time < self._cache_ttl:
-                return self._permission_cache[uid].copy()
+        with self._lock:
+            # Check cache
+            if uid in self._permission_cache:
+                cache_time = self._cache_timestamps.get(uid)
+                if cache_time and datetime.now(timezone.utc) - cache_time < self._cache_ttl:
+                    return self._permission_cache[uid].copy()
 
-        user = self.get_user(uid)
-        if not user:
-            return set()
+            user = self.get_user(uid)
+            if not user:
+                return set()
 
-        # Aggregate permissions from roles
-        permissions = set()
-        for role in user.roles:
-            permissions.update(self.role_manager.get_role_permissions(role))
+            # Aggregate permissions from roles
+            permissions = set()
+            for role in user.roles:
+                permissions.update(self.role_manager.get_role_permissions(role))
 
-        # Add custom permissions
-        permissions.update(user.custom_permissions)
+            # Add custom permissions
+            permissions.update(user.custom_permissions)
 
-        # Cache result
-        self._permission_cache[uid] = permissions
-        self._cache_timestamps[uid] = datetime.now(timezone.utc)
+            # Cache result
+            self._permission_cache[uid] = permissions
+            self._cache_timestamps[uid] = datetime.now(timezone.utc)
 
-        return permissions.copy()
+            return permissions.copy()
 
     def has_permission(self, uid: str, permission: Permission) -> bool:
         """

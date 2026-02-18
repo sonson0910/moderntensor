@@ -80,6 +80,34 @@ pub struct RpcServer {
 }
 
 impl RpcServer {
+    /// M-3 FIX: Builder pattern for constructing `RpcServer`.
+    ///
+    /// Consolidates the 6 separate constructors into a single composable API.
+    /// Required fields: `db`, `chain_id`. All other fields have sensible defaults.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let server = RpcServer::builder(db, 8899)
+    ///     .metagraph(metagraph)
+    ///     .broadcaster(broadcaster)
+    ///     .mempool(mempool)
+    ///     .validators(validator_set)
+    ///     .data_dir("./data".into())
+    ///     .build();
+    /// ```
+    pub fn builder(db: Arc<BlockchainDB>, chain_id: u64) -> RpcServerBuilder {
+        RpcServerBuilder {
+            db,
+            chain_id,
+            metagraph: None,
+            broadcaster: None,
+            mempool: None,
+            pending_txs: None,
+            validators: None,
+            data_dir: None,
+        }
+    }
+
     /// Create a new RPC server with persistent MetagraphDB
     pub fn new(
         db: Arc<BlockchainDB>,
@@ -853,6 +881,107 @@ impl RpcServer {
 
         // NOTE: dev_faucet is registered in eth_rpc.rs register_eth_methods()
         // which updates EvmState.balances - the source queried by eth_getBalance
+    }
+}
+
+// ─── M-3 FIX: Builder Pattern ────────────────────────────────────────
+
+/// Builder for constructing `RpcServer` with composable configuration.
+///
+/// Required: `db` and `chain_id` (set via `RpcServer::builder()`).
+/// Optional: `metagraph`, `broadcaster`, `mempool`, `pending_txs`,
+///           `validators`, `data_dir`.
+pub struct RpcServerBuilder {
+    db: Arc<BlockchainDB>,
+    chain_id: u64,
+    metagraph: Option<Arc<MetagraphDB>>,
+    broadcaster: Option<Arc<dyn TransactionBroadcaster>>,
+    mempool: Option<Arc<RwLock<Mempool>>>,
+    pending_txs: Option<Arc<RwLock<HashMap<Hash, Transaction>>>>,
+    validators: Option<Arc<RwLock<ValidatorSet>>>,
+    data_dir: Option<PathBuf>,
+}
+
+impl RpcServerBuilder {
+    /// Set persistent MetagraphDB (defaults to temp dir if not provided).
+    pub fn metagraph(mut self, m: Arc<MetagraphDB>) -> Self {
+        self.metagraph = Some(m);
+        self
+    }
+
+    /// Set transaction broadcaster (defaults to `NoOpBroadcaster`).
+    pub fn broadcaster(mut self, b: Arc<dyn TransactionBroadcaster>) -> Self {
+        self.broadcaster = Some(b);
+        self
+    }
+
+    /// Set external mempool (defaults to a new empty mempool).
+    pub fn mempool(mut self, m: Arc<RwLock<Mempool>>) -> Self {
+        self.mempool = Some(m);
+        self
+    }
+
+    /// Set shared pending transactions map (defaults to a new empty map).
+    pub fn pending_txs(mut self, p: Arc<RwLock<HashMap<Hash, Transaction>>>) -> Self {
+        self.pending_txs = Some(p);
+        self
+    }
+
+    /// Set validator set (defaults to an empty set).
+    pub fn validators(mut self, v: Arc<RwLock<ValidatorSet>>) -> Self {
+        self.validators = Some(v);
+        self
+    }
+
+    /// Set data directory for checkpoints (defaults to `./data`).
+    pub fn data_dir(mut self, d: PathBuf) -> Self {
+        self.data_dir = Some(d);
+        self
+    }
+
+    /// Build the `RpcServer`.
+    ///
+    /// Creates a temp MetagraphDB if none was provided.
+    pub fn build(self) -> RpcServer {
+        let metagraph = self.metagraph.unwrap_or_else(|| {
+            let temp_dir =
+                std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
+            Arc::new(MetagraphDB::open(&temp_dir).unwrap_or_else(|e| {
+                tracing::error!("MetagraphDB::open failed: {} — trying fallback", e);
+                let fallback =
+                    std::env::temp_dir().join(format!("luxtensor_fb_{}", std::process::id()));
+                MetagraphDB::open(&fallback).unwrap_or_else(|e2| {
+                    tracing::error!("FATAL: MetagraphDB fallback also failed: {}", e2);
+                    std::process::exit(1);
+                })
+            }))
+        });
+
+        let subnets = Arc::new(RwLock::new(RpcServer::load_subnets_cache(&metagraph)));
+        let neurons = Arc::new(RwLock::new(RpcServer::load_neurons_cache(&metagraph)));
+        let data_dir = self.data_dir.unwrap_or_else(|| PathBuf::from("./data"));
+
+        RpcServer {
+            db: self.db,
+            validators: self.validators.unwrap_or_else(|| Arc::new(RwLock::new(ValidatorSet::new()))),
+            metagraph,
+            subnets,
+            neurons,
+            weights: Arc::new(RwLock::new(HashMap::new())),
+            pending_txs: self.pending_txs.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
+            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            broadcaster: self.broadcaster.unwrap_or_else(|| Arc::new(NoOpBroadcaster)),
+            mempool: self.mempool.unwrap_or_else(|| Arc::new(RwLock::new(Mempool::new()))),
+            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
+                CommitRevealConfig::default(),
+            ))),
+            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            data_dir,
+            cached_block_number: Arc::new(AtomicU64::new(0)),
+            cached_chain_id: Arc::new(AtomicU64::new(self.chain_id)),
+            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(self.chain_id))),
+        }
     }
 }
 

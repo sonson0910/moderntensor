@@ -16,6 +16,34 @@ from datetime import datetime, timedelta
 TOTAL_SUPPLY = 21_000_000_000_000_000_000_000_000
 DECIMALS = 18
 
+# Maximum valid token amount (prevents integer overflow in arithmetic)
+# Set to 2x total supply to allow headroom for intermediate calculations
+MAX_TOKEN_AMOUNT = TOTAL_SUPPLY * 2
+
+
+def validate_token_amount(amount: int, label: str = "amount") -> int:
+    """
+    Validate token amount is within safe bounds.
+
+    Args:
+        amount: Token amount to validate
+        label: Human-readable label for error messages
+
+    Returns:
+        The validated amount
+
+    Raises:
+        ValueError: If amount is negative or exceeds MAX_TOKEN_AMOUNT
+    """
+    if amount < 0:
+        raise ValueError(f"{label} cannot be negative: {amount}")
+    if amount > MAX_TOKEN_AMOUNT:
+        raise ValueError(
+            f"{label} exceeds maximum ({amount} > {MAX_TOKEN_AMOUNT}). "
+            "Possible integer overflow."
+        )
+    return amount
+
 
 class AllocationCategory(Enum):
     """Token allocation categories."""
@@ -61,6 +89,7 @@ class VestingSchedule:
 
     def vested_amount(self, total: int, days_since_tge: int) -> int:
         """Calculate vested amount at a given day since TGE."""
+        validate_token_amount(total, "total vesting amount")
         # TGE unlock
         tge_amount = total * self.tge_percent // 100
         vesting_amount = total - tge_amount
@@ -270,6 +299,7 @@ class TokenAllocation:
             True if successful, False if insufficient balance
         """
         available = self.minted.get(category, 0)
+        validate_token_amount(amount, "vesting amount")
 
         if amount > available:
             return False
@@ -353,6 +383,7 @@ class TokenAllocation:
         Raises:
             ValueError if emission pool exhausted
         """
+        validate_token_amount(amount, "emission amount")
         if amount > self.emission_pool:
             raise ValueError("Emission pool exhausted")
 

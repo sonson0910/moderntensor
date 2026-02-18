@@ -9,6 +9,7 @@ Month 2 - Week 3-4: Security Hardening
 
 import time
 import re
+import json
 import hashlib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Any
@@ -705,7 +706,6 @@ class AuditLogger:
         else:
             prev_hash = self.audit_log[-1].get('hash', '')
 
-        import json
         details_str = json.dumps(details or {}, sort_keys=True)
         data = f"{prev_hash}|{event_type}|{actor}|{action}|{details_str}".encode()
         return hashlib.sha256(data).hexdigest()

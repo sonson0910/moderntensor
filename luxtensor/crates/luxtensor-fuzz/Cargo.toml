@@ -44,3 +44,9 @@ name = "address_parser"
 path = "fuzz_targets/address_parser.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "consensus_message"
+path = "fuzz_targets/consensus_message.rs"
+test = false
+doc = false

@@ -317,6 +317,34 @@ class CircuitBreakerRegistry:
             for cb in self._breakers.values():
                 cb.reset()
 
+    def remove(self, name: str) -> bool:
+        """
+        Remove a circuit breaker from the registry.
+
+        Args:
+            name: Name of the circuit breaker to remove
+
+        Returns:
+            True if removed, False if not found
+        """
+        with self._registry_lock:
+            if name in self._breakers:
+                del self._breakers[name]
+                return True
+            return False
+
+    def clear(self) -> int:
+        """
+        Remove all circuit breakers from the registry.
+
+        Returns:
+            Number of circuit breakers removed
+        """
+        with self._registry_lock:
+            count = len(self._breakers)
+            self._breakers.clear()
+            return count
+
 
 # Global registry
 def get_circuit_breaker(name: str) -> CircuitBreaker:

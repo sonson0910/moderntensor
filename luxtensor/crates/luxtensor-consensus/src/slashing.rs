@@ -258,6 +258,8 @@ impl SlashingManager {
     }
 
     /// Execute slash on a validator
+    ///
+    /// LOCK ORDER: validator_set → jailed → slash_history (matches process_unjail() to prevent ABBA deadlock)
     pub fn slash(
         &self,
         evidence: SlashingEvidence,

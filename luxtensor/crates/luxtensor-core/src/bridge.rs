@@ -161,6 +161,15 @@ pub struct BridgeConfig {
     pub relayers: Vec<Address>,
     /// Whether the bridge is currently paused.
     pub paused: bool,
+    /// When `true`, skip Merkle proof verification and rely only on relayer
+    /// attestations.  This flag replaces the previous magic "zero state root"
+    /// sentinel.  It exists for backward compatibility until the source-chain
+    /// light client is fully integrated, at which point it should be removed.
+    ///
+    /// # Security
+    /// Enabling this reduces the bridge security model to attestation-only.
+    /// Do NOT enable in production once Merkle verification is available.
+    pub attestation_only_mode: bool,
 }
 
 impl Default for BridgeConfig {
@@ -171,6 +180,7 @@ impl Default for BridgeConfig {
             max_message_age_blocks: 50_400,             // ~7 days
             relayers: Vec::new(),
             paused: false,
+            attestation_only_mode: false,
         }
     }
 }
@@ -532,12 +542,9 @@ impl Bridge for InMemoryBridge {
             ));
         }
 
-        // Verify Merkle inclusion proof against source chain state root.
-        // A zero state root signals attestation-only mode for backward
-        // compatibility; once the source chain light client is fully integrated,
-        // this fallback can be removed.
-        let zero_root: Hash = [0u8; 32];
-        if proof.message.source_state_root != zero_root {
+        // H-1 FIX: Use explicit config flag instead of magic zero-root sentinel.
+        // When attestation_only_mode is false, Merkle proof is always verified.
+        if !self.config.attestation_only_mode {
             if !verify_merkle_proof(
                 &proof.message.message_hash,
                 &proof.merkle_proof,
@@ -767,9 +774,8 @@ impl Bridge for PersistentBridge {
             ));
         }
 
-        // Verify Merkle inclusion proof.
-        let zero_root: Hash = [0u8; 32];
-        if proof.message.source_state_root != zero_root {
+        // H-1 FIX: Use explicit config flag instead of magic zero-root sentinel.
+        if !self.config.attestation_only_mode {
             if !verify_merkle_proof(
                 &proof.message.message_hash,
                 &proof.merkle_proof,
@@ -884,6 +890,7 @@ mod tests {
             max_message_age_blocks: 1_000,
             relayers: relayer_addrs,
             paused: false,
+            attestation_only_mode: true, // Tests use zero state roots
         });
         (bridge, keys)
     }
@@ -1255,6 +1262,7 @@ mod tests {
                 max_message_age_blocks: 1_000,
                 relayers: relayer_addrs,
                 paused: false,
+                attestation_only_mode: true, // Tests use zero state roots
             },
         )
         .unwrap();

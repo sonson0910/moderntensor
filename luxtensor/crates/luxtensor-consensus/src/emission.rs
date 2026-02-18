@@ -95,6 +95,7 @@ impl EmissionController {
     }
 
     /// Calculate base emission for a block height (before utility adjustment)
+    #[must_use]
     pub fn base_emission(&self, block_height: u64) -> u128 {
         // SECURITY: Guard against zero halving_interval (misconfigured config)
         if self.config.halving_interval == 0 {
@@ -119,6 +120,7 @@ impl EmissionController {
     }
 
     /// Calculate adjusted emission based on utility
+    #[must_use]
     pub fn adjusted_emission(&self, block_height: u64, utility: &UtilityMetrics) -> u128 {
         let base = self.base_emission(block_height);
         let utility_score = utility.utility_score();
@@ -142,6 +144,7 @@ impl EmissionController {
     }
 
     /// Process block emission and return amount to mint
+    #[must_use]
     pub fn process_block(&mut self, block_height: u64, utility: &UtilityMetrics) -> EmissionResult {
         let emission = self.adjusted_emission(block_height, utility);
 

@@ -225,3 +225,10 @@ final_test*.py
 analyze_*.py
 find_missing*.py
 cli_analysis_output*.txt
+
+# Dev utility scripts (should live in scripts/)
+append_*.py
+check_exports*.py
+detect_exports*.py
+migrate_*.py
+test_client_refactoring*.py
