@@ -74,7 +74,10 @@ pub fn create_test_block(
     Block::new(header, transactions)
 }
 
-/// Predefined test addresses (matching Hardhat defaults)
+/// Well-known Hardhat test addresses. These are for testing ONLY.
+/// NEVER use these addresses in production configuration, genesis allocation,
+/// or any code that runs on mainnet (chain_id=8898).
+/// See: https://hardhat.org/hardhat-network/docs/reference#initial-state
 pub mod test_addresses {
     pub const ADDR_1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     pub const ADDR_2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";

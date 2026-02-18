@@ -46,6 +46,9 @@ pub struct AccountBalance {
     pub locked_until: u64,  // block height
 }
 
+/// Maximum number of reward history entries to keep per address.
+const MAX_REWARD_HISTORY_PER_ADDRESS: usize = 1_000;
+
 /// Reward Executor - processes epochs and credits rewards
 pub struct RewardExecutor {
     distributor: RewardDistributor,
@@ -70,11 +73,19 @@ pub struct RewardExecutor {
     // DAO address
     #[allow(dead_code)] // Reserved for direct DAO treasury interaction
     dao_address: [u8; 20],
+
+    // Configurable epoch length (blocks per epoch)
+    epoch_length: u64,
 }
 
 impl RewardExecutor {
-    /// Create new reward executor
+    /// Create new reward executor with default epoch length (32).
     pub fn new(dao_address: [u8; 20]) -> Self {
+        Self::with_epoch_length(dao_address, 32)
+    }
+
+    /// Create new reward executor with a configurable epoch length.
+    pub fn with_epoch_length(dao_address: [u8; 20], epoch_length: u64) -> Self {
         Self {
             distributor: RewardDistributor::default_with_dao(dao_address),
             emission: RwLock::new(EmissionController::new(EmissionConfig::default())),
@@ -85,6 +96,7 @@ impl RewardExecutor {
             dao_balance: RwLock::new(0),
             current_epoch: RwLock::new(0),
             dao_address,
+            epoch_length,
         }
     }
 
@@ -102,8 +114,7 @@ impl RewardExecutor {
         // 🔧 FIX: process_block() emits for a single block, but we call it once per epoch.
         // To correctly emit for all blocks in the epoch, we must call it for each block height
         // in the epoch range, accumulating the total emission.
-        let epoch_length = 32u64; // Should match ConsensusConfig.epoch_length
-        let epoch_start = block_height.saturating_sub(epoch_length);
+        let epoch_start = block_height.saturating_sub(self.epoch_length);
         let mut total_emission = 0u128;
         {
             let mut emission = self.emission.write();
@@ -159,8 +170,7 @@ impl RewardExecutor {
         subnets: &[SubnetInfo],
     ) -> EpochResult {
         // 🔧 FIX: Accumulate emission for all blocks in the epoch, not just one
-        let epoch_length = 32u64; // Should match ConsensusConfig.epoch_length
-        let epoch_start = block_height.saturating_sub(epoch_length);
+        let epoch_start = block_height.saturating_sub(self.epoch_length);
         let mut total_emission = 0u128;
         {
             let mut emission = self.emission.write();
@@ -254,23 +264,9 @@ impl RewardExecutor {
         };
 
         // Credit rewards to pending balances
+        // NOTE: credit_rewards() already handles dao_allocation, community_ecosystem_allocation,
+        // and undistributed infrastructure pool → dao_balance. No additional crediting needed.
         self.credit_rewards(&combined, epoch);
-
-        // 🔧 FIX: Credit community_ecosystem + infrastructure to DAO pending rewards
-        // credit_rewards() already handles dao_allocation → dao_balance,
-        // so we only add the pools that credit_rewards() doesn't handle
-        let infra_pool = (total_emission * config.infrastructure_share_bps as u128) / 10_000;
-        let uncredited_pools = community_pool + infra_pool;
-        if uncredited_pools > 0 {
-            let mut pending = self.pending_rewards.write();
-            let entry = pending.entry(self.dao_address).or_insert_with(|| PendingReward {
-                amount: 0,
-                last_epoch: epoch,
-                accumulated_from_epoch: epoch,
-            });
-            entry.amount = entry.amount.saturating_add(uncredited_pools);
-            entry.last_epoch = epoch;
-        }
 
         // Update current epoch
         *self.current_epoch.write() = epoch;
@@ -311,7 +307,7 @@ impl RewardExecutor {
             entry.amount = entry.amount.saturating_add(amount);
             entry.last_epoch = epoch;
 
-            // Record history
+            // Record history (prune to keep bounded)
             let addr_history = history.entry(address).or_insert_with(Vec::new);
             addr_history.push(RewardHistoryEntry {
                 epoch,
@@ -319,6 +315,10 @@ impl RewardExecutor {
                 reward_type,
                 claimed: false,
             });
+            if addr_history.len() > MAX_REWARD_HISTORY_PER_ADDRESS {
+                let drain_count = addr_history.len() - MAX_REWARD_HISTORY_PER_ADDRESS;
+                addr_history.drain(..drain_count);
+            }
         };
 
         // Credit miners

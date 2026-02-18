@@ -441,11 +441,20 @@ impl WeightConsensusManager {
         proposal.status = ProposalStatus::Applied;
 
         // Record in history
-        self.applied_history.write().push((
-            proposal.subnet_uid,
-            proposal_id,
-            proposal.weights.clone(),
-        ));
+        {
+            const MAX_APPLIED_HISTORY: usize = 1000;
+            let mut history = self.applied_history.write();
+            history.push((
+                proposal.subnet_uid,
+                proposal_id,
+                proposal.weights.clone(),
+            ));
+            // Prune old history to prevent unbounded memory growth
+            if history.len() > MAX_APPLIED_HISTORY {
+                let excess = history.len() - MAX_APPLIED_HISTORY;
+                history.drain(..excess);
+            }
+        }
 
         info!("Proposal {:?} finalized, applying {} weights", proposal_id, proposal.weights.len());
 

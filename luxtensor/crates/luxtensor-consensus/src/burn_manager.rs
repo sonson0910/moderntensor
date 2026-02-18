@@ -80,6 +80,9 @@ impl Default for BurnCounters {
     }
 }
 
+/// Maximum number of burn events to retain in memory.
+const MAX_BURN_EVENTS: usize = 100_000;
+
 /// Burn Manager - tracks and executes burns
 pub struct BurnManager {
     config: BurnConfig,
@@ -179,7 +182,12 @@ impl BurnManager {
         source: Option<[u8; 20]>,
     ) {
         if amount > 0 {
-            self.events.write().push(BurnEvent { burn_type, amount, block_height, source });
+            let mut events = self.events.write();
+            if events.len() >= MAX_BURN_EVENTS {
+                // Prune oldest half to amortise cost
+                events.drain(..MAX_BURN_EVENTS / 2);
+            }
+            events.push(BurnEvent { burn_type, amount, block_height, source });
         }
     }
 

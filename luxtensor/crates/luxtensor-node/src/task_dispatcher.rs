@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 // ============================================================
@@ -140,6 +140,8 @@ pub struct TaskDispatcher {
     pending_queue: Arc<RwLock<VecDeque<PendingTask>>>,
     /// Active task assignments
     assignments: Arc<RwLock<HashMap<[u8; 32], TaskAssignment>>>,
+    /// Original task metadata preserved for re-queue on timeout
+    task_metadata: Arc<RwLock<HashMap<[u8; 32], PendingTask>>>,
     /// Registered miners
     miners: Arc<RwLock<HashMap<[u8; 20], MinerInfo>>>,
     /// Completed results
@@ -154,6 +156,7 @@ impl TaskDispatcher {
             db,
             pending_queue: Arc::new(RwLock::new(VecDeque::new())),
             assignments: Arc::new(RwLock::new(HashMap::new())),
+            task_metadata: Arc::new(RwLock::new(HashMap::new())),
             miners: Arc::new(RwLock::new(HashMap::new())),
             results: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -224,11 +227,13 @@ impl TaskDispatcher {
         miner: [u8; 20],
         _signature: Vec<u8>,
     ) -> Result<TaskAssignment, String> {
-        // Check if task is still pending
+        // Check if task is still pending and preserve its metadata for potential re-queue
         {
             let mut queue = self.pending_queue.write();
             if let Some(pos) = queue.iter().position(|task| task.task_id == task_id) {
-                queue.remove(pos);
+                let original_task = queue.remove(pos).unwrap();
+                // 🔧 FIX: Store original task metadata so timeout re-queue preserves it
+                self.task_metadata.write().insert(task_id, original_task);
             } else {
                 return Err("Task not in pending queue".into());
             }
@@ -321,10 +326,14 @@ impl TaskDispatcher {
             }
         }
 
-        // Remove from assignments
+        // Remove from assignments and clean up metadata
         {
             let mut assignments = self.assignments.write();
             assignments.remove(&task_id);
+        }
+        {
+            // 🔧 FIX: Clean up preserved metadata on successful completion
+            self.task_metadata.write().remove(&task_id);
         }
 
         info!("Task completed: 0x{}", hex::encode(&task_id[..8]));
@@ -368,20 +377,28 @@ impl TaskDispatcher {
                 }
             }
 
-            // Re-queue if retries remaining (need to reconstruct PendingTask)
+            // Re-queue if retries remaining, using preserved original metadata
             if a.retry_count < self.config.max_retries {
-                // Get task details from assignment for re-queue
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let requeue_task = PendingTask {
-                    task_id,
-                    model_hash: String::new(), // Details lost on retry
-                    input_hash: [0u8; 32],
-                    reward: 0,
-                    created_at: now,
-                };
+                // 🔧 FIX: Retrieve original task metadata instead of creating empty defaults
+                let requeue_task = self
+                    .task_metadata
+                    .write()
+                    .remove(&task_id)
+                    .unwrap_or_else(|| {
+                        // Fallback: should never happen if metadata was stored on claim
+                        warn!("Task metadata missing for 0x{}, using defaults", hex::encode(&task_id[..8]));
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        PendingTask {
+                            task_id,
+                            model_hash: String::new(),
+                            input_hash: [0u8; 32],
+                            reward: 0,
+                            created_at: now,
+                        }
+                    });
                 let mut queue = self.pending_queue.write();
                 queue.push_front(requeue_task);
                 warn!("Task timed out, re-queued: 0x{}", hex::encode(&task_id[..8]));

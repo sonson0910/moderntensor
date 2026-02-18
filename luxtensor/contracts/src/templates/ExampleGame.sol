@@ -32,6 +32,9 @@ contract ExampleGame {
     /// @notice Number of games played
     uint256 public totalGames;
 
+    /// @notice Contract owner
+    address public owner;
+
     // ========== EVENTS ==========
 
     event GameRequested(address indexed player, bytes32 indexed requestId);
@@ -44,13 +47,21 @@ contract ExampleGame {
 
     // ========== CONSTRUCTOR ==========
 
+    /// @notice Only owner modifier
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner");
+        _;
+    }
+
     /**
      * @param _aiOracle Address of deployed AIOracle contract
      * @param _modelHash Hash of the approved game AI model
      */
     constructor(address _aiOracle, bytes32 _modelHash) {
+        require(_aiOracle != address(0), "Invalid oracle address");
         aiOracle = AIOracle(_aiOracle);
         gameModelHash = _modelHash;
+        owner = msg.sender;
     }
 
     // ========== GAME FUNCTIONS ==========
@@ -151,11 +162,10 @@ contract ExampleGame {
     // ========== ADMIN ==========
 
     /**
-     * @notice Update game model (only contract deployer can call)
+     * @notice Update game model (only contract owner can call)
      * @param newModelHash New model hash
      */
-    function updateModel(bytes32 newModelHash) external {
-        // In production, add proper access control
+    function updateModel(bytes32 newModelHash) external onlyOwner {
         gameModelHash = newModelHash;
     }
 }

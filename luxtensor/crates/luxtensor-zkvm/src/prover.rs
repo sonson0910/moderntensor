@@ -13,6 +13,12 @@ use crate::{
 };
 use luxtensor_crypto::keccak256;
 
+/// Maximum input data size (16 MB) to prevent OOM during proof generation.
+const MAX_INPUT_SIZE: usize = 16 * 1024 * 1024;
+
+/// Maximum number of inputs in a single batch_prove call.
+const MAX_BATCH_SIZE: usize = 1_000;
+
 /// Statistics about prover operations
 #[derive(Debug, Clone, Default)]
 pub struct ProverStats {
@@ -106,6 +112,24 @@ impl ZkProver {
         let start = Instant::now();
         debug!(image_id = %image_id, input_size = input.data.len(), "Starting proof generation");
 
+        // SECURITY: Reject oversized inputs to prevent OOM
+        if input.data.len() > MAX_INPUT_SIZE {
+            return Err(ZkVmError::InvalidInput(format!(
+                "Input data too large: {} bytes (max: {} bytes)",
+                input.data.len(),
+                MAX_INPUT_SIZE,
+            )));
+        }
+        if let Some(ref priv_data) = input.private_data {
+            if priv_data.len() > MAX_INPUT_SIZE {
+                return Err(ZkVmError::InvalidInput(format!(
+                    "Private data too large: {} bytes (max: {} bytes)",
+                    priv_data.len(),
+                    MAX_INPUT_SIZE,
+                )));
+            }
+        }
+
         // Check if image is registered
         let images = self.registered_images.read().await;
         let elf_bytes = images.get(&image_id)
@@ -113,8 +137,18 @@ impl ZkProver {
             .clone();
         drop(images); // Release lock before proving
 
-        // Generate proof based on feature flags
-        let receipt = self.generate_proof(image_id, elf_bytes, input).await?;
+        // Generate proof, enforcing the configured timeout
+        let receipt = if self.config.timeout_seconds > 0 {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(self.config.timeout_seconds),
+                self.generate_proof(image_id, elf_bytes, input),
+            )
+            .await
+            .map_err(|_| ZkVmError::Timeout(self.config.timeout_seconds))?
+            ?
+        } else {
+            self.generate_proof(image_id, elf_bytes, input).await?
+        };
 
         let duration = start.elapsed();
 
@@ -286,6 +320,15 @@ impl ZkProver {
 
         if inputs.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // SECURITY: Reject oversized batches to prevent resource exhaustion
+        if inputs.len() > MAX_BATCH_SIZE {
+            return Err(ZkVmError::InvalidInput(format!(
+                "Batch too large: {} inputs (max: {})",
+                inputs.len(),
+                MAX_BATCH_SIZE,
+            )));
         }
 
         // For small batches or dev mode, use sequential processing

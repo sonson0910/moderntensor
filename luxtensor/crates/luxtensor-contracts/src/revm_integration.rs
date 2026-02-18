@@ -7,13 +7,11 @@
 // - Gas estimation improvements
 // - EIP-compliant behavior
 
-use crate::types::ContractAddress;
 use crate::executor::Log;
+use crate::types::ContractAddress;
+use luxtensor_core::constants::chain_id;
 use luxtensor_core::types::Hash;
-use revm::primitives::{
-    U256, Log as RevmLog,
-    SpecId,
-};
+use revm::primitives::{Log as RevmLog, SpecId, U256};
 
 /// EVM specification version to use
 /// Using CANCUN for latest EVM features
@@ -40,8 +38,8 @@ impl Default for EvmConfig {
     fn default() -> Self {
         Self {
             block_gas_limit: 30_000_000,
-            base_fee: 1_000_000_000, // 1 gwei
-            chain_id: 8899, // LuxTensor chain ID (mainnet default)
+            base_fee: 1_000_000_000,    // 1 gwei
+            chain_id: chain_id::DEVNET, // LuxTensor devnet chain ID (8898)
             enable_precompiles: true,
             enable_eip1559: true,
             enable_tracing: false,
@@ -51,7 +49,6 @@ impl Default for EvmConfig {
 
 /// Standard Ethereum precompile addresses
 pub mod precompiles {
-
 
     /// ECRECOVER precompile address (0x01)
     pub const ECRECOVER: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -75,7 +72,8 @@ pub mod precompiles {
     pub const BN128_MUL: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7];
 
     /// BN128_PAIRING precompile address (0x08)
-    pub const BN128_PAIRING: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8];
+    pub const BN128_PAIRING: [u8; 20] =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8];
 
     /// BLAKE2F precompile address (0x09)
     pub const BLAKE2F: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9];
@@ -87,25 +85,29 @@ pub mod precompiles {
     /// Submit AI inference request to the network
     /// Input: abi.encode(model_hash, input_data, callback_address, max_reward)
     /// Output: bytes32 request_id
-    pub const AI_REQUEST: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10];
+    pub const AI_REQUEST: [u8; 20] =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10];
 
     /// VERIFY_PROOF precompile address (0x11)
     /// Verify ZK proof for AI computation
     /// Input: abi.encode(proof_type, proof_data, public_inputs)
     /// Output: bool is_valid
-    pub const VERIFY_PROOF: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11];
+    pub const VERIFY_PROOF: [u8; 20] =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11];
 
     /// GET_RESULT precompile address (0x12)
     /// Retrieve completed AI inference result
     /// Input: bytes32 request_id
     /// Output: abi.encode(status, result_data, fulfiller_address)
-    pub const GET_RESULT: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x12];
+    pub const GET_RESULT: [u8; 20] =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x12];
 
     /// COMPUTE_PAYMENT precompile address (0x13)
     /// Calculate required payment for AI request based on model complexity
     /// Input: bytes32 model_hash, uint256 input_size
     /// Output: uint256 required_payment
-    pub const COMPUTE_PAYMENT: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x13];
+    pub const COMPUTE_PAYMENT: [u8; 20] =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x13];
 }
 
 /// Parse REVM logs into LuxTensor Log format
@@ -121,17 +123,9 @@ pub fn parse_revm_logs(revm_logs: &[RevmLog], default_address: &ContractAddress)
             };
 
             // Convert topics (B256 -> [u8; 32])
-            let topics: Vec<Hash> = log
-                .topics()
-                .iter()
-                .map(|t| t.0)
-                .collect();
+            let topics: Vec<Hash> = log.topics().iter().map(|t| t.0).collect();
 
-            Log {
-                address,
-                topics,
-                data: log.data.data.to_vec(),
-            }
+            Log { address, topics, data: log.data.data.to_vec() }
         })
         .collect()
 }
@@ -263,23 +257,23 @@ pub fn estimate_transaction_gas(
 // if so, executes the corresponding handler instead of running EVM bytecode.
 
 use crate::ai_precompiles::{
-    AIPrecompileState,
-    ai_request_precompile, verify_proof_precompile, get_result_precompile,
-    compute_payment_precompile, train_request_precompile,
-    vector_store_precompile, vector_query_precompile,
-    classify_precompile, anomaly_score_precompile, similarity_gate_precompile,
-    semantic_relate_precompile, cluster_assign_precompile,
-    register_vector_precompile, global_search_precompile,
-    is_ai_precompile, is_semantic_precompile, is_training_precompile,
-    is_ai_primitives_precompile, is_registry_precompile,
+    ai_request_precompile, anomaly_score_precompile, classify_precompile,
+    cluster_assign_precompile, compute_payment_precompile, get_result_precompile,
+    global_search_precompile, is_ai_precompile, is_ai_primitives_precompile,
+    is_registry_precompile, is_semantic_precompile, is_training_precompile,
+    register_vector_precompile, semantic_relate_precompile, similarity_gate_precompile,
+    train_request_precompile, vector_query_precompile, vector_store_precompile,
+    verify_proof_precompile, AIPrecompileState,
 };
 use revm::primitives::Bytes;
 
 /// Check if a given 20-byte address is any LuxTensor custom precompile
 pub fn is_luxtensor_precompile(address: &[u8; 20]) -> bool {
-    is_ai_precompile(address) || is_training_precompile(address) ||
-    is_semantic_precompile(address) || is_ai_primitives_precompile(address) ||
-    is_registry_precompile(address)
+    is_ai_precompile(address)
+        || is_training_precompile(address)
+        || is_semantic_precompile(address)
+        || is_ai_primitives_precompile(address)
+        || is_registry_precompile(address)
 }
 
 /// Route a call to the appropriate AI precompile handler.
@@ -308,15 +302,9 @@ pub fn execute_ai_precompile(
         0x10 if is_ai_precompile(address) => {
             Some(ai_request_precompile(input, gas_limit, state, caller))
         }
-        0x11 if is_ai_precompile(address) => {
-            Some(verify_proof_precompile(input, gas_limit))
-        }
-        0x12 if is_ai_precompile(address) => {
-            Some(get_result_precompile(input, gas_limit, state))
-        }
-        0x13 if is_ai_precompile(address) => {
-            Some(compute_payment_precompile(input, gas_limit))
-        }
+        0x11 if is_ai_precompile(address) => Some(verify_proof_precompile(input, gas_limit)),
+        0x12 if is_ai_precompile(address) => Some(get_result_precompile(input, gas_limit, state)),
+        0x13 if is_ai_precompile(address) => Some(compute_payment_precompile(input, gas_limit)),
         // Training (0x14)
         0x14 if is_training_precompile(address) => {
             Some(train_request_precompile(input, gas_limit, state, caller))
@@ -399,8 +387,7 @@ pub fn decode_revert_reason(data: &[u8]) -> Option<String> {
     if data.len() >= 68 && data[0..4] == [0x08, 0xc3, 0x79, 0xa0] {
         // Skip selector (4) + offset (32) + length prefix (32)
         let string_len = u64::from_be_bytes([
-            data[36], data[37], data[38], data[39],
-            data[40], data[41], data[42], data[43],
+            data[36], data[37], data[38], data[39], data[40], data[41], data[42], data[43],
         ]) as usize;
 
         if data.len() >= 68 + string_len {
@@ -477,7 +464,7 @@ mod tests {
     #[test]
     fn test_evm_config_default() {
         let config = EvmConfig::default();
-        assert_eq!(config.chain_id, 8899);
+        assert_eq!(config.chain_id, 8898);
         assert!(config.enable_precompiles);
         assert!(config.enable_eip1559);
     }

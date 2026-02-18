@@ -30,7 +30,6 @@ fn is_leader_for_slot(validator_id: &str, slot: u64, validators: &[String]) -> b
 use crate::graceful_shutdown::{GracefulShutdown, ShutdownConfig};
 use crate::health::{HealthConfig, HealthMonitor};
 use anyhow::{Context, Result};
-use futures::FutureExt;
 use luxtensor_consensus::fast_finality::FastFinality;
 use luxtensor_consensus::fork_choice::ForkChoice;
 use luxtensor_consensus::liveness::{LivenessConfig, LivenessMonitor};
@@ -123,6 +122,7 @@ fn peer_id_to_synthetic_ip(peer_id: &str) -> std::net::IpAddr {
 }
 
 /// Node service that orchestrates all components
+#[allow(dead_code)]
 pub struct NodeService {
     config: Config,
     storage: Arc<BlockchainDB>,
@@ -414,6 +414,10 @@ impl NodeService {
             .get_block_by_height(0)?
             .map(|block| block.header.timestamp)
             .unwrap_or_else(|| {
+                tracing::warn!(
+                    "No genesis block found — using current system time as genesis timestamp. \
+                     This node should sync the genesis block before participating in consensus."
+                );
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or(std::time::Duration::ZERO)
@@ -427,7 +431,10 @@ impl NodeService {
                     Ok(key_bytes) if key_bytes.len() >= 32 => {
                         let mut secret = [0u8; 32];
                         secret.copy_from_slice(&key_bytes[..32]);
-                        match KeyPair::from_secret(&secret) {
+                        let result = KeyPair::from_secret(&secret);
+                        // SECURITY: Zeroize secret key bytes after use
+                        secret.iter_mut().for_each(|b| *b = 0);
+                        match result {
                             Ok(keypair) => {
                                 let address = keypair.address();
                                 info!(
@@ -595,13 +602,16 @@ impl NodeService {
 
                 // 🔧 FIX: Run swarm in tokio::spawn (same runtime as RPC)
                 // This ensures channels work correctly between tasks
-                tokio::spawn(async move {
+                // 🔧 FIX: Track swarm JoinHandle in self.tasks so it is awaited on shutdown
+                let swarm_handle: JoinHandle<Result<()>> = tokio::spawn(async move {
                     swarm_node.run().await;
                     // 🔧 FIX #19: Log if swarm exits unexpectedly
                     tracing::error!(
                         "🚨 CRITICAL: P2P swarm event loop exited — node is now isolated!"
                     );
+                    Ok(())
                 });
+                self.tasks.push(swarm_handle);
 
                 // Start P2P event handler
                 let storage_for_p2p = self.storage.clone();
@@ -623,7 +633,7 @@ impl NodeService {
                 // P2P handler and block production (both reading/writing at the same height)
                 let best_height_guard = self.best_height_guard.clone();
                 let best_height_for_p2p = best_height_guard.clone();
-                let best_height_for_block_prod_p2p = best_height_guard.clone();
+                let _best_height_for_block_prod_p2p = best_height_guard.clone();
                 let event_task = tokio::spawn(async move {
                     while let Some(event) = p2p_event_rx.recv().await {
                         match event {
@@ -920,14 +930,27 @@ impl NodeService {
                                 }
 
                                 // �🚀 Add received TX to shared pending_txs for RPC query
+                                // SECURITY FIX: Validate via mempool FIRST, then insert into
+                                // shared_pending_txs only if accepted. This prevents invalid
+                                // transactions from polluting the shared pool.
                                 let tx_hash = tx.hash();
-                                let mut pending = shared_pending_txs_for_p2p.write();
-                                if !pending.contains_key(&tx_hash) {
-                                    pending.insert(tx_hash, tx.clone());
-                                    info!("📥 Added transaction from peer to shared pool");
+                                {
+                                    let pending = shared_pending_txs_for_p2p.read();
+                                    if pending.contains_key(&tx_hash) {
+                                        // Already in pool, skip duplicate
+                                        continue;
+                                    }
+                                }
 
-                                    // 🔧 FIX: Also add to the actual mempool for block production
-                                    if let Err(e) = mempool_for_p2p.add_transaction(tx) {
+                                // Validate through mempool first
+                                match mempool_for_p2p.add_transaction(tx.clone()) {
+                                    Ok(_) => {
+                                        // Mempool accepted — now add to shared pending pool
+                                        let mut pending = shared_pending_txs_for_p2p.write();
+                                        pending.insert(tx_hash, tx);
+                                        info!("📥 Added validated transaction from peer to shared pool");
+                                    }
+                                    Err(e) => {
                                         debug!("Mempool rejected P2P tx: {}", e);
                                     }
                                 }
@@ -1147,13 +1170,19 @@ impl NodeService {
             let rpc_threads = self.config.rpc.threads;
             let rpc_cors_origins = self.config.rpc.cors_origins.clone();
 
+            // 🔧 FIX: Use shutdown_rx instead of a second ctrl_c handler.
+            // Previously both this task and wait_for_shutdown() raced on ctrl_c,
+            // requiring 2× Ctrl+C to stop the node.
+            let mut shutdown_rx = self.shutdown_tx.subscribe();
+
             let task = tokio::spawn(async move {
                 info!("  ✓ RPC server listening on {}", addr);
                 match rpc_server.start(&addr, rpc_threads, &rpc_cors_origins) {
                     Ok(_server) => {
                         info!("RPC server started successfully");
-                        // Keep server running
-                        tokio::signal::ctrl_c().await.ok();
+                        // Keep server alive until shutdown signal is received
+                        let _ = shutdown_rx.recv().await;
+                        info!("RPC server shutting down");
                         Ok(())
                     }
                     Err(e) => Err(e.into()),
@@ -1313,13 +1342,7 @@ impl NodeService {
 
         // Save shutdown checkpoint for recovery
         self.graceful_shutdown.begin_state_save();
-        let current_height = self
-            .storage
-            .get_block_by_height(0)
-            .ok()
-            .flatten()
-            .map(|b| b.header.height)
-            .unwrap_or(0);
+        let current_height = self.storage.get_best_height().ok().flatten().unwrap_or(0);
         let current_hash = self
             .storage
             .get_block_by_height(current_height)
@@ -1507,6 +1530,12 @@ impl NodeService {
                         Ok(block) => {
                             // 🔧 FIX MC-6: Accumulate TX count for the whole epoch
                             epoch_tx_accumulator += block.transactions.len() as u64;
+
+                            // 🔧 FIX C3: Reset accumulator at epoch boundaries so it
+                            // doesn't inflate utility scores across epochs.
+                            if epoch_length > 0 && block.header.height % epoch_length == 0 {
+                                epoch_tx_accumulator = 0;
+                            }
 
                             // Sync UnifiedStateDB so the RPC layer returns fresh state
                             if let Some(ref us) = unified_state {
@@ -1998,6 +2027,7 @@ impl NodeService {
     }
 
     /// Get node statistics
+    #[allow(dead_code)]
     pub async fn get_stats(&self) -> Result<NodeStats> {
         let height = self.storage.get_best_height()?.unwrap_or(0);
         let validator_count = {
@@ -2016,6 +2046,7 @@ impl NodeService {
     }
 
     /// Add transaction to mempool
+    #[allow(dead_code)]
     pub fn add_transaction(&self, tx: Transaction) -> Result<()> {
         self.mempool
             .add_transaction(tx)
@@ -2023,12 +2054,14 @@ impl NodeService {
     }
 
     /// Get mempool
+    #[allow(dead_code)]
     pub fn mempool(&self) -> &Arc<Mempool> {
         &self.mempool
     }
 }
 
 /// Node statistics
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NodeStats {
     pub height: u64,
@@ -2079,7 +2112,7 @@ mod tests {
 /// accidentally enabling dev-mode signing on production-like chains.
 /// LuxTensor devnet uses chain_id=8898.
 fn is_dev_chain(chain_id: u64) -> bool {
-    matches!(chain_id, 8898 | 1337 | 31337)
+    matches!(chain_id, 1337 | 31337)
 }
 
 /// Sign a transaction with a development private key (proper secp256k1 signing)

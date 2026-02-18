@@ -16,6 +16,7 @@ fn get_client() -> RpcClient {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_staking_get_stake_for_pair() {
     let client = get_client();
 
@@ -34,6 +35,7 @@ fn test_staking_get_stake_for_pair() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_staking_get_all_stakes_for_coldkey() {
     let client = get_client();
 
@@ -50,6 +52,7 @@ fn test_staking_get_all_stakes_for_coldkey() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_staking_get_delegates() {
     let client = get_client();
 
@@ -67,6 +70,7 @@ fn test_staking_get_delegates() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_get_alias() {
     let client = get_client();
     let result = client.call("neuron_get", json!([1, 0]));
@@ -79,6 +83,7 @@ fn test_neuron_get_alias() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_get_all_alias() {
     let client = get_client();
     let result = client.call("neuron_getAll", json!([1]));
@@ -91,6 +96,7 @@ fn test_neuron_get_all_alias() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_exists() {
     let client = get_client();
     let result = client.call("neuron_exists", json!([1, 0]));
@@ -103,6 +109,7 @@ fn test_neuron_exists() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_get_by_hotkey() {
     let client = get_client();
     let result = client.call("neuron_getByHotkey", json!([1, test_addresses::ADDR_1]));
@@ -115,6 +122,7 @@ fn test_neuron_get_by_hotkey() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_get_active() {
     let client = get_client();
     let result = client.call("neuron_getActive", json!([1]));
@@ -127,6 +135,7 @@ fn test_neuron_get_active() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_count_alias() {
     let client = get_client();
     let result = client.call("neuron_count", json!([1]));
@@ -139,6 +148,7 @@ fn test_neuron_count_alias() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_neuron_batch_get() {
     let client = get_client();
     let result = client.call("neuron_batchGet", json!([1, [0, 1, 2]]));
@@ -155,6 +165,7 @@ fn test_neuron_batch_get() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_subnet_exists() {
     let client = get_client();
     let result = client.call("subnet_exists", json!([1]));
@@ -167,6 +178,7 @@ fn test_subnet_exists() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_subnet_get_hyperparameters() {
     let client = get_client();
     let result = client.call("subnet_getHyperparameters", json!([1]));
@@ -179,6 +191,7 @@ fn test_subnet_get_hyperparameters() {
 }
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_subnet_get_count() {
     let client = get_client();
     let result = client.call("subnet_getCount", json!([]));
@@ -195,6 +208,7 @@ fn test_subnet_get_count() {
 // ============================================================
 
 #[test]
+#[ignore] // Requires running node at localhost:8545
 fn test_weight_get_commits() {
     let client = get_client();
     let result = client.call("weight_getCommits", json!([1]));

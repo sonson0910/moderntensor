@@ -206,6 +206,7 @@ impl EventDecoder {
     /// Handle stake event
     /// Calldata layout: stake(address hotkey, uint256 amount)
     /// selector (4 bytes) + hotkey (32 bytes, left-padded address) + amount (32 bytes)
+    /// Hex layout: "0x" (2) + selector (8) + param1 (64) + param2 (64) = 138 chars
     async fn handle_stake(
         &self,
         block_number: i64,
@@ -214,10 +215,10 @@ impl EventDecoder {
         input: &str,
     ) -> Result<()> {
         // Parse hotkey and amount from calldata
-        // Minimum: 8 (selector) + 64 (address) + 64 (uint256) = 136 hex chars
-        let (hotkey, amount) = if input.len() >= 136 {
-            let hotkey = format!("0x{}", &input[32..72]); // bytes 12..32 of first param (address)
-            let amount_hex = &input[72..136];
+        // Minimum: 2 ("0x") + 8 (selector) + 64 (address) + 64 (uint256) = 138 hex chars
+        let (hotkey, amount) = if input.len() >= 138 {
+            let hotkey = format!("0x{}", &input[34..74]); // bytes 12..32 of first param (address)
+            let amount_hex = &input[74..138];
             let amount = self.parse_hex_amount(&format!("0x{}", amount_hex));
             (hotkey, amount)
         } else {
@@ -242,6 +243,7 @@ impl EventDecoder {
 
     /// Handle unstake event
     /// Same calldata layout as stake: unstake(address hotkey, uint256 amount)
+    /// Hex layout: "0x" (2) + selector (8) + param1 (64) + param2 (64) = 138 chars
     async fn handle_unstake(
         &self,
         block_number: i64,
@@ -249,9 +251,9 @@ impl EventDecoder {
         from: &str,
         input: &str,
     ) -> Result<()> {
-        let (hotkey, amount) = if input.len() >= 136 {
-            let hotkey = format!("0x{}", &input[32..72]);
-            let amount_hex = &input[72..136];
+        let (hotkey, amount) = if input.len() >= 138 {
+            let hotkey = format!("0x{}", &input[34..74]);
+            let amount_hex = &input[74..138];
             let amount = self.parse_hex_amount(&format!("0x{}", amount_hex));
             (hotkey, amount)
         } else {

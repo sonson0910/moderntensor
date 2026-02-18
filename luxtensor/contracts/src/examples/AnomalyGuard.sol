@@ -127,6 +127,16 @@ contract AnomalyGuard is Ownable, ReentrancyGuard, Pausable {
         int256[] calldata embedding,
         bytes32 txHash
     ) external whenNotPaused nonReentrant returns (bool passed, uint256 score) {
+        return _validateTransaction(embedding, txHash);
+    }
+
+    /**
+     * @dev Internal validation logic shared by validateTransaction and batchValidate
+     */
+    function _validateTransaction(
+        int256[] calldata embedding,
+        bytes32 txHash
+    ) internal returns (bool passed, uint256 score) {
         // Check embedding dimension
         if (embedding.length != embeddingDimension) {
             revert InvalidEmbedding(embedding.length, embeddingDimension);
@@ -196,7 +206,7 @@ contract AnomalyGuard is Ownable, ReentrancyGuard, Pausable {
         scores = new uint256[](embeddings.length);
 
         for (uint256 i = 0; i < embeddings.length; i++) {
-            (passed[i], scores[i]) = this.validateTransaction(
+            (passed[i], scores[i]) = _validateTransaction(
                 embeddings[i],
                 txHashes[i]
             );

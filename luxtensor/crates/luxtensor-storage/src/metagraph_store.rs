@@ -296,10 +296,13 @@ impl MetagraphDB {
             .ok_or_else(|| StorageError::DatabaseError("Missing weights CF".into()))?;
 
         let mut batch = WriteBatch::default();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
 
         for (to_uid, weight) in weights {
             let key = Self::weight_key(subnet_id, from_uid, *to_uid);

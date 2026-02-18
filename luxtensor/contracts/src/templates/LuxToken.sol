@@ -69,6 +69,7 @@ contract LuxToken is ERC20, ERC20Burnable, Ownable, ERC20Permit {
      * @param amount Amount to mint (in smallest units)
      */
     function mint(address to, uint256 amount) public onlyOwner {
+        require(to != address(0), "Mint to zero address");
         require(mintingEnabled, "Minting disabled");
 
         if (maxSupply > 0) {

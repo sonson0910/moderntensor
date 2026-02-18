@@ -16,8 +16,6 @@ use libp2p::{
 };
 use luxtensor_core::block::Block;
 use luxtensor_core::transaction::Transaction;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -128,11 +126,12 @@ impl SwarmP2PNode {
 
         info!("🔗 Local Peer ID: {}", local_peer_id);
 
-        // Message ID function to deduplicate
+        // Message ID function to deduplicate — cryptographic content-only hash
+        // Uses keccak256 instead of DefaultHasher to prevent collision attacks
+        // and ensure stability across Rust versions.
         let message_id_fn = |message: &gossipsub::Message| {
-            let mut hasher = DefaultHasher::new();
-            message.data.hash(&mut hasher);
-            gossipsub::MessageId::from(hasher.finish().to_be_bytes().to_vec())
+            let hash = luxtensor_crypto::keccak256(&message.data);
+            gossipsub::MessageId::from(hash[..20].to_vec())
         };
 
         let gossipsub_config = gossipsub::ConfigBuilder::default()

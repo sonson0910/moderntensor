@@ -8,10 +8,12 @@ use std::path::Path;
 use tracing::warn;
 
 /// Pre-deployed MDTStaking contract address (deterministic for all networks)
+#[allow(dead_code)]
 pub const STAKING_CONTRACT_ADDRESS: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
 /// MDT Native Token address (0x...01 is standard precompile convention for wrapped native token)
 /// Similar to WETH address convention. This IS the production address.
+#[allow(dead_code)]
 pub const MDT_TOKEN_ADDRESS: &str = "0x0000000000000000000000000000000000000001";
 
 
@@ -48,7 +50,7 @@ impl GenesisConfig {
     /// Create default mainnet genesis config
     pub fn mainnet() -> Self {
         Self {
-            chain_id: 8899,  // LuxTensor mainnet chain ID
+            chain_id: 8898,  // LuxTensor mainnet chain ID
             timestamp: 0,
             accounts: vec![],  // No pre-funded accounts in mainnet
             validators: vec![],
@@ -132,13 +134,13 @@ impl GenesisConfig {
         }
 
         // Safety: reject development genesis on production chain IDs
-        if self.is_development() && (self.chain_id == 8899 || self.chain_id == 9999) {
+        if self.is_development() && (self.chain_id == 8898 || self.chain_id == 9999) {
             return Err(GenesisError::InvalidConfig(
                 format!(
                     "Development genesis (known test accounts) cannot be used on chain {} ({}). \
                      Use a production genesis config for mainnet/testnet.",
                     self.chain_id,
-                    if self.chain_id == 8899 { "Mainnet" } else { "Testnet" }
+                    if self.chain_id == 8898 { "Mainnet" } else { "Testnet" }
                 )
             ));
         }
@@ -243,7 +245,7 @@ fn parse_address(s: &str) -> Option<Address> {
         return None;
     }
     let bytes = hex::decode(s).ok()?;
-    Some(Address::from_slice(&bytes))
+    Address::try_from_slice(&bytes)
 }
 
 #[cfg(test)]
@@ -253,7 +255,7 @@ mod tests {
     #[test]
     fn test_mainnet_config() {
         let config = GenesisConfig::mainnet();
-        assert_eq!(config.chain_id, 8899);
+        assert_eq!(config.chain_id, 8898);
         assert!(config.accounts.is_empty());
         assert!(!config.is_development());
     }

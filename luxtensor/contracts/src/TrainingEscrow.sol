@@ -65,6 +65,9 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
     );
     event Slashed(address indexed trainer, uint256 amount, string reason);
     event InsurancePayout(address indexed recipient, uint256 amount);
+    event AggregatorUpdated(address indexed oldAggregator, address indexed newAggregator);
+    event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
+    event SlashPercentageUpdated(uint256 oldPercentage, uint256 newPercentage);
 
     // ==================== ERRORS ====================
 
@@ -77,6 +80,8 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
     // ==================== CONSTRUCTOR ====================
 
     constructor(address _mdtToken, address _aggregator) Ownable(msg.sender) {
+        require(_mdtToken != address(0), "Invalid token address");
+        require(_aggregator != address(0), "Invalid aggregator address");
         mdtToken = IERC20(_mdtToken);
         gradientAggregator = _aggregator;
     }
@@ -193,6 +198,7 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
      */
     function setAggregator(address _aggregator) external onlyOwner {
         if (_aggregator == address(0)) revert InvalidAggregator();
+        emit AggregatorUpdated(gradientAggregator, _aggregator);
         gradientAggregator = _aggregator;
     }
 
@@ -200,6 +206,7 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
      * @notice Update minimum stake requirement
      */
     function setMinStake(uint256 _minStake) external onlyOwner {
+        emit MinStakeUpdated(minStake, _minStake);
         minStake = _minStake;
     }
 
@@ -208,6 +215,7 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
      */
     function setSlashPercentage(uint256 _percentage) external onlyOwner {
         require(_percentage <= 5000, "Max 50%"); // Cap at 50%
+        emit SlashPercentageUpdated(slashPercentage, _percentage);
         slashPercentage = _percentage;
     }
 
@@ -218,6 +226,7 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
         address recipient,
         uint256 amount
     ) external onlyOwner nonReentrant {
+        require(recipient != address(0), "Invalid recipient");
         if (amount > insuranceFund) revert InsufficientBalance();
         insuranceFund -= amount;
         mdtToken.safeTransfer(recipient, amount);

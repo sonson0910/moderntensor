@@ -2,7 +2,7 @@
 // Extracted from server.rs
 // Now with on-chain persistent storage
 
-use crate::helpers::parse_address;
+use crate::helpers::{parse_address, verify_caller_signature};
 use jsonrpc_core::{Params, Value};
 use luxtensor_consensus::{ValidatorSet, Validator};
 use luxtensor_core::UnifiedStateDB;
@@ -93,12 +93,13 @@ pub fn register_staking_handlers(
 
     // staking_addStake - Add stake to validator
     // SECURITY: Verifies EVM balance and debits it atomically
+    // SECURITY: Now requires signature verification to prevent impersonation
     // LOCK ORDER: validators → unified_state (consistent with removeStake)
     io.add_sync_method("staking_addStake", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 2 {
+        if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Missing address or amount",
+                "Missing parameters. Required: address, amount, timestamp, signature",
             ));
         }
 
@@ -112,6 +113,33 @@ pub fn register_staking_handlers(
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid amount"))?;
         let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
+
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[3]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!("staking_addStake:{}:{}:{}", hex::encode(address.as_bytes()), amount, timestamp);
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
 
         // SECURITY: Acquire both locks in consistent order (validators → state)
         // to prevent deadlock with removeStake. All checks and mutations happen
@@ -152,12 +180,13 @@ pub fn register_staking_handlers(
 
     // staking_removeStake - Remove stake from validator
     // SECURITY: Credits EVM balance back when unstaking
+    // SECURITY: Now requires signature verification to prevent unauthorized unstaking
     // LOCK ORDER: validators → unified_state (consistent with addStake)
     io.add_sync_method("staking_removeStake", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 2 {
+        if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Missing address or amount",
+                "Missing parameters. Required: address, amount, timestamp, signature",
             ));
         }
 
@@ -171,6 +200,33 @@ pub fn register_staking_handlers(
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid amount"))?;
         let amount = u128::from_str_radix(amount_str.trim_start_matches("0x"), 16)
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid amount format"))?;
+
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[3]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!("staking_removeStake:{}:{}:{}", hex::encode(address.as_bytes()), amount, timestamp);
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
 
         // SECURITY: Acquire both locks in consistent order (validators → state)
         let mut validator_set = validators_clone.write();
@@ -213,7 +269,7 @@ pub fn register_staking_handlers(
 
         let address = parse_address(&parsed[0])?;
 
-        let mut validator_set = validators_clone.write();
+        let validator_set = validators_clone.write();
 
         if let Some(validator) = validator_set.get_validator(&address) {
             let rewards = validator.rewards;
@@ -233,15 +289,16 @@ pub fn register_staking_handlers(
     let db_for_register_validator = db.clone();
 
     // staking_registerValidator - Register as a new validator (DYNAMIC REGISTRATION)
-    // Params: [address, stake, public_key, signature?, name?]
+    // Params: [address, stake, public_key, timestamp, signature, name?]
+    // SECURITY: Requires signature verification to prove ownership of the registering address.
     // Minimum stake: 1000 LUX (persisted to DB)
     const MIN_STAKE: u128 = 1_000_000_000_000_000_000_000; // 1000 LUX
 
     io.add_sync_method("staking_registerValidator", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 3 {
+        if parsed.len() < 5 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Missing address, stake amount, or public key",
+                "Missing parameters. Required: address, stake, public_key, timestamp, signature",
             ));
         }
 
@@ -267,8 +324,38 @@ pub fn register_staking_handlers(
             .as_str()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid public key"))?;
 
-        // Optional name
-        let name = parsed.get(3)
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[3]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the registering address via signature
+        let signature = parsed[4]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!(
+            "staking_registerValidator:{}:{}:{}:{}",
+            hex::encode(address.as_bytes()), stake, pubkey_str.trim_start_matches("0x"), timestamp
+        );
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own the registering address",
+            ))?;
+
+        // Optional name (now at index 5 instead of 3)
+        let name = parsed.get(5)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("validator-{}", hex::encode(&address.as_bytes()[..4])));
@@ -359,13 +446,47 @@ pub fn register_staking_handlers(
     let validators_clone = validators.clone();
 
     // staking_deactivateValidator - Deactivate a validator
+    // SECURITY: Requires signature verification - only the validator itself can deactivate
     io.add_sync_method("staking_deactivateValidator", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing parameters. Required: address, timestamp, signature",
+            ));
         }
 
-        let address = parse_address(&parsed[0])?;
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
+
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller IS the validator being deactivated
+        let signature = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!("staking_deactivateValidator:{}:{}", hex::encode(address.as_bytes()), timestamp);
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - only the validator itself can deactivate",
+            ))?;
+
         let mut validator_set = validators_clone.write();
 
         if validator_set.get_validator(&address).is_some() {
@@ -386,6 +507,9 @@ pub fn register_staking_handlers(
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Shared state for locked stakes
+    // TODO: Move LOCKED_STAKES into the RpcServer struct for proper lifecycle management.
+    // Currently a global singleton to simplify handler closures, but should be managed
+    // alongside other server state for clean shutdown and multi-instance testing.
     lazy_static::lazy_static! {
         static ref LOCKED_STAKES: parking_lot::RwLock<HashMap<[u8; 20], (u128, u64, u64)>> = {
             parking_lot::RwLock::new(HashMap::new())
@@ -416,9 +540,10 @@ pub fn register_staking_handlers(
 
     // staking_lockStakeSeconds - Lock stake for specific duration in SECONDS
     // SECURITY: Only available on dev/test chains to prevent abuse on mainnet.
-    // Params: [address, amount, lock_seconds]
+    // SECURITY: Requires signature verification to prove ownership of the address.
+    // Params: [address, amount, lock_seconds, timestamp, signature]
     // Returns: { success, unlock_timestamp }
-    let is_dev_chain = chain_id == 8898 || chain_id == 31337 || chain_id == 1337;
+    let is_dev_chain = chain_id == 31337 || chain_id == 1337;
     io.add_sync_method("staking_lockStakeSeconds", move |params: Params| {
         if !is_dev_chain {
             return Err(jsonrpc_core::Error {
@@ -428,9 +553,9 @@ pub fn register_staking_handlers(
             });
         }
         let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 3 {
+        if parsed.len() < 5 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Missing address, amount, or lock_seconds",
+                "Missing parameters. Required: address, amount, lock_seconds, timestamp, signature",
             ));
         }
 
@@ -449,11 +574,36 @@ pub fn register_staking_handlers(
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid lock_seconds"))?;
 
-        // Get current timestamp
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[3]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[4]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!(
+            "staking_lockStakeSeconds:{}:{}:{}:{}",
+            hex::encode(address.as_bytes()), amount, lock_seconds, timestamp
+        );
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
+
         let unlock_timestamp = now + lock_seconds;
 
         // Calculate bonus rate based on lock period (using LockBonusConfig logic)
@@ -520,13 +670,14 @@ pub fn register_staking_handlers(
     });
 
     // staking_lockStake - Lock stake for a period to earn bonus rewards
-    // Params: [address, amount, lock_days]
+    // SECURITY: Requires signature verification to prove ownership of the address.
+    // Params: [address, amount, lock_days, timestamp, signature]
     // Returns: { success, unlock_timestamp, bonus_rate }
     io.add_sync_method("staking_lockStake", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 3 {
+        if parsed.len() < 5 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Missing address, amount, or lock_days",
+                "Missing parameters. Required: address, amount, lock_days, timestamp, signature",
             ));
         }
 
@@ -553,6 +704,36 @@ pub fn register_staking_handlers(
             return Err(jsonrpc_core::Error::invalid_params("Maximum lock period is 365 days"));
         }
 
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[3]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[4]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!(
+            "staking_lockStake:{}:{}:{}:{}",
+            hex::encode(address.as_bytes()), amount, lock_days, timestamp
+        );
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
+
         // Calculate bonus rate based on lock period (Model C from tokenomics)
         // 7 days: 0%, 30 days: 10%, 90 days: 30%, 180 days: 60%, 365 days: 100%
         let bonus_rate = match lock_days {
@@ -564,11 +745,6 @@ pub fn register_staking_handlers(
             _ => 0,
         };
 
-        // Get current timestamp
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_secs();
         let unlock_timestamp = now + (lock_days * 24 * 60 * 60);
 
         // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
@@ -599,23 +775,53 @@ pub fn register_staking_handlers(
     });
 
     // staking_unlockStake - Unlock stake after lock period expires
-    // Params: [address]
+    // SECURITY: Requires signature verification to prove ownership of the address.
+    // Params: [address, timestamp, signature]
     // Returns: { success, amount } or error if lock not expired
     let db_for_unlock = db.clone();
     io.add_sync_method("staking_unlockStake", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing parameters. Required: address, timestamp, signature",
+            ));
         }
 
-        let address = parse_address(&parsed[0])?;
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
         let addr_bytes: [u8; 20] = *address.as_bytes();
 
-        // Get current timestamp
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!(
+            "staking_unlockStake:{}:{}",
+            hex::encode(address.as_bytes()), timestamp
+        );
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
 
         // SECURITY: Atomic check+remove under single write lock (eliminates TOCTOU)
         let mut locks = LOCKED_STAKES.write();

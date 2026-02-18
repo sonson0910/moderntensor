@@ -3,8 +3,8 @@
 //! Provides O(log N) approximate nearest neighbor search for the Semantic Layer.
 //! Designed for blockchain constraints: deterministic, serializable, gas-efficient.
 
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// HNSW configuration parameters
 #[derive(Clone, Debug)]
@@ -36,12 +36,12 @@ const DEFAULT_MAX_LAYER: usize = 16;
 impl Default for HnswConfig {
     fn default() -> Self {
         Self {
-            m: DEFAULT_M,        // Connections per layer (balanced recall/speed)
-            m0: DEFAULT_M * 2,   // Layer 0 connections (2x m)
-            ef_construction: 200, // Build quality (high for production)
-            ef_search: 64,       // Production: higher recall (>95%)
+            m: DEFAULT_M,            // Connections per layer (balanced recall/speed)
+            m0: DEFAULT_M * 2,       // Layer 0 connections (2x m)
+            ef_construction: 200,    // Build quality (high for production)
+            ef_search: 64,           // Production: higher recall (>95%)
             max_elements: 1_000_000, // Production scale: 1M vectors
-            dimension: 768,      // Standard embedding dimension
+            dimension: 768,          // Standard embedding dimension
             ml: 1.0 / (DEFAULT_M as f64).ln(),
             max_layer: DEFAULT_MAX_LAYER,
         }
@@ -127,13 +127,7 @@ impl HnswIndex {
     }
 
     pub fn with_config(config: HnswConfig) -> Self {
-        Self {
-            config,
-            nodes: HashMap::new(),
-            entry_point: None,
-            max_layer: 0,
-            count: 0,
-        }
+        Self { config, nodes: HashMap::new(), entry_point: None, max_layer: 0, count: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -151,6 +145,11 @@ impl HnswIndex {
                 expected: self.config.dimension,
                 got: vector.len(),
             });
+        }
+
+        // Reject NaN / Infinity vectors
+        if vector.iter().any(|v| !v.is_finite()) {
+            return Err(HnswError::InvalidData);
         }
 
         if self.count >= self.config.max_elements {
@@ -226,7 +225,9 @@ impl HnswIndex {
 
             let prune_data = {
                 if let Some(neighbor) = self.nodes.get(&neighbor_id) {
-                    if layer < neighbor.connections.len() && neighbor.connections[layer].len() > max_m {
+                    if layer < neighbor.connections.len()
+                        && neighbor.connections[layer].len() > max_m
+                    {
                         Some((neighbor.vector.clone(), neighbor.connections[layer].clone()))
                     } else {
                         None
@@ -240,9 +241,7 @@ impl HnswIndex {
                 let candidates: Vec<(u64, f32)> = conn_ids
                     .iter()
                     .filter_map(|&cid| {
-                        self.nodes.get(&cid).map(|n| {
-                            (cid, self.distance(&neighbor_vec, &n.vector))
-                        })
+                        self.nodes.get(&cid).map(|n| (cid, self.distance(&neighbor_vec, &n.vector)))
                     })
                     .collect();
 
@@ -322,7 +321,13 @@ impl HnswIndex {
         current_id
     }
 
-    fn search_layer(&self, query: &[f32], entry_id: u64, ef: usize, layer: usize) -> Vec<(u64, f32)> {
+    fn search_layer(
+        &self,
+        query: &[f32],
+        entry_id: u64,
+        ef: usize,
+        layer: usize,
+    ) -> Vec<(u64, f32)> {
         let mut visited = HashSet::new();
         let mut candidates: BinaryHeap<Candidate> = BinaryHeap::new();
         let mut results: BinaryHeap<MaxCandidate> = BinaryHeap::new();
@@ -361,7 +366,8 @@ impl HnswIndex {
             }
         }
 
-        let mut result_vec: Vec<(u64, f32)> = results.into_iter().map(|c| (c.id, c.distance)).collect();
+        let mut result_vec: Vec<(u64, f32)> =
+            results.into_iter().map(|c| (c.id, c.distance)).collect();
         result_vec.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         result_vec
     }
@@ -413,7 +419,13 @@ impl HnswIndex {
         bytes.extend_from_slice(&self.entry_point.unwrap_or(0).to_le_bytes());
         bytes.push(if self.entry_point.is_some() { 1 } else { 0 });
 
-        for (id, node) in &self.nodes {
+        // CONSENSUS-CRITICAL: Sort nodes by ID for deterministic serialization.
+        // HashMap iteration order is non-deterministic and differs across nodes,
+        // which would cause consensus failures if left unsorted.
+        let mut sorted_nodes: Vec<_> = self.nodes.iter().collect();
+        sorted_nodes.sort_by_key(|(id, _)| *id);
+
+        for (id, node) in sorted_nodes {
             bytes.extend_from_slice(&id.to_le_bytes());
             bytes.extend_from_slice(&(node.max_layer as u32).to_le_bytes());
 
@@ -422,8 +434,11 @@ impl HnswIndex {
             }
 
             for layer_conns in &node.connections {
-                bytes.extend_from_slice(&(layer_conns.len() as u32).to_le_bytes());
-                for &conn_id in layer_conns {
+                // Sort neighbor IDs for deterministic serialization
+                let mut sorted_conns = layer_conns.clone();
+                sorted_conns.sort();
+                bytes.extend_from_slice(&(sorted_conns.len() as u32).to_le_bytes());
+                for &conn_id in &sorted_conns {
                     bytes.extend_from_slice(&conn_id.to_le_bytes());
                 }
             }
@@ -433,18 +448,40 @@ impl HnswIndex {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HnswError> {
-        if bytes.len() < 37 {
+        // Header: dimension(4) + m(4) + ef_search(4) + count(8) + max_layer(4) + entry_id(8) + has_entry(1) = 33
+        if bytes.len() < 33 {
             return Err(HnswError::InvalidData);
         }
 
         let mut pos = 0;
 
-        let dimension = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+        let dimension =
+            u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 4;
-        let m = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+        let m =
+            u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 4;
-        let ef_search = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+        let ef_search =
+            u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 4;
+
+        // B6 fix: bounds-check dimension before any allocation
+        const MAX_DIMENSION: usize = 65_536;
+        const MAX_COUNT: usize = 10_000_000;
+        if dimension > MAX_DIMENSION {
+            return Err(HnswError::InvalidData);
+        }
+
+        // Validate deserialized parameters
+        if m == 0 || m > 256 {
+            return Err(HnswError::InvalidData);
+        }
+        if ef_search == 0 || ef_search > 10_000 {
+            return Err(HnswError::InvalidData);
+        }
 
         let mut config = HnswConfig::default();
         config.dimension = dimension;
@@ -452,11 +489,30 @@ impl HnswIndex {
         config.m0 = m * 2;
         config.ef_search = ef_search;
 
-        let count = u64::from_le_bytes(bytes[pos..pos+8].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+        let count =
+            u64::from_le_bytes(bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 8;
-        let max_layer = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+
+        // B6 fix: bounds-check count before any allocation
+        if count > MAX_COUNT {
+            return Err(HnswError::InvalidData);
+        }
+
+        // Validate buffer has enough bytes for at least the per-node vector data
+        // Each node needs at minimum: id(8) + max_layer(4) + dimension*4 bytes for vector
+        let min_bytes_per_node = 8 + 4 + dimension.checked_mul(4).ok_or(HnswError::InvalidData)?;
+        let min_total = count.checked_mul(min_bytes_per_node).ok_or(HnswError::InvalidData)?;
+        if bytes.len().saturating_sub(pos) < min_total {
+            return Err(HnswError::InvalidData);
+        }
+
+        let max_layer =
+            u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 4;
-        let entry_id = u64::from_le_bytes(bytes[pos..pos+8].try_into().map_err(|_| HnswError::InvalidData)?);
+        let entry_id =
+            u64::from_le_bytes(bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?);
         pos += 8;
         let has_entry = bytes[pos] == 1;
         pos += 1;
@@ -469,9 +525,13 @@ impl HnswIndex {
                 return Err(HnswError::InvalidData);
             }
 
-            let id = u64::from_le_bytes(bytes[pos..pos+8].try_into().map_err(|_| HnswError::InvalidData)?);
+            let id = u64::from_le_bytes(
+                bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?,
+            );
             pos += 8;
-            let node_max_layer = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+            let node_max_layer = u32::from_le_bytes(
+                bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?,
+            ) as usize;
             pos += 4;
 
             let mut vector = Vec::with_capacity(dimension);
@@ -479,7 +539,9 @@ impl HnswIndex {
                 if pos + 4 > bytes.len() {
                     return Err(HnswError::InvalidData);
                 }
-                let v = f32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?);
+                let v = f32::from_le_bytes(
+                    bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?,
+                );
                 pos += 4;
                 vector.push(v);
             }
@@ -489,15 +551,31 @@ impl HnswIndex {
                 if pos + 4 > bytes.len() {
                     return Err(HnswError::InvalidData);
                 }
-                let conn_len = u32::from_le_bytes(bytes[pos..pos+4].try_into().map_err(|_| HnswError::InvalidData)?) as usize;
+                let conn_len = u32::from_le_bytes(
+                    bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?,
+                ) as usize;
                 pos += 4;
+
+                // B6 fix: bounds-check neighbor connection count
+                const MAX_CONNECTIONS: usize = 1024;
+                if conn_len > MAX_CONNECTIONS {
+                    return Err(HnswError::InvalidData);
+                }
+
+                // Validate buffer has enough remaining bytes for this layer's connections
+                let conn_bytes_needed = conn_len.checked_mul(8).ok_or(HnswError::InvalidData)?;
+                if bytes.len().saturating_sub(pos) < conn_bytes_needed {
+                    return Err(HnswError::InvalidData);
+                }
 
                 let mut layer_conns = Vec::with_capacity(conn_len);
                 for _ in 0..conn_len {
                     if pos + 8 > bytes.len() {
                         return Err(HnswError::InvalidData);
                     }
-                    let conn_id = u64::from_le_bytes(bytes[pos..pos+8].try_into().map_err(|_| HnswError::InvalidData)?);
+                    let conn_id = u64::from_le_bytes(
+                        bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?,
+                    );
                     pos += 8;
                     layer_conns.push(conn_id);
                 }
@@ -600,10 +678,7 @@ impl HnswVectorStore {
         let (nearest_id, distance) = results[0];
 
         // Find label for nearest vector
-        let label = labels.iter()
-            .find(|(id, _)| *id == nearest_id)
-            .map(|(_, l)| *l)
-            .unwrap_or(0);
+        let label = labels.iter().find(|(id, _)| *id == nearest_id).map(|(_, l)| *l).unwrap_or(0);
 
         // Convert distance to confidence (1.0 = exact match, 0.0 = very far)
         // Using exponential decay: confidence = e^(-distance)
@@ -650,8 +725,15 @@ impl HnswVectorStore {
     ///
     /// # Returns
     /// * `(is_similar, similarity_score)`
-    pub fn similarity_check(&self, vector_a: &[f32], vector_b: &[f32], threshold: f32) -> Result<(bool, f32), HnswError> {
-        if vector_a.len() != self.index.config.dimension || vector_b.len() != self.index.config.dimension {
+    pub fn similarity_check(
+        &self,
+        vector_a: &[f32],
+        vector_b: &[f32],
+        threshold: f32,
+    ) -> Result<(bool, f32), HnswError> {
+        if vector_a.len() != self.index.config.dimension
+            || vector_b.len() != self.index.config.dimension
+        {
             return Err(HnswError::DimensionMismatch {
                 expected: self.index.config.dimension,
                 got: vector_a.len().min(vector_b.len()),
@@ -659,10 +741,8 @@ impl HnswVectorStore {
         }
 
         // Calculate Euclidean distance
-        let distance: f32 = vector_a.iter()
-            .zip(vector_b.iter())
-            .map(|(a, b)| (a - b).powi(2))
-            .sum();
+        let distance: f32 =
+            vector_a.iter().zip(vector_b.iter()).map(|(a, b)| (a - b).powi(2)).sum();
 
         // Convert distance to similarity (1.0 = identical, 0.0 = very different)
         let similarity = (-distance.sqrt() / 2.0).exp();
@@ -681,7 +761,6 @@ impl HnswVectorStore {
         self.index.config.dimension
     }
 }
-
 
 impl Default for HnswVectorStore {
     fn default() -> Self {
@@ -865,4 +944,3 @@ mod tests {
         assert_eq!(store.dimension(), 768);
     }
 }
-

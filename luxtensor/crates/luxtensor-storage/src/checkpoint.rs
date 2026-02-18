@@ -141,10 +141,13 @@ impl CheckpointManager {
     ) -> Result<CheckpointMetadata, CheckpointError> {
         info!("Creating checkpoint at height {}", height);
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
 
         let snapshot_path = self.checkpoint_dir.join(format!("checkpoint_{}", height));
         let meta_path = self.checkpoint_dir.join(format!("checkpoint_{}.meta", height));

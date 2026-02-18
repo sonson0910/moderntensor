@@ -69,9 +69,9 @@ pub struct NodeConfig {
 /// - Mainnet: Will be announced before mainnet launch
 /// - Testnet: 0xDAO0000000000000000000000000000000000002
 fn default_dao_address() -> String {
-    // Development-only default. The validate() method will reject this
-    // for non-dev chain IDs.
-    "0x0000000000000000000000000000000000000000".to_string()
+    // Use the canonical mainnet DAO treasury address by default.
+    // For custom deployments, override this in config.toml.
+    luxtensor_core::constants::addresses::DAO_TREASURY_MAINNET.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,7 +207,7 @@ impl Default for Config {
         Self {
             node: NodeConfig {
                 name: "luxtensor-node".to_string(),
-                chain_id: 8898, // LuxTensor devnet (SECURITY: previously 1, matching Ethereum mainnet)
+                chain_id: 8898, // LuxTensor mainnet (canonical chain ID)
                 data_dir: PathBuf::from("./data"),
                 is_validator: false,
                 validator_key_path: None,
@@ -289,7 +289,7 @@ impl Config {
             }
             // Warn if using the zero address on non-dev chains
             let is_zero = dao == "0x0000000000000000000000000000000000000000";
-            let is_production_chain = self.node.chain_id == 8899 || self.node.chain_id == 9999;
+            let is_production_chain = self.node.chain_id == 8898 || self.node.chain_id == 9999;
             if is_zero && is_production_chain && !self.node.dev_mode {
                 anyhow::bail!(
                     "dao_address is the zero address on chain {}. \

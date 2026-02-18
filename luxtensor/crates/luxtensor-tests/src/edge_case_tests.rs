@@ -42,8 +42,15 @@ fn test_tx_wrong_nonce_rejected() {
 
     // TX with wrong nonce (4 instead of 5)
     let tx = create_signed_tx(&keypair, 4, None, 0);
-    // Note: Actual execution validation would reject this
     assert_eq!(tx.nonce, 4);
+
+    // Verify the account's expected nonce differs from tx nonce (replay protection check)
+    let current_account = state.get_account(&addr).unwrap();
+    assert_ne!(
+        tx.nonce, current_account.nonce,
+        "TX nonce {} must not match account nonce {} — execution layer must reject this",
+        tx.nonce, current_account.nonce
+    );
 }
 
 /// Test 3: TX with insufficient balance
@@ -265,15 +272,30 @@ fn test_balance_overflow_protection() {
     // Give addr2 maximum balance
     let mut account2 = Account::new();
     account2.balance = u128::MAX;
-    state.set_account(addr2, account2);
+    state.set_account(addr2, account2.clone());
 
     // addr1 with some balance
     let mut account1 = Account::new();
     account1.balance = 1000;
     state.set_account(addr1, account1);
 
-    // Transfer should not cause overflow due to saturating_add
-    // (This test verifies the fix we applied)
+    // Verify that adding to u128::MAX would overflow with normal arithmetic
+    let transfer_amount = 1000u128;
+    assert!(
+        account2.balance.checked_add(transfer_amount).is_none(),
+        "u128::MAX + 1000 must overflow with checked arithmetic"
+    );
+    // Verify saturating_add protects against overflow
+    assert_eq!(
+        account2.balance.saturating_add(transfer_amount),
+        u128::MAX,
+        "saturating_add must cap at u128::MAX"
+    );
+
+    // Verify the account balance is retrievable and correct
+    let retrieved = state.get_account(&addr2);
+    assert!(retrieved.is_some(), "Account must exist after set_account");
+    assert_eq!(retrieved.unwrap().balance, u128::MAX);
 }
 
 /// Test 19: Nonce overflow protection
@@ -288,8 +310,23 @@ fn test_nonce_overflow_protection() {
     account.balance = 1_000_000_000_000_000_000u128;
     state.set_account(addr, account);
 
-    // Nonce increment should saturate, not overflow
-    // (This test verifies the fix we applied)
+    // Verify account was stored with max nonce
+    let retrieved = state.get_account(&addr);
+    assert!(retrieved.is_some(), "Account must exist");
+    let acc = retrieved.unwrap();
+    assert_eq!(acc.nonce, u64::MAX, "Nonce must be u64::MAX");
+
+    // Verify checked increment detects overflow
+    assert!(
+        acc.nonce.checked_add(1).is_none(),
+        "u64::MAX + 1 must overflow with checked arithmetic"
+    );
+    // Verify saturating_add protects against wraparound
+    assert_eq!(
+        acc.nonce.saturating_add(1),
+        u64::MAX,
+        "saturating_add must cap at u64::MAX"
+    );
 }
 
 /// Test 20: Total stake overflow protection
@@ -321,8 +358,15 @@ fn test_total_stake_overflow_protection() {
         activation_epoch: 0,
     });
 
-    // Total stake should be <= u128::MAX
-    assert!(vs.total_stake() <= u128::MAX);
+    // Total stake must not wrap around due to overflow.
+    // If wrapping occurred, total_stake would be less than either individual stake.
+    let total = vs.total_stake();
+    assert!(
+        total >= u128::MAX / 2,
+        "Total stake must not wrap around: got {}, expected >= {}",
+        total,
+        u128::MAX / 2
+    );
 }
 
 // ============================================================

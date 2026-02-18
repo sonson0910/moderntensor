@@ -12,11 +12,13 @@ impl Address {
         Self(bytes)
     }
 
-    /// Create address from byte slice (panics if too short — use try_from_slice for untrusted input)
+    /// Create address from byte slice.
+    ///
+    /// # Panics
+    /// Panics if the slice is shorter than 20 bytes.
+    #[deprecated(note = "Use try_from_slice instead")]
     pub fn from_slice(slice: &[u8]) -> Self {
-        let mut bytes = [0u8; 20];
-        bytes.copy_from_slice(&slice[..20]);
-        Self(bytes)
+        Self::try_from_slice(slice).expect("Address::from_slice requires at least 20 bytes")
     }
 
     /// Safe address creation from untrusted byte slice

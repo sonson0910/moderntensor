@@ -20,6 +20,9 @@ sha3 = "0.10"
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 
+[features]
+legacy = []
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = { workspace = true }

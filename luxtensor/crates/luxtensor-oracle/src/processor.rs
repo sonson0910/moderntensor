@@ -77,6 +77,9 @@ impl RequestProcessor {
         Ok(())
     }
 
+    /// Maximum time allowed for a single AI inference + proof generation.
+    const INFERENCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
     /// Process an AI computation request and generate a ZK proof
     pub async fn process_request(
         &self,
@@ -105,8 +108,19 @@ impl RequestProcessor {
             ));
         }
 
-        let receipt = prover.prove(self.ai_image_id, guest_input).await
-            .map_err(|e| crate::error::OracleError::ProofGeneration(e.to_string()))?;
+        let receipt = tokio::time::timeout(
+            Self::INFERENCE_TIMEOUT,
+            prover.prove(self.ai_image_id, guest_input),
+        )
+        .await
+        .map_err(|_| {
+            crate::error::OracleError::ProofGeneration(format!(
+                "AI inference timed out after {:?} for request {:?}",
+                Self::INFERENCE_TIMEOUT,
+                request_id
+            ))
+        })?
+        .map_err(|e| crate::error::OracleError::ProofGeneration(e.to_string()))?;
 
         info!(
             cycles = receipt.metadata.cycles,

@@ -10,7 +10,7 @@ pub use hash::{Hash, keccak256, blake3_hash, sha256};
 // Explicit re-exports — signature
 pub use signature::{
     CryptoAddress, KeyPair, verify_signature, recover_public_key,
-    address_from_public_key, recover_address,
+    address_from_public_key, recover_address, recover_address_strict,
 };
 
 // Explicit re-exports — merkle

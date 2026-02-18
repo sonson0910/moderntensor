@@ -5,9 +5,12 @@
 //! - Performance tracking for validators (uptime, block production, attestations)
 //! - Score calculation and updates
 //! - Integration with reward distribution
+//!
+//! **IMPORTANT**: All state transitions use `current_height` (block height) instead
+//! of wall-clock time, ensuring deterministic and consensus-safe scoring across
+//! all nodes.
 
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ============================================================
 // Types
@@ -24,8 +27,8 @@ pub struct MinerMetrics {
     pub avg_execution_time: u64,
     /// Average quality score (0-100)
     pub avg_quality_score: u32,
-    /// Last activity timestamp
-    pub last_active: u64,
+    /// Last active block height (deterministic, consensus-safe)
+    pub last_active_height: u64,
     /// Cumulative score (0-100_000 for precision)
     pub score: u32,
     /// GPU tasks completed this epoch (verified by validator)
@@ -47,8 +50,8 @@ pub struct ValidatorMetrics {
     pub attestations_made: u64,
     /// Uptime percentage (0-100)
     pub uptime: u32,
-    /// Last activity timestamp
-    pub last_active: u64,
+    /// Last active block height (deterministic, consensus-safe)
+    pub last_active_height: u64,
     /// Cumulative score (0-100_000 for precision)
     pub score: u32,
 }
@@ -57,39 +60,19 @@ pub struct ValidatorMetrics {
 #[derive(Debug, Clone)]
 pub enum ScoringEvent {
     /// Miner completed a task
-    TaskCompleted {
-        miner: [u8; 20],
-        execution_time: u64,
-        quality_score: u32,
-    },
+    TaskCompleted { miner: [u8; 20], execution_time: u64, quality_score: u32 },
     /// Miner failed a task
-    TaskFailed {
-        miner: [u8; 20],
-        reason: String,
-    },
+    TaskFailed { miner: [u8; 20], reason: String },
     /// GPU task assigned to miner (for AI subnets)
-    GpuTaskAssigned {
-        miner: [u8; 20],
-    },
+    GpuTaskAssigned { miner: [u8; 20] },
     /// GPU task completed by miner (verified by validator)
-    GpuTaskCompleted {
-        miner: [u8; 20],
-        execution_time: u64,
-        quality_score: u32,
-    },
+    GpuTaskCompleted { miner: [u8; 20], execution_time: u64, quality_score: u32 },
     /// Validator produced a block
-    BlockProduced {
-        validator: [u8; 20],
-    },
+    BlockProduced { validator: [u8; 20] },
     /// Validator missed block opportunity
-    BlockMissed {
-        validator: [u8; 20],
-    },
+    BlockMissed { validator: [u8; 20] },
     /// Validator made attestation
-    AttestationMade {
-        validator: [u8; 20],
-        delay: u64,
-    },
+    AttestationMade { validator: [u8; 20], delay: u64 },
 }
 
 /// Scoring configuration
@@ -111,8 +94,8 @@ pub struct ScoringConfig {
     pub min_score: u32,
     /// Maximum score
     pub max_score: u32,
-    /// Score decay interval (seconds)
-    pub decay_interval: u64,
+    /// Score decay interval in blocks (e.g., every 14400 blocks ≈ 1 day at 6s blocks)
+    pub decay_interval_blocks: u64,
 }
 
 impl Default for ScoringConfig {
@@ -124,9 +107,9 @@ impl Default for ScoringConfig {
             quality_weight: 0.4,
             block_production_weight: 0.5,
             uptime_weight: 0.5,
-            min_score: 1000,     // 1% minimum
-            max_score: 100_000,  // 100% maximum
-            decay_interval: 86400, // 1 day
+            min_score: 1000,              // 1% minimum
+            max_score: 100_000,           // 100% maximum
+            decay_interval_blocks: 14400, // ~1 day at 6s block time
         }
     }
 }
@@ -135,12 +118,16 @@ impl Default for ScoringConfig {
 // Scoring Manager
 // ============================================================
 
-/// Scoring Manager - tracks and calculates performance scores
+/// Scoring Manager - tracks and calculates performance scores.
+///
+/// **Consensus-critical**: All timestamps replaced with block heights.
+/// `last_active_height` and `last_decay_height` are deterministic values
+/// derived from the chain, ensuring identical state across all nodes.
 pub struct ScoringManager {
     config: ScoringConfig,
     miner_metrics: HashMap<[u8; 20], MinerMetrics>,
     validator_metrics: HashMap<[u8; 20], ValidatorMetrics>,
-    last_decay: u64,
+    last_decay_height: u64,
 }
 
 impl ScoringManager {
@@ -155,41 +142,38 @@ impl ScoringManager {
             config,
             miner_metrics: HashMap::new(),
             validator_metrics: HashMap::new(),
-            last_decay: current_timestamp(),
+            last_decay_height: 0,
         }
     }
 
-    /// Process a scoring event
-    pub fn process_event(&mut self, event: ScoringEvent) {
+    /// Process a scoring event at a given block height
+    pub fn process_event(&mut self, event: ScoringEvent, current_height: u64) {
         match event {
-            ScoringEvent::TaskCompleted {
-                miner,
-                execution_time,
-                quality_score,
-            } => {
-                self.record_task_completed(miner, execution_time, quality_score);
+            ScoringEvent::TaskCompleted { miner, execution_time, quality_score } => {
+                self.record_task_completed(miner, execution_time, quality_score, current_height);
             }
             ScoringEvent::TaskFailed { miner, .. } => {
-                self.record_task_failed(miner);
+                self.record_task_failed(miner, current_height);
             }
             ScoringEvent::GpuTaskAssigned { miner } => {
-                self.record_gpu_task_assigned(miner);
+                self.record_gpu_task_assigned(miner, current_height);
             }
-            ScoringEvent::GpuTaskCompleted {
-                miner,
-                execution_time,
-                quality_score,
-            } => {
-                self.record_gpu_task_completed(miner, execution_time, quality_score);
+            ScoringEvent::GpuTaskCompleted { miner, execution_time, quality_score } => {
+                self.record_gpu_task_completed(
+                    miner,
+                    execution_time,
+                    quality_score,
+                    current_height,
+                );
             }
             ScoringEvent::BlockProduced { validator } => {
-                self.record_block_produced(validator);
+                self.record_block_produced(validator, current_height);
             }
             ScoringEvent::BlockMissed { validator } => {
-                self.record_block_missed(validator);
+                self.record_block_missed(validator, current_height);
             }
             ScoringEvent::AttestationMade { validator, delay } => {
-                self.record_attestation(validator, delay);
+                self.record_attestation(validator, delay, current_height);
             }
         }
     }
@@ -200,14 +184,12 @@ impl ScoringManager {
         miner: [u8; 20],
         execution_time: u64,
         quality_score: u32,
+        current_height: u64,
     ) {
-        let metrics = self
-            .miner_metrics
-            .entry(miner)
-            .or_insert_with(MinerMetrics::default);
+        let metrics = self.miner_metrics.entry(miner).or_insert_with(MinerMetrics::default);
 
         metrics.tasks_completed += 1;
-        metrics.last_active = current_timestamp();
+        metrics.last_active_height = current_height;
 
         // Update average execution time (rolling average)
         if metrics.avg_execution_time == 0 {
@@ -228,28 +210,22 @@ impl ScoringManager {
     }
 
     /// Record failed task
-    pub fn record_task_failed(&mut self, miner: [u8; 20]) {
-        let metrics = self
-            .miner_metrics
-            .entry(miner)
-            .or_insert_with(MinerMetrics::default);
+    pub fn record_task_failed(&mut self, miner: [u8; 20], current_height: u64) {
+        let metrics = self.miner_metrics.entry(miner).or_insert_with(MinerMetrics::default);
 
         metrics.tasks_failed += 1;
-        metrics.last_active = current_timestamp();
+        metrics.last_active_height = current_height;
 
         // Recalculate score
         self.recalculate_miner_score(miner);
     }
 
     /// Record GPU task assigned (for AI subnets)
-    pub fn record_gpu_task_assigned(&mut self, miner: [u8; 20]) {
-        let metrics = self
-            .miner_metrics
-            .entry(miner)
-            .or_insert_with(MinerMetrics::default);
+    pub fn record_gpu_task_assigned(&mut self, miner: [u8; 20], current_height: u64) {
+        let metrics = self.miner_metrics.entry(miner).or_insert_with(MinerMetrics::default);
 
         metrics.gpu_tasks_assigned += 1;
-        metrics.last_active = current_timestamp();
+        metrics.last_active_height = current_height;
     }
 
     /// Record GPU task completed (verified by validator)
@@ -258,9 +234,10 @@ impl ScoringManager {
         miner: [u8; 20],
         execution_time: u64,
         quality_score: u32,
+        current_height: u64,
     ) {
         // Record as regular task completion
-        self.record_task_completed(miner, execution_time, quality_score);
+        self.record_task_completed(miner, execution_time, quality_score, current_height);
 
         // Also increment GPU-specific counter
         if let Some(metrics) = self.miner_metrics.get_mut(&miner) {
@@ -277,40 +254,35 @@ impl ScoringManager {
     }
 
     /// Record block production
-    pub fn record_block_produced(&mut self, validator: [u8; 20]) {
-        let metrics = self
-            .validator_metrics
-            .entry(validator)
-            .or_insert_with(ValidatorMetrics::default);
+    pub fn record_block_produced(&mut self, validator: [u8; 20], current_height: u64) {
+        let metrics =
+            self.validator_metrics.entry(validator).or_insert_with(ValidatorMetrics::default);
 
         metrics.blocks_produced += 1;
-        metrics.last_active = current_timestamp();
+        metrics.last_active_height = current_height;
         metrics.uptime = 100; // Active = 100% uptime for this cycle
 
         self.recalculate_validator_score(validator);
     }
 
     /// Record missed block
-    pub fn record_block_missed(&mut self, validator: [u8; 20]) {
-        let metrics = self
-            .validator_metrics
-            .entry(validator)
-            .or_insert_with(ValidatorMetrics::default);
+    pub fn record_block_missed(&mut self, validator: [u8; 20], _current_height: u64) {
+        let metrics =
+            self.validator_metrics.entry(validator).or_insert_with(ValidatorMetrics::default);
 
         metrics.blocks_missed += 1;
+        // Note: do NOT update last_active_height on miss — inactivity should be visible
 
         self.recalculate_validator_score(validator);
     }
 
     /// Record attestation
-    pub fn record_attestation(&mut self, validator: [u8; 20], delay: u64) {
-        let metrics = self
-            .validator_metrics
-            .entry(validator)
-            .or_insert_with(ValidatorMetrics::default);
+    pub fn record_attestation(&mut self, validator: [u8; 20], delay: u64, current_height: u64) {
+        let metrics =
+            self.validator_metrics.entry(validator).or_insert_with(ValidatorMetrics::default);
 
         metrics.attestations_made += 1;
-        metrics.last_active = current_timestamp();
+        metrics.last_active_height = current_height;
 
         if metrics.avg_attestation_delay == 0 {
             metrics.avg_attestation_delay = delay;
@@ -385,10 +357,13 @@ impl ScoringManager {
         }
     }
 
-    /// Apply decay to all scores (call periodically)
-    pub fn apply_decay(&mut self) {
-        let now = current_timestamp();
-        if now - self.last_decay < self.config.decay_interval {
+    /// Apply decay to all scores based on block height (call periodically).
+    ///
+    /// Decay is applied when `current_height - last_decay_height >= decay_interval_blocks`,
+    /// ensuring deterministic and identical behavior across all nodes.
+    pub fn apply_decay(&mut self, current_height: u64) {
+        if current_height.saturating_sub(self.last_decay_height) < self.config.decay_interval_blocks
+        {
             return;
         }
 
@@ -410,39 +385,27 @@ impl ScoringManager {
             };
         }
 
-        self.last_decay = now;
+        self.last_decay_height = current_height;
     }
 
     /// Get miner score (0-100_000, representing 0-100%)
     pub fn get_miner_score(&self, miner: &[u8; 20]) -> u32 {
-        self.miner_metrics
-            .get(miner)
-            .map(|m| m.score)
-            .unwrap_or(self.config.min_score)
+        self.miner_metrics.get(miner).map(|m| m.score).unwrap_or(self.config.min_score)
     }
 
     /// Get validator score (0-100_000, representing 0-100%)
     pub fn get_validator_score(&self, validator: &[u8; 20]) -> u32 {
-        self.validator_metrics
-            .get(validator)
-            .map(|m| m.score)
-            .unwrap_or(self.config.min_score)
+        self.validator_metrics.get(validator).map(|m| m.score).unwrap_or(self.config.min_score)
     }
 
     /// Get all miner scores as address -> score map
     pub fn get_all_miner_scores(&self) -> HashMap<[u8; 20], u32> {
-        self.miner_metrics
-            .iter()
-            .map(|(addr, m)| (*addr, m.score))
-            .collect()
+        self.miner_metrics.iter().map(|(addr, m)| (*addr, m.score)).collect()
     }
 
     /// Get all validator scores as address -> score map
     pub fn get_all_validator_scores(&self) -> HashMap<[u8; 20], u32> {
-        self.validator_metrics
-            .iter()
-            .map(|(addr, m)| (*addr, m.score))
-            .collect()
+        self.validator_metrics.iter().map(|(addr, m)| (*addr, m.score)).collect()
     }
 
     /// Get miner metrics
@@ -458,8 +421,9 @@ impl ScoringManager {
             .map(|(addr, m)| {
                 crate::reward_distribution::MinerEpochStats::with_tasks(
                     *addr,
-                    m.score as f64 / self.config.max_score as f64,  // Normalize to 0.0-1.0
-                    (m.tasks_completed.saturating_sub(m.gpu_tasks_completed as u64)).min(u32::MAX as u64) as u32,  // CPU tasks (clamped)
+                    m.score as f64 / self.config.max_score as f64, // Normalize to 0.0-1.0
+                    (m.tasks_completed.saturating_sub(m.gpu_tasks_completed as u64))
+                        .min(u32::MAX as u64) as u32, // CPU tasks (clamped)
                     m.gpu_tasks_completed,
                     m.gpu_tasks_assigned,
                 )
@@ -481,25 +445,25 @@ impl ScoringManager {
     pub fn validator_count(&self) -> usize {
         self.validator_metrics.len()
     }
+
+    /// Remove metrics for addresses inactive for more than `max_inactive_blocks` blocks.
+    ///
+    /// This prevents unbounded growth of the metrics maps when participants
+    /// leave the network. Should be called periodically (e.g., once per epoch).
+    pub fn evict_inactive(&mut self, current_height: u64, max_inactive_blocks: u64) {
+        self.miner_metrics.retain(|_, m| {
+            current_height.saturating_sub(m.last_active_height) <= max_inactive_blocks
+        });
+        self.validator_metrics.retain(|_, m| {
+            current_height.saturating_sub(m.last_active_height) <= max_inactive_blocks
+        });
+    }
 }
 
 impl Default for ScoringManager {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// Helper function
-// NOTE: Scoring uses wall-clock time for local tracking only (not consensus-critical).
-// The `last_active` and `last_decay` fields are per-node observations used for
-// local score decay heuristics, not replicated consensus state. If scoring ever
-// becomes consensus-critical (e.g., used in reward calculation on-chain), this
-// must be replaced with deterministic block timestamps.
-fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_secs()
 }
 
 // ============================================================
@@ -515,13 +479,17 @@ mod tests {
         let mut manager = ScoringManager::new();
         let miner = [1u8; 20];
 
-        // Complete some tasks
-        manager.record_task_completed(miner, 1000, 80);
-        manager.record_task_completed(miner, 2000, 90);
+        // Complete some tasks at height 100
+        manager.record_task_completed(miner, 1000, 80, 100);
+        manager.record_task_completed(miner, 2000, 90, 101);
 
         let score = manager.get_miner_score(&miner);
         assert!(score > 0);
         assert!(score <= 100_000);
+
+        // Verify last_active_height is updated
+        let metrics = manager.get_miner_metrics(&miner).unwrap();
+        assert_eq!(metrics.last_active_height, 101);
     }
 
     #[test]
@@ -530,12 +498,16 @@ mod tests {
         let validator = [2u8; 20];
 
         // Produce some blocks
-        manager.record_block_produced(validator);
-        manager.record_block_produced(validator);
-        manager.record_block_missed(validator);
+        manager.record_block_produced(validator, 10);
+        manager.record_block_produced(validator, 11);
+        manager.record_block_missed(validator, 12);
 
         let score = manager.get_validator_score(&validator);
         assert!(score > 0);
+
+        // Verify last_active_height is from last produced block, not missed
+        let metrics = manager.get_validator_metrics(&validator).unwrap();
+        assert_eq!(metrics.last_active_height, 11);
     }
 
     #[test]
@@ -544,11 +516,11 @@ mod tests {
         let miner = [3u8; 20];
 
         // Complete tasks
-        manager.record_task_completed(miner, 1000, 90);
+        manager.record_task_completed(miner, 1000, 90, 50);
         let score_before = manager.get_miner_score(&miner);
 
         // Fail a task
-        manager.record_task_failed(miner);
+        manager.record_task_failed(miner, 51);
         let score_after = manager.get_miner_score(&miner);
 
         assert!(score_after < score_before);
@@ -558,17 +530,42 @@ mod tests {
     fn test_process_events() {
         let mut manager = ScoringManager::new();
 
-        manager.process_event(ScoringEvent::TaskCompleted {
-            miner: [1u8; 20],
-            execution_time: 500,
-            quality_score: 95,
-        });
+        manager.process_event(
+            ScoringEvent::TaskCompleted {
+                miner: [1u8; 20],
+                execution_time: 500,
+                quality_score: 95,
+            },
+            100,
+        );
 
-        manager.process_event(ScoringEvent::BlockProduced {
-            validator: [2u8; 20],
-        });
+        manager.process_event(ScoringEvent::BlockProduced { validator: [2u8; 20] }, 100);
 
         assert_eq!(manager.miner_count(), 1);
         assert_eq!(manager.validator_count(), 1);
+    }
+
+    #[test]
+    fn test_decay_height_based() {
+        let config = ScoringConfig {
+            decay_interval_blocks: 10,
+            decay_factor: 0.5,
+            ..ScoringConfig::default()
+        };
+        let mut manager = ScoringManager::with_config(config);
+        let miner = [4u8; 20];
+
+        manager.record_task_completed(miner, 1000, 90, 1);
+        let score_before = manager.get_miner_score(&miner);
+        assert!(score_before > 0);
+
+        // Decay should not trigger yet (only 5 blocks)
+        manager.apply_decay(5);
+        assert_eq!(manager.get_miner_score(&miner), score_before);
+
+        // Decay should trigger at height 10 (gap = 10 >= interval 10)
+        manager.apply_decay(10);
+        let score_after = manager.get_miner_score(&miner);
+        assert!(score_after < score_before);
     }
 }

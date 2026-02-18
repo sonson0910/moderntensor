@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 /// Shutdown state for coordinating graceful shutdown
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShutdownState {
     /// Normal operation
@@ -25,6 +26,7 @@ pub enum ShutdownState {
 }
 
 /// Configuration for graceful shutdown
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ShutdownConfig {
     /// Maximum time to wait for pending transactions
@@ -72,6 +74,7 @@ pub struct ShutdownCheckpoint {
 }
 
 /// Result of shutdown operation
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ShutdownResult {
     /// Whether shutdown was successful
@@ -94,6 +97,7 @@ pub struct GracefulShutdown {
     accepting_new_work: RwLock<bool>,
 }
 
+#[allow(dead_code)]
 impl GracefulShutdown {
     /// Create new shutdown manager
     pub fn new(config: ShutdownConfig) -> Self {

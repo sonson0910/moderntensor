@@ -72,6 +72,8 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
     );
 
     event OracleUpdated(address indexed oldOracle, address indexed newOracle);
+    event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
+    event FeesWithdrawn(address indexed recipient, uint256 amount);
 
     // ========== ERRORS ==========
 
@@ -87,6 +89,7 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
     // ========== CONSTRUCTOR ==========
 
     constructor(address _mdtToken) Ownable(msg.sender) {
+        require(_mdtToken != address(0), "Invalid token address");
         mdtToken = IERC20(_mdtToken);
     }
 
@@ -139,6 +142,7 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
         bytes32 requestId,
         address miner
     ) external onlyOracle nonReentrant {
+        require(miner != address(0), "Invalid miner address");
         EscrowEntry storage entry = escrows[requestId];
         if (entry.depositor == address(0)) revert RequestNotFound();
         if (entry.released) revert AlreadyReleased();
@@ -187,6 +191,7 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
      * @param _aiOracle New oracle address
      */
     function setAIOracle(address _aiOracle) external onlyOwner {
+        require(_aiOracle != address(0), "Invalid oracle address");
         emit OracleUpdated(aiOracle, _aiOracle);
         aiOracle = _aiOracle;
     }
@@ -197,6 +202,7 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
      */
     function setProtocolFee(uint256 _feeBps) external onlyOwner {
         require(_feeBps <= 500, "Fee too high");
+        emit ProtocolFeeUpdated(protocolFeeBps, _feeBps);
         protocolFeeBps = _feeBps;
     }
 
@@ -205,9 +211,12 @@ contract PaymentEscrow is Ownable, ReentrancyGuard {
      * @param recipient Address to receive fees
      */
     function withdrawFees(address recipient) external onlyOwner {
+        require(recipient != address(0), "Invalid recipient");
         uint256 amount = accumulatedFees;
+        require(amount > 0, "No fees to withdraw");
         accumulatedFees = 0;
         mdtToken.safeTransfer(recipient, amount);
+        emit FeesWithdrawn(recipient, amount);
     }
 
     // ========== VIEW FUNCTIONS ==========

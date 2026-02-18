@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Health status of the node
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
     /// Whether the node is healthy overall
@@ -35,6 +36,7 @@ pub struct HealthStatus {
 }
 
 /// Possible health issues
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HealthIssue {
     /// Not enough peers connected
@@ -51,6 +53,7 @@ pub enum HealthIssue {
     HighMemoryUsage { percent: u8 },
 }
 
+#[allow(dead_code)]
 impl HealthIssue {
     /// Get severity level (1-10)
     pub fn severity(&self) -> u8 {
@@ -91,6 +94,7 @@ impl HealthIssue {
 }
 
 /// Configuration for health monitoring
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HealthConfig {
     /// Minimum peers for healthy status
@@ -121,6 +125,7 @@ impl Default for HealthConfig {
 }
 
 /// Health metrics collector
+#[allow(dead_code)]
 pub struct HealthMonitor {
     config: HealthConfig,
     start_time: Instant,
@@ -133,6 +138,7 @@ pub struct HealthMonitor {
     mempool_size: RwLock<usize>,
 }
 
+#[allow(dead_code)]
 impl HealthMonitor {
     /// Create a new health monitor
     pub fn new(config: HealthConfig) -> Self {

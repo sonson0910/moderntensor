@@ -478,6 +478,39 @@ impl<const D: usize> HnswGraph<D> {
             ));
         }
 
+        // SECURITY: Validate entry_point is within bounds
+        if let Some(ep) = graph.entry_point {
+            if ep >= graph.nodes.len() {
+                return Err(HnswError::DeserializationError(
+                    format!(
+                        "entry_point {} is out of bounds (nodes: {})",
+                        ep,
+                        graph.nodes.len(),
+                    ),
+                ));
+            }
+        }
+
+        // SECURITY: Validate all neighbor IDs reference valid nodes
+        let node_count = graph.nodes.len();
+        for (node_id, node) in graph.nodes.iter().enumerate() {
+            for (level, neighbors) in node.neighbors.iter().enumerate() {
+                for &neighbor_id in neighbors {
+                    if neighbor_id >= node_count {
+                        return Err(HnswError::DeserializationError(
+                            format!(
+                                "node {} has invalid neighbor {} at level {} (max valid ID: {})",
+                                node_id,
+                                neighbor_id,
+                                level,
+                                node_count.saturating_sub(1),
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+
         Ok(graph)
     }
 }

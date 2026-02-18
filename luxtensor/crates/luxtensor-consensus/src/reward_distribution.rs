@@ -375,6 +375,14 @@ impl RewardDistributor {
             }
         }
 
+        // Give rounding dust to last participant to ensure full pool distribution
+        let dust = pool.saturating_sub(_distributed);
+        if dust > 0 {
+            if let Some(last) = miners.last() {
+                *rewards.entry(last.address).or_insert(0) += dust;
+            }
+        }
+
         rewards
     }
 
@@ -452,19 +460,29 @@ impl RewardDistributor {
             return rewards;
         }
 
-        for (address, effective_score) in effective_scores {
+        let mut distributed: u128 = 0;
+        for (address, effective_score) in &effective_scores {
             // SECURITY: Use fixed-point integer arithmetic for precision
             const PRECISION: u128 = 1_000_000_000_000;
             let scaled_share = if total_score > 0.0 {
                 // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
-                let raw = (effective_score / total_score) * PRECISION as f64;
+                let raw = (*effective_score / total_score) * PRECISION as f64;
                 if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 }
             } else {
                 0
             };
             let reward = pool.checked_mul(scaled_share).map(|x| x / PRECISION).unwrap_or(0);
             if reward > 0 {
-                rewards.insert(address, reward);
+                rewards.insert(*address, reward);
+                distributed += reward;
+            }
+        }
+
+        // Give rounding dust to last participant
+        let dust = pool.saturating_sub(distributed);
+        if dust > 0 {
+            if let Some(last) = miners.last() {
+                *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
 
@@ -488,12 +506,22 @@ impl RewardDistributor {
             return rewards;
         }
 
-        for (address, effective) in effective_stakes {
+        let mut distributed: u128 = 0;
+        for (address, effective) in &effective_stakes {
             // Use u128 arithmetic to avoid overflow
             let share =
-                (pool as u128).checked_mul(effective).map(|x| x / total_effective).unwrap_or(0);
+                (pool as u128).checked_mul(*effective).map(|x| x / total_effective).unwrap_or(0);
             if share > 0 {
-                rewards.insert(address, share);
+                rewards.insert(*address, share);
+                distributed += share;
+            }
+        }
+
+        // Give rounding dust to last participant
+        let dust = pool.saturating_sub(distributed);
+        if dust > 0 {
+            if let Some(last) = validators.last() {
+                *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
 
@@ -525,10 +553,20 @@ impl RewardDistributor {
             return rewards;
         }
 
-        for (address, weight) in weighted_stakes {
-            let share = (pool as u128).checked_mul(weight).map(|x| x / total_weighted).unwrap_or(0);
+        let mut distributed: u128 = 0;
+        for (address, weight) in &weighted_stakes {
+            let share = (pool as u128).checked_mul(*weight).map(|x| x / total_weighted).unwrap_or(0);
             if share > 0 {
-                rewards.insert(address, share);
+                rewards.insert(*address, share);
+                distributed += share;
+            }
+        }
+
+        // Give rounding dust to last participant
+        let dust = pool.saturating_sub(distributed);
+        if dust > 0 {
+            if let Some(last) = delegators.last() {
+                *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
 
@@ -579,6 +617,14 @@ impl RewardDistributor {
             }
         }
 
+        // Give rounding dust to last infrastructure node
+        let dust = pool.saturating_sub(_distributed);
+        if dust > 0 {
+            if let Some(last) = nodes.last() {
+                *rewards.entry(last.address).or_insert(0) += dust;
+            }
+        }
+
         rewards
     }
 
@@ -591,6 +637,7 @@ impl RewardDistributor {
             return rewards;
         }
 
+        let mut distributed: u128 = 0;
         for subnet in subnets {
             let share = (pool as u128)
                 .checked_mul(subnet.emission_weight)
@@ -598,6 +645,15 @@ impl RewardDistributor {
                 .unwrap_or(0);
             if share > 0 {
                 *rewards.entry(subnet.owner).or_insert(0) += share;
+                distributed += share;
+            }
+        }
+
+        // Give rounding dust to last subnet owner
+        let dust = pool.saturating_sub(distributed);
+        if dust > 0 {
+            if let Some(last) = subnets.last() {
+                *rewards.entry(last.owner).or_insert(0) += dust;
             }
         }
 

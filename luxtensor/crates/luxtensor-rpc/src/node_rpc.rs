@@ -19,12 +19,38 @@ pub fn register_node_methods(
     registry: Arc<RwLock<NodeRegistry>>,
 ) {
     let reg = registry.clone();
+    // SECURITY: Node registration now requires signature verification
+    // to prevent attackers from registering nodes under arbitrary addresses.
     io.add_sync_method("node_register", move |params: Params| {
         let p: RegisterParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
         let stake = parse_amount(&p.stake)?;
         let block_height = p.block_height.unwrap_or(0);
+
+        // Verify timestamp freshness (within 5 minutes)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > p.timestamp + 300 || p.timestamp > now + 60 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature expired or future timestamp".to_string(),
+                data: None,
+            });
+        }
+
+        // Verify caller owns the address
+        let message = format!("node_register:{}:{}:{}", hex::encode(address), stake, p.timestamp);
+        let addr = luxtensor_core::Address::from(address);
+        verify_caller_signature(&addr, &message, &p.signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, &p.signature, 1))
+            .map_err(|_| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature verification failed - caller does not own address".to_string(),
+                data: None,
+            })?;
 
         match reg.write().register(address, stake, block_height) {
             Ok(tier) => Ok(json!({
@@ -33,7 +59,8 @@ pub fn register_node_methods(
                 "stake": p.stake,
                 "tier": format!("{:?}", tier),
                 "tier_name": tier.name(),
-                "can_produce_blocks": tier.can_produce_blocks()
+                "can_produce_blocks": tier.can_produce_blocks(),
+                "message": "Node registered (signature verified)"
             })),
             Err(e) => Err(RpcError {
                 code: ErrorCode::InvalidParams,
@@ -44,11 +71,37 @@ pub fn register_node_methods(
     });
 
     let reg = registry.clone();
+    // SECURITY: Stake updates now require signature verification
+    // to prevent attackers from manipulating other nodes' stakes.
     io.add_sync_method("node_updateStake", move |params: Params| {
         let p: UpdateStakeParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
         let new_stake = parse_amount(&p.new_stake)?;
+
+        // Verify timestamp freshness (within 5 minutes)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > p.timestamp + 300 || p.timestamp > now + 60 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature expired or future timestamp".to_string(),
+                data: None,
+            });
+        }
+
+        // Verify caller owns the address
+        let message = format!("node_updateStake:{}:{}:{}", hex::encode(address), new_stake, p.timestamp);
+        let addr = luxtensor_core::Address::from(address);
+        verify_caller_signature(&addr, &message, &p.signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, &p.signature, 1))
+            .map_err(|_| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature verification failed - caller does not own address".to_string(),
+                data: None,
+            })?;
 
         match reg.write().update_stake(address, new_stake) {
             Some(tier) => Ok(json!({
@@ -56,7 +109,8 @@ pub fn register_node_methods(
                 "address": p.address,
                 "new_stake": p.new_stake,
                 "new_tier": format!("{:?}", tier),
-                "tier_name": tier.name()
+                "tier_name": tier.name(),
+                "message": "Stake updated (signature verified)"
             })),
             None => Err(RpcError {
                 code: ErrorCode::InvalidParams,
@@ -264,12 +318,16 @@ struct RegisterParams {
     address: String,
     stake: String,
     block_height: Option<u64>,
+    timestamp: u64,
+    signature: String,
 }
 
 #[derive(Deserialize)]
 struct UpdateStakeParams {
     address: String,
     new_stake: String,
+    timestamp: u64,
+    signature: String,
 }
 
 #[derive(Deserialize)]

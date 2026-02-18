@@ -40,6 +40,9 @@ impl TxSubmitter {
         Ok(Self { contract })
     }
 
+    /// Maximum number of retry attempts for transaction submission.
+    const MAX_RETRIES: u32 = 3;
+
     pub async fn submit_fulfillment(
         &self,
         request_id: [u8; 32],
@@ -48,17 +51,44 @@ impl TxSubmitter {
     ) -> Result<H256> {
         info!("Submitting fulfillment for request {:?}", hex::encode(request_id));
 
-        let tx = self.contract
-            .fulfill_request(request_id, result, proof_hash);
+        let mut backoff = std::time::Duration::from_secs(2);
 
-        let pending_tx = tx.send().await
-            .map_err(|e| OracleError::Transaction(e.to_string()))?;
+        for attempt in 0..=Self::MAX_RETRIES {
+            let call = self.contract
+                .fulfill_request(request_id, result.clone(), proof_hash);
+            let send_result = call.send().await;
 
-        let receipt = pending_tx.await
-            .map_err(|e| OracleError::Transaction(e.to_string()))?
-            .ok_or(OracleError::Transaction("Transaction dropped".to_string()))?;
+            match send_result {
+                Ok(pending_tx) => {
+                    let receipt = pending_tx.await
+                        .map_err(|e| OracleError::Transaction(e.to_string()))?
+                        .ok_or(OracleError::Transaction("Transaction dropped".to_string()))?;
 
-        info!("Transaction confirmed: {:?}", receipt.transaction_hash);
-        Ok(receipt.transaction_hash)
+                    info!("Transaction confirmed: {:?}", receipt.transaction_hash);
+                    return Ok(receipt.transaction_hash);
+                }
+                Err(e) if attempt < Self::MAX_RETRIES => {
+                    tracing::warn!(
+                        "TX attempt {}/{} failed: {}, retrying in {:?}",
+                        attempt + 1,
+                        Self::MAX_RETRIES,
+                        e,
+                        backoff
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff *= 2;
+                }
+                Err(e) => {
+                    return Err(OracleError::Transaction(format!(
+                        "Transaction failed after {} attempts: {}",
+                        Self::MAX_RETRIES + 1,
+                        e
+                    )));
+                }
+            }
+        }
+
+        // Unreachable, but satisfy the compiler
+        Err(OracleError::Transaction("Transaction submission exhausted all retries".to_string()))
     }
 }

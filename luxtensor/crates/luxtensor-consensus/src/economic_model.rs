@@ -155,11 +155,11 @@ pub fn project_supply(
         cumulative_emission = cumulative_emission.saturating_add(annual_gross_emission);
 
         // ── Burns for this year ──
-        // 1. Transaction fee burns
-        let annual_tx_fees = proj.avg_txs_per_block as u128
-            * proj.avg_gas_fee_wei
-            * 21_000 // base gas per tx
-            * BLOCKS_PER_YEAR as u128;
+        // 1. Transaction fee burns (saturating to prevent overflow)
+        let annual_tx_fees = (proj.avg_txs_per_block as u128)
+            .saturating_mul(proj.avg_gas_fee_wei)
+            .saturating_mul(21_000) // base gas per tx
+            .saturating_mul(BLOCKS_PER_YEAR as u128);
         let tx_burn = annual_tx_fees * burn_cfg.tx_fee_burn_rate_bps as u128 / 10_000;
 
         // 2. Subnet registration burns

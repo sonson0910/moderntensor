@@ -2,7 +2,6 @@ use luxtensor_core::{Transaction, Address, Account, StateDB, CoreError, Result};
 use luxtensor_crypto::keccak256;
 use luxtensor_contracts::EvmExecutor;
 use luxtensor_contracts::evm_executor::EvmLog;
-use serde::{Deserialize, Serialize};
 use sha3::{Keccak256, Digest};
 use tracing::info;
 
@@ -60,6 +59,7 @@ impl TransactionExecutor {
     /// Create executor for development mode (signature verification disabled)
     /// WARNING: Only use for local development/testing!
     #[must_use]
+    #[allow(dead_code)]
     pub fn new_dev_mode(chain_id: u64) -> Self {
         Self {
             chain_id,
@@ -71,6 +71,7 @@ impl TransactionExecutor {
     }
 
     /// Get the chain_id this executor validates against
+    #[allow(dead_code)]
     pub fn chain_id(&self) -> u64 {
         self.chain_id
     }
@@ -324,6 +325,7 @@ impl TransactionExecutor {
     }
 
     /// Batch execute transactions
+    #[allow(dead_code)]
     pub fn execute_batch(
         &self,
         transactions: &[Transaction],
@@ -340,9 +342,9 @@ impl TransactionExecutor {
 }
 
 impl Default for TransactionExecutor {
-    /// Default executor uses LuxTensor mainnet chain_id (8899)
+    /// Default executor uses LuxTensor mainnet chain_id (8898)
     fn default() -> Self {
-        Self::new(8899) // luxtensor_core::constants::chain_id::MAINNET
+        Self::new(8898) // luxtensor_core::constants::chain_id::MAINNET
     }
 }
 

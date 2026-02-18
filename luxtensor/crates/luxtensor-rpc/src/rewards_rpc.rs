@@ -1,6 +1,7 @@
 // Rewards RPC API Module
 // Provides JSON-RPC endpoints for reward queries and claims
 
+use crate::helpers::{parse_address as helpers_parse_address, verify_caller_signature};
 use jsonrpc_core::{IoHandler, Params};
 use luxtensor_consensus::RewardExecutor;
 use parking_lot::RwLock;
@@ -48,14 +49,49 @@ pub fn register_reward_methods(io: &mut IoHandler, executor: Arc<RwLock<RewardEx
     });
 
     // rewards_claim - Claim pending rewards
+    // SECURITY: Requires signature verification to prevent unauthorized claims
     let exec = executor.clone();
     io.add_sync_method("rewards_claim", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing parameters. Required: address, timestamp, signature",
+            ));
         }
 
-        let address = parse_address(&parsed[0])?;
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
+
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via signature
+        let signature = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let rpc_address = helpers_parse_address(addr_str)?;
+        let message = format!("rewards_claim:{}:{}", hex::encode(rpc_address.as_bytes()), timestamp);
+        verify_caller_signature(&rpc_address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&rpc_address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
+
         let result = exec.read().claim_rewards(address);
 
         Ok(serde_json::json!({

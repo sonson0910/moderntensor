@@ -98,6 +98,11 @@ pub struct CircuitBreakerStats {
 }
 
 /// Circuit Breaker implementation
+///
+/// NOTE: Uses `Instant::now()` intentionally — circuit breaker timings are local
+/// to each node and do not affect consensus determinism. The open-to-half-open
+/// transition is based on wall-clock elapsed time, which is acceptable because
+/// it only governs local request gating, not any on-chain state transition.
 pub struct CircuitBreaker {
     config: CircuitBreakerConfig,
     /// Current state
@@ -166,7 +171,7 @@ impl CircuitBreaker {
         self.successful_requests.fetch_add(1, Ordering::Relaxed);
 
         // Hold write lock to ensure atomic read-modify-write of state + counters
-        let mut state = self.state.write();
+        let state = self.state.write();
         self.failure_count.store(0, Ordering::SeqCst);
 
         if *state == CircuitState::HalfOpen {
@@ -189,7 +194,7 @@ impl CircuitBreaker {
         self.failed_requests.fetch_add(1, Ordering::Relaxed);
 
         // Hold write lock to ensure atomic read-modify-write of state + counters
-        let mut state = self.state.write();
+        let state = self.state.write();
         self.success_count.store(0, Ordering::SeqCst);
 
         match *state {

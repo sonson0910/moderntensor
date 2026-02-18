@@ -136,13 +136,7 @@ pub struct RootValidatorInfo {
 
 impl RootValidatorInfo {
     pub fn new(address: [u8; 20], stake: u128, rank: u16) -> Self {
-        Self {
-            address,
-            stake,
-            rank,
-            is_active: true,
-            last_weight_update: 0,
-        }
+        Self { address, stake, rank, is_active: true, last_weight_update: 0 }
     }
 }
 
@@ -159,16 +153,17 @@ pub struct SubnetWeights {
 
 impl SubnetWeights {
     pub fn new(validator: [u8; 20]) -> Self {
-        Self {
-            validator,
-            weights: HashMap::new(),
-            block_updated: 0,
-        }
+        Self { validator, weights: HashMap::new(), block_updated: 0 }
     }
 
     /// Set weight for a subnet (as float 0.0-1.0)
     pub fn set_weight(&mut self, netuid: u16, weight: f64) {
-        let bps = (weight * 10000.0).min(10000.0).max(0.0) as u16;
+        // SECURITY: NaN/Inf poisons min/max and would cast to 0 or u16::MAX unpredictably
+        if weight.is_nan() || weight.is_infinite() || weight < 0.0 {
+            self.weights.insert(netuid, 0);
+            return;
+        }
+        let bps = (weight * 10000.0).min(10000.0) as u16;
         self.weights.insert(netuid, bps);
     }
 
@@ -203,11 +198,13 @@ pub struct EmissionShare {
 
 impl EmissionShare {
     pub fn new(netuid: u16, share: f64, amount: u128) -> Self {
-        Self {
-            netuid,
-            share_bps: (share * 10000.0).min(10000.0).max(0.0) as u16,
-            amount,
-        }
+        // SECURITY: NaN/Inf guard — treat NaN/Inf/negative as zero share
+        let safe_bps = if share.is_nan() || share.is_infinite() || share < 0.0 {
+            0u16
+        } else {
+            (share * 10000.0).min(10000.0) as u16
+        };
+        Self { netuid, share_bps: safe_bps, amount }
     }
 
     /// Get share as float
@@ -265,11 +262,11 @@ impl Default for SubnetConfig {
         Self {
             gpu_required: false,
             gpu_bonus_enabled: true,
-            gpu_bonus_rate: 1.2,          // 20% default bonus
-            miner_share: 0.55,            // 55% to miners
-            validator_share: 0.30,        // 30% to validators
-            owner_share: 0.15,            // 15% to owner
-            task_window_seconds: 3600,    // 1 hour
+            gpu_bonus_rate: 1.2,                            // 20% default bonus
+            miner_share: 0.55,                              // 55% to miners
+            validator_share: 0.30,                          // 30% to validators
+            owner_share: 0.15,                              // 15% to owner
+            task_window_seconds: 3600,                      // 1 hour
             min_stake_to_join: 100_000_000_000_000_000_000, // 100 tokens
             subnet_type: SubnetType::AI,
         }
@@ -279,6 +276,24 @@ impl Default for SubnetConfig {
 impl SubnetConfig {
     /// Validate config against protocol guardrails
     pub fn validate(&self, guardrails: &ProtocolGuardrails) -> Result<(), String> {
+        // SECURITY: Reject NaN — NaN bypasses all comparison-based guardrails
+        if self.gpu_bonus_rate.is_nan()
+            || self.miner_share.is_nan()
+            || self.validator_share.is_nan()
+            || self.owner_share.is_nan()
+        {
+            return Err("SubnetConfig fields must not be NaN".to_string());
+        }
+
+        // SECURITY: Reject Infinity — infinite values bypass range checks
+        if self.gpu_bonus_rate.is_infinite()
+            || self.miner_share.is_infinite()
+            || self.validator_share.is_infinite()
+            || self.owner_share.is_infinite()
+        {
+            return Err("SubnetConfig fields must not be infinite".to_string());
+        }
+
         // Check GPU bonus cap
         if self.gpu_bonus_rate > guardrails.max_gpu_bonus {
             return Err(format!(
@@ -354,12 +369,12 @@ pub struct ProtocolGuardrails {
 impl Default for ProtocolGuardrails {
     fn default() -> Self {
         Self {
-            max_gpu_bonus: 1.4,           // 40% max bonus
-            max_owner_share: 0.20,        // 20% max owner
-            min_miner_share: 0.40,        // 40% min miner
-            min_validator_share: 0.20,    // 20% min validator
-            min_task_window: 300,         // 5 minutes min
-            max_task_window: 86400,       // 24 hours max
+            max_gpu_bonus: 1.4,        // 40% max bonus
+            max_owner_share: 0.20,     // 20% max owner
+            min_miner_share: 0.40,     // 40% min miner
+            min_validator_share: 0.20, // 20% min validator
+            min_task_window: 300,      // 5 minutes min
+            max_task_window: 86400,    // 24 hours max
         }
     }
 }
@@ -381,23 +396,11 @@ pub struct SubnetRegistrationResult {
 
 impl SubnetRegistrationResult {
     pub fn success(netuid: u16, cost: u128) -> Self {
-        Self {
-            success: true,
-            netuid: Some(netuid),
-            tx_hash: None,
-            error: None,
-            cost_burned: cost,
-        }
+        Self { success: true, netuid: Some(netuid), tx_hash: None, error: None, cost_burned: cost }
     }
 
     pub fn failure(error: String) -> Self {
-        Self {
-            success: false,
-            netuid: None,
-            tx_hash: None,
-            error: Some(error),
-            cost_burned: 0,
-        }
+        Self { success: false, netuid: None, tx_hash: None, error: Some(error), cost_burned: 0 }
     }
 }
 

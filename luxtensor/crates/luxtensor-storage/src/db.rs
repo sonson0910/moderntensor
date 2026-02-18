@@ -182,6 +182,45 @@ impl BlockchainDB {
             batch.put_cf(cf_tx_to_block, tx_hash, block_hash);
         }
 
+        // Store best_height metadata for O(1) lookup — only update if new height is greater
+        // AND the block properly connects to the existing chain
+        let cf_meta = self.db.cf_handle(CF_METADATA).ok_or_else(|| {
+            StorageError::DatabaseError("CF_METADATA not found".to_string())
+        })?;
+        let should_update = match self.db.get_cf(cf_meta, b"best_height")? {
+            Some(bytes) if bytes.len() >= 8 => {
+                let current_best = u64::from_be_bytes(
+                    bytes[..8]
+                        .try_into()
+                        .map_err(|_| StorageError::DatabaseError("Invalid best_height".to_string()))?,
+                );
+                if height > current_best {
+                    // Verify chain connectivity: if a block at height-1 exists,
+                    // the new block's previous_hash must match it
+                    if height > 0 {
+                        match self.db.get_cf(cf_height, (height - 1).to_be_bytes())? {
+                            Some(prev_hash_bytes) => {
+                                // Previous block exists — verify the link
+                                block.header.previous_hash == prev_hash_bytes.as_ref()
+                            }
+                            None => {
+                                // No block at height-1 (out-of-order import), allow update
+                                true
+                            }
+                        }
+                    } else {
+                        true // Genesis block
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => true, // No existing best_height, always set
+        };
+        if should_update {
+            batch.put_cf(cf_meta, b"best_height", height.to_be_bytes());
+        }
+
         // Write batch atomically
         self.db.write(batch)?;
 
@@ -269,13 +308,28 @@ impl BlockchainDB {
         }
     }
 
-    /// Get the current best block height
+    /// Get the current best block height.
+    /// Uses O(1) metadata lookup with fallback to reverse iterator for backward compatibility.
     pub fn get_best_height(&self) -> Result<Option<u64>> {
+        // Fast path: read from metadata key (O(1))
+        if let Some(cf_meta) = self.db.cf_handle(CF_METADATA) {
+            if let Some(bytes) = self.db.get_cf(cf_meta, b"best_height")? {
+                if bytes.len() >= 8 {
+                    let height = u64::from_be_bytes(
+                        bytes[..8]
+                            .try_into()
+                            .map_err(|_| StorageError::DatabaseError("Invalid best_height".to_string()))?,
+                    );
+                    return Ok(Some(height));
+                }
+            }
+        }
+
+        // Fallback: iterate backwards (for DBs created before metadata key was added)
         let cf_height = self.db.cf_handle(CF_HEIGHT_TO_HASH).ok_or_else(|| {
             StorageError::DatabaseError("CF_HEIGHT_TO_HASH not found".to_string())
         })?;
 
-        // Iterate backwards from u64::MAX to find the highest height
         let mut iter = self.db.iterator_cf(cf_height, rocksdb::IteratorMode::End);
         if let Some(Ok((key, _))) = iter.next() {
             let height = u64::from_be_bytes(

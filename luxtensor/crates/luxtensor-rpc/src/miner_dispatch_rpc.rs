@@ -46,6 +46,10 @@ pub struct TaskResultSubmission {
     pub result_hash: String,
     pub execution_time_ms: u64,
     pub proof: Option<String>,
+    /// Miner address submitting the result (hex encoded)
+    pub miner: String,
+    /// Hex-encoded signature proving miner owns the address
+    pub signature: String,
 }
 
 /// Simple in-memory task store for dispatch
@@ -211,8 +215,25 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
     let tasks = ctx.tasks.clone();
 
     // lux_submitResult - Miner submits task result
+    // SECURITY: Now requires signature verification to prevent result spoofing
     io.add_sync_method("lux_submitResult", move |params: Params| {
         let submission: TaskResultSubmission = params.parse()?;
+
+        // Parse and verify miner address + signature
+        let miner_addr = parse_address(&submission.miner)?;
+        let message = format!(
+            "submit_result:{}:{}:{}",
+            submission.task_id.trim_start_matches("0x"),
+            submission.result_hash.trim_start_matches("0x"),
+            hex::encode(&miner_addr)
+        );
+        let sig_valid = verify_caller_signature(&miner_addr, &message, &submission.signature, 0)
+            .or_else(|_| verify_caller_signature(&miner_addr, &message, &submission.signature, 1));
+        if sig_valid.is_err() {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own miner address",
+            ));
+        }
 
         // Parse task_id
         let task_id_hex = submission.task_id.trim_start_matches("0x");
@@ -240,6 +261,19 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
             if task.status != 1 {
                 return Err(jsonrpc_core::Error::invalid_params(
                     "Task not in assigned state",
+                ));
+            }
+
+            // SECURITY: Verify the submitter is actually assigned to this task
+            if let Some(ref assigned) = task.assigned_to {
+                if assigned.as_bytes() != miner_addr.as_bytes() {
+                    return Err(jsonrpc_core::Error::invalid_params(
+                        "Miner is not assigned to this task",
+                    ));
+                }
+            } else {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Task has no assigned miner",
                 ));
             }
 

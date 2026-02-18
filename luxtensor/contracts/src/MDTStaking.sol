@@ -33,6 +33,7 @@ contract MDTStaking is Ownable, ReentrancyGuard {
 
     uint256 public totalStaked;
     uint256 public totalBonusPaid;
+    uint256 public totalBonusLiability;
 
     event Staked(
         address indexed staker,
@@ -78,7 +79,15 @@ contract MDTStaking is Ownable, ReentrancyGuard {
         token.safeTransferFrom(msg.sender, address(this), amount);
 
         uint256 bonusRate = getBonusRate(lockDays);
+        uint256 bonus = (amount * bonusRate) / 10000;
         uint256 unlockTime = block.timestamp + (lockDays * 1 days);
+
+        totalBonusLiability += bonus;
+        require(
+            token.balanceOf(address(this)) >=
+                totalStaked + amount + totalBonusLiability,
+            "Insufficient bonus pool"
+        );
 
         stakeLocks[msg.sender].push(
             StakeLock({
@@ -109,7 +118,15 @@ contract MDTStaking is Ownable, ReentrancyGuard {
 
         uint256 lockDays = lockSeconds_ / 86400;
         uint256 bonusRate = getBonusRate(lockDays);
+        uint256 bonus = (amount * bonusRate) / 10000;
         uint256 unlockTime = block.timestamp + lockSeconds_;
+
+        totalBonusLiability += bonus;
+        require(
+            token.balanceOf(address(this)) >=
+                totalStaked + amount + totalBonusLiability,
+            "Insufficient bonus pool"
+        );
 
         stakeLocks[msg.sender].push(
             StakeLock({
@@ -149,6 +166,7 @@ contract MDTStaking is Ownable, ReentrancyGuard {
         stake.withdrawn = true;
         totalStaked -= stake.amount;
         totalBonusPaid += bonus;
+        totalBonusLiability -= bonus;
 
         // Transfer tokens back with bonus
         token.safeTransfer(msg.sender, totalReturn);

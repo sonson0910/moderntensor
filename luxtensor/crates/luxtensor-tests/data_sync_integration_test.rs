@@ -113,11 +113,18 @@ async fn test_block_validation_during_sync() {
     // Attempt to create and sync invalid block (wrong previous hash)
     println!("Testing rejection of invalid block...");
     let invalid_block = create_invalid_block(&node_a).await;
-    let result = node_b.storage.store_block(&invalid_block);
+    let _result = node_b.storage.store_block(&invalid_block);
 
-    // Invalid block should be rejected by validation
-    // Note: In production, this would be rejected by consensus validation
-    println!("✓ Invalid block handling verified\n");
+    // The block has an invalid previous_hash ([0xFF; 32]).
+    // At the storage layer it may still be persisted, but verify that
+    // the canonical best-height did NOT advance to include it.
+    let height_after = node_b.storage.get_best_height().unwrap().unwrap_or(0);
+    assert_eq!(
+        synced_height, height_after,
+        "Best height must not advance after storing a block with invalid previous_hash (was {}, now {})",
+        synced_height, height_after
+    );
+    println!("✓ Invalid block handling verified (best height unchanged: {})\n", height_after);
 }
 
 /// Test scenario: State sync with transactions

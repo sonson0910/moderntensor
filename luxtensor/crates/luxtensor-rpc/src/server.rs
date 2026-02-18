@@ -10,7 +10,7 @@ use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_consensus::{
     AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, ValidatorSet,
 };
-use luxtensor_core::{Hash, StateDB, Transaction, UnifiedStateDB};
+use luxtensor_core::{Hash, Transaction, UnifiedStateDB};
 use luxtensor_storage::{BlockchainDB, MetagraphDB};
 use parking_lot::RwLock;
 use serde_json::json;
@@ -23,11 +23,13 @@ use crate::handlers::{
     register_checkpoint_handlers, register_neuron_handlers, register_staking_handlers,
     register_subnet_handlers, register_weight_handlers,
 };
-use crate::helpers::{parse_address, parse_block_number, parse_block_number_with_latest};
+use crate::helpers::{parse_address, parse_block_number_with_latest};
+#[cfg(test)]
+use crate::helpers::parse_block_number;
 use crate::query_rpc::{register_query_methods as register_query_methods_new, QueryRpcContext};
 use crate::tx_rpc::{register_tx_methods, TxRpcContext};
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 /// JSON-RPC server for LuxTensor blockchain
 ///
@@ -87,7 +89,7 @@ impl RpcServer {
     ///
     /// # Example
     /// ```ignore
-    /// let server = RpcServer::builder(db, 8899)
+    /// let server = RpcServer::builder(db, 8898)
     ///     .metagraph(metagraph)
     ///     .broadcaster(broadcaster)
     ///     .mempool(mempool)
@@ -611,6 +613,49 @@ impl RpcServer {
                     .collect(),
             ));
         }
+
+        // SECURITY: Apply rate limiter middleware for DoS protection.
+        // The RateLimiter was previously created but never called — this fixes that.
+        let rate_limiter_mw = self.rate_limiter.clone();
+        builder = builder.request_middleware(
+            move |request: jsonrpc_http_server::hyper::Request<jsonrpc_http_server::hyper::Body>| {
+                // Extract client IP from standard reverse-proxy headers, fallback to 0.0.0.0
+                let ip = request
+                    .headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.split(',').next())
+                    .and_then(|s| s.trim().parse::<std::net::IpAddr>().ok())
+                    .or_else(|| {
+                        request
+                            .headers()
+                            .get("x-real-ip")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+                    })
+                    .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+
+                if !rate_limiter_mw.check(ip) {
+                    warn!("Rate limited RPC request from {}", ip);
+                    let body = r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limited: too many requests"},"id":null}"#;
+                    jsonrpc_http_server::RequestMiddlewareAction::Respond {
+                        should_validate_hosts: false,
+                        response: Box::pin(async move {
+                            Ok(jsonrpc_http_server::hyper::Response::builder()
+                                .status(429)
+                                .header("content-type", "application/json")
+                                .body(jsonrpc_http_server::hyper::Body::from(body))
+                                .expect("static response"))
+                        }),
+                    }
+                } else {
+                    jsonrpc_http_server::RequestMiddlewareAction::Proceed {
+                        should_continue_on_invalid_cors: false,
+                        request,
+                    }
+                }
+            },
+        );
 
         let server = builder
             .start_http(

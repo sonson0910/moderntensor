@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tracing::info;
 
 /// Constant-time comparison to prevent timing attacks on API key validation.
@@ -20,6 +21,12 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     }
     diff == 0
 }
+
+/// Maximum number of concurrent HTTP connections to prevent resource exhaustion.
+const MAX_CONCURRENT_CONNECTIONS: usize = 1024;
+
+/// Read timeout for incoming HTTP requests (seconds).
+const READ_TIMEOUT_SECS: u64 = 10;
 
 /// HTTP API server
 pub struct GraphQLServer {
@@ -49,6 +56,7 @@ struct QueryRequest {
     offset: Option<i32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 struct ApiResponse<T: Serialize> {
     success: bool,
@@ -83,14 +91,26 @@ impl GraphQLServer {
         info!("  GET  /stakes/:hotkey      - Stake history");
         info!("  POST /query               - Query indexed data");
 
+        // SECURITY: Limit concurrent connections to prevent resource exhaustion
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+
         loop {
             let (socket, addr) = listener.accept().await
                 .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
 
             let storage = self.storage.clone();
             let api_key = std::env::var("INDEXER_API_KEY").ok();
+            let sem = semaphore.clone();
 
             tokio::spawn(async move {
+                // Acquire permit before processing; drop will release it
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::warn!("Semaphore closed, dropping connection from {}", addr);
+                        return;
+                    }
+                };
                 if let Err(e) = handle_connection(socket, storage, api_key.as_deref()).await {
                     tracing::error!("Connection error from {}: {}", addr, e);
                 }
@@ -106,8 +126,23 @@ async fn handle_connection(
 ) -> Result<()> {
     // 64 KB read buffer (increased from 8 KB to handle larger POST bodies)
     let mut buffer = vec![0u8; 65536];
-    let n = socket.read(&mut buffer).await
-        .map_err(|e| crate::error::IndexerError::Connection(e.to_string()))?;
+    // SECURITY: Enforce a read timeout to prevent Slowloris-style DoS attacks
+    let n = match tokio::time::timeout(
+        std::time::Duration::from_secs(READ_TIMEOUT_SECS),
+        socket.read(&mut buffer),
+    )
+    .await
+    {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            return Err(crate::error::IndexerError::Connection(e.to_string()));
+        }
+        Err(_) => {
+            return Err(crate::error::IndexerError::Connection(
+                "Read timeout".to_string(),
+            ));
+        }
+    };
 
     let request = String::from_utf8_lossy(&buffer[..n]);
     let lines: Vec<&str> = request.lines().collect();
@@ -270,9 +305,10 @@ async fn handle_connection(
         // POST /query - Generic query endpoint
         ("POST", "/query") => {
             // Find body after empty line
+            // SECURITY: Handle both \r\n\r\n (4 bytes) and \n\n (2 bytes) correctly
             let body_start = request.find("\r\n\r\n")
-                .or_else(|| request.find("\n\n"))
                 .map(|i| i + 4)
+                .or_else(|| request.find("\n\n").map(|i| i + 2))
                 .unwrap_or(0);
             let body = &request[body_start..];
 

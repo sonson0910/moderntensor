@@ -93,6 +93,24 @@ impl BlockHeader {
         }
         Ok(())
     }
+
+    /// Maximum allowed drift of block timestamp into the future (seconds).
+    pub const MAX_FUTURE_DRIFT_SECS: u64 = 15;
+
+    /// Validate block header timestamp against current time.
+    ///
+    /// Rejects blocks with timestamps more than [`MAX_FUTURE_DRIFT_SECS`]
+    /// seconds in the future. This prevents validators from manipulating
+    /// timestamps to gain unfair advantages in time-dependent logic.
+    pub fn validate_timestamp(&self, current_timestamp: u64) -> crate::Result<()> {
+        if self.timestamp > current_timestamp + Self::MAX_FUTURE_DRIFT_SECS {
+            return Err(crate::CoreError::InvalidBlock(format!(
+                "block timestamp {} is too far in the future (current: {}, max drift: {}s)",
+                self.timestamp, current_timestamp, Self::MAX_FUTURE_DRIFT_SECS
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Block structure
@@ -183,6 +201,20 @@ impl Block {
                     "tx[{}] has zero gas_limit",
                     i
                 )));
+            }
+        }
+
+        // SECURITY: Reject blocks with duplicate transactions (prevents double-spend)
+        {
+            let mut seen_hashes = std::collections::HashSet::new();
+            for (i, tx) in self.transactions.iter().enumerate() {
+                let tx_hash = tx.hash();
+                if !seen_hashes.insert(tx_hash) {
+                    return Err(crate::CoreError::InvalidBlock(format!(
+                        "duplicate transaction at index {}: {:?}",
+                        i, tx_hash
+                    )));
+                }
             }
         }
 

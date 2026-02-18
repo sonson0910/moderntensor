@@ -333,6 +333,16 @@ impl MultisigManager {
         let tx = pending.get_mut(tx_id)
             .ok_or_else(|| MultisigError::TransactionNotFound(tx_id.to_string()))?;
 
+        // Check expiry before executing
+        if tx.is_expired(current_timestamp) {
+            return Err(MultisigError::Expired);
+        }
+
+        // Check already-executed
+        if tx.executed {
+            return Err(MultisigError::AlreadyExecuted);
+        }
+
         let wallet = self.get_wallet(&tx.wallet_id)
             .ok_or_else(|| MultisigError::WalletNotFound(tx.wallet_id.clone()))?;
 

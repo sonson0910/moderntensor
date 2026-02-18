@@ -1,12 +1,14 @@
 // LuxTensor storage module
 // Phase 4: Storage Layer implementation
 
+pub mod cache;
 pub mod checkpoint;
 pub mod db;
 pub mod error;
 pub mod evm_store;
 pub mod maintenance;
 pub mod metagraph_store;
+pub mod merkle_cache;
 pub mod state_db;
 pub mod trie;
 

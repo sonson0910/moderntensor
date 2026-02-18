@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title TokenVesting
@@ -11,7 +13,7 @@ pragma solidity ^0.8.19;
  * - Revocable by owner (returns unvested tokens)
  * - Emergency withdraw by owner
  */
-contract TokenVesting {
+contract TokenVesting is ReentrancyGuard {
     // Vesting schedule structure
     struct VestingSchedule {
         address beneficiary;
@@ -187,7 +189,9 @@ contract TokenVesting {
      * @dev Release vested tokens to the beneficiary
      * @param scheduleId The ID of the vesting schedule
      */
-    function release(uint256 scheduleId) external scheduleExists(scheduleId) {
+    function release(
+        uint256 scheduleId
+    ) external nonReentrant scheduleExists(scheduleId) {
         VestingSchedule storage schedule = vestingSchedules[scheduleId];
 
         require(!schedule.revoked, "Vesting schedule has been revoked");
@@ -215,7 +219,7 @@ contract TokenVesting {
      */
     function revoke(
         uint256 scheduleId
-    ) external onlyOwner scheduleExists(scheduleId) {
+    ) external nonReentrant onlyOwner scheduleExists(scheduleId) {
         VestingSchedule storage schedule = vestingSchedules[scheduleId];
 
         require(!schedule.revoked, "Vesting schedule already revoked");
@@ -236,7 +240,7 @@ contract TokenVesting {
     /**
      * @dev Emergency withdraw all funds (only owner)
      */
-    function emergencyWithdraw() external onlyOwner {
+    function emergencyWithdraw() external nonReentrant onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No funds to withdraw");
 

@@ -143,7 +143,8 @@ impl ContractExecutor {
 
         // Add to receiver balance (create if doesn't exist)
         if let Some(to_contract) = contracts.get_mut(to) {
-            to_contract.balance += amount;
+            to_contract.balance = to_contract.balance.checked_add(amount)
+                .ok_or(ContractError::ArithmeticOverflow)?;
         }
 
         Ok(())
@@ -168,11 +169,11 @@ impl ContractExecutor {
         address: &ContractAddress,
         amount: u128,
     ) -> Result<(), ContractError> {
-        self.contracts
-            .write()
-            .get_mut(address)
-            .map(|c| c.balance += amount)
-            .ok_or(ContractError::ContractNotFound)
+        let mut contracts = self.contracts.write();
+        let contract = contracts.get_mut(address).ok_or(ContractError::ContractNotFound)?;
+        contract.balance = contract.balance.checked_add(amount)
+            .ok_or(ContractError::ArithmeticOverflow)?;
+        Ok(())
     }
 
     /// Subtract from contract balance
@@ -397,7 +398,9 @@ impl ContractExecutor {
         // Transfer balance to beneficiary if any
         if balance > 0 {
             if let Some(beneficiary_contract) = contracts.get_mut(beneficiary) {
-                beneficiary_contract.balance += balance;
+                beneficiary_contract.balance = beneficiary_contract.balance
+                    .checked_add(balance)
+                    .ok_or(ContractError::ArithmeticOverflow)?;
             }
         }
 
@@ -509,7 +512,7 @@ impl ContractExecutor {
     ) -> Result<u64, ContractError> {
         // Basic gas estimation
         let base_gas = 21_000u64; // Base transaction cost
-        let data_gas = (input_data.len() as u64) * 68; // Cost per byte of data
+        let data_gas = crate::revm_integration::estimate_calldata_gas(input_data);
         let execution_gas = 5_000u64; // Estimated execution cost
 
         Ok(base_gas + data_gas + execution_gas)
@@ -870,7 +873,7 @@ mod tests {
         let input_data = vec![0x01, 0x02, 0x03, 0x04];
         let estimated_gas = executor.estimate_gas(&context, &input_data).unwrap();
 
-        // Base (21000) + data (4 * 68) + execution (5000)
-        assert_eq!(estimated_gas, 21_000 + 272 + 5_000);
+        // Base (21000) + data (4 non-zero bytes * 16 gas each = 64) + execution (5000)
+        assert_eq!(estimated_gas, 21_000 + 64 + 5_000);
     }
 }

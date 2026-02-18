@@ -65,6 +65,20 @@ impl HalvingSchedule {
         Self { initial_reward, halving_interval, minimum_reward, max_halvings }
     }
 
+    /// Validate halving schedule parameters without panicking.
+    ///
+    /// Prefer this over `new()` when the caller can handle configuration errors
+    /// gracefully (e.g., during config deserialization from user input).
+    pub fn validate(&self) -> std::result::Result<(), &'static str> {
+        if self.halving_interval == 0 {
+            return Err("halving_interval must be > 0");
+        }
+        if self.initial_reward == 0 {
+            return Err("initial_reward must be > 0");
+        }
+        Ok(())
+    }
+
     /// Calculate block reward for a given block height
     ///
     /// Formula: reward = initial_reward / 2^halvings

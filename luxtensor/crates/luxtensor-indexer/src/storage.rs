@@ -39,6 +39,7 @@ impl Storage {
             CREATE TABLE IF NOT EXISTS transactions (
                 hash VARCHAR(66) PRIMARY KEY,
                 block_number BIGINT NOT NULL,
+                chain_id BIGINT NOT NULL DEFAULT 0,
                 from_address VARCHAR(42) NOT NULL,
                 to_address VARCHAR(42),
                 value VARCHAR(78) NOT NULL,
@@ -203,12 +204,13 @@ impl Storage {
     /// Insert transaction
     pub async fn insert_transaction(&self, tx: &Transaction) -> Result<()> {
         sqlx::query(r#"
-            INSERT INTO transactions (hash, block_number, from_address, to_address, value, gas_used, status, tx_type)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO transactions (hash, block_number, chain_id, from_address, to_address, value, gas_used, status, tx_type)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (hash) DO NOTHING
         "#)
         .bind(&tx.hash)
         .bind(tx.block_number)
+        .bind(tx.chain_id)
         .bind(&tx.from_address)
         .bind(&tx.to_address)
         .bind(&tx.value)

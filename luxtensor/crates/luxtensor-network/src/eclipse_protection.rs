@@ -150,10 +150,13 @@ impl EclipseProtection {
             peer_id: peer_id.clone(),
             ip_addr: ip,
             is_outbound,
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            connected_at: match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => d.as_secs(),
+                Err(e) => {
+                    tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                    0
+                }
+            },
             behavior_score: 50, // Start neutral
         };
 
@@ -232,10 +235,13 @@ impl EclipseProtection {
     /// Get peers that should be rotated (old or low score)
     pub fn get_peers_to_rotate(&self, max_count: usize) -> Vec<String> {
         let peers = self.peers.read();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
 
         let mut candidates: Vec<_> = peers.iter()
             .filter(|(_, p)| {
@@ -311,10 +317,13 @@ impl EclipseProtection {
     /// Get the most trusted peers (for preferential treatment)
     pub fn get_trusted_peers(&self, min_trust: u32, stakes: &HashMap<String, u64>) -> Vec<String> {
         let peers = self.peers.read();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
 
         let mut trusted: Vec<_> = peers.keys()
             .filter_map(|peer_id| {

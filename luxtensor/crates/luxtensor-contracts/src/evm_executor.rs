@@ -2,6 +2,7 @@
 
 use crate::error::ContractError;
 use crate::types::ContractAddress;
+use luxtensor_core::constants::chain_id;
 use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
 use revm::primitives::{
@@ -39,9 +40,9 @@ pub struct EvmExecutor {
 }
 
 impl Default for EvmExecutor {
-    /// Default executor uses LuxTensor Mainnet chain_id (8899)
+    /// Default executor uses LuxTensor Devnet chain_id (8898)
     fn default() -> Self {
-        Self::new(8899) // LuxTensor Mainnet
+        Self::new(chain_id::DEVNET) // LuxTensor Devnet
     }
 }
 
@@ -727,7 +728,7 @@ impl Clone for PersistentEvmExecutor {
 
 impl Default for PersistentEvmExecutor {
     fn default() -> Self {
-        Self::new(8899) // LuxTensor Mainnet
+        Self::new(chain_id::MAINNET) // LuxTensor Mainnet (8898)
     }
 }
 
@@ -740,13 +741,13 @@ mod tests {
 
     #[test]
     fn test_evm_executor_creation() {
-        let executor = EvmExecutor::new(8899);
+        let executor = EvmExecutor::new(chain_id::MAINNET);
         assert_eq!(executor.accounts.read().len(), 0);
     }
 
     #[test]
     fn test_simple_deployment() {
-        let executor = EvmExecutor::new(8899);
+        let executor = EvmExecutor::new(chain_id::MAINNET);
         let deployer = Address::from([1u8; 20]);
 
         // Simple contract bytecode (just returns)

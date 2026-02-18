@@ -7,6 +7,12 @@
 //! - Cache computed Merkle roots by block height
 //! - Incremental root updates when only few accounts change
 //! - Optional tree snapshots for fast rollback
+//!
+//! ## NOTE: Incremental Computation Limitation
+//! Current "incremental" mode recomputes the full root from all cached account
+//! hashes, rather than maintaining a persistent tree structure across updates.
+//! True incremental computation (updating only changed branches) is planned
+//! for a future optimization pass.
 
 use crate::{StateDB, Result};
 use luxtensor_core::{Account, Address};
@@ -324,7 +330,7 @@ mod tests {
     #[test]
     fn test_commit_with_cache() {
         let (_dir, cached_db) = create_test_cached_db();
-        let address = Address::from_slice(&[1u8; 20]);
+        let address = Address::try_from_slice(&[1u8; 20]).unwrap();
 
         cached_db.set_balance(&address, 1000).unwrap();
         let root1 = cached_db.commit(1).unwrap();
@@ -341,7 +347,7 @@ mod tests {
     #[test]
     fn test_cache_hit() {
         let (_dir, cached_db) = create_test_cached_db();
-        let address = Address::from_slice(&[1u8; 20]);
+        let address = Address::try_from_slice(&[1u8; 20]).unwrap();
 
         cached_db.set_balance(&address, 500).unwrap();
         let _root = cached_db.commit(1).unwrap();
@@ -357,7 +363,7 @@ mod tests {
     #[test]
     fn test_incremental_update() {
         let (_dir, cached_db) = create_test_cached_db();
-        let address = Address::from_slice(&[1u8; 20]);
+        let address = Address::try_from_slice(&[1u8; 20]).unwrap();
 
         // First commit
         cached_db.set_balance(&address, 100).unwrap();

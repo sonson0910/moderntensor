@@ -40,7 +40,9 @@ pub const SIMD_LANES: usize = 4;
 /// Sum of squared differences as i64 (fixed-point bits)
 #[inline]
 pub fn squared_distance_simd(a: &[i64], b: &[i64]) -> i64 {
-    debug_assert_eq!(a.len(), b.len(), "Vectors must have same length");
+    // SECURITY: Hard assert instead of debug_assert to prevent
+    // undefined-behavior-like miscomputation in release builds.
+    assert_eq!(a.len(), b.len(), "Vectors must have same length");
 
     let len = a.len();
     let chunks = len / SIMD_LANES;
@@ -85,7 +87,9 @@ pub fn squared_distance_simd(a: &[i64], b: &[i64]) -> i64 {
 /// Compute dot product using SIMD acceleration.
 #[inline]
 pub fn dot_product_simd(a: &[i64], b: &[i64]) -> i64 {
-    debug_assert_eq!(a.len(), b.len(), "Vectors must have same length");
+    // SECURITY: Hard assert instead of debug_assert to prevent
+    // undefined-behavior-like miscomputation in release builds.
+    assert_eq!(a.len(), b.len(), "Vectors must have same length");
 
     let len = a.len();
     let chunks = len / SIMD_LANES;

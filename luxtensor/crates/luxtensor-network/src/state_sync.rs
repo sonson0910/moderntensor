@@ -278,6 +278,7 @@ pub struct StateSyncManager {
 }
 
 /// Chunk request tracking
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ChunkRequest {
     /// Request type
@@ -290,6 +291,7 @@ struct ChunkRequest {
     retries: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum ChunkType {
     Account,
@@ -845,28 +847,36 @@ pub enum SyncError {
 /// Walks the proof path from `leaf_hash` to the root using canonical
 /// ordering (smaller hash first) — identical to bridge.rs's approach.
 ///
+/// SECURITY: Uses domain separation to prevent second pre-image attacks.
+/// Leaf nodes are prefixed with 0x00 and internal nodes with 0x01, so an
+/// attacker cannot craft a "leaf" whose hash collides with an internal node.
+///
 /// Returns `true` if the reconstructed root matches `expected_root`.
 fn verify_merkle_proof(leaf_hash: &Hash, proof: &[Hash], expected_root: &Hash) -> bool {
+    // Domain-separated leaf: H(0x00 || leaf_hash)
+    let mut leaf_data = Vec::with_capacity(1 + 32);
+    leaf_data.push(0x00);
+    leaf_data.extend_from_slice(leaf_hash);
+    let mut current = luxtensor_crypto::keccak256(&leaf_data);
+
     if proof.is_empty() {
-        // Single-element tree: leaf must equal root
-        return leaf_hash == expected_root;
+        // Single-element tree: root is the domain-separated leaf
+        return current == *expected_root;
     }
 
-    let mut current = *leaf_hash;
     for sibling in proof {
+        // Domain-separated internal node: H(0x01 || left || right)
         // Canonical ordering: smaller hash first for determinism
-        let combined = if current <= *sibling {
-            let mut data = [0u8; 64];
-            data[..32].copy_from_slice(&current);
-            data[32..].copy_from_slice(sibling);
-            data
+        let mut data = Vec::with_capacity(1 + 64);
+        data.push(0x01);
+        if current <= *sibling {
+            data.extend_from_slice(&current);
+            data.extend_from_slice(sibling);
         } else {
-            let mut data = [0u8; 64];
-            data[..32].copy_from_slice(sibling);
-            data[32..].copy_from_slice(&current);
-            data
-        };
-        current = luxtensor_crypto::keccak256(&combined);
+            data.extend_from_slice(sibling);
+            data.extend_from_slice(&current);
+        }
+        current = luxtensor_crypto::keccak256(&data);
     }
     current == *expected_root
 }
@@ -977,8 +987,11 @@ mod tests {
     #[test]
     fn test_merkle_proof_single_leaf() {
         let leaf = luxtensor_crypto::keccak256(b"leaf");
-        // Single-element tree: root == leaf
-        assert!(verify_merkle_proof(&leaf, &[], &leaf));
+        // Single-element tree: root = H(0x00 || leaf) with domain separation
+        let mut leaf_data = vec![0x00u8];
+        leaf_data.extend_from_slice(&leaf);
+        let root = luxtensor_crypto::keccak256(&leaf_data);
+        assert!(verify_merkle_proof(&leaf, &[], &root));
     }
 
     #[test]
@@ -986,21 +999,30 @@ mod tests {
         let leaf_a = luxtensor_crypto::keccak256(b"a");
         let leaf_b = luxtensor_crypto::keccak256(b"b");
 
-        // Canonical ordering: smaller hash first
-        let (first, second) = if leaf_a <= leaf_b {
-            (leaf_a, leaf_b)
+        // Domain-separated leaf nodes: H(0x00 || leaf)
+        let mut la_data = vec![0x00u8];
+        la_data.extend_from_slice(&leaf_a);
+        let node_a = luxtensor_crypto::keccak256(&la_data);
+
+        let mut lb_data = vec![0x00u8];
+        lb_data.extend_from_slice(&leaf_b);
+        let node_b = luxtensor_crypto::keccak256(&lb_data);
+
+        // Domain-separated internal node: H(0x01 || smaller || larger)
+        let (first, second) = if node_a <= node_b {
+            (node_a, node_b)
         } else {
-            (leaf_b, leaf_a)
+            (node_b, node_a)
         };
-        let mut combined = [0u8; 64];
-        combined[..32].copy_from_slice(&first);
-        combined[32..].copy_from_slice(&second);
+        let mut combined = vec![0x01u8];
+        combined.extend_from_slice(&first);
+        combined.extend_from_slice(&second);
         let root = luxtensor_crypto::keccak256(&combined);
 
-        // Proof for leaf_a is [leaf_b], root should match
-        assert!(verify_merkle_proof(&leaf_a, &[leaf_b], &root));
+        // Proof for leaf_a: sibling is node_b (domain-separated leaf B)
+        assert!(verify_merkle_proof(&leaf_a, &[node_b], &root));
         // And vice versa
-        assert!(verify_merkle_proof(&leaf_b, &[leaf_a], &root));
+        assert!(verify_merkle_proof(&leaf_b, &[node_a], &root));
     }
 
     #[test]
@@ -1038,7 +1060,12 @@ mod tests {
         data.extend_from_slice(&acc.nonce.to_le_bytes());
         let leaf_hash = luxtensor_crypto::keccak256(&data);
 
-        // State root equals the single leaf hash (no siblings)
+        // Domain-separated root for single-element tree: H(0x00 || leaf_hash)
+        let mut leaf_node_data = vec![0x00u8];
+        leaf_node_data.extend_from_slice(&leaf_hash);
+        let root = luxtensor_crypto::keccak256(&leaf_node_data);
+
+        // State root equals the domain-separated leaf hash (no siblings)
         let mut manager = StateSyncManager::new(StateSyncConfig {
             verify_proofs: true,
             ..Default::default()
@@ -1046,7 +1073,7 @@ mod tests {
         manager.target_snapshot = Some(StateSnapshot {
             block_number: 10,
             block_hash: [0u8; 32],
-            state_root: leaf_hash,
+            state_root: root,
             timestamp: 0,
             account_count: 1,
             storage_count: 0,
@@ -1128,16 +1155,21 @@ mod tests {
         let key = [0xaau8; 32];
         let value = [0xbbu8; 32];
 
-        // Compute expected storage root = hash of (key || value)
+        // Compute expected storage root with domain separation
         let mut slot_data = Vec::with_capacity(64);
         slot_data.extend_from_slice(&key);
         slot_data.extend_from_slice(&value);
         let leaf_hash = luxtensor_crypto::keccak256(&slot_data);
 
+        // Domain-separated root for single-element tree: H(0x00 || leaf_hash)
+        let mut leaf_node_data = vec![0x00u8];
+        leaf_node_data.extend_from_slice(&leaf_hash);
+        let storage_root = luxtensor_crypto::keccak256(&leaf_node_data);
+
         let acc = Account {
             nonce: 0,
             balance: 0,
-            storage_root: leaf_hash, // single-slot trie → root == leaf hash
+            storage_root, // single-slot trie → root == domain-separated leaf hash
             code_hash: [0u8; 32],
             code: None,
         };

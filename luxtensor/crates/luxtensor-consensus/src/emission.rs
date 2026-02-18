@@ -18,6 +18,25 @@ pub struct EmissionConfig {
     pub utility_weight: u8,
 }
 
+impl EmissionConfig {
+    /// Validate emission configuration parameters.
+    ///
+    /// Returns an error if any parameter is inconsistent or would cause
+    /// runtime issues (e.g., division by zero from `halving_interval == 0`).
+    pub fn validate(&self) -> std::result::Result<(), &'static str> {
+        if self.halving_interval == 0 {
+            return Err("halving_interval must be > 0");
+        }
+        if self.initial_emission == 0 {
+            return Err("initial_emission must be > 0");
+        }
+        if self.min_emission > self.initial_emission {
+            return Err("min_emission must be <= initial_emission");
+        }
+        Ok(())
+    }
+}
+
 impl Default for EmissionConfig {
     fn default() -> Self {
         Self {

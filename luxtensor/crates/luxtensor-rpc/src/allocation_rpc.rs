@@ -1,7 +1,12 @@
 // Allocation RPC Module
 // JSON-RPC endpoints for token allocation and vesting
+//
+// SECURITY: All state-changing operations now require signature verification
+// to prevent unauthorized minting, vesting, and TGE execution.
 
+use crate::helpers::verify_caller_signature;
 use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
+use luxtensor_core::Address;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -17,7 +22,14 @@ pub fn register_allocation_methods(
     allocation: Arc<RwLock<TokenAllocation>>,
 ) {
     let alloc = allocation.clone();
-    io.add_sync_method("allocation_executeTge", move |_params: Params| {
+    // SECURITY: TGE execution now requires caller signature verification
+    io.add_sync_method("allocation_executeTge", move |params: Params| {
+        let p: ExecuteTgeParams = params.parse()?;
+        let caller_addr = parse_address(&p.caller)?;
+        verify_alloc_timestamp(p.timestamp)?;
+        let message = format!("allocation_executeTge:{}:{}", hex::encode(caller_addr), p.timestamp);
+        verify_alloc_sig(&caller_addr, &message, &p.signature)?;
+
         let result = alloc.write().execute_tge();
         Ok(json!({
             "tge_timestamp": result.tge_timestamp,
@@ -25,6 +37,7 @@ pub fn register_allocation_methods(
             "total_pre_minted_decimal": result.total_pre_minted.to_string(),
             "emission_reserved": format!("0x{:x}", result.emission_reserved),
             "emission_reserved_decimal": result.emission_reserved.to_string(),
+            "caller": p.caller,
             "pre_minted": result.pre_minted.iter().map(|(cat, amt)| {
                 json!({
                     "category": format!("{:?}", cat),
@@ -36,8 +49,16 @@ pub fn register_allocation_methods(
     });
 
     let alloc = allocation.clone();
+    // SECURITY: Adding vesting entries now requires caller signature verification
     io.add_sync_method("allocation_addVesting", move |params: Params| {
         let p: AddVestingParams = params.parse()?;
+        let caller_addr = parse_address(&p.caller)?;
+        verify_alloc_timestamp(p.timestamp)?;
+        let message = format!(
+            "allocation_addVesting:{}:{}:{}:{}:{}",
+            hex::encode(caller_addr), p.beneficiary, p.category, p.amount, p.timestamp
+        );
+        verify_alloc_sig(&caller_addr, &message, &p.signature)?;
 
         let beneficiary = parse_address(&p.beneficiary)?;
         let category = parse_category(&p.category)?;
@@ -46,10 +67,11 @@ pub fn register_allocation_methods(
         match alloc.write().add_vesting(beneficiary, category, amount) {
             Ok(()) => Ok(json!({
                 "success": true,
+                "caller": p.caller,
                 "beneficiary": p.beneficiary,
                 "category": p.category,
                 "amount": p.amount,
-                "message": "Vesting entry added successfully"
+                "message": "Vesting entry added successfully (signature verified)"
             })),
             Err(e) => Err(RpcError {
                 code: ErrorCode::InvalidParams,
@@ -60,16 +82,16 @@ pub fn register_allocation_methods(
     });
 
     let alloc = allocation.clone();
+    // SECURITY: Claiming now requires the beneficiary to prove ownership via signature
     io.add_sync_method("allocation_claim", move |params: Params| {
         let p: ClaimParams = params.parse()?;
 
         let beneficiary = parse_address(&p.beneficiary)?;
-        let current_timestamp = p.timestamp.unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or(std::time::Duration::ZERO)
-                .as_secs()
-        });
+        verify_alloc_timestamp(p.timestamp)?;
+        let message = format!("allocation_claim:{}:{}", hex::encode(beneficiary), p.timestamp);
+        verify_alloc_sig(&beneficiary, &message, &p.signature)?;
+
+        let current_timestamp = p.timestamp;
 
         let result = alloc.write().claim(beneficiary, current_timestamp);
 
@@ -147,14 +169,23 @@ pub fn register_allocation_methods(
     });
 
     let alloc = allocation.clone();
+    // SECURITY: Minting emission now requires caller signature verification
     io.add_sync_method("allocation_mintEmission", move |params: Params| {
         let p: MintParams = params.parse()?;
+        let caller_addr = parse_address(&p.caller)?;
+        verify_alloc_timestamp(p.timestamp)?;
+        let message = format!(
+            "allocation_mintEmission:{}:{}:{}",
+            hex::encode(caller_addr), p.amount, p.timestamp
+        );
+        verify_alloc_sig(&caller_addr, &message, &p.signature)?;
 
         let amount = parse_amount(&p.amount)?;
 
         match alloc.write().mint_emission(amount) {
             Ok(minted) => Ok(json!({
                 "success": true,
+                "caller": p.caller,
                 "minted": format!("0x{:x}", minted),
                 "minted_decimal": minted.to_string(),
                 "remaining_emission": format!("0x{:x}", alloc.read().remaining_emission())
@@ -213,17 +244,32 @@ pub fn register_allocation_methods(
 }
 
 // Parameter structs
+
+/// Params for TGE execution (now requires authentication)
+#[derive(Deserialize)]
+struct ExecuteTgeParams {
+    caller: String,
+    timestamp: u64,
+    signature: String,
+}
+
+/// Params for adding vesting (now requires caller authentication)
 #[derive(Deserialize)]
 struct AddVestingParams {
+    caller: String,
     beneficiary: String,
     category: String,
     amount: String,
+    timestamp: u64,
+    signature: String,
 }
 
+/// Params for claiming vested tokens (beneficiary must sign)
 #[derive(Deserialize)]
 struct ClaimParams {
     beneficiary: String,
-    timestamp: Option<u64>,
+    timestamp: u64,
+    signature: String,
 }
 
 #[derive(Deserialize)]
@@ -232,9 +278,13 @@ struct QueryParams {
     timestamp: Option<u64>,
 }
 
+/// Params for minting emission (now requires caller authentication)
 #[derive(Deserialize)]
 struct MintParams {
+    caller: String,
     amount: String,
+    timestamp: u64,
+    signature: String,
 }
 
 #[derive(Deserialize)]
@@ -296,4 +346,38 @@ fn parse_amount(amt: &str) -> Result<u128, RpcError> {
             data: None,
         })
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Signature verification helpers for allocation operations
+// ──────────────────────────────────────────────────────────────────────
+
+/// Verify signature for allocation RPC operations.
+/// Tries recovery IDs 0 and 1 (covers both Ethereum v=27/28 conventions).
+fn verify_alloc_sig(caller_bytes: &[u8; 20], message: &str, signature: &str) -> Result<(), RpcError> {
+    let addr = Address::from(*caller_bytes);
+    verify_caller_signature(&addr, message, signature, 0)
+        .or_else(|_| verify_caller_signature(&addr, message, signature, 1))
+        .map_err(|_| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Signature verification failed - caller does not own address".to_string(),
+            data: None,
+        })
+}
+
+/// Verify timestamp is recent (within 5 minutes, not more than 60s in the future).
+/// Prevents replay attacks with stale signatures.
+fn verify_alloc_timestamp(timestamp: u64) -> Result<(), RpcError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if now > timestamp + 300 || timestamp > now + 60 {
+        return Err(RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Signature expired or future timestamp".to_string(),
+            data: None,
+        });
+    }
+    Ok(())
 }

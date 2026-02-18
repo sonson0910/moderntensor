@@ -17,6 +17,7 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 alloy-rlp = { workspace = true }
 flate2 = "1.0"
+lru = "0.12"
 tar = "0.4"
 
 luxtensor-core = { path = "../luxtensor-core" }

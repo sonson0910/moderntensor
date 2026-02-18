@@ -13,11 +13,12 @@
 
 use crate::revm_integration::precompiles;
 use luxtensor_core::hnsw::HnswVectorStore;
-use luxtensor_core::semantic_registry::{SemanticRegistry, SemanticDomain, RegistryError};
+use luxtensor_core::semantic_registry::{RegistryError, SemanticDomain, SemanticRegistry};
 use luxtensor_crypto::keccak256;
-use revm::primitives::{Bytes, PrecompileOutput, PrecompileResult, PrecompileError};
+use parking_lot::RwLock;
+use revm::primitives::{Bytes, PrecompileError, PrecompileOutput, PrecompileResult};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Gas costs for AI precompiles
 pub mod gas_costs {
@@ -90,6 +91,42 @@ pub mod gas_costs {
     pub const GLOBAL_SEARCH_PER_DOMAIN: u64 = 5_000;
 }
 
+/// Maximum allowed vector dimension to prevent DoS via memory exhaustion.
+/// Covers common embedding sizes (768, 1024, 1536) with headroom.
+const MAX_VECTOR_DIM: usize = 4096;
+
+/// Maximum stored result size (256 KB) to prevent memory exhaustion in get_result.
+const MAX_RESULT_SIZE: usize = 262_144;
+
+/// Maximum number of stored AI requests to prevent unbounded state growth.
+const MAX_STORED_REQUESTS: usize = 100_000;
+
+/// Maximum number of stored training jobs.
+const MAX_STORED_TRAINING_JOBS: usize = 10_000;
+
+/// Safely multiply two gas values, returning OutOfGas on overflow.
+#[inline]
+fn checked_gas_mul(a: u64, b: u64) -> Result<u64, PrecompileError> {
+    a.checked_mul(b).ok_or(PrecompileError::OutOfGas)
+}
+
+/// Safely add gas cost components, returning OutOfGas on overflow.
+#[inline]
+fn checked_gas_add(a: u64, b: u64) -> Result<u64, PrecompileError> {
+    a.checked_add(b).ok_or(PrecompileError::OutOfGas)
+}
+
+/// Validate that a float vector contains no NaN or Infinity values,
+/// which could corrupt HNSW index or produce nonsensical results.
+fn validate_float_vector(vector: &[f32]) -> Result<(), PrecompileError> {
+    for &val in vector.iter() {
+        if val.is_nan() || val.is_infinite() {
+            return Err(PrecompileError::other("Vector contains NaN or Infinity"));
+        }
+    }
+    Ok(())
+}
+
 /// Stored AI request for precompile state
 #[derive(Clone, Debug)]
 pub struct AIRequestEntry {
@@ -114,10 +151,10 @@ pub enum RequestStatus {
 /// Training job status
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrainingStatus {
-    Open,           // Accepting participants
-    Training,       // Active training round
-    Aggregating,    // Aggregating gradients
-    Completed,      // All rounds finished
+    Open,        // Accepting participants
+    Training,    // Active training round
+    Aggregating, // Aggregating gradients
+    Completed,   // All rounds finished
     Cancelled,
 }
 
@@ -125,8 +162,8 @@ pub enum TrainingStatus {
 #[derive(Clone, Debug)]
 pub struct TrainingJob {
     pub job_id: [u8; 32],
-    pub model_id: [u8; 32],       // IPFS CID of base model
-    pub dataset_ref: [u8; 32],    // IPFS reference to dataset
+    pub model_id: [u8; 32],    // IPFS CID of base model
+    pub dataset_ref: [u8; 32], // IPFS reference to dataset
     pub total_rounds: u64,
     pub current_round: u64,
     pub min_participants: u64,
@@ -171,8 +208,8 @@ impl AIPrecompileState {
 
     /// Generate unique request ID
     fn generate_request_id(&self, caller: &[u8; 20], model_hash: &[u8; 32]) -> [u8; 32] {
-        let mut counter = self.request_counter.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut counter =
+            self.request_counter.write();
         *counter += 1;
 
         // Concatenate inputs for hashing
@@ -186,15 +223,13 @@ impl AIPrecompileState {
 
     /// Store new request
     pub fn store_request(&self, entry: AIRequestEntry) {
-        let mut requests = self.requests.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut requests = self.requests.write();
         requests.insert(entry.request_id, entry);
     }
 
     /// Get request by ID
     pub fn get_request(&self, request_id: &[u8; 32]) -> Option<AIRequestEntry> {
-        let requests = self.requests.read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let requests = self.requests.read();
         requests.get(request_id).cloned()
     }
 
@@ -205,8 +240,7 @@ impl AIPrecompileState {
         fulfiller: [u8; 20],
         result: Vec<u8>,
     ) -> bool {
-        let mut requests = self.requests.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut requests = self.requests.write();
         if let Some(entry) = requests.get_mut(request_id) {
             if entry.status == RequestStatus::Pending {
                 entry.status = RequestStatus::Fulfilled;
@@ -220,8 +254,8 @@ impl AIPrecompileState {
 
     /// Generate unique training job ID
     fn generate_job_id(&self, creator: &[u8; 20], model_id: &[u8; 32]) -> [u8; 32] {
-        let mut counter = self.training_job_counter.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut counter =
+            self.training_job_counter.write();
         *counter += 1;
 
         let mut data = Vec::with_capacity(20 + 32 + 8);
@@ -234,22 +268,19 @@ impl AIPrecompileState {
 
     /// Store new training job
     pub fn store_training_job(&self, job: TrainingJob) {
-        let mut jobs = self.training_jobs.write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut jobs = self.training_jobs.write();
         jobs.insert(job.job_id, job);
     }
 
     /// Get training job by ID
     pub fn get_training_job(&self, job_id: &[u8; 32]) -> Option<TrainingJob> {
-        let jobs = self.training_jobs.read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let jobs = self.training_jobs.read();
         jobs.get(job_id).cloned()
     }
 
     /// List active training jobs
     pub fn list_active_training_jobs(&self) -> Vec<TrainingJob> {
-        let jobs = self.training_jobs.read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let jobs = self.training_jobs.read();
         jobs.values()
             .filter(|j| j.status == TrainingStatus::Open || j.status == TrainingStatus::Training)
             .cloned()
@@ -267,9 +298,9 @@ pub fn ai_request_precompile(
     state: &AIPrecompileState,
     caller: [u8; 20],
 ) -> PrecompileResult {
-    // Calculate gas
-    let gas_cost = gas_costs::AI_REQUEST_BASE +
-        (input.len() as u64 * gas_costs::AI_REQUEST_PER_BYTE);
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::AI_REQUEST_PER_BYTE)?;
+    let gas_cost = checked_gas_add(gas_costs::AI_REQUEST_BASE, per_byte_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -295,7 +326,7 @@ pub fn ai_request_precompile(
     let max_reward = u128::from_be_bytes(
         reward_bytes[16..32]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid reward bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid reward bytes"))?,
     );
 
     // Generate request ID
@@ -312,25 +343,27 @@ pub fn ai_request_precompile(
         result: Vec::new(),
         fulfiller: [0u8; 20],
     };
+
+    // SECURITY: Check state capacity to prevent unbounded growth
+    {
+        let requests = state.requests.read();
+        if requests.len() >= MAX_STORED_REQUESTS {
+            return Err(PrecompileError::other("Request storage capacity exceeded").into());
+        }
+    }
     state.store_request(entry);
 
     // Return request_id
-    Ok(PrecompileOutput::new(
-        gas_cost,
-        Bytes::copy_from_slice(&request_id),
-    ))
+    Ok(PrecompileOutput::new(gas_cost, Bytes::copy_from_slice(&request_id)))
 }
 
 /// VERIFY_PROOF precompile handler (0x11)
 ///
 /// Input format: abi.encode(proof_type, proof_data, public_inputs)
 /// Output format: bool is_valid (32 bytes, right-padded)
-pub fn verify_proof_precompile(
-    input: &Bytes,
-    gas_limit: u64,
-) -> PrecompileResult {
-    let gas_cost = gas_costs::VERIFY_PROOF_BASE +
-        (input.len() as u64 * gas_costs::VERIFY_PROOF_PER_BYTE);
+pub fn verify_proof_precompile(input: &Bytes, gas_limit: u64) -> PrecompileResult {
+    let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::VERIFY_PROOF_PER_BYTE)?;
+    let gas_cost = checked_gas_add(gas_costs::VERIFY_PROOF_BASE, per_byte_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -359,10 +392,7 @@ pub fn verify_proof_precompile(
         result[31] = 1;
     }
 
-    Ok(PrecompileOutput::new(
-        gas_cost,
-        Bytes::copy_from_slice(&result),
-    ))
+    Ok(PrecompileOutput::new(gas_cost, Bytes::copy_from_slice(&result)))
 }
 
 /// GET_RESULT precompile handler (0x12)
@@ -395,7 +425,14 @@ pub fn get_result_precompile(
                 RequestStatus::Cancelled => 3,
             };
 
-            let mut output = Vec::with_capacity(128 + entry.result.len());
+            // SECURITY: Cap result data to prevent memory exhaustion
+            let result_data: &[u8] = if entry.result.len() > MAX_RESULT_SIZE {
+                &entry.result[..MAX_RESULT_SIZE]
+            } else {
+                &entry.result
+            };
+
+            let mut output = Vec::with_capacity(128 + result_data.len());
 
             // Status (32 bytes)
             output.extend_from_slice(&[0u8; 31]);
@@ -410,29 +447,23 @@ pub fn get_result_precompile(
             output.extend_from_slice(&entry.fulfiller);
 
             // Result length
-            let result_len = entry.result.len() as u32;
+            let result_len = result_data.len() as u32;
             output.extend_from_slice(&[0u8; 28]);
             output.extend_from_slice(&result_len.to_be_bytes());
 
             // Result data
-            output.extend_from_slice(&entry.result);
+            output.extend_from_slice(result_data);
 
             // Pad to 32-byte boundary
             while output.len() % 32 != 0 {
                 output.push(0);
             }
 
-            Ok(PrecompileOutput::new(
-                gas_costs::GET_RESULT,
-                Bytes::from(output),
-            ))
+            Ok(PrecompileOutput::new(gas_costs::GET_RESULT, Bytes::from(output)))
         }
         None => {
             // Return empty result for non-existent request
-            Ok(PrecompileOutput::new(
-                gas_costs::GET_RESULT,
-                Bytes::from(&[0u8; 96][..]),
-            ))
+            Ok(PrecompileOutput::new(gas_costs::GET_RESULT, Bytes::from(&[0u8; 96][..])))
         }
     }
 }
@@ -441,10 +472,7 @@ pub fn get_result_precompile(
 ///
 /// Input format: bytes32 model_hash, uint256 input_size
 /// Output format: uint256 required_payment
-pub fn compute_payment_precompile(
-    input: &Bytes,
-    gas_limit: u64,
-) -> PrecompileResult {
+pub fn compute_payment_precompile(input: &Bytes, gas_limit: u64) -> PrecompileResult {
     if gas_costs::COMPUTE_PAYMENT > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
     }
@@ -458,7 +486,7 @@ pub fn compute_payment_precompile(
     let input_size = u64::from_be_bytes(
         input_size_bytes[24..32]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid input size bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid input size bytes"))?,
     );
 
     // Simple pricing formula:
@@ -474,10 +502,7 @@ pub fn compute_payment_precompile(
     let mut output = [0u8; 32];
     output[16..32].copy_from_slice(&total_cost.to_be_bytes());
 
-    Ok(PrecompileOutput::new(
-        gas_costs::COMPUTE_PAYMENT,
-        Bytes::copy_from_slice(&output),
-    ))
+    Ok(PrecompileOutput::new(gas_costs::COMPUTE_PAYMENT, Bytes::copy_from_slice(&output)))
 }
 
 /// TRAIN_REQUEST precompile handler (0x14)
@@ -490,9 +515,9 @@ pub fn train_request_precompile(
     state: &AIPrecompileState,
     caller: [u8; 20],
 ) -> PrecompileResult {
-    // Calculate gas
-    let gas_cost = gas_costs::TRAIN_REQUEST_BASE +
-        (input.len() as u64 * gas_costs::TRAIN_REQUEST_PER_BYTE);
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::TRAIN_REQUEST_PER_BYTE)?;
+    let gas_cost = checked_gas_add(gas_costs::TRAIN_REQUEST_BASE, per_byte_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -515,21 +540,21 @@ pub fn train_request_precompile(
     let total_rounds = u64::from_be_bytes(
         input[88..96]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid total_rounds bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid total_rounds bytes"))?,
     );
 
     // Parse min_participants (uint256 -> u64)
     let min_participants = u64::from_be_bytes(
         input[120..128]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid min_participants bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid min_participants bytes"))?,
     );
 
     // Parse reward_per_round (uint256 -> u128)
     let reward_per_round = u128::from_be_bytes(
         input[144..160]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid reward_per_round bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid reward_per_round bytes"))?,
     );
 
     // Validate parameters
@@ -554,13 +579,18 @@ pub fn train_request_precompile(
         participants: Vec::new(),
         gradient_hashes: Vec::new(),
     };
+
+    // SECURITY: Check state capacity to prevent unbounded growth
+    {
+        let jobs = state.training_jobs.read();
+        if jobs.len() >= MAX_STORED_TRAINING_JOBS {
+            return Err(PrecompileError::other("Training job storage capacity exceeded").into());
+        }
+    }
     state.store_training_job(job);
 
     // Return job_id
-    Ok(PrecompileOutput::new(
-        gas_cost,
-        Bytes::copy_from_slice(&job_id),
-    ))
+    Ok(PrecompileOutput::new(gas_cost, Bytes::copy_from_slice(&job_id)))
 }
 
 /// VECTOR_STORE precompile handler (0x20)
@@ -579,9 +609,7 @@ pub fn vector_store_precompile(
 
     // Parse vector ID (uint64 from first 32 bytes)
     let vector_id = u64::from_be_bytes(
-        input[24..32]
-            .try_into()
-            .map_err(|_| PrecompileError::other("Invalid vector ID bytes"))?
+        input[24..32].try_into().map_err(|_| PrecompileError::other("Invalid vector ID bytes"))?,
     );
 
     // Parse vector data (offset-based parsing simplified for prototype)
@@ -594,7 +622,7 @@ pub fn vector_store_precompile(
     let vector_len = u32::from_be_bytes(
         length_word[28..32]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid length bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid length bytes"))?,
     ) as usize;
 
     let float_data_start = 96;
@@ -604,10 +632,18 @@ pub fn vector_store_precompile(
         return Err(PrecompileError::other("Input too short for vector data").into());
     }
 
+    // SECURITY: Cap vector dimension to prevent DoS via memory exhaustion
+    if vector_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum (4096)").into());
+    }
+
     // 2. Calculate Gas (HNSW insert with graph structure updates)
-    let gas_cost = gas_costs::VECTOR_STORE_BASE +
-                   (vector_len as u64 * gas_costs::VECTOR_STORE_PER_DIM) +
-                   gas_costs::VECTOR_STORE_GRAPH_UPDATE;
+    // SECURITY: Use checked arithmetic to prevent overflow bypassing gas limits
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::VECTOR_STORE_PER_DIM)?;
+    let gas_cost = checked_gas_add(
+        checked_gas_add(gas_costs::VECTOR_STORE_BASE, dim_gas)?,
+        gas_costs::VECTOR_STORE_GRAPH_UPDATE,
+    )?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -617,7 +653,7 @@ pub fn vector_store_precompile(
     let mut vector = Vec::with_capacity(vector_len);
     for i in 0..vector_len {
         let start = float_data_start + (i * 4);
-        let bytes: [u8; 4] = input[start..start+4]
+        let bytes: [u8; 4] = input[start..start + 4]
             .try_into()
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
         // Use from_be_bytes because EVM is big-endian, but standard floats are typically LE in Rust/x86
@@ -626,11 +662,16 @@ pub fn vector_store_precompile(
         vector.push(val);
     }
 
+    // SECURITY: Reject NaN/Infinity to prevent HNSW index corruption
+    validate_float_vector(&vector)?;
+
     // 4. Store Vector (with RwLock poisoning handling)
     {
-        let mut store = state.vector_store.write()
-            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
-        store.insert(vector_id, vector)
+        let mut store = state
+            .vector_store
+            .write();
+        store
+            .insert(vector_id, vector)
             .map_err(|_| PrecompileError::other("Vector store error"))?;
     }
 
@@ -638,10 +679,7 @@ pub fn vector_store_precompile(
     let mut result = [0u8; 32];
     result[31] = 1;
 
-    Ok(PrecompileOutput::new(
-        gas_cost,
-        Bytes::copy_from_slice(&result),
-    ))
+    Ok(PrecompileOutput::new(gas_cost, Bytes::copy_from_slice(&result)))
 }
 
 /// VECTOR_QUERY precompile handler (0x21)
@@ -664,9 +702,7 @@ pub fn vector_query_precompile(
     }
 
     let raw_k = u64::from_be_bytes(
-        input[24..32]
-            .try_into()
-            .map_err(|_| PrecompileError::other("Invalid k bytes"))?
+        input[24..32].try_into().map_err(|_| PrecompileError::other("Invalid k bytes"))?,
     ) as usize;
 
     // Cap k to prevent DoS attacks
@@ -682,21 +718,33 @@ pub fn vector_query_precompile(
     let vector_len = u32::from_be_bytes(
         length_word[28..32]
             .try_into()
-            .map_err(|_| PrecompileError::other("Invalid length bytes"))?
+            .map_err(|_| PrecompileError::other("Invalid length bytes"))?,
     ) as usize;
+
+    // SECURITY: Cap vector dimension to prevent DoS
+    if vector_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum (4096)").into());
+    }
 
     // 2. Calculate Gas (HNSW O(log N) search cost)
     // Cost = base + per_dim * dimensions + per_layer * estimated_layers
     let estimated_layers = {
-        let store = state.vector_store.read()
-            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+        let store = state
+            .vector_store
+            .read();
         let n = store.len();
-        if n <= 1 { 1 } else { ((n as f64).ln() / 16_f64.ln()).ceil() as u64 }
+        if n <= 1 {
+            1
+        } else {
+            ((n as f64).ln() / 16_f64.ln()).ceil() as u64
+        }
     };
 
-    let gas_cost = gas_costs::VECTOR_QUERY_BASE +
-                   (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
-                   (estimated_layers * gas_costs::VECTOR_QUERY_PER_LAYER);
+    // SECURITY: Use checked arithmetic to prevent overflow bypassing gas limits
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::VECTOR_QUERY_PER_DIM)?;
+    let layer_gas = checked_gas_mul(estimated_layers, gas_costs::VECTOR_QUERY_PER_LAYER)?;
+    let gas_cost =
+        checked_gas_add(checked_gas_add(gas_costs::VECTOR_QUERY_BASE, dim_gas)?, layer_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -711,19 +759,22 @@ pub fn vector_query_precompile(
     let mut query = Vec::with_capacity(vector_len);
     for i in 0..vector_len {
         let start = float_data_start + (i * 4);
-        let bytes: [u8; 4] = input[start..start+4]
+        let bytes: [u8; 4] = input[start..start + 4]
             .try_into()
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
         let val = f32::from_bits(u32::from_be_bytes(bytes));
         query.push(val);
     }
 
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&query)?;
+
     // 4. Perform Search (with RwLock poisoning handling)
     let results = {
-        let store = state.vector_store.read()
-            .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
-        store.search(&query, k)
-            .map_err(|_| PrecompileError::other("Vector search error"))?
+        let store = state
+            .vector_store
+            .read();
+        store.search(&query, k).map_err(|_| PrecompileError::other("Vector search error"))?
     };
 
     // 5. Encode Output with both IDs and Scores
@@ -775,12 +826,8 @@ pub fn vector_query_precompile(
         output.extend_from_slice(&score_bytes);
     }
 
-    Ok(PrecompileOutput::new(
-        gas_cost,
-        Bytes::from(output),
-    ))
+    Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
 }
-
 
 // ==================== AI PRIMITIVES (0x22 - 0x26) ====================
 
@@ -810,7 +857,7 @@ pub fn classify_precompile(
 
     // Parse vector offset and length
     let vector_offset = u32::from_be_bytes(
-        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     if input.len() < vector_offset + 32 {
@@ -818,13 +865,14 @@ pub fn classify_precompile(
     }
 
     let vector_len = u32::from_be_bytes(
-        input[vector_offset + 28..vector_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid length"))?
+        input[vector_offset + 28..vector_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
     // Parse labels offset and count
     let labels_offset = u32::from_be_bytes(
-        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     if input.len() < labels_offset + 32 {
@@ -832,14 +880,20 @@ pub fn classify_precompile(
     }
 
     let labels_len = u32::from_be_bytes(
-        input[labels_offset + 28..labels_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid labels length"))?
+        input[labels_offset + 28..labels_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid labels length"))?,
     ) as usize;
 
-    // Calculate gas
-    let gas_cost = gas_costs::CLASSIFY_BASE +
-        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
-        (labels_len as u64 * gas_costs::CLASSIFY_PER_LABEL);
+    // SECURITY: Cap vector dimension
+    if vector_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum").into());
+    }
+
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::VECTOR_QUERY_PER_DIM)?;
+    let label_gas = checked_gas_mul(labels_len as u64, gas_costs::CLASSIFY_PER_LABEL)?;
+    let gas_cost = checked_gas_add(checked_gas_add(gas_costs::CLASSIFY_BASE, dim_gas)?, label_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -869,8 +923,9 @@ pub fn classify_precompile(
             break;
         }
         let id = u64::from_be_bytes(
-            input[start + 24..start + 32].try_into()
-                .map_err(|_| PrecompileError::other("Invalid label id"))?
+            input[start + 24..start + 32]
+                .try_into()
+                .map_err(|_| PrecompileError::other("Invalid label id"))?,
         );
         // Label is in next 32-byte word
         let label_start = labels_data_start + ((labels_len + i) * 32);
@@ -878,17 +933,20 @@ pub fn classify_precompile(
             continue;
         }
         let label = u32::from_be_bytes(
-            input[label_start + 28..label_start + 32].try_into()
-                .map_err(|_| PrecompileError::other("Invalid label value"))?
+            input[label_start + 28..label_start + 32]
+                .try_into()
+                .map_err(|_| PrecompileError::other("Invalid label value"))?,
         );
         labels.push((id, label));
     }
 
     // Perform classification
-    let store = state.vector_store.read()
-        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+    let store = state
+        .vector_store
+        .read();
 
-    let (label, confidence) = store.classify(&query, &labels)
+    let (label, confidence) = store
+        .classify(&query, &labels)
         .map_err(|_| PrecompileError::other("Classification failed"))?;
 
     // Encode output: (uint32 label, uint256 confidence)
@@ -923,12 +981,17 @@ pub fn cluster_assign_precompile(
 
     // Parse query vector (simplified - assume vector starts at offset 64)
     let vector_len = u32::from_be_bytes(
-        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
-    // Calculate gas
-    let gas_cost = gas_costs::CLUSTER_ASSIGN_BASE +
-        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM);
+    // SECURITY: Cap vector dimension
+    if vector_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum").into());
+    }
+
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::VECTOR_QUERY_PER_DIM)?;
+    let gas_cost = checked_gas_add(gas_costs::CLUSTER_ASSIGN_BASE, dim_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -950,15 +1013,14 @@ pub fn cluster_assign_precompile(
     }
 
     // Find nearest centroid using HNSW search
-    let store = state.vector_store.read()
-        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+    let store = state
+        .vector_store
+        .read();
 
-    let results = store.search(&query, 1)
-        .map_err(|_| PrecompileError::other("Search failed"))?;
+    let results = store.search(&query, 1).map_err(|_| PrecompileError::other("Search failed"))?;
 
-    let (cluster_id, distance) = results.first()
-        .map(|(id, dist)| (*id, *dist))
-        .unwrap_or((0, f32::MAX));
+    let (cluster_id, distance) =
+        results.first().map(|(id, dist)| (*id, *dist)).unwrap_or((0, f32::MAX));
 
     // Encode output: (uint64 cluster_id, uint256 distance)
     let mut output = vec![0u8; 64];
@@ -991,12 +1053,17 @@ pub fn anomaly_score_precompile(
     }
 
     let vector_len = u32::from_be_bytes(
-        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
-    // Calculate gas
-    let gas_cost = gas_costs::ANOMALY_SCORE_BASE +
-        (vector_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM);
+    // SECURITY: Cap vector dimension
+    if vector_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum").into());
+    }
+
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::VECTOR_QUERY_PER_DIM)?;
+    let gas_cost = checked_gas_add(gas_costs::ANOMALY_SCORE_BASE, dim_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -1018,10 +1085,12 @@ pub fn anomaly_score_precompile(
     }
 
     // Calculate anomaly score
-    let store = state.vector_store.read()
-        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+    let store = state
+        .vector_store
+        .read();
 
-    let score = store.anomaly_score(&query)
+    let score = store
+        .anomaly_score(&query)
         .map_err(|_| PrecompileError::other("Anomaly calculation failed"))?;
 
     // Encode output: uint256 anomaly_score
@@ -1054,17 +1123,17 @@ pub fn similarity_gate_precompile(
 
     // Parse offsets
     let vec_a_offset = u32::from_be_bytes(
-        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     let vec_b_offset = u32::from_be_bytes(
-        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     // Threshold is at offset 64-96 (direct value, not offset)
     let threshold_bytes = &input[80..96];
     let threshold_scaled = u128::from_be_bytes(
-        threshold_bytes.try_into().map_err(|_| PrecompileError::other("Invalid threshold"))?
+        threshold_bytes.try_into().map_err(|_| PrecompileError::other("Invalid threshold"))?,
     );
     let threshold = (threshold_scaled as f64 / 1e18) as f32;
 
@@ -1074,18 +1143,26 @@ pub fn similarity_gate_precompile(
     }
 
     let vec_a_len = u32::from_be_bytes(
-        input[vec_a_offset + 28..vec_a_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid length"))?
+        input[vec_a_offset + 28..vec_a_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
     let vec_b_len = u32::from_be_bytes(
-        input[vec_b_offset + 28..vec_b_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid length"))?
+        input[vec_b_offset + 28..vec_b_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
-    // Calculate gas
-    let gas_cost = gas_costs::SIMILARITY_GATE_BASE +
-        ((vec_a_len + vec_b_len) as u64 * gas_costs::VECTOR_QUERY_PER_DIM / 2);
+    // SECURITY: Cap vector dimensions
+    if vec_a_len > MAX_VECTOR_DIM || vec_b_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Vector dimension exceeds maximum").into());
+    }
+
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let combined_dim = (vec_a_len + vec_b_len) as u64;
+    let dim_gas = checked_gas_mul(combined_dim, gas_costs::VECTOR_QUERY_PER_DIM / 2)?;
+    let gas_cost = checked_gas_add(gas_costs::SIMILARITY_GATE_BASE, dim_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -1096,7 +1173,9 @@ pub fn similarity_gate_precompile(
     let vec_a_data_start = vec_a_offset + 32;
     for i in 0..vec_a_len {
         let start = vec_a_data_start + (i * 4);
-        if start + 4 > input.len() { break; }
+        if start + 4 > input.len() {
+            break;
+        }
         let bytes: [u8; 4] = input[start..start + 4]
             .try_into()
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
@@ -1107,7 +1186,9 @@ pub fn similarity_gate_precompile(
     let vec_b_data_start = vec_b_offset + 32;
     for i in 0..vec_b_len {
         let start = vec_b_data_start + (i * 4);
-        if start + 4 > input.len() { break; }
+        if start + 4 > input.len() {
+            break;
+        }
         let bytes: [u8; 4] = input[start..start + 4]
             .try_into()
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
@@ -1115,10 +1196,12 @@ pub fn similarity_gate_precompile(
     }
 
     // Check similarity
-    let store = state.vector_store.read()
-        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+    let store = state
+        .vector_store
+        .read();
 
-    let (is_similar, similarity) = store.similarity_check(&vec_a, &vec_b, threshold)
+    let (is_similar, similarity) = store
+        .similarity_check(&vec_a, &vec_b, threshold)
         .map_err(|_| PrecompileError::other("Similarity check failed"))?;
 
     // Encode output: (bool is_similar, uint256 similarity)
@@ -1152,7 +1235,7 @@ pub fn semantic_relate_precompile(
 
     // Parse vector ID
     let vector_id = u64::from_be_bytes(
-        input[24..32].try_into().map_err(|_| PrecompileError::other("Invalid id"))?
+        input[24..32].try_into().map_err(|_| PrecompileError::other("Invalid id"))?,
     );
 
     // Calculate gas
@@ -1163,8 +1246,9 @@ pub fn semantic_relate_precompile(
     }
 
     // Lookup vector
-    let store = state.vector_store.read()
-        .map_err(|_| PrecompileError::other("Vector store lock poisoned"))?;
+    let store = state
+        .vector_store
+        .read();
 
     let vector = store.get_vector(vector_id);
 
@@ -1232,7 +1316,7 @@ pub fn register_vector_precompile(
 
     // Parse vector offset
     let vector_offset = u32::from_be_bytes(
-        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[60..64].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     if input.len() < vector_offset + 32 {
@@ -1240,8 +1324,9 @@ pub fn register_vector_precompile(
     }
 
     let vector_len = u32::from_be_bytes(
-        input[vector_offset + 28..vector_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid length"))?
+        input[vector_offset + 28..vector_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
     // Limit vector dimension for DoS protection
@@ -1251,13 +1336,12 @@ pub fn register_vector_precompile(
 
     // Parse tags offset and count
     let tags_offset = u32::from_be_bytes(
-        input[92..96].try_into().map_err(|_| PrecompileError::other("Invalid tags offset"))?
+        input[92..96].try_into().map_err(|_| PrecompileError::other("Invalid tags offset"))?,
     ) as usize;
 
     let tags_len = if input.len() >= tags_offset + 32 {
-        u32::from_be_bytes(
-            input[tags_offset + 28..tags_offset + 32].try_into().unwrap_or([0; 4])
-        ) as usize
+        u32::from_be_bytes(input[tags_offset + 28..tags_offset + 32].try_into().unwrap_or([0; 4]))
+            as usize
     } else {
         0
     };
@@ -1267,17 +1351,16 @@ pub fn register_vector_precompile(
 
     // Parse TTL (at byte 96-128)
     let ttl = if input.len() >= 128 {
-        u64::from_be_bytes(
-            input[120..128].try_into().unwrap_or([0; 8])
-        )
+        u64::from_be_bytes(input[120..128].try_into().unwrap_or([0; 8]))
     } else {
         0 // Permanent
     };
 
-    // Calculate gas
-    let gas_cost = gas_costs::REGISTER_VECTOR_BASE +
-        (vector_len as u64 * gas_costs::REGISTER_VECTOR_PER_DIM) +
-        (tags_len as u64 * gas_costs::REGISTER_VECTOR_PER_TAG);
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let dim_gas = checked_gas_mul(vector_len as u64, gas_costs::REGISTER_VECTOR_PER_DIM)?;
+    let tag_gas = checked_gas_mul(tags_len as u64, gas_costs::REGISTER_VECTOR_PER_TAG)?;
+    let gas_cost =
+        checked_gas_add(checked_gas_add(gas_costs::REGISTER_VECTOR_BASE, dim_gas)?, tag_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -1298,6 +1381,9 @@ pub fn register_vector_precompile(
         vector.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
 
+    // SECURITY: Reject NaN/Infinity to prevent registry corruption
+    validate_float_vector(&vector)?;
+
     // Parse tags
     let mut tags = Vec::with_capacity(tags_len);
     let tags_data_start = tags_offset + 32;
@@ -1312,25 +1398,20 @@ pub fn register_vector_precompile(
     }
 
     // Register in global registry
-    let mut registry = state.semantic_registry.write()
-        .map_err(|_| PrecompileError::other("Registry lock poisoned"))?;
+    let mut registry = state
+        .semantic_registry
+        .write();
 
-    let global_id = registry.register(
-        *caller,
-        domain,
-        vector,
-        tags,
-        block_number,
-        ttl,
-    ).map_err(|e| match e {
-        RegistryError::QuotaExceeded => PrecompileError::other("Storage quota exceeded"),
-        RegistryError::DimensionMismatch { .. } => PrecompileError::other("Dimension mismatch"),
-        _ => PrecompileError::other("Registration failed"),
-    })?;
+    let global_id = registry.register(*caller, domain, vector, tags, block_number, ttl).map_err(
+        |e| match e {
+            RegistryError::QuotaExceeded => PrecompileError::other("Storage quota exceeded"),
+            RegistryError::DimensionMismatch { .. } => PrecompileError::other("Dimension mismatch"),
+            _ => PrecompileError::other("Registration failed"),
+        },
+    )?;
 
     // Get remaining quota
-    let remaining = registry.get_remaining_quota(caller)
-        .unwrap_or(0);
+    let remaining = registry.get_remaining_quota(caller).unwrap_or(0);
 
     // Encode output: (uint64 global_id, uint256 remaining_quota)
     let mut output = vec![0u8; 64];
@@ -1361,7 +1442,7 @@ pub fn global_search_precompile(
 
     // Parse query vector offset
     let query_offset = u32::from_be_bytes(
-        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?
+        input[28..32].try_into().map_err(|_| PrecompileError::other("Invalid offset"))?,
     ) as usize;
 
     if input.len() < query_offset + 32 {
@@ -1369,13 +1450,14 @@ pub fn global_search_precompile(
     }
 
     let query_len = u32::from_be_bytes(
-        input[query_offset + 28..query_offset + 32].try_into()
-            .map_err(|_| PrecompileError::other("Invalid length"))?
+        input[query_offset + 28..query_offset + 32]
+            .try_into()
+            .map_err(|_| PrecompileError::other("Invalid length"))?,
     ) as usize;
 
     // Parse k
     let k = u64::from_be_bytes(
-        input[56..64].try_into().map_err(|_| PrecompileError::other("Invalid k"))?
+        input[56..64].try_into().map_err(|_| PrecompileError::other("Invalid k"))?,
     ) as usize;
 
     // Limit k for DoS protection
@@ -1384,10 +1466,16 @@ pub fn global_search_precompile(
     // Count domains to search (0 = all domains)
     let num_domains = 4; // Default: search 4 common domains
 
-    // Calculate gas
-    let gas_cost = gas_costs::GLOBAL_SEARCH_BASE +
-        (query_len as u64 * gas_costs::VECTOR_QUERY_PER_DIM) +
-        (num_domains as u64 * gas_costs::GLOBAL_SEARCH_PER_DOMAIN);
+    // SECURITY: Cap query dimension
+    if query_len > MAX_VECTOR_DIM {
+        return Err(PrecompileError::other("Query dimension exceeds maximum").into());
+    }
+
+    // Calculate gas (checked arithmetic to prevent overflow)
+    let dim_gas = checked_gas_mul(query_len as u64, gas_costs::VECTOR_QUERY_PER_DIM)?;
+    let domain_gas = checked_gas_mul(num_domains as u64, gas_costs::GLOBAL_SEARCH_PER_DOMAIN)?;
+    let gas_cost =
+        checked_gas_add(checked_gas_add(gas_costs::GLOBAL_SEARCH_BASE, dim_gas)?, domain_gas)?;
 
     if gas_cost > gas_limit {
         return Err(PrecompileError::OutOfGas.into());
@@ -1409,10 +1497,12 @@ pub fn global_search_precompile(
     }
 
     // Perform global search
-    let registry = state.semantic_registry.read()
-        .map_err(|_| PrecompileError::other("Registry lock poisoned"))?;
+    let registry = state
+        .semantic_registry
+        .read();
 
-    let results = registry.search_global(&query, k)
+    let results = registry
+        .search_global(&query, k)
         .map_err(|_| PrecompileError::other("Global search failed"))?;
 
     // Encode output: (uint64[] ids, uint256[] scores, uint8[] domains)
@@ -1421,7 +1511,8 @@ pub fn global_search_precompile(
 
     // Offsets for three dynamic arrays
     // ids offset = 96 (3 * 32)
-    output.extend_from_slice(&[0u8; 31]); output.push(96);
+    output.extend_from_slice(&[0u8; 31]);
+    output.push(96);
     // scores offset = 96 + 32 + (results.len() * 32)
     let scores_offset = 96 + 32 + (results.len() * 32);
     output.extend_from_slice(&[0u8; 24]);
@@ -1459,9 +1550,7 @@ pub fn global_search_precompile(
     Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
 }
 
-
 // ========== HELPER FUNCTIONS ==========
-
 
 /// RISC Zero proof verification — SECURITY: rejects until real verifier integrated
 ///
@@ -1499,14 +1588,14 @@ fn verify_groth16_proof(_input: &Bytes) -> bool {
 
 /// Check if address is an AI precompile
 pub fn is_ai_precompile(address: &[u8; 20]) -> bool {
-    *address == precompiles::AI_REQUEST ||
-    *address == precompiles::VERIFY_PROOF ||
-    *address == precompiles::GET_RESULT ||
-    *address == precompiles::COMPUTE_PAYMENT ||
-    is_training_precompile(address) ||
-    is_semantic_precompile(address) ||
-    is_ai_primitives_precompile(address) ||
-    is_registry_precompile(address)
+    *address == precompiles::AI_REQUEST
+        || *address == precompiles::VERIFY_PROOF
+        || *address == precompiles::GET_RESULT
+        || *address == precompiles::COMPUTE_PAYMENT
+        || is_training_precompile(address)
+        || is_semantic_precompile(address)
+        || is_ai_primitives_precompile(address)
+        || is_registry_precompile(address)
 }
 
 /// Check if address is a training precompile
@@ -1521,8 +1610,10 @@ pub fn is_training_precompile(address: &[u8; 20]) -> bool {
 /// Check if address is a semantic precompile (0x20 - 0x21)
 pub fn is_semantic_precompile(address: &[u8; 20]) -> bool {
     let base = [0u8; 20];
-    let mut expected_store = base; expected_store[19] = 0x20;
-    let mut expected_query = base; expected_query[19] = 0x21;
+    let mut expected_store = base;
+    expected_store[19] = 0x20;
+    let mut expected_query = base;
+    expected_query[19] = 0x21;
 
     *address == expected_store || *address == expected_query
 }
@@ -1544,7 +1635,6 @@ pub fn is_registry_precompile(address: &[u8; 20]) -> bool {
     let last_byte = address[19];
     (0x27..=0x28).contains(&last_byte)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1579,12 +1669,7 @@ mod tests {
         input[64..84].copy_from_slice(&[0xEFu8; 20]); // callback
         input[100..116].copy_from_slice(&100u128.to_be_bytes()); // reward
 
-        let result = ai_request_precompile(
-            &Bytes::from(input),
-            100_000,
-            &state,
-            caller,
-        );
+        let result = ai_request_precompile(&Bytes::from(input), 100_000, &state, caller);
 
         assert!(result.is_ok());
         let output = result.unwrap();
@@ -1597,10 +1682,7 @@ mod tests {
         let mut input = vec![0u8; 64];
         input[56..64].copy_from_slice(&1000u64.to_be_bytes());
 
-        let result = compute_payment_precompile(
-            &Bytes::from(input),
-            10_000,
-        );
+        let result = compute_payment_precompile(&Bytes::from(input), 10_000);
 
         assert!(result.is_ok());
         let output = result.unwrap();

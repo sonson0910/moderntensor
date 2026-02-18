@@ -11,8 +11,6 @@ use luxtensor_core::block::Block;
 use luxtensor_core::transaction::Transaction;
 use luxtensor_core::types::Hash;
 use parking_lot::RwLock;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash as StdHash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -157,14 +155,14 @@ impl P2PNode {
 
     /// Build gossipsub configuration
     fn build_gossipsub_config(config: &P2PConfig) -> Result<GossipsubConfig, NetworkError> {
-        // Custom message ID function to deduplicate messages
+        // Cryptographic content-only message ID function to deduplicate messages.
+        // Uses keccak256 instead of DefaultHasher to prevent collision attacks
+        // and ensure stability across Rust versions.
+        // NOTE: Only hashes message.data (no source) for consistency with swarm.rs
+        // — the same content from different sources should be deduped.
         let message_id_fn = |message: &Message| {
-            let mut hasher = DefaultHasher::new();
-            message.data.hash(&mut hasher);
-            if let Some(source) = &message.source {
-                source.hash(&mut hasher);
-            }
-            MessageId::from(hasher.finish().to_be_bytes().to_vec())
+            let hash = luxtensor_crypto::keccak256(&message.data);
+            MessageId::from(hash[..20].to_vec())
         };
 
         ConfigBuilder::default()

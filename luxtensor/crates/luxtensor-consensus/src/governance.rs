@@ -54,6 +54,9 @@ pub enum GovernanceError {
 
     #[error("too many active proposals ({max} max)")]
     TooManyActiveProposals { max: usize },
+
+    #[error("invalid proposal: {0}")]
+    InvalidProposal(String),
 }
 
 pub type Result<T> = std::result::Result<T, GovernanceError>;
@@ -206,6 +209,20 @@ impl GovernanceModule {
     ) -> Result<u64> {
         if proposer_stake < self.config.min_proposal_stake {
             return Err(GovernanceError::InsufficientStake(proposer));
+        }
+
+        // Validate title and description lengths
+        const MAX_TITLE_LEN: usize = 256;
+        const MAX_DESCRIPTION_LEN: usize = 10_000;
+        if title.len() > MAX_TITLE_LEN {
+            return Err(GovernanceError::InvalidProposal(
+                "Title too long (max 256 chars)".into(),
+            ));
+        }
+        if description.len() > MAX_DESCRIPTION_LEN {
+            return Err(GovernanceError::InvalidProposal(
+                "Description too long (max 10000 chars)".into(),
+            ));
         }
 
         // SECURITY: Limit active proposals to prevent governance spam.

@@ -225,7 +225,18 @@ pub fn recover_public_key(
 /// successfully recovers.  The signature must be exactly 64 bytes (r‖s)
 /// or 65 bytes (r‖s‖v) — if 65 bytes, the last byte is used as the
 /// recovery id directly.
+///
+/// # Security Warning
+/// This function is **ambiguous** for 64-byte signatures: it tries both
+/// recovery IDs and returns the first success, which may not be the intended
+/// signer.  For transaction-signing contexts where you need certainty about
+/// the signer, use [`recover_address_strict`] instead.
 pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAddress> {
+    recover_address_inner(message_hash, signature)
+}
+
+/// Inner implementation shared by both recover_address and recover_address_strict.
+fn recover_address_inner(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAddress> {
     let (sig_bytes, recovery_ids): ([u8; 64], Vec<u8>) = if signature.len() == 65 {
         let mut sig = [0u8; 64];
         sig.copy_from_slice(&signature[..64]);
@@ -250,6 +261,46 @@ pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAd
     }
 
     Err(CryptoError::Secp256k1Error("Failed to recover address with any recovery id".into()))
+}
+
+/// Recover the 20-byte Ethereum-style address from a message hash and a
+/// **65-byte** signature (r‖s‖v) where `v` is the explicit recovery ID.
+///
+/// Unlike [`recover_address`] this function is **not ambiguous**: it
+/// requires exactly 65 bytes and uses the last byte as the single recovery
+/// ID. This is the correct function to use in transaction-signing contexts
+/// where signer identity must be unambiguous.
+///
+/// The `v` byte may be:
+/// - `0` or `1` (raw recovery id)
+/// - `27` or `28` (Ethereum legacy, mapped to 0/1)
+pub fn recover_address_strict(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAddress> {
+    if signature.len() != 65 {
+        return Err(CryptoError::Secp256k1Error(format!(
+            "recover_address_strict requires exactly 65-byte signature (r||s||v), got {} bytes",
+            signature.len()
+        )));
+    }
+
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes.copy_from_slice(&signature[..64]);
+
+    // Normalize v: Ethereum uses 27/28, raw ECDSA uses 0/1
+    let v_raw = signature[64];
+    let recovery_id = match v_raw {
+        0 | 1 => v_raw,
+        27 => 0,
+        28 => 1,
+        _ => {
+            return Err(CryptoError::Secp256k1Error(format!(
+                "Invalid recovery id (v byte): {}. Expected 0, 1, 27, or 28",
+                v_raw
+            )));
+        }
+    };
+
+    let pubkey = recover_public_key(message_hash, &sig_bytes, recovery_id)?;
+    address_from_public_key(&pubkey)
 }
 
 /// Derive address from public key bytes

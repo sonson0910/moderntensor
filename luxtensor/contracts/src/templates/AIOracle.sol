@@ -58,9 +58,6 @@ contract AIOracle is Ownable, ReentrancyGuard {
     /// @notice Registered AI models
     mapping(bytes32 => bool) public approvedModels;
 
-    /// @notice Minimum stake to fulfill requests
-    uint256 public minFulfillerStake;
-
     /// @notice Default request timeout (blocks)
     uint256 public defaultTimeout = 100; // ~10 minutes
 
@@ -95,6 +92,10 @@ contract AIOracle is Ownable, ReentrancyGuard {
     event AIRequestExpired(bytes32 indexed requestId);
     event ModelApproved(bytes32 indexed modelHash);
     event ModelRevoked(bytes32 indexed modelHash);
+    event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
+    event DefaultTimeoutUpdated(uint256 oldTimeout, uint256 newTimeout);
+    event ZkMLVerifierUpdated(address oldVerifier, address newVerifier);
+    event FeesWithdrawn(address indexed recipient, uint256 amount);
 
     // ========== CONSTRUCTOR ==========
 
@@ -164,7 +165,8 @@ contract AIOracle is Ownable, ReentrancyGuard {
 
         req.status = RequestStatus.Cancelled;
 
-        payable(msg.sender).transfer(req.reward);
+        (bool success, ) = payable(msg.sender).call{value: req.reward}("");
+        require(success, "Transfer failed");
 
         emit AIRequestCancelled(requestId);
     }
@@ -222,7 +224,8 @@ contract AIOracle is Ownable, ReentrancyGuard {
         uint256 payout = req.reward - fee;
 
         accumulatedFees += fee;
-        payable(msg.sender).transfer(payout);
+        (bool success, ) = payable(msg.sender).call{value: payout}("");
+        require(success, "Transfer failed");
 
         emit AIRequestFulfilled(requestId, msg.sender, proofHash);
     }
@@ -231,7 +234,7 @@ contract AIOracle is Ownable, ReentrancyGuard {
      * @notice Mark expired requests
      * @param requestId Request to check
      */
-    function markExpired(bytes32 requestId) external {
+    function markExpired(bytes32 requestId) external nonReentrant {
         AIRequest storage req = requests[requestId];
         require(req.status == RequestStatus.Pending, "Not pending");
         require(block.number > req.deadline, "Not expired yet");
@@ -239,7 +242,8 @@ contract AIOracle is Ownable, ReentrancyGuard {
         req.status = RequestStatus.Expired;
 
         // Refund requester
-        payable(req.requester).transfer(req.reward);
+        (bool success, ) = payable(req.requester).call{value: req.reward}("");
+        require(success, "Transfer failed");
 
         emit AIRequestExpired(requestId);
     }
@@ -269,6 +273,7 @@ contract AIOracle is Ownable, ReentrancyGuard {
      * @param _verifier Verifier contract address
      */
     function setZkMLVerifier(address _verifier) external onlyOwner {
+        emit ZkMLVerifierUpdated(zkmlVerifier, _verifier);
         zkmlVerifier = _verifier;
     }
 
@@ -278,6 +283,7 @@ contract AIOracle is Ownable, ReentrancyGuard {
      */
     function setProtocolFee(uint256 _feeBps) external onlyOwner {
         require(_feeBps <= 1000, "Fee too high"); // Max 10%
+        emit ProtocolFeeUpdated(protocolFeeBps, _feeBps);
         protocolFeeBps = _feeBps;
     }
 
@@ -287,16 +293,22 @@ contract AIOracle is Ownable, ReentrancyGuard {
      */
     function setDefaultTimeout(uint256 _timeout) external onlyOwner {
         require(_timeout >= 10 && _timeout <= 10000, "Invalid timeout");
+        emit DefaultTimeoutUpdated(defaultTimeout, _timeout);
         defaultTimeout = _timeout;
     }
 
     /**
      * @notice Withdraw accumulated fees
      */
-    function withdrawFees() external onlyOwner {
+    function withdrawFees() external onlyOwner nonReentrant {
         uint256 amount = accumulatedFees;
+        require(amount > 0, "No fees to withdraw");
         accumulatedFees = 0;
-        payable(owner()).transfer(amount);
+
+        (bool success, ) = payable(owner()).call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit FeesWithdrawn(owner(), amount);
     }
 
     // ========== VIEW FUNCTIONS ==========

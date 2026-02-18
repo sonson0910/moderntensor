@@ -114,6 +114,13 @@ impl<const D: usize> FixedPointVector<D> {
             });
         }
 
+        // SECURITY: Prevent division by zero panic
+        if scale == 0 {
+            return Err(HnswError::InvalidParameter(
+                "scale cannot be zero".to_string(),
+            ));
+        }
+
         let mut components = [I64F32::ZERO; D];
         let scale_fixed = I64F32::from_num(scale);
         for (i, &val) in values.iter().enumerate() {

@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+use crate::helpers::verify_caller_signature;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -77,6 +79,20 @@ pub struct CreateJobRequest {
     pub total_rounds: u64,
     pub min_participants: u64,
     pub reward_per_round: String,
+    /// Timestamp for replay protection
+    pub timestamp: u64,
+    /// Hex-encoded signature proving caller owns the address
+    pub signature: String,
+}
+
+/// Cancel job request (now requires authentication)
+#[derive(Clone, Debug, Deserialize)]
+pub struct CancelJobRequest {
+    pub job_id: String,
+    /// Caller address (must be job creator)
+    pub caller: String,
+    pub timestamp: u64,
+    pub signature: String,
 }
 
 /// Submit gradient request
@@ -146,28 +162,59 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let rounds = ctx.rounds.clone();
 
     // training_createJob - Create a new training job
+    // SECURITY: Now requires signature verification to prevent impersonation
     io.add_sync_method("training_createJob", move |params: Params| {
         let request: CreateJobRequest = params.parse()?;
+
+        // SECURITY: Verify timestamp freshness
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        if now_ts > request.timestamp + 300 || request.timestamp > now_ts + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address
+        let caller_hex = request.caller.trim_start_matches("0x");
+        let caller_bytes = hex::decode(caller_hex)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid caller address"))?;
+        if caller_bytes.len() != 20 {
+            return Err(jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"));
+        }
+        let caller_addr = luxtensor_core::Address::try_from_slice(&caller_bytes)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"))?;
+        let message = format!(
+            "training_createJob:{}:{}:{}:{}",
+            hex::encode(caller_addr.as_bytes()),
+            request.model_id,
+            request.total_rounds,
+            request.timestamp
+        );
+        verify_caller_signature(&caller_addr, &message, &request.signature, 0)
+            .or_else(|_| verify_caller_signature(&caller_addr, &message, &request.signature, 1))
+            .map_err(|_| {
+                jsonrpc_core::Error::invalid_params(
+                    "Signature verification failed - caller does not own address",
+                )
+            })?;
 
         // Validate
         if request.model_id.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Model ID is required"));
         }
         if request.total_rounds == 0 {
-            return Err(jsonrpc_core::Error::invalid_params(
-                "Total rounds must be > 0",
-            ));
+            return Err(jsonrpc_core::Error::invalid_params("Total rounds must be > 0"));
         }
         if request.min_participants == 0 {
-            return Err(jsonrpc_core::Error::invalid_params(
-                "Min participants must be > 0",
-            ));
+            return Err(jsonrpc_core::Error::invalid_params("Min participants must be > 0"));
         }
 
         // Parse reward
-        let reward =
-            u128::from_str_radix(request.reward_per_round.trim_start_matches("0x"), 16)
-                .unwrap_or(0);
+        let reward = u128::from_str_radix(request.reward_per_round.trim_start_matches("0x"), 16)
+            .unwrap_or(0);
 
         // Generate job ID
         let mut counter = job_counter.write();
@@ -297,16 +344,58 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let jobs = ctx.jobs.clone();
 
     // training_cancelJob - Cancel a job (creator only)
+    // SECURITY: Now requires signature verification + creator check
     io.add_sync_method("training_cancelJob", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing job ID"));
+        let request: CancelJobRequest = params.parse()?;
+
+        // SECURITY: Verify timestamp freshness
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        if now_ts > request.timestamp + 300 || request.timestamp > now_ts + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
         }
 
-        let job_id = parse_job_id(&parsed[0])?;
+        // SECURITY: Verify caller owns the address
+        let caller_hex = request.caller.trim_start_matches("0x");
+        let caller_bytes = hex::decode(caller_hex)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid caller address"))?;
+        if caller_bytes.len() != 20 {
+            return Err(jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"));
+        }
+        let caller_addr = luxtensor_core::Address::try_from_slice(&caller_bytes)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"))?;
+
+        let job_id = parse_job_id(&request.job_id)?;
+        let message = format!(
+            "training_cancelJob:{}:{}:{}",
+            hex::encode(caller_addr.as_bytes()),
+            hex::encode(job_id),
+            request.timestamp
+        );
+        verify_caller_signature(&caller_addr, &message, &request.signature, 0)
+            .or_else(|_| verify_caller_signature(&caller_addr, &message, &request.signature, 1))
+            .map_err(|_| {
+                jsonrpc_core::Error::invalid_params(
+                    "Signature verification failed - caller does not own address",
+                )
+            })?;
+
         let mut jobs_map = jobs.write();
 
         if let Some(job) = jobs_map.get_mut(&job_id) {
+            // SECURITY: Only the job creator can cancel
+            if job.creator.trim_start_matches("0x").to_lowercase()
+                != hex::encode(caller_addr.as_bytes()).to_lowercase()
+            {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Only the job creator can cancel this job",
+                ));
+            }
+
             if job.status == TrainingJobStatus::Completed
                 || job.status == TrainingJobStatus::Cancelled
             {
@@ -316,11 +405,12 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             }
 
             job.status = TrainingJobStatus::Cancelled;
-            info!("Training job cancelled: 0x{}", hex::encode(&job_id));
+            info!("Training job cancelled (verified): 0x{}", hex::encode(&job_id));
 
             Ok(serde_json::json!({
                 "success": true,
                 "job_id": format!("0x{}", hex::encode(job_id)),
+                "message": "Job cancelled (signature verified)"
             }))
         } else {
             Err(jsonrpc_core::Error::invalid_params("Job not found"))
@@ -337,16 +427,56 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let trainer_stakes = ctx.trainer_stakes.clone();
 
     // training_registerTrainer - Register as a trainer for a job
+    // SECURITY: Now requires signature verification to prevent impersonation
     io.add_sync_method("training_registerTrainer", move |params: Params| {
+        // Params: [job_id, trainer_address, timestamp, signature, optional_stake_bps]
         let parsed: Vec<String> = params.parse()?;
-        if parsed.len() < 2 {
+        if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
-                "Required: job_id, trainer_address",
+                "Required: job_id, trainer_address, timestamp, signature [, stake_bps]",
             ));
         }
 
         let job_id = parse_job_id(&parsed[0])?;
         let trainer_address = &parsed[1];
+        let timestamp: u64 = parsed[2].parse::<u64>().map_err(|_| {
+            jsonrpc_core::Error::invalid_params("Invalid timestamp")
+        })?;
+        let signature = &parsed[3];
+
+        // SECURITY: Verify timestamp freshness (5min window)
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        if now_ts > timestamp + 300 || timestamp > now_ts + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify trainer owns the address
+        let trainer_hex = trainer_address.trim_start_matches("0x");
+        let trainer_bytes = hex::decode(trainer_hex)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid trainer address"))?;
+        if trainer_bytes.len() != 20 {
+            return Err(jsonrpc_core::Error::invalid_params("Trainer address must be 20 bytes"));
+        }
+        let trainer_addr = luxtensor_core::Address::try_from_slice(&trainer_bytes)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Trainer address must be 20 bytes"))?;
+        let message = format!(
+            "training_registerTrainer:{}:{}:{}",
+            hex::encode(trainer_addr.as_bytes()),
+            hex::encode(job_id),
+            timestamp
+        );
+        verify_caller_signature(&trainer_addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&trainer_addr, &message, signature, 1))
+            .map_err(|_| {
+                jsonrpc_core::Error::invalid_params(
+                    "Signature verification failed - trainer does not own address",
+                )
+            })?;
 
         let mut jobs_map = jobs.write();
 
@@ -358,19 +488,14 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             }
 
             if job.trainers.contains(trainer_address) {
-                return Err(jsonrpc_core::Error::invalid_params(
-                    "Trainer already registered",
-                ));
+                return Err(jsonrpc_core::Error::invalid_params("Trainer already registered"));
             }
 
             job.trainers.push(trainer_address.clone());
 
-            // Store stake weight (optional third param, default 10000 BPS = 100%)
-            let stake_bps: u64 = if parsed.len() >= 3 {
-                parsed[2].parse::<u64>().unwrap_or(10_000)
-            } else {
-                10_000
-            };
+            // Store stake weight (optional fifth param, default 10000 BPS = 100%)
+            let stake_bps: u64 =
+                if parsed.len() >= 5 { parsed[4].parse::<u64>().unwrap_or(10_000) } else { 10_000 };
             {
                 let mut stakes = trainer_stakes.write();
                 stakes.insert((job_id, trainer_address.clone()), stake_bps);
@@ -609,9 +734,7 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     io.add_sync_method("training_getGradients", move |params: Params| {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
-            return Err(jsonrpc_core::Error::invalid_params(
-                "Required: job_id, round",
-            ));
+            return Err(jsonrpc_core::Error::invalid_params("Required: job_id, round"));
         }
 
         let job_id_str = parsed[0]
@@ -701,17 +824,69 @@ fn register_round_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let jobs = ctx.jobs.clone();
     let rounds = ctx.rounds.clone();
 
-    // training_advanceRound - Manually advance to next round (for testing)
+    // training_advanceRound - Manually advance to next round
+    // SECURITY: Restricted to the job creator with signature verification
     io.add_sync_method("training_advanceRound", move |params: Params| {
+        // Params: [job_id, caller_address, timestamp, signature]
         let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing job ID"));
+        if parsed.len() < 4 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Required: job_id, caller_address, timestamp, signature",
+            ));
         }
 
         let job_id = parse_job_id(&parsed[0])?;
+        let caller_address = &parsed[1];
+        let timestamp: u64 = parsed[2].parse::<u64>().map_err(|_| {
+            jsonrpc_core::Error::invalid_params("Invalid timestamp")
+        })?;
+        let signature = &parsed[3];
+
+        // SECURITY: Verify timestamp freshness (5min window)
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs();
+        if now_ts > timestamp + 300 || timestamp > now_ts + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address
+        let caller_hex = caller_address.trim_start_matches("0x");
+        let caller_bytes = hex::decode(caller_hex)
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid caller address"))?;
+        if caller_bytes.len() != 20 {
+            return Err(jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"));
+        }
+        let caller_addr = luxtensor_core::Address::try_from_slice(&caller_bytes)
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Caller address must be 20 bytes"))?;
+        let message = format!(
+            "training_advanceRound:{}:{}:{}",
+            hex::encode(caller_addr.as_bytes()),
+            hex::encode(job_id),
+            timestamp
+        );
+        verify_caller_signature(&caller_addr, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&caller_addr, &message, signature, 1))
+            .map_err(|_| {
+                jsonrpc_core::Error::invalid_params(
+                    "Signature verification failed - caller does not own address",
+                )
+            })?;
 
         let mut jobs_map = jobs.write();
         if let Some(job) = jobs_map.get_mut(&job_id) {
+            // SECURITY: Only the job creator can advance rounds
+            if job.creator.trim_start_matches("0x").to_lowercase()
+                != hex::encode(caller_addr.as_bytes()).to_lowercase()
+            {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Only the job creator can advance rounds",
+                ));
+            }
+
             if job.status != TrainingJobStatus::Training {
                 return Err(jsonrpc_core::Error::invalid_params("Job is not training"));
             }
@@ -756,9 +931,7 @@ fn parse_job_id(hex_str: &str) -> Result<Hash, jsonrpc_core::Error> {
         .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid job ID format"))?;
 
     if job_id_bytes.len() != 32 {
-        return Err(jsonrpc_core::Error::invalid_params(
-            "Job ID must be 32 bytes",
-        ));
+        return Err(jsonrpc_core::Error::invalid_params("Job ID must be 32 bytes"));
     }
 
     let mut job_id = [0u8; 32];
@@ -844,11 +1017,8 @@ fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
         for chunk in current_level.chunks(2) {
             if chunk.len() == 2 {
                 // Sort pair for canonical ordering (smaller hash first)
-                let (left, right) = if chunk[0] <= chunk[1] {
-                    (chunk[0], chunk[1])
-                } else {
-                    (chunk[1], chunk[0])
-                };
+                let (left, right) =
+                    if chunk[0] <= chunk[1] { (chunk[0], chunk[1]) } else { (chunk[1], chunk[0]) };
                 let mut combined = [0u8; 64];
                 combined[..32].copy_from_slice(&left);
                 combined[32..].copy_from_slice(&right);

@@ -32,6 +32,9 @@ pub enum ContractError {
 
     #[error("Insufficient balance")]
     InsufficientBalance,
+
+    #[error("Arithmetic overflow")]
+    ArithmeticOverflow,
 }
 
 pub type Result<T> = std::result::Result<T, ContractError>;

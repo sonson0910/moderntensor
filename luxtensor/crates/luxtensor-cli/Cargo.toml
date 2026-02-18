@@ -16,6 +16,11 @@ clap = { workspace = true }
 hex = { workspace = true }
 reqwest = { version = "0.11", features = ["json"] }
 serde_json = { workspace = true }
+rpassword = "7"
+scrypt = "0.11"
+aes = "0.8"
+ctr = "0.9"
+rand = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }

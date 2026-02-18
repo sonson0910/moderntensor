@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use std::io::{self, Write};
+use rand::RngCore;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -115,9 +115,9 @@ struct SendTxArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Sender's private key (hex)
+    /// Sender's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
     #[arg(long)]
-    from: String,
+    from: Option<String>,
 
     /// Destination address (0x...)
     #[arg(long)]
@@ -150,9 +150,9 @@ struct StakeArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Staker's private key (hex)
+    /// Staker's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
     #[arg(long)]
-    from: String,
+    from: Option<String>,
 
     /// Amount of MDT to stake
     #[arg(long)]
@@ -165,9 +165,9 @@ struct UnstakeArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Staker's private key (hex)
+    /// Staker's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
     #[arg(long)]
-    from: String,
+    from: Option<String>,
 
     /// Amount of MDT to unstake
     #[arg(long)]
@@ -180,9 +180,9 @@ struct DelegateArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Delegator's private key (hex)
+    /// Delegator's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
     #[arg(long)]
-    from: String,
+    from: Option<String>,
 
     /// Validator address to delegate to (0x...)
     #[arg(long)]
@@ -195,9 +195,9 @@ struct DelegateArgs {
 
 #[derive(Args)]
 struct ImportKeyArgs {
-    /// Private key hex to import
+    /// Private key hex to import. Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
     #[arg(long)]
-    private_key: String,
+    private_key: Option<String>,
 
     /// Output keystore file path
     #[arg(long)]
@@ -214,9 +214,9 @@ struct ExportKeyArgs {
     #[arg(long)]
     keystore: PathBuf,
 
-    /// Password to decrypt the keystore
+    /// Password to decrypt the keystore (will prompt interactively if omitted)
     #[arg(long)]
-    password: String,
+    password: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -563,8 +563,8 @@ fn parse_wei_amount(s: &str) -> Result<Vec<u8>> {
     }
 }
 
-/// Derive a 32-byte encryption key from password + salt using iterated keccak256.
-fn derive_key(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
+/// Legacy KDF: iterated keccak256 (kept for backward compatibility with v1 keystores).
+fn derive_key_legacy(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
     let mut key = luxtensor_crypto::keccak256(&[password, salt].concat());
     for _ in 1..iterations {
         key = luxtensor_crypto::keccak256(&key);
@@ -572,15 +572,80 @@ fn derive_key(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
     key
 }
 
+/// Derive a 32-byte encryption key using scrypt KDF (secure replacement for iterated keccak256).
+fn derive_key_scrypt(password: &[u8], salt: &[u8]) -> Result<[u8; 32]> {
+    // scrypt params: log_n=14 (N=16384), r=8, p=1 — matches Ethereum keystore v3 defaults
+    let params = scrypt::Params::new(14, 8, 1, 32)
+        .map_err(|e| anyhow::anyhow!("Invalid scrypt params: {}", e))?;
+    let mut key = [0u8; 32];
+    scrypt::scrypt(password, salt, &params, &mut key)
+        .map_err(|e| anyhow::anyhow!("scrypt KDF failed: {}", e))?;
+    Ok(key)
+}
+
+/// AES-128-CTR encrypt/decrypt (symmetric — same operation for both directions).
+fn aes128_ctr_apply(key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    use aes::cipher::{KeyIvInit, StreamCipher};
+    type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
+
+    let mut cipher = Aes128Ctr::new_from_slices(key, iv)
+        .map_err(|e| anyhow::anyhow!("AES-128-CTR init failed: {}", e))?;
+    let mut buffer = data.to_vec();
+    cipher.apply_keystream(&mut buffer);
+    Ok(buffer)
+}
+
+/// Constant-time comparison of two byte slices to prevent timing side-channel attacks.
+/// Used for MAC verification where a timing oracle could leak information about the
+/// correct MAC value.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
+/// Read a private key from CLI argument, environment variable, or interactive prompt.
+/// Priority: CLI arg > LUXTENSOR_PRIVATE_KEY env var > interactive prompt (hidden input).
+fn read_private_key(cli_value: Option<String>) -> Result<String> {
+    if let Some(key) = cli_value {
+        eprintln!("\u{26a0}\u{fe0f}  WARNING: Passing private keys via CLI arguments is insecure.");
+        eprintln!("   Your key may be visible in shell history and process listings.");
+        eprintln!("   Consider using LUXTENSOR_PRIVATE_KEY env var or interactive prompt instead.");
+        return Ok(key);
+    }
+
+    if let Ok(key) = std::env::var("LUXTENSOR_PRIVATE_KEY") {
+        if !key.is_empty() {
+            eprintln!(
+                "\u{1f511} Using private key from LUXTENSOR_PRIVATE_KEY environment variable."
+            );
+            return Ok(key);
+        }
+    }
+
+    let key = rpassword::prompt_password("\u{1f511} Enter private key (hex): ")
+        .map_err(|e| anyhow::anyhow!("Failed to read private key: {}", e))?;
+
+    if key.trim().is_empty() {
+        anyhow::bail!("Private key cannot be empty");
+    }
+
+    Ok(key.trim().to_string())
+}
+
 // ============================================================
 // New command handlers
 // ============================================================
 
 async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
-    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
-
-    // Parse private key and derive sender address
-    let secret = parse_private_key(&args.from)?;
+    // Read private key securely (env var or interactive prompt if not on CLI)
+    let from_key = read_private_key(args.from)?;
+    let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let from_address = keypair.address();
@@ -701,9 +766,9 @@ async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
 }
 
 async fn handle_stake(args: StakeArgs) -> Result<()> {
-    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
-
-    let secret = parse_private_key(&args.from)?;
+    // Read private key securely
+    let from_key = read_private_key(args.from)?;
+    let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
@@ -724,9 +789,9 @@ async fn handle_stake(args: StakeArgs) -> Result<()> {
 }
 
 async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
-    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
-
-    let secret = parse_private_key(&args.from)?;
+    // Read private key securely
+    let from_key = read_private_key(args.from)?;
+    let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
@@ -747,9 +812,9 @@ async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
 }
 
 async fn handle_delegate(args: DelegateArgs) -> Result<()> {
-    println!("⚠️  WARNING: Never share your private key. Ensure you are on a secure machine.");
-
-    let secret = parse_private_key(&args.from)?;
+    // Read private key securely
+    let from_key = read_private_key(args.from)?;
+    let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
@@ -776,7 +841,9 @@ async fn handle_delegate(args: DelegateArgs) -> Result<()> {
 fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     println!("⚠️  WARNING: Handle private keys with extreme care.");
 
-    let secret = parse_private_key(&args.private_key)?;
+    // Read private key securely
+    let pk = read_private_key(args.private_key)?;
+    let secret = parse_private_key(&pk)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
@@ -785,10 +852,8 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     let password = match args.password {
         Some(p) => p,
         None => {
-            eprint!("Enter password to encrypt keystore: ");
-            io::stderr().flush()?;
-            let mut pass = String::new();
-            io::stdin().read_line(&mut pass)?;
+            let pass = rpassword::prompt_password("Enter password to encrypt keystore: ")
+                .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))?;
             pass.trim().to_string()
         }
     };
@@ -797,19 +862,17 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
         anyhow::bail!("Password cannot be empty");
     }
 
-    // Generate random 16-byte salt using OS CSPRNG (via KeyPair::generate)
-    let salt_keypair = luxtensor_crypto::KeyPair::generate();
-    let salt_hash = luxtensor_crypto::keccak256(salt_keypair.address().as_bytes());
-    let salt = &salt_hash[..16];
+    // Generate random 32-byte salt and 16-byte IV using OS CSPRNG
+    let mut salt = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut salt);
+    let mut iv = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut iv);
 
-    let iterations = 100_000u32;
-    let derived_key = derive_key(password.as_bytes(), salt, iterations);
+    // Derive 32-byte key using scrypt KDF
+    let derived_key = derive_key_scrypt(password.as_bytes(), &salt)?;
 
-    // Encrypt the private key (XOR with derived key)
-    let mut ciphertext = [0u8; 32];
-    for i in 0..32 {
-        ciphertext[i] = secret[i] ^ derived_key[i];
-    }
+    // Encrypt the private key with AES-128-CTR (first 16 bytes of derived key)
+    let ciphertext = aes128_ctr_apply(&derived_key[..16], &iv, &secret)?;
 
     // MAC for integrity verification: keccak256(derived_key[16..32] || ciphertext)
     let mut mac_input = Vec::with_capacity(48);
@@ -818,14 +881,20 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     let mac = luxtensor_crypto::keccak256(&mac_input);
 
     let keystore = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "address": format!("{}", address),
         "crypto": {
-            "cipher": "xor-keccak256",
+            "cipher": "aes-128-ctr",
+            "cipherparams": {
+                "iv": hex::encode(iv)
+            },
             "ciphertext": hex::encode(ciphertext),
-            "kdf": "keccak256-iter",
+            "kdf": "scrypt",
             "kdfparams": {
-                "iterations": iterations,
+                "n": 16384,
+                "r": 8,
+                "p": 1,
+                "dklen": 32,
                 "salt": hex::encode(salt)
             },
             "mac": hex::encode(mac)
@@ -842,6 +911,25 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
 }
 
 fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
+    // Read password securely: prompt interactively if not provided via CLI arg
+    let password = match args.password {
+        Some(p) => {
+            eprintln!("\u{26a0}\u{fe0f}  Warning: Passing password via CLI arg exposes it in shell history.");
+            eprintln!("   Consider omitting --password to use the interactive prompt instead.");
+            p
+        }
+        None => {
+            rpassword::prompt_password("\u{1f511} Enter keystore password: ")
+                .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))?
+                .trim()
+                .to_string()
+        }
+    };
+
+    if password.is_empty() {
+        anyhow::bail!("Password cannot be empty");
+    }
+
     let data = std::fs::read_to_string(&args.keystore).map_err(|e| {
         anyhow::anyhow!("Failed to read keystore '{}': {}", args.keystore.display(), e)
     })?;
@@ -851,6 +939,10 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     let crypto = keystore
         .get("crypto")
         .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing 'crypto' field"))?;
+
+    let cipher = crypto.get("cipher").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+    let kdf = crypto.get("kdf").and_then(|v| v.as_str()).unwrap_or("unknown");
 
     let ciphertext_hex = crypto
         .get("ciphertext")
@@ -864,11 +956,6 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     let kdfparams = crypto
         .get("kdfparams")
         .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing kdfparams"))?;
-    let iterations = kdfparams
-        .get("iterations")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing iterations"))?
-        as u32;
     let salt_hex = kdfparams
         .get("salt")
         .and_then(|v| v.as_str())
@@ -881,8 +968,27 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing mac"))?;
     let stored_mac = hex::decode(stored_mac_hex)?;
 
-    // Derive key from password
-    let derived_key = derive_key(args.password.as_bytes(), &salt, iterations);
+    // Derive key based on KDF type
+    let derived_key = match kdf {
+        "scrypt" => {
+            // v2 keystore: scrypt KDF
+            derive_key_scrypt(password.as_bytes(), &salt)?
+        }
+        "keccak256-iter" => {
+            // v1 legacy keystore: iterated keccak256
+            eprintln!("⚠️  WARNING: This keystore uses a legacy encryption format (keccak256-iter + XOR).");
+            eprintln!("   Please re-import your key to upgrade to the secure format (scrypt + AES-128-CTR).");
+            let iterations = kdfparams
+                .get("iterations")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing iterations"))?
+                as u32;
+            derive_key_legacy(password.as_bytes(), &salt, iterations)
+        }
+        _ => {
+            anyhow::bail!("Unsupported KDF: {}", kdf);
+        }
+    };
 
     // Verify MAC
     let mut mac_input = Vec::with_capacity(48);
@@ -890,15 +996,37 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     mac_input.extend_from_slice(&ciphertext);
     let computed_mac = luxtensor_crypto::keccak256(&mac_input);
 
-    if computed_mac[..] != stored_mac[..] {
+    if !constant_time_eq(&computed_mac[..], &stored_mac[..]) {
         anyhow::bail!("❌ Incorrect password or corrupted keystore");
     }
 
-    // Decrypt private key
-    let mut private_key = [0u8; 32];
-    for i in 0..32 {
-        private_key[i] = ciphertext[i] ^ derived_key[i];
-    }
+    // Decrypt private key based on cipher type
+    let private_key: [u8; 32] = match cipher {
+        "aes-128-ctr" => {
+            // v2 keystore: AES-128-CTR
+            let iv_hex = crypto
+                .get("cipherparams")
+                .and_then(|v| v.get("iv"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing IV for AES-128-CTR"))?;
+            let iv = hex::decode(iv_hex)?;
+            let decrypted = aes128_ctr_apply(&derived_key[..16], &iv, &ciphertext)?;
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&decrypted);
+            key
+        }
+        "xor-keccak256" => {
+            // v1 legacy keystore: XOR decryption
+            let mut key = [0u8; 32];
+            for i in 0..32 {
+                key[i] = ciphertext[i] ^ derived_key[i];
+            }
+            key
+        }
+        _ => {
+            anyhow::bail!("Unsupported cipher: {}", cipher);
+        }
+    };
 
     let address = keystore.get("address").and_then(|v| v.as_str()).unwrap_or("unknown");
 

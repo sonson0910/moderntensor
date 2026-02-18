@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
 use tracing::{info, warn, error};
+use sha2::{Sha256, Digest};
 
 /// Backup configuration
 #[derive(Debug, Clone)]
@@ -80,10 +81,13 @@ impl DbMaintenance {
         fs::create_dir_all(&self.backup_config.backup_dir)?;
 
         // Generate backup filename with timestamp
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                tracing::warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
 
         let backup_name = format!("backup_{}_{}", label, timestamp);
         let backup_path = self.backup_config.backup_dir.join(&backup_name);
@@ -95,6 +99,10 @@ impl DbMaintenance {
 
         info!("✅ Backup created successfully: {:?}", backup_path);
 
+        // Write checksum file
+        let checksum = self.compute_directory_checksum(&backup_path)?;
+        fs::write(backup_path.join("CHECKSUM"), &checksum)?;
+
         // Cleanup old backups
         self.cleanup_old_backups()?;
 
@@ -105,6 +113,21 @@ impl DbMaintenance {
     pub fn restore_from_backup(&self, backup_path: &Path) -> io::Result<()> {
         if !backup_path.exists() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "Backup not found"));
+        }
+
+        // Verify backup integrity before restoring
+        let checksum_path = backup_path.join("CHECKSUM");
+        if checksum_path.exists() {
+            let expected = fs::read_to_string(&checksum_path)?.trim().to_string();
+            let actual = self.compute_directory_checksum(backup_path)?;
+            if expected != actual {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Backup integrity check failed: checksum mismatch",
+                ));
+            }
+        } else {
+            warn!("No CHECKSUM file found in backup — skipping integrity verification");
         }
 
         info!("🔄 Restoring from backup: {:?}", backup_path);
@@ -233,6 +256,40 @@ impl DbMaintenance {
         }
 
         Ok(size)
+    }
+
+    /// Compute a SHA-256 checksum of all non-CHECKSUM files in a directory (recursive, sorted).
+    fn compute_directory_checksum(&self, dir: &Path) -> io::Result<String> {
+        let mut hasher = Sha256::new();
+        self.hash_dir_recursive(&mut hasher, dir, dir)?;
+        Ok(hex::encode(hasher.finalize()))
+    }
+
+    /// Recursively feed file contents into the hasher in sorted order.
+    fn hash_dir_recursive(&self, hasher: &mut Sha256, base: &Path, dir: &Path) -> io::Result<()> {
+        let mut entries: Vec<_> = fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            // Skip the CHECKSUM file itself
+            if path.file_name().map(|n| n == "CHECKSUM").unwrap_or(false) {
+                continue;
+            }
+            // Include relative path in hash for structural integrity
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            hasher.update(rel.to_string_lossy().as_bytes());
+            if path.is_dir() {
+                self.hash_dir_recursive(hasher, base, &path)?;
+            } else {
+                let data = fs::read(&path)?;
+                hasher.update(&(data.len() as u64).to_be_bytes());
+                hasher.update(&data);
+            }
+        }
+        Ok(())
     }
 
     // Helper: Cleanup old backups

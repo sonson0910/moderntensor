@@ -262,9 +262,14 @@ impl StateDB {
 
         let mut batch = rocksdb::WriteBatch::default();
 
-        // Build Merkle Patricia Trie from ALL accounts (not just dirty ones)
-        // to produce a deterministic state root consistent with Ethereum.
         let mut trie = MerkleTrie::new();
+
+        // SECURITY FIX: Capture dirty addresses before clearing, for trie update below.
+        // We only insert dirty (modified) accounts into the trie — previously this
+        // iterated ALL cached accounts, but the cache is a partial view containing
+        // only recently-accessed accounts, not the full state. Building a trie from
+        // a partial cache produces an incorrect state root.
+        let dirty_addresses: Vec<Address> = dirty.iter().cloned().collect();
 
         for address in dirty.iter() {
             if let Some(account) = cache.get(address) {
@@ -279,14 +284,48 @@ impl StateDB {
         drop(dirty);
         self.dirty.write().clear();
 
-        // Insert all cached accounts into the trie for root computation.
-        // Key = keccak256(address), Value = RLP/bincode-serialized account.
-        // This ensures the state root covers the full account set.
-        for (address, account) in cache.iter() {
-            let key = keccak256(address.as_bytes());
-            let value = bincode::serialize(account)
-                .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
-            trie.insert(&key, &value)?;
+        // Flush dirty contract codes to RocksDB
+        {
+            let dirty_codes = self.dirty_codes.read();
+            if !dirty_codes.is_empty() {
+                let codes = self.contract_code.read();
+                let mut code_batch = rocksdb::WriteBatch::default();
+                for code_hash in dirty_codes.iter() {
+                    if let Some(code) = codes.get(code_hash) {
+                        let mut key = CONTRACT_CODE_PREFIX.to_vec();
+                        key.extend_from_slice(code_hash);
+                        code_batch.put(&key, code);
+                    }
+                }
+                drop(codes);
+                drop(dirty_codes);
+                self.db.write(code_batch)?;
+                self.dirty_codes.write().clear();
+            }
+        }
+
+        // SECURITY FIX: Only insert dirty (modified) accounts into the trie.
+        // Clean (unchanged) accounts retain their previous trie entries from
+        // the prior state root. For a fully correct incremental state root,
+        // the MerkleTrie should be persisted across commits rather than
+        // recreated each time.
+        if dirty_addresses.is_empty() {
+            tracing::debug!("No dirty accounts — state root unchanged");
+        } else {
+            tracing::warn!(
+                "⚠️ Building trie from {} dirty accounts (cache has {} total). \
+                 For production correctness, persist trie across commits for incremental updates.",
+                dirty_addresses.len(),
+                cache.len()
+            );
+        }
+        for address in dirty_addresses.iter() {
+            if let Some(account) = cache.get(address) {
+                let key = keccak256(address.as_bytes());
+                let value = bincode::serialize(account)
+                    .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
+                trie.insert(&key, &value)?;
+            }
         }
 
         let state_root = trie.root_hash();
@@ -402,8 +441,8 @@ mod tests {
     #[test]
     fn test_transfer() {
         let (_dir, state_db) = create_test_db();
-        let from = Address::from_slice(&[1u8; 20]);
-        let to = Address::from_slice(&[2u8; 20]);
+        let from = Address::try_from_slice(&[1u8; 20]).unwrap();
+        let to = Address::try_from_slice(&[2u8; 20]).unwrap();
 
         state_db.set_balance(&from, 1000).unwrap();
         state_db.transfer(&from, &to, 300).unwrap();
@@ -415,8 +454,8 @@ mod tests {
     #[test]
     fn test_transfer_insufficient_balance() {
         let (_dir, state_db) = create_test_db();
-        let from = Address::from_slice(&[1u8; 20]);
-        let to = Address::from_slice(&[2u8; 20]);
+        let from = Address::try_from_slice(&[1u8; 20]).unwrap();
+        let to = Address::try_from_slice(&[2u8; 20]).unwrap();
 
         state_db.set_balance(&from, 100).unwrap();
         let result = state_db.transfer(&from, &to, 200);

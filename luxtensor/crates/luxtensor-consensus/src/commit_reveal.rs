@@ -436,8 +436,16 @@ impl CommitRevealManager {
         // Get revealed weights
         let weights = state.get_revealed_weights();
 
-        // Record in history
-        self.history.write().push((subnet_uid, state.epoch_number, weights.clone()));
+        // Record in history (pruned to prevent unbounded memory growth)
+        {
+            const MAX_HISTORY: usize = 1000;
+            let mut history = self.history.write();
+            history.push((subnet_uid, state.epoch_number, weights.clone()));
+            if history.len() > MAX_HISTORY {
+                let excess = history.len() - MAX_HISTORY;
+                history.drain(..excess);
+            }
+        }
 
         // Mark as finalized
         state.phase = EpochPhase::Finalized;

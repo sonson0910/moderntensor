@@ -37,6 +37,7 @@ use tracing::info;
 // Implements proper ecrecover to derive sender address from ECDSA signature.
 
 /// Decoded fields from an RLP-encoded Ethereum transaction
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct RlpDecodedTx {
     chain_id: u64,
@@ -732,6 +733,7 @@ pub fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
 /// Generate a deterministic contract address from deployer + nonce.
 ///
 /// Uses keccak256(RLP([deployer, nonce]))[12..] following Ethereum CREATE semantics.
+#[allow(dead_code)]
 fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
     use luxtensor_crypto::keccak256;
 
@@ -1495,7 +1497,7 @@ pub fn register_eth_methods(
         // Look up in mempool first (pending transactions)
         let mempool_guard = mp_for_gettx.read();
         if let Some(tx) = mempool_guard.pending_txs.get(&hash) {
-            let block_number = unified_for_gettx.read().block_number();
+            let _block_number = unified_for_gettx.read().block_number();
             let chain_id = unified_for_gettx.read().chain_id();
 
             // Find the corresponding ReadyTransaction for signature data
@@ -2138,7 +2140,11 @@ fn parse_address(s: &str) -> Result<luxtensor_core::types::Address, RpcError> {
         message: "Invalid address hex".to_string(),
         data: None,
     })?;
-    Ok(luxtensor_core::types::Address::from_slice(&bytes))
+    Ok(luxtensor_core::types::Address::try_from_slice(&bytes).ok_or_else(|| RpcError {
+        code: ErrorCode::InvalidParams,
+        message: "Invalid address length".to_string(),
+        data: None,
+    })?)
 }
 
 fn parse_hash(s: &str) -> Result<[u8; 32], RpcError> {

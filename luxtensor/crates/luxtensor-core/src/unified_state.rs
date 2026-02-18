@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use crate::{Account, Address, Hash, Result, CoreError};
+use crate::constants::chain_id;
 use crate::hnsw::HnswVectorStore;
 
 /// Deployed contract information
@@ -226,8 +227,11 @@ impl UnifiedStateDB {
     }
 
     /// Advance to next block
+    ///
+    /// # Panics
+    /// Panics if block number overflows `u64::MAX`.
     pub fn advance_block(&mut self) {
-        self.block_number += 1;
+        self.block_number = self.block_number.checked_add(1).expect("block number overflow");
         self.dirty = true;
     }
 
@@ -285,7 +289,8 @@ impl UnifiedStateDB {
             data.extend_from_slice(addr.as_bytes());
             data.extend_from_slice(&balance.to_le_bytes());
             data.extend_from_slice(&nonce.to_le_bytes());
-            leaves.push(luxtensor_crypto::keccak256(&data));
+            // SECURITY: Use hash_leaf (0x00 prefix) to prevent second-preimage attacks
+            leaves.push(luxtensor_crypto::MerkleTree::hash_leaf(&data));
         }
 
         Ok(luxtensor_crypto::MerkleTree::new(leaves).root())
@@ -306,7 +311,8 @@ impl UnifiedStateDB {
                 let mut data = Vec::new();
                 data.extend_from_slice(addr.as_bytes());
                 data.extend_from_slice(&code_hash);
-                leaves.push(luxtensor_crypto::keccak256(&data));
+                // SECURITY: Use hash_leaf (0x00 prefix) to prevent second-preimage attacks
+                leaves.push(luxtensor_crypto::MerkleTree::hash_leaf(&data));
             }
         }
 
@@ -345,7 +351,7 @@ impl UnifiedStateDB {
 
 impl Default for UnifiedStateDB {
     fn default() -> Self {
-        Self::new(1) // Default chain ID
+        Self::new(chain_id::DEVNET) // LuxTensor devnet chain ID (8898)
     }
 }
 

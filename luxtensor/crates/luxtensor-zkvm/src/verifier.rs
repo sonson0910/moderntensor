@@ -343,7 +343,7 @@ impl ZkVerifier {
     fn verify_stark_structural(
         &self,
         receipt: &ProofReceipt,
-        start: Instant,
+        _start: Instant,
     ) -> Result<VerificationResult> {
         tracing::warn!(
             "STARK proof verification attempted without `risc0` feature enabled. \
@@ -422,7 +422,7 @@ impl ZkVerifier {
     fn verify_groth16_structural(
         &self,
         receipt: &ProofReceipt,
-        start: Instant,
+        _start: Instant,
     ) -> Result<VerificationResult> {
         tracing::warn!(
             "Groth16 proof verification attempted without `groth16` feature enabled. \

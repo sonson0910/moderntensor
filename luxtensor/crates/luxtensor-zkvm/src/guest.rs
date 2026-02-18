@@ -50,6 +50,53 @@ pub struct WeightUpdateInput {
     pub validator_sig: Vec<u8>,
 }
 
+impl WeightUpdateInput {
+    /// Validate the weight update input for correctness.
+    ///
+    /// Checks:
+    /// - `weights.len() == miners.len()`
+    /// - All weights are finite and in `[0.0, 1.0]`
+    /// - Weight sum is approximately 1.0 (tolerance: 0.001)
+    /// - Validator signature is exactly 64 bytes
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.weights.len() != self.miners.len() {
+            return Err(crate::ZkVmError::InvalidInput(format!(
+                "weights count ({}) != miners count ({})",
+                self.weights.len(),
+                self.miners.len(),
+            )));
+        }
+        for (i, &w) in self.weights.iter().enumerate() {
+            if w.is_nan() || w.is_infinite() {
+                return Err(crate::ZkVmError::InvalidInput(format!(
+                    "weight[{}] is NaN or infinite",
+                    i,
+                )));
+            }
+            if !(0.0..=1.0).contains(&w) {
+                return Err(crate::ZkVmError::InvalidInput(format!(
+                    "weight[{}] = {} is out of range [0.0, 1.0]",
+                    i, w,
+                )));
+            }
+        }
+        let sum: f64 = self.weights.iter().sum();
+        if (sum - 1.0).abs() > 0.001 {
+            return Err(crate::ZkVmError::InvalidInput(format!(
+                "weight sum {} is not approximately 1.0",
+                sum,
+            )));
+        }
+        if self.validator_sig.len() != 64 {
+            return Err(crate::ZkVmError::InvalidInput(format!(
+                "validator_sig length {} != 64",
+                self.validator_sig.len(),
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Weight update output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeightUpdateOutput {

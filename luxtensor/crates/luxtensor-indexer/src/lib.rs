@@ -45,6 +45,7 @@ use std::sync::Arc;
 use tracing::{info, error};
 
 /// Main indexer service
+#[allow(dead_code)]
 pub struct Indexer {
     config: Config,
     storage: Arc<Storage>,

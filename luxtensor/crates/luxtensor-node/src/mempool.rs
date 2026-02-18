@@ -40,6 +40,7 @@ pub struct Mempool {
     chain_id: u64,
 }
 
+#[allow(dead_code)]
 impl Mempool {
     /// Create a new mempool with maximum size and signature validation enabled
     pub fn new(max_size: usize, chain_id: u64) -> Self {
@@ -57,6 +58,7 @@ impl Mempool {
     }
 
     /// Create mempool with custom config
+    #[allow(dead_code)]
     pub fn with_config(
         max_size: usize,
         max_per_sender: usize,
@@ -79,6 +81,7 @@ impl Mempool {
 
     /// Create mempool for development (no signature validation, relaxed limits)
     /// WARNING: Only use for local development/testing!
+    #[allow(dead_code)]
     pub fn new_dev_mode(max_size: usize, chain_id: u64) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -192,6 +195,7 @@ impl Mempool {
     }
 
     /// Get all pending transactions
+    #[allow(dead_code)]
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
         let txs = self.transactions.read();
         txs.values().map(|t| t.tx.clone()).collect()

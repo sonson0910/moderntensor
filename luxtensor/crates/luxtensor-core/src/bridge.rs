@@ -30,7 +30,7 @@ pub enum BridgeError {
     UnsupportedChain(u64),
 
     #[error("amount below minimum bridge threshold ({0} < {1})")]
-    BelowMinimum(u64, u64),
+    BelowMinimum(u128, u128),
 
     #[error("bridge is paused")]
     Paused,
@@ -55,7 +55,7 @@ pub type Result<T> = std::result::Result<T, BridgeError>;
 /// Supported external chains.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ChainId {
-    /// LuxTensor Mainnet (8899).
+    /// LuxTensor Mainnet (8898).
     LuxTensorMainnet,
     /// LuxTensor Testnet (9999).
     LuxTensorTestnet,
@@ -68,7 +68,7 @@ pub enum ChainId {
 impl ChainId {
     pub fn as_u64(&self) -> u64 {
         match self {
-            ChainId::LuxTensorMainnet => 8899,
+            ChainId::LuxTensorMainnet => 8898,
             ChainId::LuxTensorTestnet => 9999,
             ChainId::Ethereum => 1,
             ChainId::EthereumSepolia => 11_155_111,
@@ -113,7 +113,7 @@ pub struct BridgeMessage {
     /// Recipient address on the target chain (20-byte).
     pub recipient: Address,
     /// Amount in base units (wei / smallest unit).
-    pub amount: u64,
+    pub amount: u128,
     /// Optional data payload (e.g. for contract calls).
     pub data: Vec<u8>,
     /// Block height on source chain where the deposit was made.
@@ -154,7 +154,7 @@ pub struct BridgeConfig {
     /// Minimum number of relayer attestations required.
     pub min_attestations: usize,
     /// Minimum transfer amount (in base units).
-    pub min_transfer_amount: u64,
+    pub min_transfer_amount: u128,
     /// Maximum age (in blocks) of a bridge message before it expires.
     pub max_message_age_blocks: u64,
     /// Set of authorised relayer addresses.
@@ -197,7 +197,7 @@ pub trait Bridge {
         &self,
         sender: Address,
         recipient: Address,
-        amount: u64,
+        amount: u128,
         target_chain: ChainId,
         data: Vec<u8>,
         current_block: u64,
@@ -222,7 +222,7 @@ pub fn compute_message_hash(
     nonce: u64,
     sender: &Address,
     recipient: &Address,
-    amount: u64,
+    amount: u128,
     source_chain: ChainId,
     target_chain: ChainId,
     direction: BridgeDirection,
@@ -274,10 +274,7 @@ fn verify_attestations_with_config(config: &BridgeConfig, proof: &BridgeProof) -
         .count();
 
     if valid_count < config.min_attestations {
-        return Err(BridgeError::InsufficientSignatures(
-            valid_count,
-            config.min_attestations,
-        ));
+        return Err(BridgeError::InsufficientSignatures(valid_count, config.min_attestations));
     }
     Ok(())
 }
@@ -317,10 +314,7 @@ pub struct InMemoryBridgeStore {
 
 impl InMemoryBridgeStore {
     pub fn new() -> Self {
-        Self {
-            messages: RwLock::new(HashMap::new()),
-            nonces: RwLock::new(HashMap::new()),
-        }
+        Self { messages: RwLock::new(HashMap::new()), nonces: RwLock::new(HashMap::new()) }
     }
 }
 
@@ -350,13 +344,7 @@ impl BridgeStore for InMemoryBridgeStore {
     }
 
     fn list_by_status(&self, status: BridgeMessageStatus) -> Result<Vec<BridgeMessage>> {
-        Ok(self
-            .messages
-            .read()
-            .values()
-            .filter(|m| m.status == status)
-            .cloned()
-            .collect())
+        Ok(self.messages.read().values().filter(|m| m.status == status).cloned().collect())
     }
 
     fn list_all(&self) -> Result<Vec<BridgeMessage>> {
@@ -369,6 +357,8 @@ impl BridgeStore for InMemoryBridgeStore {
 /// Simple in-memory bridge for testing and validation.
 pub struct InMemoryBridge {
     config: BridgeConfig,
+    /// Source chain identifier. Defaults to `ChainId::LuxTensorMainnet`.
+    source_chain: ChainId,
     messages: RwLock<HashMap<Hash, BridgeMessage>>,
     nonce: RwLock<u64>,
     inbound_nonce: RwLock<u64>,
@@ -376,8 +366,14 @@ pub struct InMemoryBridge {
 
 impl InMemoryBridge {
     pub fn new(config: BridgeConfig) -> Self {
+        Self::with_source_chain(config, ChainId::LuxTensorMainnet)
+    }
+
+    /// Create a new in-memory bridge with an explicit source chain.
+    pub fn with_source_chain(config: BridgeConfig, source_chain: ChainId) -> Self {
         Self {
             config,
+            source_chain,
             messages: RwLock::new(HashMap::new()),
             nonce: RwLock::new(1),
             inbound_nonce: RwLock::new(1),
@@ -396,13 +392,22 @@ impl InMemoryBridge {
         nonce: u64,
         sender: &Address,
         recipient: &Address,
-        amount: u64,
+        amount: u128,
         source_chain: ChainId,
         target_chain: ChainId,
         direction: BridgeDirection,
         data: &[u8],
     ) -> Hash {
-        compute_message_hash(nonce, sender, recipient, amount, source_chain, target_chain, direction, data)
+        compute_message_hash(
+            nonce,
+            sender,
+            recipient,
+            amount,
+            source_chain,
+            target_chain,
+            direction,
+            data,
+        )
     }
 
     pub fn config(&self) -> &BridgeConfig {
@@ -457,7 +462,7 @@ impl Bridge for InMemoryBridge {
         &self,
         sender: Address,
         recipient: Address,
-        amount: u64,
+        amount: u128,
         target_chain: ChainId,
         data: Vec<u8>,
         current_block: u64,
@@ -472,14 +477,14 @@ impl Bridge for InMemoryBridge {
 
         let mut nonce = self.nonce.write();
         let n = *nonce;
-        *nonce += 1;
+        *nonce = n.checked_add(1).ok_or(BridgeError::StoreError("nonce overflow".into()))?;
 
         let message_hash = Self::compute_hash(
             n,
             &sender,
             &recipient,
             amount,
-            ChainId::LuxTensorMainnet,
+            self.source_chain,
             target_chain,
             BridgeDirection::Outbound,
             &data,
@@ -489,7 +494,7 @@ impl Bridge for InMemoryBridge {
             message_hash,
             nonce: n,
             direction: BridgeDirection::Outbound,
-            source_chain: ChainId::LuxTensorMainnet,
+            source_chain: self.source_chain,
             target_chain,
             sender,
             recipient,
@@ -561,10 +566,7 @@ impl Bridge for InMemoryBridge {
         {
             let expected = *self.inbound_nonce.read();
             if proof.message.nonce != expected {
-                return Err(BridgeError::NonceMismatch {
-                    expected,
-                    got: proof.message.nonce,
-                });
+                return Err(BridgeError::NonceMismatch { expected, got: proof.message.nonce });
             }
         }
 
@@ -661,11 +663,7 @@ impl PersistentBridge {
                 None => self.store.list_all(),
             };
         }
-        Ok(cache
-            .values()
-            .filter(|m| status.map_or(true, |s| m.status == s))
-            .cloned()
-            .collect())
+        Ok(cache.values().filter(|m| status.map_or(true, |s| m.status == s)).cloned().collect())
     }
 
     /// Write a message to both cache and store (write-through).
@@ -681,7 +679,7 @@ impl Bridge for PersistentBridge {
         &self,
         sender: Address,
         recipient: Address,
-        amount: u64,
+        amount: u128,
         target_chain: ChainId,
         data: Vec<u8>,
         current_block: u64,
@@ -819,9 +817,7 @@ impl Bridge for PersistentBridge {
             return Ok(msg.clone());
         }
         // Fall back to store.
-        self.store
-            .get_message(&message_hash)?
-            .ok_or(BridgeError::MessageNotFound(message_hash))
+        self.store.get_message(&message_hash)?.ok_or(BridgeError::MessageNotFound(message_hash))
     }
 }
 
@@ -1074,7 +1070,7 @@ mod tests {
 
     #[test]
     fn test_chain_ids() {
-        assert_eq!(ChainId::LuxTensorMainnet.as_u64(), 8899);
+        assert_eq!(ChainId::LuxTensorMainnet.as_u64(), 8898);
         assert_eq!(ChainId::LuxTensorTestnet.as_u64(), 9999);
         assert_eq!(ChainId::Ethereum.as_u64(), 1);
         assert_eq!(ChainId::EthereumSepolia.as_u64(), 11_155_111);
@@ -1136,11 +1132,7 @@ mod tests {
         // Two-element tree
         let leaf_a = keccak256(b"message_a");
         let leaf_b = keccak256(b"message_b");
-        let (first, second) = if leaf_a <= leaf_b {
-            (leaf_a, leaf_b)
-        } else {
-            (leaf_b, leaf_a)
-        };
+        let (first, second) = if leaf_a <= leaf_b { (leaf_a, leaf_b) } else { (leaf_b, leaf_a) };
         let mut combined = [0u8; 64];
         combined[..32].copy_from_slice(&first);
         combined[32..].copy_from_slice(&second);
@@ -1190,7 +1182,7 @@ mod tests {
 
         let proof = BridgeProof {
             message: msg,
-            merkle_proof: vec![],  // empty proof ⇒ leaf must equal root
+            merkle_proof: vec![], // empty proof ⇒ leaf must equal root
             attestations: vec![
                 make_attestation(message_hash, &keys[0].0, keys[0].1),
                 make_attestation(message_hash, &keys[1].0, keys[1].1),
@@ -1203,7 +1195,17 @@ mod tests {
 
     #[test]
     fn test_submit_proof_invalid_merkle() {
-        let (bridge, keys) = test_bridge_with_keys();
+        // Use attestation_only_mode: false so Merkle verification is enforced
+        let keys = relayer_set_with_keys();
+        let relayer_addrs: Vec<Address> = keys.iter().map(|(_, a)| *a).collect();
+        let bridge = InMemoryBridge::new(BridgeConfig {
+            min_attestations: 2,
+            min_transfer_amount: 1_000,
+            max_message_age_blocks: 1_000,
+            relayers: relayer_addrs,
+            paused: false,
+            attestation_only_mode: false,
+        });
 
         let message_hash = InMemoryBridge::compute_hash(
             1,
@@ -1322,11 +1324,9 @@ mod tests {
     #[test]
     fn test_persistent_paused() {
         let store = Arc::new(InMemoryBridgeStore::new());
-        let bridge = PersistentBridge::new(
-            store,
-            BridgeConfig { paused: true, ..BridgeConfig::default() },
-        )
-        .unwrap();
+        let bridge =
+            PersistentBridge::new(store, BridgeConfig { paused: true, ..BridgeConfig::default() })
+                .unwrap();
         let result = bridge.initiate_transfer(
             addr(1),
             addr(2),
@@ -1482,12 +1482,24 @@ mod tests {
     fn test_compute_message_hash_matches_inmemory() {
         // Verify the standalone function produces the same hash as InMemoryBridge::compute_hash
         let h1 = compute_message_hash(
-            1, &addr(1), &addr(2), 100,
-            ChainId::Ethereum, ChainId::LuxTensorMainnet, BridgeDirection::Inbound, &[0xAB],
+            1,
+            &addr(1),
+            &addr(2),
+            100,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+            &[0xAB],
         );
         let h2 = InMemoryBridge::compute_hash(
-            1, &addr(1), &addr(2), 100,
-            ChainId::Ethereum, ChainId::LuxTensorMainnet, BridgeDirection::Inbound, &[0xAB],
+            1,
+            &addr(1),
+            &addr(2),
+            100,
+            ChainId::Ethereum,
+            ChainId::LuxTensorMainnet,
+            BridgeDirection::Inbound,
+            &[0xAB],
         );
         assert_eq!(h1, h2);
     }

@@ -3,7 +3,7 @@
 // Security: Added signature verification for RPC authentication
 
 use luxtensor_core::Address;
-use luxtensor_crypto::{keccak256, recover_public_key, address_from_public_key};
+use luxtensor_crypto::{address_from_public_key, keccak256, recover_public_key};
 
 /// Parse block number from JSON value
 /// Supports: "latest", "pending", "earliest", hex string, or numeric
@@ -27,12 +27,10 @@ pub fn parse_block_number_with_latest(
                     .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid block number"))
             }
         }
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid block number")),
-        _ => Err(jsonrpc_core::Error::invalid_params(
-            "Block number must be string or number",
-        )),
+        serde_json::Value::Number(n) => {
+            n.as_u64().ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid block number"))
+        }
+        _ => Err(jsonrpc_core::Error::invalid_params("Block number must be string or number")),
     }
 }
 
@@ -41,7 +39,9 @@ pub fn parse_block_number_with_latest(
 /// **DEPRECATED**: Use [`parse_block_number_with_latest`] for correct "latest"/"pending" resolution.
 /// This function resolves "latest" to 0 (genesis), which is incorrect for most use cases.
 /// It is retained only for backward compatibility with callers that resolve the tag externally.
-pub fn parse_block_number(value: &serde_json::Value) -> std::result::Result<u64, jsonrpc_core::Error> {
+pub fn parse_block_number(
+    value: &serde_json::Value,
+) -> std::result::Result<u64, jsonrpc_core::Error> {
     parse_block_number_with_latest(value, 0)
 }
 
@@ -52,24 +52,21 @@ pub fn parse_address(s: &str) -> std::result::Result<Address, jsonrpc_core::Erro
         .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid address format"))?;
 
     if bytes.len() != 20 {
-        return Err(jsonrpc_core::Error::invalid_params(
-            "Address must be 20 bytes",
-        ));
+        return Err(jsonrpc_core::Error::invalid_params("Address must be 20 bytes"));
     }
 
-    Ok(Address::from_slice(&bytes))
+    Ok(Address::try_from_slice(&bytes)
+        .ok_or_else(|| jsonrpc_core::Error::invalid_params("Address must be 20 bytes"))?)
 }
 
 /// Parse hash from hex string (32 bytes)
 pub fn parse_hash(s: &str) -> std::result::Result<[u8; 32], jsonrpc_core::Error> {
     let s = s.trim_start_matches("0x");
-    let bytes = hex::decode(s)
-        .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+    let bytes =
+        hex::decode(s).map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
 
     if bytes.len() != 32 {
-        return Err(jsonrpc_core::Error::invalid_params(
-            "Hash must be 32 bytes",
-        ));
+        return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
     }
 
     let mut hash = [0u8; 32];
@@ -111,9 +108,7 @@ pub fn verify_caller_signature(
         .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid signature hex format"))?;
 
     if sig_bytes.len() != 64 && sig_bytes.len() != 65 {
-        return Err(jsonrpc_core::Error::invalid_params(
-            "Signature must be 64 or 65 bytes"
-        ));
+        return Err(jsonrpc_core::Error::invalid_params("Signature must be 64 or 65 bytes"));
     }
 
     // Get signature portion (64 bytes)
@@ -126,21 +121,19 @@ pub fn verify_caller_signature(
     let message_hash = keccak256(&prefixed_msg);
 
     // Recover public key from signature
-    let public_key = recover_public_key(&message_hash, &sig_arr, recovery_id)
-        .map_err(|e| jsonrpc_core::Error::invalid_params(
-            format!("Failed to recover public key: {:?}", e)
-        ))?;
+    let public_key = recover_public_key(&message_hash, &sig_arr, recovery_id).map_err(|e| {
+        jsonrpc_core::Error::invalid_params(format!("Failed to recover public key: {:?}", e))
+    })?;
 
     // Derive address from recovered public key
-    let recovered_address = address_from_public_key(&public_key)
-        .map_err(|e| jsonrpc_core::Error::invalid_params(
-            format!("Failed to derive address: {:?}", e)
-        ))?;
+    let recovered_address = address_from_public_key(&public_key).map_err(|e| {
+        jsonrpc_core::Error::invalid_params(format!("Failed to derive address: {:?}", e))
+    })?;
 
     // Compare addresses
     if recovered_address.as_bytes() != claimed_address.as_bytes() {
         return Err(jsonrpc_core::Error::invalid_params(
-            "Signature does not match claimed address"
+            "Signature does not match claimed address",
         ));
     }
 

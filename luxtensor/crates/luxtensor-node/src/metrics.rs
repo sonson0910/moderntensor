@@ -7,9 +7,11 @@ use parking_lot::RwLock;
 use std::collections::VecDeque;
 
 /// Maximum history points for moving averages
+#[allow(dead_code)]
 const MAX_HISTORY: usize = 100;
 
 /// Node metrics for Prometheus with enhanced monitoring
+#[allow(dead_code)]
 pub struct NodeMetrics {
     /// Current block height
     pub block_height: AtomicU64,
@@ -88,6 +90,7 @@ impl Default for NodeMetrics {
     }
 }
 
+#[allow(dead_code)]
 impl NodeMetrics {
     /// Record a block production with timing
     pub fn record_block(&self, height: u64, tx_count: usize, production_time_ms: u64) {

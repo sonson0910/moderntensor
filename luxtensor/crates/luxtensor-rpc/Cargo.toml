@@ -34,6 +34,9 @@ luxtensor-crypto = { path = "../luxtensor-crypto" }
 luxtensor-contracts = { path = "../luxtensor-contracts" }
 luxtensor-zkvm = { path = "../luxtensor-zkvm" }
 
+[features]
+reqwest = []
+
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3.8"

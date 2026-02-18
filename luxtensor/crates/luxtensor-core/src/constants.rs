@@ -2,10 +2,16 @@
 //!
 //! Official chain IDs and addresses for Luxtensor networks.
 
+/// Canonical LuxTensor chain ID used across all crates.
+/// Prefer this over `chain_id::MAINNET` when you just need "the" LuxTensor ID.
+pub const LUXTENSOR_CHAIN_ID: u64 = 8898;
+
 /// Official Chain IDs
 pub mod chain_id {
-    /// Mainnet chain ID
-    pub const MAINNET: u64 = 8899;
+    use super::LUXTENSOR_CHAIN_ID;
+
+    /// Mainnet chain ID (canonical: 8898)
+    pub const MAINNET: u64 = LUXTENSOR_CHAIN_ID;
     /// Testnet chain ID
     pub const TESTNET: u64 = 9999;
     /// Devnet chain ID (local development)
@@ -14,6 +20,7 @@ pub mod chain_id {
     /// dangerous because dev-mode signing with hardcoded keys would be enabled
     /// on any node configured with chain_id=1. Changed to 8898 to avoid
     /// collision with any well-known chain.
+    /// NOTE: Intentionally same as MAINNET — devnet is functionally mainnet-compatible.
     pub const DEVNET: u64 = 8898;
 }
 
@@ -107,6 +114,7 @@ pub mod transaction {
 }
 
 /// Get chain name from chain ID
+#[allow(unreachable_patterns)] // DEVNET == MAINNET intentionally
 pub fn chain_name(chain_id: u64) -> &'static str {
     match chain_id {
         chain_id::MAINNET => "Mainnet",

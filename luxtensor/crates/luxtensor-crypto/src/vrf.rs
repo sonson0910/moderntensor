@@ -32,7 +32,7 @@ pub type VrfOutput = [u8; 32];
 /// Contains gamma (EC point), Schnorr challenge (c), and response (s).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VrfProof {
-    /// Gamma point — compressed SEC1 encoding (33 bytes, stored in 32+1)
+    /// Gamma point x-coordinate (32 bytes)
     pub gamma: [u8; 32],
     /// Schnorr-style challenge (truncated to 16 bytes, zero-padded to 32)
     pub c: [u8; 32],
@@ -43,40 +43,48 @@ pub struct VrfProof {
 }
 
 impl VrfProof {
-    /// Create a new VRF proof
-    pub fn new(gamma: [u8; 32], c: [u8; 32], s: [u8; 32]) -> Self {
-        // Reconstruct gamma_compressed from gamma (assume 0x02 prefix for legacy compat)
+    /// Create a new VRF proof with an explicit SEC1 prefix byte for gamma.
+    ///
+    /// `gamma_prefix` must be `0x02` (even Y) or `0x03` (odd Y).
+    pub fn new(gamma_prefix: u8, gamma: [u8; 32], c: [u8; 32], s: [u8; 32]) -> Self {
         let mut gc = [0u8; 33];
-        gc[0] = 0x02;
+        gc[0] = gamma_prefix;
         gc[1..33].copy_from_slice(&gamma);
         Self { gamma, c, s, gamma_compressed: gc }
     }
 
-    /// Create proof with full EC data
+    /// Create proof with full EC data (33-byte compressed gamma)
     fn new_ec(gamma_compressed: [u8; 33], c: [u8; 32], s: [u8; 32]) -> Self {
         let mut gamma = [0u8; 32];
         gamma.copy_from_slice(&gamma_compressed[1..33]);
         Self { gamma, c, s, gamma_compressed }
     }
 
-    /// Serialize proof to bytes (96 bytes for backward compat)
-    pub fn to_bytes(&self) -> [u8; 96] {
-        let mut bytes = [0u8; 96];
-        bytes[0..32].copy_from_slice(&self.gamma);
-        bytes[32..64].copy_from_slice(&self.c);
-        bytes[64..96].copy_from_slice(&self.s);
+    /// Serialize proof to bytes (97 bytes: 1 prefix + 32 gamma_x + 32 c + 32 s)
+    pub fn to_bytes(&self) -> [u8; 97] {
+        let mut bytes = [0u8; 97];
+        bytes[0] = self.gamma_compressed[0]; // SEC1 prefix: 0x02 or 0x03
+        bytes[1..33].copy_from_slice(&self.gamma);
+        bytes[33..65].copy_from_slice(&self.c);
+        bytes[65..97].copy_from_slice(&self.s);
         bytes
     }
 
-    /// Deserialize proof from bytes
-    pub fn from_bytes(bytes: &[u8; 96]) -> Self {
+    /// Deserialize proof from 97-byte encoding (prefix || gamma_x || c || s)
+    /// Returns an error if the prefix byte is not a valid SEC1 compressed point prefix (0x02 or 0x03).
+    pub fn from_bytes(bytes: &[u8; 97]) -> Result<Self, VrfError> {
+        let prefix = bytes[0];
+        // SECURITY: Validate SEC1 prefix byte — only 0x02 (even Y) and 0x03 (odd Y) are valid
+        if prefix != 0x02 && prefix != 0x03 {
+            return Err(VrfError::InvalidPrefix(prefix));
+        }
         let mut gamma = [0u8; 32];
         let mut c = [0u8; 32];
         let mut s = [0u8; 32];
-        gamma.copy_from_slice(&bytes[0..32]);
-        c.copy_from_slice(&bytes[32..64]);
-        s.copy_from_slice(&bytes[64..96]);
-        Self::new(gamma, c, s)
+        gamma.copy_from_slice(&bytes[1..33]);
+        c.copy_from_slice(&bytes[33..65]);
+        s.copy_from_slice(&bytes[65..97]);
+        Ok(Self::new(prefix, gamma, c, s))
     }
 }
 
@@ -159,16 +167,17 @@ fn compute_challenge(
 impl VrfKeypair {
     /// Generate a new VRF keypair from a 32-byte seed.
     /// Derives a secp256k1 secret key deterministically.
-    pub fn from_seed(seed: &[u8; 32]) -> Self {
+    ///
+    /// Returns an error if the seed reduces to the zero scalar (e.g. all-zero seed).
+    pub fn from_seed(seed: &[u8; 32]) -> Result<Self, VrfError> {
         // Derive secret key scalar from seed
         let sk = <Scalar as Reduce<k256::U256>>::reduce_bytes(&(*seed).into());
-        // Ensure non-zero (reduce_bytes can return zero for zero input)
-        let sk = if sk.is_zero().into() {
-            let fallback = keccak256(seed);
-            <Scalar as Reduce<k256::U256>>::reduce_bytes(&fallback.into())
-        } else {
-            sk
-        };
+        // SECURITY: reject zero scalars — never fall back to a predictable key
+        if bool::from(sk.is_zero()) {
+            return Err(VrfError::InvalidSeed(
+                "zero seed produces invalid secret key".into(),
+            ));
+        }
 
         let pk_point = ProjectivePoint::GENERATOR * sk;
         let pk_affine = pk_point.to_affine();
@@ -181,7 +190,7 @@ impl VrfKeypair {
         let mut public_key_compressed = [0u8; 33];
         public_key_compressed.copy_from_slice(pk_bytes_full);
 
-        Self { secret_key: sk, public_key, public_key_compressed }
+        Ok(Self { secret_key: sk, public_key, public_key_compressed })
     }
 
     /// Get the public key (x-coordinate, 32 bytes)
@@ -380,6 +389,10 @@ pub enum VrfError {
     InvalidPublicKey,
     /// Hash-to-curve failed after exhausting all 256 TAI counter attempts
     HashToCurveFailed,
+    /// Seed produces an invalid (zero) secret key
+    InvalidSeed(String),
+    /// Invalid SEC1 prefix byte in serialized proof (must be 0x02 or 0x03)
+    InvalidPrefix(u8),
 }
 
 impl std::fmt::Display for VrfError {
@@ -389,6 +402,8 @@ impl std::fmt::Display for VrfError {
             VrfError::VerificationFailed => write!(f, "VRF verification failed"),
             VrfError::InvalidPublicKey => write!(f, "Invalid public key"),
             VrfError::HashToCurveFailed => write!(f, "Hash-to-curve failed after 256 attempts"),
+            VrfError::InvalidSeed(msg) => write!(f, "Invalid seed: {}", msg),
+            VrfError::InvalidPrefix(byte) => write!(f, "Invalid SEC1 prefix byte: 0x{:02x} (expected 0x02 or 0x03)", byte),
         }
     }
 }
@@ -402,21 +417,35 @@ mod tests {
     #[test]
     fn test_keypair_generation() {
         let seed = [42u8; 32];
-        let keypair = VrfKeypair::from_seed(&seed);
+        let keypair = VrfKeypair::from_seed(&seed).unwrap();
 
         // Same seed = same keypair
-        let keypair2 = VrfKeypair::from_seed(&seed);
+        let keypair2 = VrfKeypair::from_seed(&seed).unwrap();
         assert_eq!(keypair.public_key, keypair2.public_key);
 
         // Different seed = different keypair
-        let keypair3 = VrfKeypair::from_seed(&[43u8; 32]);
+        let keypair3 = VrfKeypair::from_seed(&[43u8; 32]).unwrap();
         assert_ne!(keypair.public_key, keypair3.public_key);
+    }
+
+    #[test]
+    fn test_zero_seed_rejected() {
+        let result = VrfKeypair::from_seed(&[0u8; 32]);
+        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("Expected error for zero seed"),
+        };
+        match err {
+            VrfError::InvalidSeed(msg) => assert!(msg.contains("zero seed")),
+            other => panic!("Expected InvalidSeed, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_prove_determinism() {
         let seed = [42u8; 32];
-        let keypair = VrfKeypair::from_seed(&seed);
+        let keypair = VrfKeypair::from_seed(&seed).unwrap();
         let input = b"slot_123_epoch_456";
 
         let (output1, proof1) = keypair.prove(input).unwrap();
@@ -430,7 +459,7 @@ mod tests {
     #[test]
     fn test_prove_different_inputs() {
         let seed = [42u8; 32];
-        let keypair = VrfKeypair::from_seed(&seed);
+        let keypair = VrfKeypair::from_seed(&seed).unwrap();
 
         let (output1, _) = keypair.prove(b"input_1").unwrap();
         let (output2, _) = keypair.prove(b"input_2").unwrap();
@@ -442,7 +471,7 @@ mod tests {
     #[test]
     fn test_verify_valid_proof() {
         let seed = [42u8; 32];
-        let keypair = VrfKeypair::from_seed(&seed);
+        let keypair = VrfKeypair::from_seed(&seed).unwrap();
         let input = b"test_input";
 
         let (output, proof) = keypair.prove(input).unwrap();
@@ -454,7 +483,7 @@ mod tests {
     #[test]
     fn test_verify_wrong_input_fails() {
         let seed = [42u8; 32];
-        let keypair = VrfKeypair::from_seed(&seed);
+        let keypair = VrfKeypair::from_seed(&seed).unwrap();
 
         let (_output, proof) = keypair.prove(b"correct_input").unwrap();
         let result = vrf_verify(&keypair.public_key, b"wrong_input", &proof);
@@ -464,8 +493,8 @@ mod tests {
 
     #[test]
     fn test_verify_wrong_key_fails() {
-        let keypair1 = VrfKeypair::from_seed(&[42u8; 32]);
-        let keypair2 = VrfKeypair::from_seed(&[43u8; 32]);
+        let keypair1 = VrfKeypair::from_seed(&[42u8; 32]).unwrap();
+        let keypair2 = VrfKeypair::from_seed(&[43u8; 32]).unwrap();
 
         let (_output, proof) = keypair1.prove(b"test").unwrap();
         let result = vrf_verify(&keypair2.public_key, b"test", &proof);
@@ -475,13 +504,55 @@ mod tests {
 
     #[test]
     fn test_proof_serialization() {
-        let proof = VrfProof::new([1u8; 32], [2u8; 32], [3u8; 32]);
+        let proof = VrfProof::new(0x02, [1u8; 32], [2u8; 32], [3u8; 32]);
         let bytes = proof.to_bytes();
-        let restored = VrfProof::from_bytes(&bytes);
+        let restored = VrfProof::from_bytes(&bytes).unwrap();
 
         assert_eq!(proof.gamma, restored.gamma);
         assert_eq!(proof.c, restored.c);
         assert_eq!(proof.s, restored.s);
+        assert_eq!(proof.gamma_compressed, restored.gamma_compressed);
+    }
+
+    #[test]
+    fn test_proof_serialization_odd_prefix() {
+        // Ensure 0x03 prefix survives round-trip
+        let proof = VrfProof::new(0x03, [0xAB; 32], [0xCD; 32], [0xEF; 32]);
+        let bytes = proof.to_bytes();
+        assert_eq!(bytes[0], 0x03);
+        let restored = VrfProof::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.gamma_compressed[0], 0x03);
+        assert_eq!(proof.gamma_compressed, restored.gamma_compressed);
+    }
+
+    #[test]
+    fn test_proof_from_bytes_invalid_prefix() {
+        // A prefix of 0x00 should be rejected
+        let proof = VrfProof::new(0x02, [1u8; 32], [2u8; 32], [3u8; 32]);
+        let mut bytes = proof.to_bytes();
+        bytes[0] = 0x00; // Invalid prefix
+        let result = VrfProof::from_bytes(&bytes);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), VrfError::InvalidPrefix(0x00));
+
+        // A prefix of 0x04 (uncompressed) should also be rejected
+        bytes[0] = 0x04;
+        let result = VrfProof::from_bytes(&bytes);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), VrfError::InvalidPrefix(0x04));
+    }
+
+    #[test]
+    fn test_proof_roundtrip_through_prove_verify() {
+        // End-to-end: prove -> serialize -> deserialize -> verify
+        let keypair = VrfKeypair::from_seed(&[99u8; 32]).unwrap();
+        let (output, proof) = keypair.prove(b"roundtrip_test").unwrap();
+
+        let bytes = proof.to_bytes();
+        let restored = VrfProof::from_bytes(&bytes).unwrap();
+
+        let verified = vrf_verify(&keypair.public_key, b"roundtrip_test", &restored).unwrap();
+        assert_eq!(output, verified);
     }
 
     #[test]

@@ -263,17 +263,28 @@ impl LightClientState {
     // ── Internal helpers ─────────────────────────────────────────────
 
     /// Compute the Merkle root from a proof.
+    ///
+    /// SECURITY: Uses domain separation (0x00 leaf, 0x01 internal) to prevent
+    /// second pre-image attacks. Leaf hash includes a length prefix for the key
+    /// to prevent key||value collision when keys have variable length.
     fn compute_merkle_root(proof: &MerkleProof) -> Hash {
         use sha3::{Digest, Keccak256};
 
-        // Leaf = H(key || value)
+        // Domain-separated leaf: H(0x00 || key_len_u64_be || key || value)
+        // The 0x00 prefix distinguishes leaf nodes from internal nodes.
+        // The length prefix prevents collisions where a short key + long value
+        // hashes the same as a long key + short value.
         let mut hasher = Keccak256::new();
+        hasher.update(&[0x00]); // leaf domain tag
+        hasher.update(&(proof.key.len() as u64).to_be_bytes());
         hasher.update(&proof.key);
         hasher.update(&proof.value);
         let mut current: [u8; 32] = hasher.finalize().into();
 
         for (sibling, is_right) in proof.siblings.iter().zip(proof.path_bits.iter()) {
+            // Domain-separated internal node: H(0x01 || left || right)
             let mut hasher = Keccak256::new();
+            hasher.update(&[0x01]); // internal node domain tag
             if *is_right {
                 hasher.update(sibling);
                 hasher.update(current);
@@ -408,18 +419,25 @@ mod tests {
 
         let light = lc();
 
-        // Build a simple merkle tree: leaf = H(key||value), root = H(leaf||sibling)
+        // Build a simple merkle tree with domain separation:
+        // leaf = H(0x00 || key_len_u64_be || key || value)
+        // root = H(0x01 || leaf || sibling)
         let key = b"account_1".to_vec();
         let value = b"balance_100".to_vec();
 
+        // Domain-separated leaf
         let mut leaf_hasher = Keccak256::new();
+        leaf_hasher.update(&[0x00]); // leaf domain tag
+        leaf_hasher.update(&(key.len() as u64).to_be_bytes());
         leaf_hasher.update(&key);
         leaf_hasher.update(&value);
         let leaf: [u8; 32] = leaf_hasher.finalize().into();
 
         let sibling: Hash = [0x42u8; 32];
 
+        // Domain-separated internal node
         let mut root_hasher = Keccak256::new();
+        root_hasher.update(&[0x01]); // internal node domain tag
         root_hasher.update(leaf);
         root_hasher.update(sibling);
         let state_root: [u8; 32] = root_hasher.finalize().into();

@@ -79,11 +79,7 @@ impl UserOperation {
 
     /// Get paymaster address if present
     pub fn paymaster(&self) -> Option<Address> {
-        if self.paymaster_and_data.len() >= 20 {
-            Some(Address::from_slice(&self.paymaster_and_data[..20]))
-        } else {
-            None
-        }
+        Address::try_from_slice(&self.paymaster_and_data)
     }
 
     /// Validate basic constraints
@@ -479,7 +475,7 @@ impl EntryPoint {
             unstake_delay_sec: 0,
             deposit: 0,
         });
-        info.stake += stake;
+        info.stake = info.stake.saturating_add(stake);
         info.unstake_delay_sec = unstake_delay_sec;
 
         info!("Paymaster staked: {:?}, stake={}", paymaster, info.stake);
@@ -494,7 +490,7 @@ impl EntryPoint {
             unstake_delay_sec: 0,
             deposit: 0,
         });
-        info.deposit += amount;
+        info.deposit = info.deposit.saturating_add(amount);
     }
 
     /// Get paymaster deposit

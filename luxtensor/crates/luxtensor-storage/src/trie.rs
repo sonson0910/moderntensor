@@ -400,17 +400,15 @@ impl MerkleTrie {
     /// Delete a key from the trie (re-insert remaining keys)
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
         if self.keys.remove(key).is_some() {
-            // Rebuild trie without the deleted key
-            let entries: Vec<(Vec<u8>, Vec<u8>)> = self.keys.drain().collect();
+            // Rebuild trie from remaining keys without draining
             self.root = TrieNode::Empty;
-            for (k, v) in &entries {
-                let nibbles = bytes_to_nibbles(k);
-                let old_root = std::mem::take(&mut self.root);
-                self.root = old_root.insert(&nibbles, v.clone());
-            }
-            // Re-insert into keys cache
+            let entries: Vec<(Vec<u8>, Vec<u8>)> = self.keys.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             for (k, v) in entries {
-                self.keys.insert(k, v);
+                let nibbles = bytes_to_nibbles(&k);
+                let old_root = std::mem::take(&mut self.root);
+                self.root = old_root.insert(&nibbles, v);
             }
         }
         Ok(())

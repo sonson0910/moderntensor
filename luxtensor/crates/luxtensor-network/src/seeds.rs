@@ -6,7 +6,7 @@
 //! ## Network Types
 //! - **Devnet (Chain ID: 8898)**: Local development, uses mDNS, no seed nodes needed
 //! - **Testnet (Chain ID: 9999)**: Public testnet, requires seed nodes
-//! - **Mainnet (Chain ID: 8899)**: Production network, requires seed nodes
+//! - **Mainnet (Chain ID: 8898)**: Production network, requires seed nodes
 //!
 //! ## Adding New Seed Nodes
 //! 1. Run the seed node and get its Peer ID from startup log
@@ -15,7 +15,7 @@
 
 use tracing::{info, warn};
 
-/// Get seed nodes for mainnet (Chain ID: 8899)
+/// Get seed nodes for mainnet (Chain ID: 8898)
 ///
 /// # Production Deployment
 ///
@@ -62,12 +62,12 @@ pub fn devnet_seeds() -> Vec<String> {
 /// 3. mDNS discovery (fallback for devnet)
 pub fn get_seeds_for_chain(chain_id: u64) -> Vec<String> {
     let seeds = match chain_id {
-        8899 => mainnet_seeds(),
+        8898 => mainnet_seeds(),
         9999 => testnet_seeds(),
-        _ => devnet_seeds(), // Chain ID 8898, 1337, 31337, etc. = devnet
+        _ => devnet_seeds(), // Chain ID 1337, 31337, etc. = devnet
     };
 
-    if seeds.is_empty() && (chain_id == 8899 || chain_id == 9999) {
+    if seeds.is_empty() && (chain_id == 8898 || chain_id == 9999) {
         warn!(
             "⚠️  No built-in seed nodes for {} (chain {}). \
              Nodes MUST configure bootstrap_nodes in config.toml or discovery will fail.",
@@ -89,9 +89,8 @@ pub fn has_hardcoded_seeds(chain_id: u64) -> bool {
 /// Get network name from chain ID
 pub fn get_network_name(chain_id: u64) -> &'static str {
     match chain_id {
-        8899 => "Mainnet",
+        8898 => "Mainnet",
         9999 => "Testnet",
-        8898 => "Devnet",
         1337 | 31337 => "Local",
         _ => "Unknown",
     }
@@ -111,8 +110,7 @@ mod tests {
 
     #[test]
     fn test_network_names() {
-        assert_eq!(get_network_name(8899), "Mainnet");
+        assert_eq!(get_network_name(8898), "Mainnet");
         assert_eq!(get_network_name(9999), "Testnet");
-        assert_eq!(get_network_name(8898), "Devnet");
     }
 }

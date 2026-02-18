@@ -277,17 +277,30 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
         bytes32 aggregatedCheckpoint = _aggregateGradients(jobId, round);
         roundCheckpoints[jobId][round] = aggregatedCheckpoint;
 
-        // Distribute rewards proportionally
-        uint256 rewardPerTrainer = job.rewardPerRound / submissions.length;
+        // Distribute rewards proportionally to verified trainers
+        uint256 verifiedCount = 0;
         for (uint256 i = 0; i < submissions.length; i++) {
-            if (submissions[i].verified) {
-                mdtToken.safeTransfer(submissions[i].trainer, rewardPerTrainer);
-                emit RewardDistributed(
-                    jobId,
-                    round,
-                    submissions[i].trainer,
-                    rewardPerTrainer
-                );
+            if (submissions[i].verified) verifiedCount++;
+        }
+
+        if (verifiedCount > 0) {
+            uint256 rewardPerTrainer = job.rewardPerRound / verifiedCount;
+            uint256 distributed = 0;
+            for (uint256 i = 0; i < submissions.length; i++) {
+                if (submissions[i].verified) {
+                    distributed++;
+                    // Last verified trainer gets remainder to prevent dust loss
+                    uint256 amount = (distributed == verifiedCount)
+                        ? job.rewardPerRound - (rewardPerTrainer * (verifiedCount - 1))
+                        : rewardPerTrainer;
+                    mdtToken.safeTransfer(submissions[i].trainer, amount);
+                    emit RewardDistributed(
+                        jobId,
+                        round,
+                        submissions[i].trainer,
+                        amount
+                    );
+                }
             }
         }
 
