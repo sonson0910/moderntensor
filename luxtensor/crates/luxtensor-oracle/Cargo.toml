@@ -21,3 +21,15 @@ dotenv = "0.15"
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-zkvm = { path = "../luxtensor-zkvm" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
+
+# RISC Zero methods (provides guest ELF binary).
+# Optional: only needed when risc0 feature is enabled.
+# Requires RISC Zero toolchain installed via `rzup install`.
+luxtensor-methods = { path = "../luxtensor-methods", optional = true }
+
+[features]
+default = []
+# Enable real RISC Zero STARK proof generation.
+# Requires: `rzup install` (one-time RISC Zero toolchain setup).
+# When disabled, the oracle uses dev-mode proofs.
+risc0 = ["luxtensor-zkvm/risc0", "dep:luxtensor-methods"]

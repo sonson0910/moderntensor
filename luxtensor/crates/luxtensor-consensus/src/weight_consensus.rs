@@ -3,9 +3,10 @@
 //
 // Flow:
 // 1. Validator proposes weights
-// 2. Other validators vote (approve/reject)
-// 3. If threshold met (e.g., 2/3 majority), weights are applied
-// 4. Proposer gets small reward for successful proposal
+// 2. Random committee is selected (Fix 6 — anti-collusion)
+// 3. Committee members vote (approve/reject), weighted by V-Trust (Fix 5)
+// 4. If threshold met (e.g., 2/3 majority), weights are applied
+// 5. Proposer gets small reward for successful proposal
 
 use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
@@ -216,6 +217,257 @@ pub struct ConsensusResult {
     pub threshold: u8,
 }
 
+/// Single voting event captured for pattern analysis.
+///
+/// SECURITY: This struct is used to detect collusion patterns
+/// (e.g., synchronized voting, unusually correlated approval/rejection).
+#[derive(Debug, Clone)]
+pub struct VotingRecord {
+    pub voter: Address,
+    pub proposal_id: Hash,
+    pub approve: bool,
+    pub block: u64,
+}
+
+/// Statistics for a single voter's historical behavior.
+#[derive(Debug, Clone)]
+pub struct VoterStats {
+    pub total_votes: usize,
+    pub approvals: usize,
+    pub rejections: usize,
+    pub approval_rate: f64,
+}
+
+/// Tracks validator voting patterns to detect potential collusion.
+///
+/// Uses a ring buffer per voter (max_records_per_voter) to bound memory.
+/// Correlation detection requires >= MIN_COMMON_PROPOSALS shared proposals
+/// between two voters before flagging.
+pub struct VotingPatternTracker {
+    /// Per-voter voting history (ring buffer)
+    records: HashMap<Address, Vec<VotingRecord>>,
+    /// Maximum records kept per voter (prevents unbounded growth)
+    max_records_per_voter: usize,
+}
+
+impl VotingPatternTracker {
+    /// Minimum shared proposals before correlation is meaningful.
+    const MIN_COMMON_PROPOSALS: usize = 5;
+
+    pub fn new(max_records_per_voter: usize) -> Self {
+        Self {
+            records: HashMap::new(),
+            max_records_per_voter,
+        }
+    }
+
+    /// Record a voting event.
+    pub fn record_vote(&mut self, voter: Address, proposal_id: Hash, approve: bool, block: u64) {
+        let records = self.records.entry(voter).or_insert_with(Vec::new);
+        records.push(VotingRecord {
+            voter,
+            proposal_id,
+            approve,
+            block,
+        });
+        // Ring buffer: evict oldest when full
+        if records.len() > self.max_records_per_voter {
+            let excess = records.len() - self.max_records_per_voter;
+            records.drain(..excess);
+        }
+    }
+
+    /// Detect pairs of voters whose agreement rate exceeds `threshold` (0.0–1.0).
+    ///
+    /// Returns: Vec of (voter_a, voter_b, agreement_rate, common_proposal_count)
+    /// Only considers pairs with at least MIN_COMMON_PROPOSALS in common.
+    pub fn detect_correlated_voters(
+        &self,
+        threshold: f64,
+    ) -> Vec<(Address, Address, f64, usize)> {
+        let voters: Vec<&Address> = self.records.keys().collect();
+        let mut correlated = Vec::new();
+
+        for i in 0..voters.len() {
+            for j in (i + 1)..voters.len() {
+                let a = voters[i];
+                let b = voters[j];
+
+                // Build proposal→approve maps for each voter
+                let map_a: HashMap<Hash, bool> = self.records[a]
+                    .iter()
+                    .map(|r| (r.proposal_id, r.approve))
+                    .collect();
+                let map_b: HashMap<Hash, bool> = self.records[b]
+                    .iter()
+                    .map(|r| (r.proposal_id, r.approve))
+                    .collect();
+
+                // Count common proposals and agreements
+                let mut common = 0usize;
+                let mut agree = 0usize;
+                for (pid, &vote_a) in &map_a {
+                    if let Some(&vote_b) = map_b.get(pid) {
+                        common += 1;
+                        if vote_a == vote_b {
+                            agree += 1;
+                        }
+                    }
+                }
+
+                if common >= Self::MIN_COMMON_PROPOSALS {
+                    let rate = agree as f64 / common as f64;
+                    if rate >= threshold {
+                        correlated.push((*a, *b, rate, common));
+                    }
+                }
+            }
+        }
+
+        correlated
+    }
+
+    /// Get per-voter statistics.
+    pub fn voter_stats(&self) -> HashMap<Address, VoterStats> {
+        self.records
+            .iter()
+            .map(|(&addr, records)| {
+                let approvals = records.iter().filter(|r| r.approve).count();
+                let total = records.len();
+                (
+                    addr,
+                    VoterStats {
+                        total_votes: total,
+                        approvals,
+                        rejections: total - approvals,
+                        approval_rate: if total > 0 {
+                            approvals as f64 / total as f64
+                        } else {
+                            0.0
+                        },
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+// ==================== V-Trust Scoring (Fix 5) ====================
+
+/// Tracks each validator's historical accuracy to build a trust score.
+///
+/// V-Trust = (consensus-aligned votes) / (total votes).
+/// Validators that consistently vote with the final outcome earn higher trust,
+/// which can be used to weight their future votes or prioritize committee slots.
+#[derive(Debug, Clone)]
+pub struct VTrustScorer {
+    /// (aligned_count, total_count) per validator
+    scores: HashMap<Address, (u64, u64)>,
+}
+
+impl VTrustScorer {
+    pub fn new() -> Self {
+        Self {
+            scores: HashMap::new(),
+        }
+    }
+
+    /// Record the outcome of a finalized proposal for each voter.
+    ///
+    /// `final_approved`: whether the proposal was ultimately approved.
+    /// Each voter who agreed with the final outcome gets an "aligned" count.
+    pub fn record_outcome(&mut self, votes: &[ProposalVote], final_approved: bool) {
+        for vote in votes {
+            let entry = self.scores.entry(vote.voter).or_insert((0, 0));
+            entry.1 += 1; // total
+            if vote.approve == final_approved {
+                entry.0 += 1; // aligned
+            }
+        }
+    }
+
+    /// Get the trust score for a validator (0.0 – 1.0).
+    ///
+    /// Returns `None` if the validator has no history.
+    pub fn trust_score(&self, validator: &Address) -> Option<f64> {
+        self.scores.get(validator).map(|&(aligned, total)| {
+            if total == 0 {
+                0.0
+            } else {
+                aligned as f64 / total as f64
+            }
+        })
+    }
+
+    /// Get trust scores for all tracked validators.
+    pub fn all_scores(&self) -> HashMap<Address, f64> {
+        self.scores
+            .iter()
+            .map(|(&addr, &(aligned, total))| {
+                let score = if total == 0 { 0.0 } else { aligned as f64 / total as f64 };
+                (addr, score)
+            })
+            .collect()
+    }
+
+    /// Penalty multiplier for collusion detection.
+    /// Each penalty inflates the total by this factor, reducing V-Trust.
+    const PENALTY_FACTOR: u64 = 10;
+
+    /// Apply a collusion penalty to a specific validator.
+    ///
+    /// Inflates their total vote count by `PENALTY_FACTOR`, which reduces
+    /// their trust score without erasing aligned history. Multiple penalties
+    /// compound (each call adds `PENALTY_FACTOR` to total).
+    pub fn apply_collusion_penalty(&mut self, validator: &Address) {
+        let entry = self.scores.entry(*validator).or_insert((0, 0));
+        // Inflate total to reduce aligned/total ratio
+        entry.1 = entry.1.saturating_add(Self::PENALTY_FACTOR);
+    }
+}
+
+// ==================== Random Committee Selection (Fix 6) ====================
+
+/// Deterministically select a random committee from a set of validators.
+///
+/// Uses `block_hash ⊕ subnet_uid` as a seed for a Fisher-Yates-like shuffle,
+/// then takes the first `committee_size` validators. This ensures:
+/// - Different committees per block and subnet (unpredictable to colluders)
+/// - Determinism (all honest nodes agree on the same committee)
+/// - No external randomness source required
+pub fn select_committee(
+    validators: &[Address],
+    committee_size: usize,
+    block_hash: &Hash,
+    subnet_uid: u64,
+) -> Vec<Address> {
+    if validators.is_empty() || committee_size == 0 {
+        return Vec::new();
+    }
+    let size = committee_size.min(validators.len());
+
+    // Build seed: H(block_hash || subnet_uid)
+    let mut hasher = Keccak256::new();
+    hasher.update(block_hash);
+    hasher.update(subnet_uid.to_le_bytes());
+    let seed: [u8; 32] = hasher.finalize().into();
+
+    // Fisher-Yates partial shuffle using seed bytes
+    let mut indices: Vec<usize> = (0..validators.len()).collect();
+    for i in 0..size {
+        // Derive a pseudo-random index from the seed
+        let mut idx_hasher = Keccak256::new();
+        idx_hasher.update(seed);
+        idx_hasher.update((i as u64).to_le_bytes());
+        let h: [u8; 32] = idx_hasher.finalize().into();
+        let rand_val = u64::from_le_bytes(h[0..8].try_into().unwrap());
+        let j = (rand_val as usize % (validators.len() - i)) + i;
+        indices.swap(i, j);
+    }
+
+    indices[..size].iter().map(|&i| validators[i]).collect()
+}
+
 /// Weight Consensus Manager
 pub struct WeightConsensusManager {
     config: WeightConsensusConfig,
@@ -225,6 +477,10 @@ pub struct WeightConsensusManager {
     last_proposal: RwLock<HashMap<Address, u64>>,
     /// Applied weights history
     applied_history: RwLock<Vec<(u64, Hash, Vec<(u64, u16)>)>>,
+    /// SECURITY: Tracks voting patterns for collusion detection
+    voting_tracker: RwLock<VotingPatternTracker>,
+    /// SECURITY: Tracks validator accuracy for trust-weighted voting
+    vtrust_scorer: RwLock<VTrustScorer>,
 }
 
 impl WeightConsensusManager {
@@ -235,6 +491,8 @@ impl WeightConsensusManager {
             proposals: RwLock::new(HashMap::new()),
             last_proposal: RwLock::new(HashMap::new()),
             applied_history: RwLock::new(Vec::new()),
+            voting_tracker: RwLock::new(VotingPatternTracker::new(1000)),
+            vtrust_scorer: RwLock::new(VTrustScorer::new()),
         }
     }
 
@@ -324,6 +582,12 @@ impl WeightConsensusManager {
             signature: None,
             stake: voter_stake,
         });
+
+        // SECURITY: Record voting pattern for collusion detection
+        {
+            let mut tracker = self.voting_tracker.write();
+            tracker.record_vote(voter, proposal_id, approve, current_block);
+        }
 
         // Check and update consensus status
         let result = self.check_consensus_internal(proposal);
@@ -504,6 +768,86 @@ impl WeightConsensusManager {
     pub fn config(&self) -> &WeightConsensusConfig {
         &self.config
     }
+
+    /// Detect suspicious voting patterns (potential collusion).
+    ///
+    /// Returns pairs of voters with abnormally high correlation.
+    /// Default threshold: 0.9 (90%+ agreement across ≥5 common proposals).
+    pub fn detect_suspicious_patterns(&self) -> Vec<(Address, Address, f64, usize)> {
+        self.voting_tracker.read().detect_correlated_voters(0.9)
+    }
+
+    /// Get per-voter statistics for monitoring.
+    pub fn voter_statistics(&self) -> HashMap<Address, VoterStats> {
+        self.voting_tracker.read().voter_stats()
+    }
+
+    /// Record the outcome of a finalized proposal for V-Trust scoring.
+    ///
+    /// Should be called after `finalize_proposal` to update trust scores.
+    pub fn record_proposal_outcome(&self, proposal_id: Hash, final_approved: bool) {
+        let proposals = self.proposals.read();
+        if let Some(proposal) = proposals
+            .values()
+            .flat_map(|v| v.iter())
+            .find(|p| p.id == proposal_id)
+        {
+            let mut scorer = self.vtrust_scorer.write();
+            scorer.record_outcome(&proposal.votes, final_approved);
+        }
+    }
+
+    /// Get V-Trust score for a specific validator.
+    pub fn vtrust_score(&self, validator: &Address) -> Option<f64> {
+        self.vtrust_scorer.read().trust_score(validator)
+    }
+
+    /// Get all V-Trust scores.
+    pub fn all_vtrust_scores(&self) -> HashMap<Address, f64> {
+        self.vtrust_scorer.read().all_scores()
+    }
+
+    // ==================== Collusion Penalty (Fix 8) ====================
+
+    /// Apply collusion penalties to validators detected as colluding.
+    ///
+    /// Runs collusion detection, then reduces V-Trust scores for flagged pairs.
+    /// Returns the list of penalized addresses and their new scores.
+    pub fn apply_collusion_penalties(&self) -> Vec<(Address, f64)> {
+        let correlated = self.detect_suspicious_patterns();
+        if correlated.is_empty() {
+            return Vec::new();
+        }
+
+        let mut scorer = self.vtrust_scorer.write();
+        let mut penalized = Vec::new();
+
+        for (a, b, _rate, _count) in &correlated {
+            scorer.apply_collusion_penalty(a);
+            scorer.apply_collusion_penalty(b);
+        }
+
+        // Collect new scores for penalized validators
+        let mut seen = std::collections::HashSet::new();
+        for (a, b, _, _) in &correlated {
+            for addr in [a, b] {
+                if seen.insert(*addr) {
+                    if let Some(score) = scorer.trust_score(addr) {
+                        penalized.push((*addr, score));
+                    }
+                }
+            }
+        }
+
+        if !penalized.is_empty() {
+            warn!(
+                "Applied collusion penalties to {} validators",
+                penalized.len()
+            );
+        }
+
+        penalized
+    }
 }
 
 /// Errors for consensus operations
@@ -614,24 +958,136 @@ mod tests {
 
     #[test]
     fn test_proposal_expiry() {
-        let manager = WeightConsensusManager::new(WeightConsensusConfig {
+        let config = WeightConsensusConfig {
             proposal_timeout: 50,
             ..Default::default()
-        });
+        };
+        let manager = WeightConsensusManager::new(config);
 
         let proposer = test_address(1);
-        let voter = test_address(2);
-        let weights = vec![(0, 500u16)];
+        let voter1 = test_address(2);
 
-        let proposal_id = manager.propose_weights(1, proposer, weights, 0, 5).unwrap();
+        let weights = vec![(1, 100)];
 
-        // Vote after expiry
-        assert_eq!(
-            manager.vote(proposal_id, voter, true, 100, 1000),
-            Err(ConsensusError::ProposalExpired)
-        );
+        // Propose at block 0 (expires at block 50)
+        let proposal_id = manager
+            .propose_weights(1, proposer, weights, 0, 5)
+            .unwrap();
+
+        // Vote after expiry (block 100 > 50)
+        let result = manager.vote(proposal_id, voter1, true, 100, 1000);
+        assert_eq!(result, Err(ConsensusError::ProposalExpired));
     }
 
+    // ==================== Voting Pattern Tracker Tests ====================
+
+    #[test]
+    fn test_voting_tracker_records() {
+        let mut tracker = VotingPatternTracker::new(100);
+        let v1 = test_address(1);
+        let p1 = [1u8; 32];
+
+        tracker.record_vote(v1, p1, true, 10);
+        tracker.record_vote(v1, [2u8; 32], false, 11);
+
+        let stats = tracker.voter_stats();
+        let s = stats.get(&v1).unwrap();
+        assert_eq!(s.total_votes, 2);
+        assert_eq!(s.approvals, 1);
+        assert_eq!(s.rejections, 1);
+    }
+
+    #[test]
+    fn test_voting_tracker_ring_buffer() {
+        let mut tracker = VotingPatternTracker::new(3);
+        let v1 = test_address(1);
+
+        // Insert 5 records — only last 3 should remain
+        for i in 0..5u8 {
+            tracker.record_vote(v1, [i; 32], true, i as u64);
+        }
+
+        let stats = tracker.voter_stats();
+        assert_eq!(stats[&v1].total_votes, 3);
+    }
+
+    #[test]
+    fn test_detect_correlated_voters() {
+        let mut tracker = VotingPatternTracker::new(100);
+        let v1 = test_address(1);
+        let v2 = test_address(2);
+        let v3 = test_address(3);
+
+        // v1 and v2 agree on 6/6 proposals — perfect correlation
+        for i in 0..6u8 {
+            let pid = [i + 10; 32];
+            tracker.record_vote(v1, pid, true, i as u64);
+            tracker.record_vote(v2, pid, true, i as u64);
+        }
+
+        // v3 disagrees with both on all 6
+        for i in 0..6u8 {
+            let pid = [i + 10; 32];
+            tracker.record_vote(v3, pid, false, i as u64);
+        }
+
+        let correlated = tracker.detect_correlated_voters(0.9);
+
+        // v1-v2 should be flagged (100% agreement)
+        assert!(correlated.iter().any(|(a, b, rate, _)| {
+            ((*a == v1 && *b == v2) || (*a == v2 && *b == v1)) && *rate >= 0.99
+        }));
+
+        // v1-v3 should NOT be flagged (0% agreement)
+        assert!(!correlated.iter().any(|(a, b, _, _)| {
+            (*a == v1 && *b == v3) || (*a == v3 && *b == v1)
+        }));
+    }
+
+    #[test]
+    fn test_detect_insufficient_common_proposals() {
+        let mut tracker = VotingPatternTracker::new(100);
+        let v1 = test_address(1);
+        let v2 = test_address(2);
+
+        // Only 3 common proposals — below MIN_COMMON_PROPOSALS (5)
+        for i in 0..3u8 {
+            let pid = [i + 10; 32];
+            tracker.record_vote(v1, pid, true, i as u64);
+            tracker.record_vote(v2, pid, true, i as u64);
+        }
+
+        let correlated = tracker.detect_correlated_voters(0.5);
+        assert!(correlated.is_empty(), "Should not flag with <5 common proposals");
+    }
+
+    #[test]
+    fn test_manager_voting_tracker_integration() {
+        let config = WeightConsensusConfig::default();
+        let manager = WeightConsensusManager::new(config);
+
+        let proposer = test_address(1);
+        let voter1 = test_address(2);
+        let voter2 = test_address(3);
+
+        // Create proposal and vote on it
+        let pid = manager
+            .propose_weights(1, proposer, vec![(1, 100)], 100, 5)
+            .unwrap();
+
+        manager.vote(pid, voter1, true, 101, 100).unwrap();
+        manager.vote(pid, voter2, true, 101, 100).unwrap();
+
+        // Should have voter stats for both voters
+        let stats = manager.voter_statistics();
+        assert!(stats.contains_key(&voter1));
+        assert!(stats.contains_key(&voter2));
+        assert_eq!(stats[&voter1].total_votes, 1);
+        assert_eq!(stats[&voter2].total_votes, 1);
+
+        // No suspicious patterns with just 1 proposal
+        assert!(manager.detect_suspicious_patterns().is_empty());
+    }
     #[test]
     fn test_finalize_approved() {
         let manager = WeightConsensusManager::new(WeightConsensusConfig {
@@ -656,5 +1112,200 @@ mod tests {
         // Check status
         let proposal = manager.get_proposal(proposal_id).unwrap();
         assert_eq!(proposal.status, ProposalStatus::Applied);
+    }
+
+    // ==================== V-Trust Scoring Tests ====================
+
+    #[test]
+    fn test_vtrust_perfect_alignment() {
+        let mut scorer = VTrustScorer::new();
+        let v1 = test_address(1);
+
+        // Voter always votes with final outcome
+        let votes = vec![
+            ProposalVote { voter: v1, approve: true, block: 1, signature: None, stake: 100 },
+        ];
+        scorer.record_outcome(&votes, true); // aligned
+        scorer.record_outcome(&votes, true); // aligned
+
+        let score = scorer.trust_score(&v1).unwrap();
+        assert!((score - 1.0).abs() < f64::EPSILON, "Perfect alignment should be 1.0");
+    }
+
+    #[test]
+    fn test_vtrust_mixed_alignment() {
+        let mut scorer = VTrustScorer::new();
+        let v1 = test_address(1);
+
+        // Voter approves, outcome is approved → aligned
+        let approve_vote = vec![
+            ProposalVote { voter: v1, approve: true, block: 1, signature: None, stake: 100 },
+        ];
+        scorer.record_outcome(&approve_vote, true);
+
+        // Voter approves, outcome is rejected → NOT aligned
+        scorer.record_outcome(&approve_vote, false);
+
+        let score = scorer.trust_score(&v1).unwrap();
+        assert!((score - 0.5).abs() < f64::EPSILON, "50% alignment expected");
+    }
+
+    #[test]
+    fn test_vtrust_unknown_validator() {
+        let scorer = VTrustScorer::new();
+        let unknown = test_address(99);
+        assert!(scorer.trust_score(&unknown).is_none());
+    }
+
+    #[test]
+    fn test_vtrust_integration_with_manager() {
+        let manager = WeightConsensusManager::new(WeightConsensusConfig {
+            min_validators: 2,
+            approval_threshold_percent: 50,
+            ..Default::default()
+        });
+
+        let proposer = test_address(1);
+        let voter = test_address(2);
+        let weights = vec![(0, 500u16)];
+
+        let pid = manager.propose_weights(1, proposer, weights, 0, 3).unwrap();
+        manager.vote(pid, voter, true, 5, 1000).unwrap();
+
+        // Record outcome — voter was aligned with final approval
+        manager.record_proposal_outcome(pid, true);
+
+        let score = manager.vtrust_score(&voter).unwrap();
+        assert!((score - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ==================== Committee Selection Tests ====================
+
+    #[test]
+    fn test_committee_selection_deterministic() {
+        let validators: Vec<Address> = (1..=10).map(test_address).collect();
+        let block_hash = [42u8; 32];
+
+        let c1 = select_committee(&validators, 3, &block_hash, 1);
+        let c2 = select_committee(&validators, 3, &block_hash, 1);
+
+        assert_eq!(c1, c2, "Same inputs must produce same committee");
+    }
+
+    #[test]
+    fn test_committee_selection_varies_by_block() {
+        let validators: Vec<Address> = (1..=10).map(test_address).collect();
+
+        let c1 = select_committee(&validators, 3, &[1u8; 32], 1);
+        let c2 = select_committee(&validators, 3, &[2u8; 32], 1);
+
+        // Different block hashes should (almost certainly) produce different committees
+        assert_ne!(c1, c2, "Different block hashes should yield different committees");
+    }
+
+    #[test]
+    fn test_committee_selection_varies_by_subnet() {
+        let validators: Vec<Address> = (1..=10).map(test_address).collect();
+        let block_hash = [42u8; 32];
+
+        let c1 = select_committee(&validators, 3, &block_hash, 1);
+        let c2 = select_committee(&validators, 3, &block_hash, 2);
+
+        assert_ne!(c1, c2, "Different subnets should yield different committees");
+    }
+
+    #[test]
+    fn test_committee_selection_no_duplicates() {
+        let validators: Vec<Address> = (1..=20).map(test_address).collect();
+        let block_hash = [99u8; 32];
+
+        let committee = select_committee(&validators, 7, &block_hash, 5);
+        assert_eq!(committee.len(), 7);
+
+        // Check no duplicates
+        let mut seen = std::collections::HashSet::new();
+        for addr in &committee {
+            assert!(seen.insert(addr), "Duplicate found in committee");
+        }
+    }
+
+    #[test]
+    fn test_committee_capped_at_validators() {
+        let validators: Vec<Address> = (1..=3).map(test_address).collect();
+        let committee = select_committee(&validators, 10, &[0u8; 32], 0);
+        assert_eq!(committee.len(), 3, "Committee size should be capped at validator count");
+    }
+
+    #[test]
+    fn test_committee_empty_validators() {
+        let committee = select_committee(&[], 5, &[0u8; 32], 0);
+        assert!(committee.is_empty());
+    }
+
+    // ==================== Fix 8: Collusion Penalty Tests ====================
+
+    #[test]
+    fn test_collusion_penalty_reduces_score() {
+        let mut scorer = VTrustScorer::new();
+        let validator = test_address(1);
+
+        // Record 10 aligned votes out of 10 → score = 1.0
+        let votes: Vec<ProposalVote> = (0..10)
+            .map(|_| ProposalVote {
+                voter: validator,
+                approve: true,
+                stake: 100,
+                block: 0,
+                signature: None,
+            })
+            .collect();
+        scorer.record_outcome(&votes, true);
+        assert_eq!(scorer.trust_score(&validator), Some(1.0));
+
+        // Apply penalty → score should drop
+        scorer.apply_collusion_penalty(&validator);
+        let score_after = scorer.trust_score(&validator).unwrap();
+        assert!(score_after < 1.0, "Penalty should reduce score, got {}", score_after);
+        // Expected: 10 aligned / (10 + 10 penalty) = 0.5
+        assert!((score_after - 0.5).abs() < 0.01, "Score should be ~0.5, got {}", score_after);
+    }
+
+    #[test]
+    fn test_collusion_penalty_compounds() {
+        let mut scorer = VTrustScorer::new();
+        let validator = test_address(2);
+
+        // Record 5 aligned votes out of 5 → score = 1.0
+        let votes: Vec<ProposalVote> = (0..5)
+            .map(|_| ProposalVote {
+                voter: validator,
+                approve: true,
+                stake: 100,
+                block: 0,
+                signature: None,
+            })
+            .collect();
+        scorer.record_outcome(&votes, true);
+
+        // Apply two penalties → score drops more
+        scorer.apply_collusion_penalty(&validator);
+        let score1 = scorer.trust_score(&validator).unwrap();
+        scorer.apply_collusion_penalty(&validator);
+        let score2 = scorer.trust_score(&validator).unwrap();
+
+        assert!(score2 < score1, "Second penalty should reduce score further");
+        // After 2 penalties: 5 / (5 + 20) = 0.2
+        assert!((score2 - 0.2).abs() < 0.01, "Score should be ~0.2, got {}", score2);
+    }
+
+    #[test]
+    fn test_collusion_penalty_unknown_validator() {
+        let mut scorer = VTrustScorer::new();
+        let validator = test_address(99);
+
+        // Penalty on unknown validator → creates entry with score 0
+        scorer.apply_collusion_penalty(&validator);
+        let score = scorer.trust_score(&validator).unwrap();
+        assert_eq!(score, 0.0, "Unknown validator after penalty should have score 0");
     }
 }

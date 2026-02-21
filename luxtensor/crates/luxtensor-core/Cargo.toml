@@ -13,7 +13,6 @@ thiserror = { workspace = true }
 bytes = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
-rayon = { workspace = true }
 sha3 = "0.10"
 
 luxtensor-crypto = { path = "../luxtensor-crypto" }

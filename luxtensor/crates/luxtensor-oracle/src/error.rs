@@ -16,6 +16,9 @@ pub enum OracleError {
 
     #[error("Proof generation error: {0}")]
     ProofGeneration(String),
+
+    #[error("Dispute error: {0}")]
+    DisputeError(String),
 }
 
 pub type Result<T> = std::result::Result<T, OracleError>;

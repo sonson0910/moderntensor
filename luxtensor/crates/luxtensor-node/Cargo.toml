@@ -32,6 +32,7 @@ luxtensor-network = { path = "../luxtensor-network" }
 luxtensor-storage = { path = "../luxtensor-storage" }
 luxtensor-rpc = { path = "../luxtensor-rpc" }
 luxtensor-contracts = { path = "../luxtensor-contracts" }
+luxtensor-oracle = { path = "../luxtensor-oracle" }
 
 [features]
 legacy = ["luxtensor-network/legacy"]

@@ -91,4 +91,14 @@ pub use training_rpc::{TrainingRpcContext, register_training_methods};
 pub mod zkml_rpc;
 pub use zkml_rpc::{ZkmlRpcContext, register_zkml_methods};
 
+pub mod agent_rpc;
+pub use agent_rpc::{AgentRpcContext, register_agent_methods};
 
+pub mod dispute_rpc;
+pub use dispute_rpc::{DisputeRpcContext, register_dispute_methods};
+
+pub mod bridge_rpc;
+pub use bridge_rpc::{BridgeRpcContext, register_bridge_methods};
+
+pub mod multisig_rpc;
+pub use multisig_rpc::{MultisigRpcContext, register_multisig_methods};

@@ -127,6 +127,24 @@ fn validate_float_vector(vector: &[f32]) -> Result<(), PrecompileError> {
     Ok(())
 }
 
+/// Quantize f32 vector to deterministic fixed-precision values.
+///
+/// Truncates to ~16-bit mantissa precision (1/65536 steps) to eliminate
+/// cross-platform floating-point discrepancies at the ULP level.
+///
+/// CONSENSUS-CRITICAL: All nodes must store identical bit patterns for
+/// the same input. Raw IEEE 754 f32 operations can produce different
+/// results on x86 vs ARM at the least-significant-bit level.
+fn quantize_to_deterministic(vector: &mut [f32]) {
+    const SCALE: f32 = 65536.0; // 2^16 precision levels
+    for val in vector.iter_mut() {
+        // Round-trip through integer truncation eliminates precision noise.
+        // .round() uses IEEE 754 "round to nearest, ties to even" which
+        // is deterministic across all platforms that implement the standard.
+        *val = (*val * SCALE).round() / SCALE;
+    }
+}
+
 /// Stored AI request for precompile state
 #[derive(Clone, Debug)]
 pub struct AIRequestEntry {
@@ -664,6 +682,11 @@ pub fn vector_store_precompile(
 
     // SECURITY: Reject NaN/Infinity to prevent HNSW index corruption
     validate_float_vector(&vector)?;
+
+    // CONSENSUS-CRITICAL: Quantize to deterministic fixed-precision
+    // to prevent cross-platform f32 discrepancies at ULP level.
+    // Must happen AFTER validation (NaN/Inf check) and BEFORE storage.
+    quantize_to_deterministic(&mut vector);
 
     // 4. Store Vector (with RwLock poisoning handling)
     {
@@ -1636,12 +1659,187 @@ pub fn is_registry_precompile(address: &[u8; 20]) -> bool {
     (0x27..=0x28).contains(&last_byte)
 }
 
+// ==================== HNSW Index Sharding by Subnet (Fix 9) ====================
+
+/// Sharded vector store that manages per-subnet HNSW indices.
+///
+/// Instead of one global HNSW index, each subnet gets its own isolated index.
+/// Benefits:
+/// - No cross-subnet interference (one subnet's data doesn't affect another)
+/// - Independent TTL pruning per subnet
+/// - Better query performance (small indices per subnet vs one massive index)
+/// - Easier to scale (can move hot subnets to dedicated nodes)
+pub struct ShardedVectorStore {
+    shards: HashMap<u64, luxtensor_core::hnsw::HnswVectorStore>,
+    /// Maximum number of shards to prevent unbounded memory growth
+    max_shards: usize,
+    /// Dimension of vectors stored in each shard
+    dimension: usize,
+}
+
+impl Default for ShardedVectorStore {
+    fn default() -> Self {
+        Self {
+            shards: HashMap::new(),
+            max_shards: Self::DEFAULT_MAX_SHARDS,
+            dimension: 768,
+        }
+    }
+}
+
+impl ShardedVectorStore {
+    /// Default maximum number of shards (subnets).
+    pub const DEFAULT_MAX_SHARDS: usize = 256;
+
+    /// Create a new sharded vector store with the standard embedding dimension (768).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a sharded vector store with a custom dimension.
+    pub fn with_dimension(dimension: usize) -> Self {
+        Self {
+            shards: HashMap::new(),
+            max_shards: Self::DEFAULT_MAX_SHARDS,
+            dimension,
+        }
+    }
+
+    /// Create a sharded vector store with a custom shard limit and dimension.
+    pub fn with_max_shards(max_shards: usize, dimension: usize) -> Self {
+        Self {
+            shards: HashMap::new(),
+            max_shards,
+            dimension,
+        }
+    }
+
+    /// Get or create the HNSW index for a given subnet.
+    fn get_or_create_shard(
+        &mut self,
+        subnet_uid: u64,
+    ) -> Result<&mut luxtensor_core::hnsw::HnswVectorStore, PrecompileError> {
+        if !self.shards.contains_key(&subnet_uid) {
+            if self.shards.len() >= self.max_shards {
+                return Err(PrecompileError::other(
+                    "Maximum number of HNSW shards reached",
+                ));
+            }
+            self.shards.insert(
+                subnet_uid,
+                luxtensor_core::hnsw::HnswVectorStore::new(self.dimension),
+            );
+        }
+        Ok(self.shards.get_mut(&subnet_uid).unwrap())
+    }
+
+    /// Insert a vector into the subnet-specific shard.
+    pub fn insert(
+        &mut self,
+        subnet_uid: u64,
+        id: u64,
+        vector: Vec<f32>,
+    ) -> Result<(), PrecompileError> {
+        let shard = self.get_or_create_shard(subnet_uid)?;
+        shard
+            .insert(id, vector)
+            .map_err(|e| PrecompileError::other(format!("HNSW insert error: {:?}", e)))
+    }
+
+    /// Insert with block-height tracking for TTL pruning.
+    pub fn insert_with_block(
+        &mut self,
+        subnet_uid: u64,
+        id: u64,
+        vector: Vec<f32>,
+        block: u64,
+    ) -> Result<(), PrecompileError> {
+        let shard = self.get_or_create_shard(subnet_uid)?;
+        shard
+            .insert_with_block(id, vector, block)
+            .map_err(|e| PrecompileError::other(format!("HNSW insert error: {:?}", e)))
+    }
+
+    /// Query from a specific subnet's shard.
+    pub fn query(
+        &self,
+        subnet_uid: u64,
+        query: &[f32],
+        k: usize,
+    ) -> Vec<(u64, f32)> {
+        match self.shards.get(&subnet_uid) {
+            Some(shard) => shard.search(query, k).unwrap_or_default(),
+            None => Vec::new(), // No shard for this subnet
+        }
+    }
+
+    /// Prune expired vectors from a specific subnet's shard.
+    pub fn prune_subnet(&mut self, subnet_uid: u64, cutoff_block: u64) -> usize {
+        match self.shards.get_mut(&subnet_uid) {
+            Some(shard) => shard.prune_before(cutoff_block),
+            None => 0,
+        }
+    }
+
+    /// Prune all shards.
+    pub fn prune_all(&mut self, cutoff_block: u64) -> usize {
+        let mut total = 0;
+        for shard in self.shards.values_mut() {
+            total += shard.prune_before(cutoff_block);
+        }
+        total
+    }
+
+    /// Remove a vector from a specific subnet's shard.
+    pub fn remove(&mut self, subnet_uid: u64, id: u64) -> bool {
+        match self.shards.get_mut(&subnet_uid) {
+            Some(shard) => shard.remove(id),
+            None => false,
+        }
+    }
+
+    /// Get the number of active shards.
+    pub fn shard_count(&self) -> usize {
+        self.shards.len()
+    }
+
+    /// Get the total number of vectors across all shards.
+    pub fn total_vectors(&self) -> usize {
+        self.shards.values().map(|s| s.len()).sum()
+    }
+
+    /// Get vector count for a specific subnet.
+    pub fn subnet_vector_count(&self, subnet_uid: u64) -> usize {
+        self.shards.get(&subnet_uid).map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Get per-shard statistics.
+    pub fn shard_stats(&self) -> Vec<(u64, usize)> {
+        self.shards
+            .iter()
+            .map(|(&uid, shard)| (uid, shard.len()))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn create_test_state() -> AIPrecompileState {
         AIPrecompileState::new()
+    }
+
+    /// Create a test state with a custom vector store dimension.
+    fn create_test_state_with_dim(dim: usize) -> AIPrecompileState {
+        AIPrecompileState {
+            requests: Arc::new(RwLock::new(HashMap::new())),
+            request_counter: Arc::new(RwLock::new(0)),
+            training_jobs: Arc::new(RwLock::new(HashMap::new())),
+            training_job_counter: Arc::new(RwLock::new(0)),
+            vector_store: Arc::new(RwLock::new(HnswVectorStore::new(dim))),
+            semantic_registry: Arc::new(RwLock::new(SemanticRegistry::new(dim))),
+        }
     }
 
     #[test]
@@ -1653,7 +1851,7 @@ mod tests {
         let id1 = state.generate_request_id(&caller, &model_hash);
         let id2 = state.generate_request_id(&caller, &model_hash);
 
-        // IDs should be unique
+        // Different IDs due to different nonces
         assert_ne!(id1, id2);
     }
 
@@ -1695,6 +1893,30 @@ mod tests {
     }
 
     #[test]
+    fn test_vector_store_basic() {
+        let state = create_test_state_with_dim(3);
+
+        // ABI-encoded input format expected by vector_store_precompile:
+        // [0..32]   vector_id (uint64, right-padded in 32 bytes, BE)
+        // [32..64]  data offset (placeholder, not used in parsing)
+        // [64..96]  vector length (uint32 in last 4 bytes of 32-byte word)
+        // [96..]    float data (4 bytes per float, BE)
+        let mut input = vec![0u8; 96]; // 3 × 32-byte words
+        // vector_id = 1 (in bytes 24..32)
+        input[24..32].copy_from_slice(&1u64.to_be_bytes());
+        // offset word (bytes 32..64) — can be zero placeholder
+        // vector length = 3 (in bytes 92..96)
+        input[92..96].copy_from_slice(&3u32.to_be_bytes());
+        // 3 floats
+        input.extend_from_slice(&1.0f32.to_be_bytes());
+        input.extend_from_slice(&2.0f32.to_be_bytes());
+        input.extend_from_slice(&3.0f32.to_be_bytes());
+
+        let result = vector_store_precompile(&Bytes::from(input), 500_000, &state);
+        assert!(result.is_ok(), "vector_store_precompile failed: {:?}", result.err());
+    }
+
+    #[test]
     fn test_is_ai_precompile() {
         assert!(is_ai_precompile(&precompiles::AI_REQUEST));
         assert!(is_ai_precompile(&precompiles::VERIFY_PROOF));
@@ -1704,5 +1926,127 @@ mod tests {
         // Standard precompiles should return false
         assert!(!is_ai_precompile(&precompiles::ECRECOVER));
         assert!(!is_ai_precompile(&precompiles::SHA256));
+    }
+
+    #[test]
+    fn test_quantize_deterministic_basic() {
+        // Verify quantization produces consistent results
+        let mut v1 = vec![0.123456789_f32, -0.987654321, 0.0, 1.0];
+        let mut v2 = v1.clone();
+
+        quantize_to_deterministic(&mut v1);
+        quantize_to_deterministic(&mut v2);
+
+        // Must be bitwise identical
+        assert_eq!(v1, v2);
+
+        // Must lose some precision (not equal to original)
+        assert_ne!(v1[0], 0.123456789_f32);
+
+        // Zero and one should survive quantization exactly
+        assert_eq!(v1[2], 0.0);
+        assert_eq!(v1[3], 1.0);
+    }
+
+    #[test]
+    fn test_quantize_deterministic_idempotent() {
+        // Double-quantization should give same result
+        let mut v = vec![0.33333_f32, -0.66666, 0.99999];
+        quantize_to_deterministic(&mut v);
+        let after_first = v.clone();
+        quantize_to_deterministic(&mut v);
+        assert_eq!(v, after_first, "Quantization must be idempotent");
+    }
+
+    #[test]
+    fn test_quantize_preserves_range() {
+        // Large and small values should survive without becoming NaN/Inf
+        let mut v = vec![1e6_f32, -1e6, 1e-6, -1e-6];
+        quantize_to_deterministic(&mut v);
+        for &val in &v {
+            assert!(val.is_finite(), "Quantized value must be finite");
+        }
+    }
+
+    // ==================== Fix 9: Sharding Tests ====================
+
+    #[test]
+    fn test_sharded_store_isolation() {
+        let mut store = ShardedVectorStore::with_dimension(3);
+
+        // Insert into two different subnets
+        store.insert(1, 100, vec![1.0, 0.0, 0.0]).unwrap();
+        store.insert(2, 200, vec![0.0, 1.0, 0.0]).unwrap();
+
+        // Each subnet should only see its own vectors
+        assert_eq!(store.subnet_vector_count(1), 1);
+        assert_eq!(store.subnet_vector_count(2), 1);
+        assert_eq!(store.total_vectors(), 2);
+        assert_eq!(store.shard_count(), 2);
+
+        // Query subnet 1 should not return subnet 2's vectors
+        let results = store.query(1, &[1.0, 0.0, 0.0], 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, 100); // ID from subnet 1
+    }
+
+    #[test]
+    fn test_sharded_store_max_shards() {
+        let mut store = ShardedVectorStore::with_max_shards(2, 1);
+
+        store.insert(1, 1, vec![1.0]).unwrap();
+        store.insert(2, 2, vec![2.0]).unwrap();
+
+        // Third shard should fail
+        let result = store.insert(3, 3, vec![3.0]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sharded_store_per_subnet_pruning() {
+        let mut store = ShardedVectorStore::with_dimension(1);
+
+        // Insert with block tracking
+        store.insert_with_block(1, 10, vec![1.0], 100).unwrap();
+        store.insert_with_block(1, 11, vec![2.0], 200).unwrap();
+        store.insert_with_block(2, 20, vec![3.0], 100).unwrap();
+
+        // Prune only subnet 1 before block 150
+        let pruned = store.prune_subnet(1, 150);
+        assert_eq!(pruned, 1); // Only vector 10 (block 100) removed
+        assert_eq!(store.subnet_vector_count(1), 1); // vector 11 remains
+        assert_eq!(store.subnet_vector_count(2), 1); // subnet 2 untouched
+    }
+
+    #[test]
+    fn test_sharded_store_prune_all() {
+        let mut store = ShardedVectorStore::with_dimension(1);
+
+        store.insert_with_block(1, 10, vec![1.0], 50).unwrap();
+        store.insert_with_block(2, 20, vec![2.0], 50).unwrap();
+        store.insert_with_block(1, 11, vec![3.0], 200).unwrap();
+
+        // Prune all shards before block 100
+        let pruned = store.prune_all(100);
+        assert_eq!(pruned, 2); // Both old vectors removed
+        assert_eq!(store.total_vectors(), 1); // Only vector 11 remains
+    }
+
+    #[test]
+    fn test_sharded_store_query_empty_subnet() {
+        let store = ShardedVectorStore::with_dimension(2);
+        let results = store.query(999, &[1.0, 2.0], 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_sharded_store_remove() {
+        let mut store = ShardedVectorStore::with_dimension(1);
+        store.insert(1, 10, vec![1.0]).unwrap();
+
+        assert!(store.remove(1, 10));
+        assert!(!store.remove(1, 10)); // Already removed
+        assert!(!store.remove(2, 10)); // Wrong subnet
+        assert_eq!(store.subnet_vector_count(1), 0);
     }
 }

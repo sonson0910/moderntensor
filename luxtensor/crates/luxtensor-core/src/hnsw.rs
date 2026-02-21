@@ -138,6 +138,35 @@ impl HnswIndex {
         self.count == 0
     }
 
+    /// Remove a vector from the index by ID.
+    ///
+    /// Removes the node and cleans up all neighbor references to it.
+    /// Returns `true` if the node existed and was removed.
+    pub fn remove(&mut self, id: u64) -> bool {
+        if self.nodes.remove(&id).is_none() {
+            return false;
+        }
+        self.count = self.count.saturating_sub(1);
+
+        // Clean up all neighbor references to the removed node
+        for node in self.nodes.values_mut() {
+            for layer_connections in node.connections.iter_mut() {
+                layer_connections.retain(|&neighbor_id| neighbor_id != id);
+            }
+        }
+
+        // Update entry point if the removed node was the entry point
+        if self.entry_point == Some(id) {
+            self.entry_point = self.nodes.keys().next().copied();
+            self.max_layer = self.entry_point
+                .and_then(|ep| self.nodes.get(&ep))
+                .map(|n| n.max_layer)
+                .unwrap_or(0);
+        }
+
+        true
+    }
+
     /// Insert a vector into the index
     pub fn insert(&mut self, id: u64, vector: Vec<f32>) -> Result<(), HnswError> {
         if vector.len() != self.config.dimension {
@@ -592,15 +621,79 @@ impl HnswIndex {
 /// HNSW-backed vector store for precompile integration
 pub struct HnswVectorStore {
     index: HnswIndex,
+    /// Maximum number of vectors allowed in this store.
+    /// Prevents unbounded state growth that could lead to memory exhaustion.
+    max_capacity: usize,
+    /// Tracks insertion block for each vector ID (for TTL-based pruning).
+    timestamps: HashMap<u64, u64>,
 }
 
 impl HnswVectorStore {
+    /// Default capacity limit per store (prevents unbounded growth).
+    /// 10K vectors × 768 dims × 4 bytes ≈ 30MB — manageable for blockchain state.
+    pub const DEFAULT_MAX_CAPACITY: usize = 10_000;
+
     pub fn new(dimension: usize) -> Self {
-        Self { index: HnswIndex::new(dimension) }
+        Self {
+            index: HnswIndex::new(dimension),
+            max_capacity: Self::DEFAULT_MAX_CAPACITY,
+            timestamps: HashMap::new(),
+        }
+    }
+
+    /// Create a store with a custom capacity limit.
+    ///
+    /// The underlying HnswIndex's max_elements will also be set
+    /// to match, providing defense-in-depth capacity enforcement.
+    pub fn with_capacity(dimension: usize, max_capacity: usize) -> Self {
+        let mut config = HnswConfig::default();
+        config.dimension = dimension;
+        config.max_elements = max_capacity;
+        Self {
+            index: HnswIndex::with_config(config),
+            max_capacity,
+            timestamps: HashMap::new(),
+        }
     }
 
     pub fn insert(&mut self, id: u64, vector: Vec<f32>) -> Result<(), HnswError> {
+        if self.index.len() >= self.max_capacity {
+            return Err(HnswError::CapacityExceeded);
+        }
         self.index.insert(id, vector)
+    }
+
+    /// Insert a vector with block-height tracking for TTL pruning.
+    ///
+    /// Records the insertion block so `prune_before()` can expire old vectors.
+    pub fn insert_with_block(&mut self, id: u64, vector: Vec<f32>, block: u64) -> Result<(), HnswError> {
+        self.insert(id, vector)?;
+        self.timestamps.insert(id, block);
+        Ok(())
+    }
+
+    /// Remove a single vector by ID.
+    pub fn remove(&mut self, id: u64) -> bool {
+        self.timestamps.remove(&id);
+        self.index.remove(id)
+    }
+
+    /// Prune all vectors inserted before `cutoff_block`.
+    ///
+    /// Returns the number of vectors removed. Vectors without timestamps
+    /// (inserted via `insert()` without block tracking) are NOT pruned.
+    pub fn prune_before(&mut self, cutoff_block: u64) -> usize {
+        let expired_ids: Vec<u64> = self.timestamps
+            .iter()
+            .filter(|&(_, &block)| block < cutoff_block)
+            .map(|(&id, _)| id)
+            .collect();
+
+        let count = expired_ids.len();
+        for id in expired_ids {
+            self.remove(id);
+        }
+        count
     }
 
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(u64, f32)>, HnswError> {
@@ -624,7 +717,18 @@ impl HnswVectorStore {
 
     #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HnswError> {
-        Ok(Self { index: HnswIndex::from_bytes(bytes)? })
+        let index = HnswIndex::from_bytes(bytes)?;
+        Ok(Self {
+            max_capacity: index.len().max(Self::DEFAULT_MAX_CAPACITY),
+            index,
+            timestamps: HashMap::new(),
+        })
+    }
+
+    /// Get current capacity limit.
+    #[allow(dead_code)]
+    pub fn capacity(&self) -> usize {
+        self.max_capacity
     }
 
     /// Calculate Merkle root hash for consensus verification
@@ -764,7 +868,11 @@ impl HnswVectorStore {
 
 impl Default for HnswVectorStore {
     fn default() -> Self {
-        Self::new(768) // Default to 768 dimensions (standard embedding size)
+        Self {
+            index: HnswIndex::new(768), // Default to 768 dimensions (standard embedding size)
+            max_capacity: Self::DEFAULT_MAX_CAPACITY,
+            timestamps: HashMap::new(),
+        }
     }
 }
 
@@ -942,5 +1050,87 @@ mod tests {
     fn test_dimension() {
         let store = HnswVectorStore::new(768);
         assert_eq!(store.dimension(), 768);
+    }
+
+    // ==================== Capacity Limit Tests ====================
+
+    #[test]
+    fn test_capacity_enforcement() {
+        let mut store = HnswVectorStore::with_capacity(2, 3);
+
+        store.insert(1, vec![1.0, 0.0]).unwrap();
+        store.insert(2, vec![0.0, 1.0]).unwrap();
+        store.insert(3, vec![0.5, 0.5]).unwrap();
+
+        // 4th insert should fail
+        let result = store.insert(4, vec![0.1, 0.9]);
+        assert!(matches!(result, Err(HnswError::CapacityExceeded)));
+        assert_eq!(store.len(), 3);
+    }
+
+    #[test]
+    fn test_with_capacity_constructor() {
+        let store = HnswVectorStore::with_capacity(4, 500);
+        assert_eq!(store.capacity(), 500);
+        assert_eq!(store.dimension(), 4);
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_default_capacity() {
+        let store = HnswVectorStore::new(768);
+        assert_eq!(store.capacity(), HnswVectorStore::DEFAULT_MAX_CAPACITY);
+    }
+
+    // ==================== TTL Pruning Tests ====================
+
+    #[test]
+    fn test_insert_with_block_and_prune() {
+        let mut store = HnswVectorStore::new(2);
+
+        store.insert_with_block(1, vec![1.0, 0.0], 100).unwrap();
+        store.insert_with_block(2, vec![0.0, 1.0], 200).unwrap();
+        store.insert_with_block(3, vec![0.5, 0.5], 300).unwrap();
+        assert_eq!(store.len(), 3);
+
+        // Prune vectors before block 250 — should remove IDs 1 and 2
+        let pruned = store.prune_before(250);
+        assert_eq!(pruned, 2);
+        assert_eq!(store.len(), 1);
+
+        // Remaining vector should still be searchable
+        let results = store.search(&[0.5, 0.5], 1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, 3);
+    }
+
+    #[test]
+    fn test_prune_empty_store() {
+        let mut store = HnswVectorStore::new(2);
+        let pruned = store.prune_before(999);
+        assert_eq!(pruned, 0);
+    }
+
+    #[test]
+    fn test_prune_no_expiry() {
+        let mut store = HnswVectorStore::new(2);
+        store.insert_with_block(1, vec![1.0, 0.0], 500).unwrap();
+        store.insert_with_block(2, vec![0.0, 1.0], 600).unwrap();
+
+        // Cutoff before any insertions — nothing should be pruned
+        let pruned = store.prune_before(100);
+        assert_eq!(pruned, 0);
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_single_vector() {
+        let mut store = HnswVectorStore::new(2);
+        store.insert_with_block(1, vec![1.0, 0.0], 100).unwrap();
+        store.insert_with_block(2, vec![0.0, 1.0], 200).unwrap();
+
+        assert!(store.remove(1));
+        assert_eq!(store.len(), 1);
+        assert!(!store.remove(1)); // Already removed
     }
 }

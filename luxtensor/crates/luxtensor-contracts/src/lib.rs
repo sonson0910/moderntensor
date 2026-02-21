@@ -9,6 +9,8 @@ pub mod evm_executor;
 pub mod revm_integration;
 pub mod account_abstraction;
 pub mod ai_precompiles;
+pub mod agent_registry;
+pub mod agent_trigger;
 
 
 pub use error::*;
@@ -32,4 +34,7 @@ pub use ai_precompiles::{
 };
 pub use revm_integration::precompiles;
 pub use revm_integration::{execute_ai_precompile, is_luxtensor_precompile};
+pub use agent_registry::{AgentRegistry, AgentAccount, AgentTriggerConfig, AgentRegistryConfig, AgentRegistryError};
+pub use agent_trigger::{AgentTriggerEngine, TriggerResult, BlockTriggerOutcome};
+
 

@@ -14,6 +14,7 @@ members = [
     "crates/luxtensor-indexer",
     "crates/luxtensor-oracle",
     "crates/luxtensor-zkvm",
+    "crates/luxtensor-methods",
 ]
 resolver = "2"
 

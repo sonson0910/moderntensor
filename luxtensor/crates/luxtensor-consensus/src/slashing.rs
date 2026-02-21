@@ -21,6 +21,8 @@ pub struct SlashingConfig {
     pub double_sign_slash_percent: u8,
     /// Percentage to slash for invalid block (0-100)
     pub invalid_block_slash_percent: u8,
+    /// Percentage to slash for fraudulent AI results (0-100)
+    pub fraudulent_ai_slash_percent: u8,
     /// Minimum slash amount (absolute)
     pub min_slash_amount: u128,
     /// Jail duration in blocks
@@ -34,6 +36,7 @@ impl Default for SlashingConfig {
             offline_slash_percent: 1,                    // 1% stake
             double_sign_slash_percent: 10,               // 10% stake
             invalid_block_slash_percent: 5,              // 5% stake
+            fraudulent_ai_slash_percent: 20,             // 20% stake — severe penalty for AI fraud
             min_slash_amount: 1_000_000_000_000_000_000, // 1 token
             jail_duration: 7200,                         // ~24 hours @ 12s blocks
         }
@@ -51,6 +54,8 @@ pub enum SlashReason {
     InvalidBlock,
     /// Validator submitted invalid weights
     InvalidWeights,
+    /// Miner submitted fraudulent AI computation result (proven by ZK fraud proof)
+    FraudulentAI,
     /// Custom reason with percentage
     Custom(u8),
 }
@@ -63,6 +68,7 @@ impl SlashReason {
             SlashReason::DoubleSigning => config.double_sign_slash_percent,
             SlashReason::InvalidBlock => config.invalid_block_slash_percent,
             SlashReason::InvalidWeights => config.offline_slash_percent,
+            SlashReason::FraudulentAI => config.fraudulent_ai_slash_percent,
             SlashReason::Custom(pct) => *pct,
         }
     }
@@ -145,6 +151,11 @@ impl SlashingManager {
             slash_history: RwLock::new(Vec::new()),
             validator_set,
         }
+    }
+
+    /// Get a reference to the slashing configuration.
+    pub fn config(&self) -> &SlashingConfig {
+        &self.config
     }
 
     /// Record a missed block for validator
@@ -295,8 +306,10 @@ impl SlashingManager {
         }
 
         // Jail validator for serious offenses
-        let should_jail =
-            matches!(evidence.reason, SlashReason::DoubleSigning | SlashReason::InvalidBlock);
+        let should_jail = matches!(
+            evidence.reason,
+            SlashReason::DoubleSigning | SlashReason::InvalidBlock | SlashReason::FraudulentAI
+        );
 
         if should_jail {
             let jail_status = JailStatus {

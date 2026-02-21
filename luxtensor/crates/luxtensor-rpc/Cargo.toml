@@ -32,6 +32,7 @@ luxtensor-storage = { path = "../luxtensor-storage" }
 luxtensor-consensus = { path = "../luxtensor-consensus" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 luxtensor-contracts = { path = "../luxtensor-contracts" }
+luxtensor-oracle = { path = "../luxtensor-oracle" }
 luxtensor-zkvm = { path = "../luxtensor-zkvm" }
 
 [features]

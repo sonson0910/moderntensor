@@ -201,6 +201,15 @@ impl ZkProver {
     }
 
     /// Generate a RISC Zero STARK proof (when feature enabled)
+    ///
+    /// This method performs the actual ZK proof generation using the RISC Zero zkVM.
+    /// The guest program ELF is loaded, executed with the input data, and a
+    /// cryptographic proof of correct execution is generated.
+    ///
+    /// # Performance
+    /// - Dev mode (`RISC0_DEV_MODE=1`): ~1ms, no real proof
+    /// - CPU proving: 30s-5min depending on input complexity
+    /// - GPU proving (cuda/metal): 5x-10x faster than CPU
     #[cfg(feature = "risc0")]
     async fn generate_risc0_proof(
         &self,
@@ -212,31 +221,30 @@ impl ZkProver {
 
         let start = Instant::now();
 
-        // Build executor environment with input
+        // Build executor environment with input data.
+        // The guest program reads this data via env::read() and env::read_slice().
         let env = ExecutorEnv::builder()
             .write_slice(&input.data)
             .map_err(|e| ZkVmError::ExecutionFailed(e.to_string()))?
             .build()
             .map_err(|e| ZkVmError::ExecutionFailed(e.to_string()))?;
 
-        // Get prover based on configuration
-        let prover = if self.config.use_gpu && self.gpu_available() {
-            // GPU-accelerated prover
-            default_prover()
-        } else {
-            // CPU prover
-            default_prover()
-        };
+        // Get the default prover. When RISC0_DEV_MODE=1, this returns a
+        // dev-mode prover that executes the guest but skips real proving.
+        // In production (RISC0_DEV_MODE=0), this returns the full prover.
+        let prover = default_prover();
 
-        // Generate proof
+        // Generate proof — this is the expensive operation.
+        // In dev mode: instant. In production: 30s-5min.
         let prove_info = prover
             .prove(env, &elf_bytes)
             .map_err(|e| ZkVmError::ProofGenerationFailed(e.to_string()))?;
 
         let receipt = prove_info.receipt;
         let cycles = prove_info.stats.total_cycles;
+        let segments = prove_info.stats.segments;
 
-        // Optionally wrap to Groth16 for smaller proofs
+        // Serialize the receipt's inner proof for storage
         let (seal, proof_type) = if self.config.wrap_to_groth16 {
             #[cfg(feature = "groth16")]
             {
@@ -257,7 +265,7 @@ impl ZkProver {
             proving_time_ms: start.elapsed().as_millis() as u64,
             memory_bytes: 0, // RISC Zero doesn't expose this directly
             gpu_used: self.config.use_gpu && self.gpu_available(),
-            segments: prove_info.stats.segments as u32,
+            segments: segments as u32,
         };
 
         Ok(ProofReceipt {

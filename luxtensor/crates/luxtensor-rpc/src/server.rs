@@ -11,7 +11,7 @@ use luxtensor_consensus::{
     AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, ValidatorSet,
 };
 use luxtensor_core::{Hash, Transaction, UnifiedStateDB};
-use luxtensor_storage::{BlockchainDB, MetagraphDB};
+use luxtensor_storage::{BlockchainDB, CachedStateDB, MetagraphDB};
 use parking_lot::RwLock;
 use serde_json::json;
 use std::collections::HashMap;
@@ -28,6 +28,14 @@ use crate::helpers::{parse_address, parse_block_number_with_latest};
 use crate::helpers::parse_block_number;
 use crate::query_rpc::{register_query_methods as register_query_methods_new, QueryRpcContext};
 use crate::tx_rpc::{register_tx_methods, TxRpcContext};
+use crate::agent_rpc::{register_agent_methods as register_agent_methods_new, AgentRpcContext};
+use crate::dispute_rpc::{register_dispute_methods as register_dispute_methods_new, DisputeRpcContext};
+use crate::bridge_rpc::{register_bridge_methods, BridgeRpcContext};
+use crate::multisig_rpc::{register_multisig_methods, MultisigRpcContext};
+use luxtensor_contracts::AgentRegistry;
+use luxtensor_core::bridge::InMemoryBridge;
+use luxtensor_core::multisig::MultisigManager;
+use luxtensor_oracle::DisputeManager;
 use std::path::PathBuf;
 use tracing::warn;
 
@@ -79,6 +87,16 @@ pub struct RpcServer {
     cached_chain_id: Arc<AtomicU64>,
     /// Unified state - THE source of truth for all state operations
     unified_state: Arc<RwLock<UnifiedStateDB>>,
+    /// Agentic EVM — agent registry for on-chain autonomous agents
+    agent_registry: Option<Arc<AgentRegistry>>,
+    /// Optimistic AI — dispute manager for fraud-proof resolution
+    dispute_manager: Option<Arc<DisputeManager>>,
+    /// Cross-chain bridge for asset transfers
+    bridge: Option<Arc<InMemoryBridge>>,
+    /// Multisig wallet manager for multi-signature transactions
+    multisig_manager: Option<Arc<MultisigManager>>,
+    /// Merkle root cache for state root caching stats (optional)
+    merkle_cache: Option<Arc<CachedStateDB>>,
 }
 
 impl RpcServer {
@@ -141,6 +159,11 @@ impl RpcServer {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 
@@ -171,6 +194,21 @@ impl RpcServer {
     /// Get unified state reference (C1 Phase 2B)
     pub fn unified_state(&self) -> Arc<RwLock<UnifiedStateDB>> {
         self.unified_state.clone()
+    }
+
+    /// Set the cross-chain bridge instance (optional, enables bridge_* RPC methods)
+    pub fn set_bridge(&mut self, bridge: Arc<InMemoryBridge>) {
+        self.bridge = Some(bridge);
+    }
+
+    /// Set the multisig wallet manager (optional, enables multisig_* RPC methods)
+    pub fn set_multisig_manager(&mut self, manager: Arc<MultisigManager>) {
+        self.multisig_manager = Some(manager);
+    }
+
+    /// Set the merkle cache (optional, enables system_cacheStats RPC method)
+    pub fn set_merkle_cache(&mut self, cache: Arc<CachedStateDB>) {
+        self.merkle_cache = Some(cache);
     }
 
     /// Create a new RPC server for testing with external mempool
@@ -204,6 +242,11 @@ impl RpcServer {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 
@@ -254,6 +297,11 @@ impl RpcServer {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 
@@ -304,6 +352,11 @@ impl RpcServer {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 
@@ -338,6 +391,11 @@ impl RpcServer {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 
@@ -536,6 +594,23 @@ impl RpcServer {
             }))
         });
 
+        // system_cacheStats - Return Merkle cache statistics for monitoring
+        if let Some(ref cache) = self.merkle_cache {
+            let cache_for_stats = cache.clone();
+            io.add_sync_method("system_cacheStats", move |_params: Params| {
+                let stats = cache_for_stats.stats();
+                Ok(serde_json::json!({
+                    "full_computations": stats.full_computations,
+                    "incremental_computations": stats.incremental_computations,
+                    "root_cache_hits": stats.root_cache_hits,
+                    "root_cache_misses": stats.root_cache_misses,
+                    "hash_cache_hits": stats.hash_cache_hits,
+                    "hit_ratio": stats.hit_ratio(),
+                    "incremental_ratio": stats.incremental_ratio()
+                }))
+            });
+        }
+
         // sync_getSyncStatus - Return current sync status for state sync protocol
         let db_for_sync = self.db.clone();
         let unified_for_sync = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
@@ -598,6 +673,30 @@ impl RpcServer {
             self.db.clone(),
         );
         register_tx_methods(&tx_ctx, &mut io);
+
+        // Register Agent RPC methods (agent_*) — Agentic EVM
+        if let Some(ref registry) = self.agent_registry {
+            let agent_ctx = AgentRpcContext::new(registry.clone());
+            register_agent_methods_new(&agent_ctx, &mut io);
+        }
+
+        // Register Dispute RPC methods (dispute_*) — Optimistic AI
+        if let Some(ref dm) = self.dispute_manager {
+            let dispute_ctx = DisputeRpcContext::new(dm.clone());
+            register_dispute_methods_new(&dispute_ctx, &mut io);
+        }
+
+        // Register Bridge RPC methods (bridge_*) — Cross-Chain Asset Transfers
+        if let Some(ref bridge) = self.bridge {
+            let bridge_ctx = BridgeRpcContext::new(bridge.clone());
+            register_bridge_methods(&bridge_ctx, &mut io);
+        }
+
+        // Register Multisig RPC methods (multisig_*) — Multi-Signature Wallets
+        if let Some(ref mm) = self.multisig_manager {
+            let multisig_ctx = MultisigRpcContext::new(mm.clone());
+            register_multisig_methods(&multisig_ctx, &mut io);
+        }
 
         // Start HTTP server with optimized settings
         let thread_count = if threads > 0 { threads } else { 4 };
@@ -1026,6 +1125,11 @@ impl RpcServerBuilder {
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(self.chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(self.chain_id))),
+            agent_registry: None,
+            dispute_manager: None,
+            bridge: None,
+            multisig_manager: None,
+            merkle_cache: None,
         }
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "luxtensor-methods"
+version = "0.1.0"
+edition = "2021"
+description = "Build pipeline for LuxTensor RISC Zero guest programs"
+authors = ["LuxTensor Team"]
+license = "MIT"
+
+[build-dependencies]
+risc0-build = { version = "3.0" }
+
+[package.metadata.risc0]
+methods = ["../luxtensor-guest"]

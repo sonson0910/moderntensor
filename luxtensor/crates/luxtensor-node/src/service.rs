@@ -41,6 +41,9 @@ use luxtensor_consensus::{
     SubnetInfo, TokenAllocation, UtilityMetrics, ValidatorInfo,
 };
 use luxtensor_core::{Block, StateDB, Transaction};
+use luxtensor_storage::CachedStateDB;
+use luxtensor_core::bridge::{BridgeConfig, InMemoryBridge};
+use luxtensor_core::multisig::MultisigManager;
 use luxtensor_crypto::{KeyPair, MerkleTree};
 use luxtensor_network::eclipse_protection::{EclipseConfig, EclipseProtection};
 use luxtensor_network::rate_limiter::{
@@ -51,6 +54,8 @@ use luxtensor_network::{
     SwarmP2PNode,
 };
 use luxtensor_rpc::RpcServer;
+use luxtensor_contracts::{AgentRegistry, AgentTriggerEngine, EvmExecutor};
+use luxtensor_oracle::DisputeManager;
 use luxtensor_storage::maintenance::{BackupConfig, DbMaintenance, PruningConfig};
 use luxtensor_storage::metagraph_store::MetagraphDB;
 use luxtensor_storage::BlockchainDB;
@@ -171,6 +176,18 @@ pub struct NodeService {
     network_rate_limiter: Arc<NetworkRateLimiter>,
     /// Atomic height guard to prevent block height race between P2P and block production
     best_height_guard: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Agent registry for autonomous AI agents (Agentic EVM)
+    agent_registry: Arc<AgentRegistry>,
+    /// Agent trigger engine for block-level autonomous execution
+    agent_trigger_engine: Arc<AgentTriggerEngine>,
+    /// Dispute manager for optimistic AI fraud proofs
+    dispute_manager: Arc<DisputeManager>,
+    /// Cross-chain bridge for asset transfers
+    bridge: Arc<InMemoryBridge>,
+    /// Multisig wallet manager for multi-signature transactions
+    multisig_manager: Arc<MultisigManager>,
+    /// Merkle root caching layer wrapping state_db for efficient block production
+    merkle_cache: Arc<CachedStateDB>,
 }
 
 impl NodeService {
@@ -220,6 +237,10 @@ impl NodeService {
             }
         }
         info!("  ✓ State database initialized");
+
+        // Initialize Merkle cache wrapping the shared state_db
+        let merkle_cache = Arc::new(CachedStateDB::with_defaults(state_db.clone()));
+        info!("  ✓ Merkle cache initialized (height_cache=256, account_hashes=4096)");
 
         // Initialize transaction executor
         info!("⚡ Initializing transaction executor...");
@@ -393,6 +414,27 @@ impl NodeService {
         )));
         info!("  ✓ Slashing manager initialized");
 
+        // Initialize Agentic EVM — Agent Registry + Trigger Engine
+        let agent_registry = Arc::new(AgentRegistry::with_defaults());
+        let agent_evm = Arc::new(EvmExecutor::new(config.node.chain_id as u64));
+        let agent_trigger_engine = Arc::new(AgentTriggerEngine::new(
+            agent_registry.clone(),
+            agent_evm,
+        ));
+        info!("  ✓ Agentic EVM initialized (agent registry + trigger engine)");
+
+        // Initialize Dispute Manager for optimistic AI execution
+        let dispute_manager = Arc::new(DisputeManager::default_config());
+        info!("  ✓ Dispute Manager initialized (optimistic AI fraud proofs)");
+
+        // Initialize Cross-Chain Bridge (in-memory for now, swap for persistent later)
+        let bridge = Arc::new(InMemoryBridge::new(BridgeConfig::default()));
+        info!("  ✓ Cross-Chain Bridge initialized (lock-and-mint / burn-and-release)");
+
+        // Initialize Multisig Wallet Manager
+        let multisig_manager = Arc::new(MultisigManager::new());
+        info!("  ✓ Multisig Manager initialized (N-of-M signature wallets)");
+
         // Initialize network-layer rate limiter
         let network_rate_limiter = Arc::new(NetworkRateLimiter::new(NetworkRateLimiterConfig {
             requests_per_second: 50, // 50 msgs/s per peer
@@ -498,6 +540,12 @@ impl NodeService {
             best_height_guard: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
                 initial_best_height,
             )),
+            agent_registry,
+            agent_trigger_engine,
+            dispute_manager,
+            bridge,
+            multisig_manager,
+            merkle_cache,
         })
     }
 
@@ -1154,13 +1202,18 @@ impl NodeService {
 
             // Use shared pending_txs for unified TX storage between RPC and P2P
             // 🔧 FIX: Pass config chain_id instead of hardcoded 1337
-            let rpc_server = RpcServer::new_with_shared_pending_txs(
+            let mut rpc_server = RpcServer::new_with_shared_pending_txs(
                 self.storage.clone(),
                 rpc_mempool.clone(),
                 broadcaster,
                 shared_pending_txs.clone(),
                 self.config.node.chain_id as u64,
             );
+
+            // Wire optional subsystems into the RPC server
+            rpc_server.set_bridge(self.bridge.clone());
+            rpc_server.set_multisig_manager(self.multisig_manager.clone());
+            rpc_server.set_merkle_cache(self.merkle_cache.clone());
 
             // Extract unified_state Arc BEFORE moving rpc_server into the spawn closure.
             // This allows block production to sync state into the RPC layer after each block.
@@ -1224,6 +1277,7 @@ impl NodeService {
             let consensus = self.consensus.clone();
             let storage = self.storage.clone();
             let state_db = self.state_db.clone();
+            let merkle_cache = self.merkle_cache.clone();
             let mempool = self.mempool.clone();
             let executor = self.executor.clone();
             let reward_executor = self.reward_executor.clone();
@@ -1250,6 +1304,9 @@ impl NodeService {
             let metagraph_db_clone = self.metagraph_db.clone();
             let unified_state_clone = unified_state_for_blocks.clone();
             let randao_clone = self.randao.clone();
+            let agent_trigger_clone = self.agent_trigger_engine.clone();
+            let dispute_manager_clone = self.dispute_manager.clone();
+            let slashing_manager_clone = self.slashing_manager.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -1273,6 +1330,10 @@ impl NodeService {
                     metagraph_db_clone,
                     unified_state_clone, // For syncing RPC state after each block
                     randao_clone,        // RANDAO mixer for epoch finalization
+                    agent_trigger_clone, // Agentic EVM triggers
+                    dispute_manager_clone, // Optimistic AI dispute processing
+                    slashing_manager_clone, // For dispute slashing
+                    merkle_cache,        // Merkle root caching layer
                 )
                 .await
             });
@@ -1399,6 +1460,14 @@ impl NodeService {
         unified_state: Option<Arc<parking_lot::RwLock<luxtensor_core::UnifiedStateDB>>>,
         // RANDAO mixer for epoch finalization
         randao: Arc<RwLock<RandaoMixer>>,
+        // Agentic EVM: block-level autonomous agent triggers
+        agent_trigger_engine: Arc<AgentTriggerEngine>,
+        // Optimistic AI: dispute manager for fraud proofs
+        dispute_manager: Arc<DisputeManager>,
+        // Slashing manager for dispute-triggered slashing
+        slashing_manager: Arc<RwLock<SlashingManager>>,
+        // Merkle root caching layer for efficient state root computation
+        merkle_cache: Arc<CachedStateDB>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -1526,6 +1595,10 @@ impl NodeService {
                         &metagraph_db,   // For reward distribution from metagraph
                         &randao,         // RANDAO mixer for epoch finalization
                         epoch_tx_accumulator, // 🔧 FIX MC-6: pass accumulated count
+                        &agent_trigger_engine, // Agentic EVM triggers
+                        &dispute_manager, // Optimistic AI disputes
+                        &slashing_manager, // For dispute slashing
+                        &merkle_cache,   // Merkle root caching
                     ).await {
                         Ok(block) => {
                             // 🔧 FIX MC-6: Accumulate TX count for the whole epoch
@@ -1615,6 +1688,14 @@ impl NodeService {
         randao: &Arc<RwLock<RandaoMixer>>,
         // 🔧 FIX MC-6: Accumulated TX count from prior blocks in this epoch
         epoch_tx_count: u64,
+        // 🤖 Agentic EVM: autonomous agent trigger engine
+        agent_trigger_engine: &Arc<AgentTriggerEngine>,
+        // ⚖️ Optimistic AI: dispute manager for fraud proofs
+        dispute_manager: &Arc<DisputeManager>,
+        // Slashing manager for dispute-triggered slashing
+        slashing_manager: &Arc<RwLock<SlashingManager>>,
+        // 📦 Merkle root caching layer — caches state roots by block height
+        merkle_cache: &Arc<CachedStateDB>,
     ) -> Result<Block> {
         // Get current height
         let height = storage.get_best_height()?.unwrap_or(0);
@@ -1682,6 +1763,24 @@ impl NodeService {
         let mut valid_receipts = Vec::new();
         let mut total_gas = 0u64;
 
+        // ── 🤖 Agentic EVM: process autonomous agent triggers ──
+        // Agents get executed before user transactions, allowing them to react
+        // to on-chain state changes from the previous block.
+        let gas_price: u128 = 1_000_000_000; // 1 Gwei baseline for agent triggers
+        let trigger_outcome = agent_trigger_engine.process_block_triggers(
+            new_height, block_timestamp, gas_price,
+        );
+        if trigger_outcome.successful > 0 || trigger_outcome.failed > 0 {
+            info!(
+                "🤖 Block #{}: {} agent triggers executed ({} failed, {} skipped, {} gas)",
+                new_height,
+                trigger_outcome.successful,
+                trigger_outcome.failed,
+                trigger_outcome.skipped,
+                trigger_outcome.total_gas_used,
+            );
+        }
+
         for (tx_index, tx) in transactions.into_iter().enumerate() {
             match executor.execute(
                 &tx,
@@ -1710,16 +1809,27 @@ impl NodeService {
         // Calculate receipts root
         let receipts_root = calculate_receipts_root(&valid_receipts);
 
-        // Short write lock: merge results, commit, and flush (<10ms)
-        let state_root = {
+        // Short write lock: merge results into shared state, then commit via
+        // CachedStateDB for height-indexed root caching.
+        //
+        // Lock ordering: write lock for merge only, then drop before commit()
+        // which acquires its own read lock internally.
+        {
             let mut state = state_db.write();
             state.merge_accounts(temp_state.snapshot_accounts());
-            let root = state.commit()?;
+        }
+
+        // Commit via merkle_cache: computes root & caches it by block height.
+        // This acquires a read lock on state_db internally.
+        let state_root = merkle_cache.commit(new_height)?;
+
+        // Flush persisted state to disk
+        {
+            let state = state_db.read();
             if let Err(e) = state.flush_to_db(storage.as_ref()) {
                 warn!("Failed to persist state to disk: {} (state is in-memory only)", e);
             }
-            root
-        };
+        }
         // FIXED (M-4): Block production now uses clone-then-commit pattern.
         // Read lock is held only briefly to snapshot accounts, TX execution runs
         // against an unlocked temporary StateDB, and write lock is held only for
@@ -1792,6 +1902,48 @@ impl NodeService {
         storage
             .store_block(&block)
             .context(format!("Failed to store block at height {}", header.height))?;
+
+        // ── ⚖️ Optimistic AI: process disputes and finalize/slash ──
+        // Run dispute resolution after storing the block so all state is committed.
+        let slash_percent = slashing_manager.read().config().fraudulent_ai_slash_percent;
+        let dispute_outcome = dispute_manager.process_block(new_height, slash_percent).await;
+        if dispute_outcome.finalized_count > 0 || dispute_outcome.disputes_verified > 0 {
+            info!(
+                "⚖️ Block #{}: {} results finalized, {} disputes verified, {} rejected",
+                new_height,
+                dispute_outcome.finalized_count,
+                dispute_outcome.disputes_verified,
+                dispute_outcome.rejected_disputes,
+            );
+        }
+        // Apply slashing for miners proven fraudulent via SlashingManager
+        for (miner_addr, _slash_amount) in &dispute_outcome.slashed_miners {
+            let miner_address = luxtensor_core::Address::from(*miner_addr);
+            let evidence = luxtensor_consensus::slashing::SlashingEvidence {
+                validator: miner_address,
+                reason: luxtensor_consensus::slashing::SlashReason::FraudulentAI,
+                height: new_height,
+                evidence_hash: None,
+                timestamp: block_timestamp,
+            };
+            match slashing_manager.write().slash(evidence, new_height) {
+                Ok(event) => {
+                    info!(
+                        "⚖️ Slashed miner 0x{} for {} wei (fraudulent AI result, jailed: {})",
+                        hex::encode(miner_addr),
+                        event.amount_slashed,
+                        event.jailed,
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to slash miner 0x{} for FraudulentAI: {}",
+                        hex::encode(miner_addr),
+                        e,
+                    );
+                }
+            }
+        }
 
         // Update consensus with the new block hash for VRF entropy
         consensus.read().update_last_block_hash(block.hash());

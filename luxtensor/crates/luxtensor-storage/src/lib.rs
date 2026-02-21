@@ -18,5 +18,6 @@ pub use error::*;
 pub use evm_store::{EvmAccountRecord, EvmStateStore};
 pub use maintenance::{DbMaintenance, BackupConfig, PruningConfig, BackupInfo, PruningStats};
 pub use metagraph_store::{MetagraphDB, StakingData, DelegationData, SubnetData, NeuronData, ValidatorData};
+pub use merkle_cache::{CachedStateDB, MerkleCacheConfig, MerkleCacheStats};
 pub use state_db::StateDB;
 pub use trie::MerkleTrie;

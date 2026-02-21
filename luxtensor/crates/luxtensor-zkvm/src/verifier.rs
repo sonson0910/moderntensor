@@ -366,33 +366,40 @@ impl ZkVerifier {
         start: Instant,
     ) -> Result<VerificationResult> {
         use risc0_zkvm::Receipt;
+        use crate::ZkVmError;
 
-        // Deserialize the receipt
+        // Deserialize the receipt from the seal bytes
         let inner: risc0_zkvm::InnerReceipt =
             bincode::deserialize(&receipt.proof.seal).map_err(|e| {
-                VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("Failed to deserialize STARK proof: {}", e),
-                )
+                ZkVmError::VerificationFailed(format!(
+                    "Failed to deserialize STARK proof: {}", e
+                ))
             })?;
 
-        let risc0_receipt =
-            Receipt { inner, journal: risc0_zkvm::Journal::new(receipt.journal.clone()) };
+        let risc0_receipt = Receipt {
+            inner,
+            journal: risc0_zkvm::Journal::new(receipt.journal.clone()),
+        };
 
-        // Verify the receipt against the image ID
-        risc0_receipt.verify(receipt.image_id.0.into()).map_err(|e| {
-            VerificationResult::invalid(
-                receipt.image_id,
-                format!("STARK verification failed: {}", e),
-            )
-        })?;
-
-        let journal_hash = keccak256(&receipt.journal);
-        Ok(VerificationResult::valid(
-            receipt.image_id,
-            journal_hash,
-            start.elapsed().as_micros() as u64,
-        ))
+        // Verify the receipt against the expected image ID.
+        // Receipt::verify takes impl Into<Digest> where Digest is [u32; 8].
+        // Our ImageId is [u8; 32], which converts to Digest via .into()
+        match risc0_receipt.verify(receipt.image_id.0) {
+            Ok(()) => {
+                let journal_hash = keccak256(&receipt.journal);
+                Ok(VerificationResult::valid(
+                    receipt.image_id,
+                    journal_hash,
+                    start.elapsed().as_micros() as u64,
+                ))
+            }
+            Err(e) => {
+                Ok(VerificationResult::invalid(
+                    receipt.image_id,
+                    format!("STARK verification failed: {}", e),
+                ))
+            }
+        }
     }
 
     /// Verify a Groth16-wrapped SNARK proof
@@ -445,28 +452,31 @@ impl ZkVerifier {
         start: Instant,
     ) -> Result<VerificationResult> {
         use risc0_groth16::Groth16Receipt;
+        use crate::ZkVmError;
 
         let groth16_receipt: Groth16Receipt =
             bincode::deserialize(&receipt.proof.seal).map_err(|e| {
-                VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("Failed to deserialize Groth16 proof: {}", e),
-                )
+                ZkVmError::VerificationFailed(format!(
+                    "Failed to deserialize Groth16 proof: {}", e
+                ))
             })?;
 
-        groth16_receipt.verify(&receipt.journal, receipt.image_id.0.into()).map_err(|e| {
-            VerificationResult::invalid(
-                receipt.image_id,
-                format!("Groth16 verification failed: {}", e),
-            )
-        })?;
-
-        let journal_hash = keccak256(&receipt.journal);
-        Ok(VerificationResult::valid(
-            receipt.image_id,
-            journal_hash,
-            start.elapsed().as_micros() as u64,
-        ))
+        match groth16_receipt.verify(&receipt.journal, receipt.image_id.0) {
+            Ok(()) => {
+                let journal_hash = keccak256(&receipt.journal);
+                Ok(VerificationResult::valid(
+                    receipt.image_id,
+                    journal_hash,
+                    start.elapsed().as_micros() as u64,
+                ))
+            }
+            Err(e) => {
+                Ok(VerificationResult::invalid(
+                    receipt.image_id,
+                    format!("Groth16 verification failed: {}", e),
+                ))
+            }
+        }
     }
 
     /// Batch verify multiple receipts

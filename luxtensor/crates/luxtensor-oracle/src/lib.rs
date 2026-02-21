@@ -3,15 +3,21 @@
 //! Bridges on-chain "Verifiable Intelligence" requests with off-chain AI computation.
 
 pub mod config;
+pub mod dispute;
 pub mod listener;
 pub mod processor;
 pub mod submitter;
 pub mod error;
 
 pub use config::OracleConfig;
+pub use dispute::{DisputeManager, DisputeConfig, DisputeStatus, FraudProof};
 pub use listener::EventWatcher;
 pub use processor::RequestProcessor;
 pub use submitter::TxSubmitter;
+
+// Re-export ethers types used in the dispute API so downstream crates
+// (like luxtensor-rpc) don't need a direct ethers dependency.
+pub use ethers::types::{H256, Bytes as EthBytes};
 
 use tracing::{info, warn, error};
 use std::time::Duration;

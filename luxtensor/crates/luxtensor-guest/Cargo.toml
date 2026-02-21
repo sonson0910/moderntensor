@@ -1,0 +1,13 @@
+[package]
+name = "luxtensor-guest"
+version = "0.1.0"
+edition = "2021"
+description = "RISC Zero guest program for LuxTensor AI inference verification"
+authors = ["LuxTensor Team"]
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+# RISC Zero guest environment (no_std compatible)
+risc0-zkvm = { version = "3.0", default-features = false, features = ["guest"] }
