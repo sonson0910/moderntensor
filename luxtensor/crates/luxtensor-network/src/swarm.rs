@@ -6,6 +6,7 @@ use crate::eclipse_protection::{EclipseProtection, EclipseConfig};
 use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
 use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
 use futures::StreamExt;
+use std::sync::atomic::AtomicU64;
 use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity, ValidationMode},
     identity::Keypair,
@@ -75,10 +76,14 @@ pub struct SwarmP2PNode {
     peer_discovery: std::sync::Arc<PeerDiscovery>,
     /// 🔧 FIX: Eclipse protection to limit connections per subnet
     eclipse_protection: std::sync::Arc<EclipseProtection>,
+    /// Monotonic nonce to prevent gossipsub dedup of identical sync requests
+    sync_nonce: AtomicU64,
+    /// Throttle: last time we responded to any sync request
+    last_sync_response: std::time::Instant,
 }
 
 /// Maximum sync requests per peer per minute
-const MAX_SYNC_REQUESTS_PER_PEER: u32 = 10;
+const MAX_SYNC_REQUESTS_PER_PEER: u32 = 60;
 /// Sync rate limit window
 const SYNC_RATE_LIMIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -305,6 +310,8 @@ impl SwarmP2PNode {
             sync_requests: std::collections::HashMap::new(),
             peer_discovery,
             eclipse_protection,
+            sync_nonce: AtomicU64::new(0),
+            last_sync_response: std::time::Instant::now(),
         }, command_tx))
     }
 
@@ -405,8 +412,9 @@ impl SwarmP2PNode {
                                 blocks
                             };
                             if !blocks.is_empty() {
-                                info!("📤 SWARM: Broadcasting {} blocks for sync", blocks.len());
-                                let message = NetworkMessage::Blocks(blocks);
+                                debug!("📤 SWARM: Broadcasting {} blocks for sync", blocks.len());
+                                let nonce = self.sync_nonce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let message = NetworkMessage::Blocks { blocks, nonce };
                                 let data = match bincode::serialize(&message) {
                                     Ok(d) => d,
                                     Err(e) => {
@@ -420,7 +428,7 @@ impl SwarmP2PNode {
                                     self.blocks_topic.clone(),
                                     data
                                 ) {
-                                    Ok(_) => info!("📡 Sync blocks broadcast successful"),
+                                    Ok(_) => debug!("📡 Sync blocks broadcast successful"),
                                     Err(gossipsub::PublishError::InsufficientPeers) => {
                                         warn!("⚠️ No peers subscribed to topic for sync blocks broadcast");
                                     }
@@ -521,7 +529,7 @@ impl SwarmP2PNode {
     fn handle_gossip_message(&mut self, source: PeerId, message: gossipsub::Message) {
         let topic = message.topic.to_string();
         let msg_len = message.data.len();
-        info!("📨 GOSSIP RECEIVED: from {} on topic {} - {} bytes", source, topic, msg_len);
+        debug!("📨 GOSSIP RECEIVED: from {} on topic {} - {} bytes", source, topic, msg_len);
 
         // SECURITY: Reject oversized messages before deserialization
         if msg_len > crate::messages::MAX_MESSAGE_SIZE as usize {
@@ -533,7 +541,7 @@ impl SwarmP2PNode {
         // Deserialize message with size limit to prevent DoS
         match crate::messages::deserialize_message(&message.data) {
             Ok(NetworkMessage::NewBlock(block)) => {
-                info!("📥 Received block #{} from peer {}", block.header.height, source);
+                debug!("📥 Received block #{} from peer {}", block.header.height, source);
                 if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
                     warn!("⚠️ Event channel full, dropping NewBlock — node is falling behind");
                 }
@@ -544,7 +552,7 @@ impl SwarmP2PNode {
                     warn!("⚠️ Event channel full, dropping NewTransaction");
                 }
             }
-            Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id: _ }) => {
+            Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id: _, nonce: _ }) => {
                 // SECURITY: Validate sync range to prevent DoS.
                 // An attacker requesting from_height=0, to_height=u64::MAX would force
                 // expensive database lookups. Cap range at 1000 blocks.
@@ -565,28 +573,38 @@ impl SwarmP2PNode {
                     entry.1 = now;
                 }
 
-                // Check rate limit
-                if entry.0 >= MAX_SYNC_REQUESTS_PER_PEER {
-                    warn!("🚫 Rate limiting sync requests from peer {} ({} requests/min)",
+                entry.0 += 1;
+
+                // Warn on high request rate but don't block — gossipsub replays
+                // cached messages in bursts when peers first connect, which would
+                // otherwise permanently starve sync.
+                if entry.0 == MAX_SYNC_REQUESTS_PER_PEER {
+                    debug!("⚠️ High sync request rate from peer {} ({} requests/min)",
                           source, entry.0);
+                }
+                // Throttle: only respond to sync requests every 5 seconds max
+                // This prevents O(N²) response storms when multiple peers request same range
+                let elapsed = now.duration_since(self.last_sync_response);
+                if elapsed < std::time::Duration::from_secs(5) {
+                    debug!("🔄 Throttling sync response (last response {}ms ago)", elapsed.as_millis());
                     return;
                 }
+                self.last_sync_response = now;
 
-                entry.0 += 1;
-                info!("🔄 Sync request from {} for blocks {}-{}", source, from_height, to_height);
+                debug!("🔄 Sync request from {} for blocks {}-{}", source, from_height, to_height);
                 if self.event_sender.try_send(SwarmP2PEvent::SyncRequest {
                     from_height,
                     to_height,
-                    requester_id: source.to_string(),  // 🔧 FIX #18: Use authenticated peer ID instead of untrusted self-reported value
+                    requester_id: source.to_string(),
                 }).is_err() {
-                    warn!("⚠️ Event channel full, dropping SyncRequest");
+                    debug!("⚠️ Event channel full, dropping SyncRequest");
                 }
             }
-            Ok(NetworkMessage::Blocks(blocks)) => {
-                info!("📥 Received {} blocks from sync", blocks.len());
-                for block in blocks {
+            Ok(NetworkMessage::Blocks { blocks, nonce: _ }) => {
+                debug!("📥 Received {} blocks from sync", blocks.len());
+                for block in blocks.into_iter().take(50) {
                     if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
-                        warn!("⚠️ Event channel full, dropping sync block");
+                        debug!("⚠️ Event channel full, dropping sync block");
                         break;
                     }
                 }
@@ -683,18 +701,22 @@ impl SwarmP2PNode {
     }
 
     /// Send sync request to network
+    /// Each request gets a unique nonce to prevent gossipsub from deduplicating
+    /// identical requests (same from/to/requester_id) via keccak256 message_id_fn
     fn send_sync_request(&mut self, from_height: u64, to_height: u64, my_id: String) -> Result<(), NetworkError> {
+        let nonce = self.sync_nonce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let message = NetworkMessage::SyncRequest {
             from_height,
             to_height,
-            requester_id: my_id.clone()
+            requester_id: my_id.clone(),
+            nonce,
         };
         let data = bincode::serialize(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         match self.swarm.behaviour_mut().gossipsub.publish(self.sync_topic.clone(), data) {
             Ok(_) => {
-                info!("🔄 Sent sync request for blocks {}-{}", from_height, to_height);
+                debug!("🔄 Sent sync request for blocks {}-{}", from_height, to_height);
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {

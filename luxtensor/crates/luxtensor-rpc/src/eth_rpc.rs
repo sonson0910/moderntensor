@@ -30,6 +30,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
+// Shared RLP encoding helpers from luxtensor-core
+use luxtensor_core::rlp::{rlp_encode_bytes, rlp_encode_u64, rlp_encode_u128, rlp_encode_list};
+
 // ============================================================================
 // RLP Transaction Decoding — MetaMask / ethers.js / web3.js compatibility
 // ============================================================================
@@ -150,71 +153,8 @@ fn rlp_decode_list(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     Ok(items)
 }
 
-/// RLP-encode a single item (bytes)
-fn rlp_encode_bytes(data: &[u8]) -> Vec<u8> {
-    if data.len() == 1 && data[0] <= 0x7f {
-        return data.to_vec();
-    }
-    if data.is_empty() {
-        return vec![0x80];
-    }
-    if data.len() <= 55 {
-        let mut out = vec![0x80 + data.len() as u8];
-        out.extend_from_slice(data);
-        out
-    } else {
-        let len_bytes = to_minimal_be(data.len() as u64);
-        let mut out = vec![0xb7 + len_bytes.len() as u8];
-        out.extend_from_slice(&len_bytes);
-        out.extend_from_slice(data);
-        out
-    }
-}
-
-/// RLP-encode a u64 as minimal big-endian bytes
-fn rlp_encode_u64(val: u64) -> Vec<u8> {
-    if val == 0 {
-        return vec![0x80]; // empty bytes = 0
-    }
-    let bytes = to_minimal_be(val);
-    rlp_encode_bytes(&bytes)
-}
-
-/// RLP-encode a u128 as minimal big-endian bytes
-fn rlp_encode_u128(val: u128) -> Vec<u8> {
-    if val == 0 {
-        return vec![0x80];
-    }
-    let full = val.to_be_bytes();
-    let start = full.iter().position(|&b| b != 0).unwrap_or(16);
-    rlp_encode_bytes(&full[start..])
-}
-
-/// RLP-encode a list from pre-encoded items
-fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
-    let payload: Vec<u8> = items.iter().flat_map(|i| i.iter().copied()).collect();
-    if payload.len() <= 55 {
-        let mut out = vec![0xc0 + payload.len() as u8];
-        out.extend_from_slice(&payload);
-        out
-    } else {
-        let len_bytes = to_minimal_be(payload.len() as u64);
-        let mut out = vec![0xf7 + len_bytes.len() as u8];
-        out.extend_from_slice(&len_bytes);
-        out.extend_from_slice(&payload);
-        out
-    }
-}
-
-/// Convert u64 to minimal big-endian bytes (no leading zeroes)
-fn to_minimal_be(val: u64) -> Vec<u8> {
-    if val == 0 {
-        return vec![];
-    }
-    let full = val.to_be_bytes();
-    let start = full.iter().position(|&b| b != 0).unwrap_or(7);
-    full[start..].to_vec()
-}
+// NOTE: RLP encode functions (rlp_encode_bytes, rlp_encode_u64, rlp_encode_u128,
+// rlp_encode_list, to_minimal_be) are now imported from luxtensor_core::rlp above.
 
 /// Decode an RLP item as u64
 fn rlp_item_to_u64(item: &[u8]) -> Result<u64, String> {
@@ -409,7 +349,7 @@ fn decode_legacy_tx(raw: &[u8]) -> Result<RlpDecodedTx, String> {
         to,
         value,
         data,
-        v: v_raw,
+        v: recovery_id as u64, // Store recovery_id (0 or 1), NOT v_raw
         r,
         s,
         tx_type: 0,
@@ -609,11 +549,13 @@ pub struct ReadyTransaction {
     pub value: u128,
     pub data: Vec<u8>,
     pub gas: u64,
+    /// Gas price in wei (must match what was signed)
+    pub gas_price: u64,
     /// Signature R component (32 bytes)
     pub r: [u8; 32],
     /// Signature S component (32 bytes)
     pub s: [u8; 32],
-    /// Signature V component (recovery id)
+    /// Signature V component (recovery id: 0 or 1)
     pub v: u8,
 }
 
@@ -756,12 +698,14 @@ fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
 /// - `mempool`: Transaction mempool (pending_txs, tx_queue)
 /// - `unified_state`: Primary state source for reads (chain_id, nonces, balances, code, storage)
 /// - `broadcaster`: P2P transaction broadcaster for relaying RPC-submitted transactions
+/// - `evm_executor`: Shared EVM executor from block execution (for eth_call storage reads)
 pub fn register_eth_methods(
     io: &mut IoHandler,
     mempool: Arc<RwLock<Mempool>>,
     unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
     db: Arc<luxtensor_storage::BlockchainDB>,
     broadcaster: Arc<dyn crate::TransactionBroadcaster>,
+    evm_executor: Option<luxtensor_contracts::EvmExecutor>,
 ) {
     // eth_chainId - Route to UnifiedStateDB
     let state = unified_state.clone();
@@ -1024,8 +968,9 @@ pub fn register_eth_methods(
     });
 
     // eth_call - Execute a call without creating a transaction (read-only)
-    // Uses unified_state for contract code and block_number
+    // Uses shared EvmExecutor.static_call() to read REAL contract storage
     let state_for_call = unified_state.clone();
+    let evm_for_call = evm_executor.clone();
     io.add_sync_method("eth_call", move |params: Params| {
         let p: Vec<serde_json::Value> = params.parse()?;
         let call_obj = p.get(0).ok_or_else(|| RpcError {
@@ -1044,7 +989,15 @@ pub fn register_eth_methods(
 
         let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("0x");
 
-        let value_str = call_obj.get("value").and_then(|v| v.as_str()).unwrap_or("0x0");
+        // Parse gas limit from call object (default: 1M)
+        let gas_limit: u64 = call_obj
+            .get("gas")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                let s = s.strip_prefix("0x").unwrap_or(s);
+                u64::from_str_radix(s, 16).ok()
+            })
+            .unwrap_or(1_000_000);
 
         // Parse addresses
         let from_addr = hex_to_address(from_str).unwrap_or([0u8; 20]);
@@ -1062,30 +1015,16 @@ pub fn register_eth_methods(
             hex::decode(s).unwrap_or_default()
         };
 
-        // Parse value
-        let value: u128 = {
-            let s = value_str.strip_prefix("0x").unwrap_or(value_str);
-            u128::from_str_radix(s, 16).unwrap_or(0)
-        };
-
-        // Get contract code from UnifiedStateDB
+        // Get contract code and block number from UnifiedStateDB
         let state_guard = state_for_call.read();
         let contract_code = match state_guard.get_code(&luxtensor_core::Address::from(to_addr)) {
             Some(code) => code.to_vec(),
             None => {
-                // No contract code, return empty
                 return Ok(json!("0x"));
             }
         };
         let block_number = state_guard.block_number();
-        let caller_balance = state_guard.get_balance(&luxtensor_core::Address::from(from_addr));
         drop(state_guard);
-
-        // Execute call using EvmExecutor seeded with real state
-        let executor = luxtensor_contracts::EvmExecutor::default();
-        // Fund caller and deploy target code so the EVM operates on correct state
-        executor.fund_account(&luxtensor_core::Address::from(from_addr), caller_balance);
-        executor.deploy_code(&luxtensor_core::Address::from(to_addr), contract_code.clone());
 
         // Get current timestamp
         let timestamp = std::time::SystemTime::now()
@@ -1093,23 +1032,45 @@ pub fn register_eth_methods(
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // Execute the call
-        match executor.call(
-            luxtensor_core::Address::from(from_addr),
-            luxtensor_contracts::ContractAddress::from(to_addr),
-            contract_code,
-            data,
-            value,
-            1_000_000, // Gas limit for eth_call
-            block_number,
-            timestamp,
-            1, // gas_price for eth_call
-        ) {
-            Ok((output, _gas_used, _logs)) => Ok(json!(format!("0x{}", hex::encode(output)))),
-            Err(e) => {
-                // Log error but return empty for compatibility
-                tracing::warn!("eth_call execution error: {:?}", e);
-                Ok(json!("0x"))
+        // Use shared EvmExecutor.static_call() which deep-clones the real EVM state
+        // (accounts, storage, block_hashes) and executes WITHOUT committing changes.
+        // This ensures eth_call reads the actual contract storage from executed TXs.
+        if let Some(ref executor) = evm_for_call {
+            match executor.static_call(
+                luxtensor_core::Address::from(from_addr),
+                luxtensor_contracts::ContractAddress::from(to_addr),
+                contract_code,
+                data,
+                gas_limit,
+                block_number,
+                timestamp,
+                1, // gas_price for eth_call
+            ) {
+                Ok((output, _gas_used, _logs)) => Ok(json!(format!("0x{}", hex::encode(output)))),
+                Err(e) => {
+                    tracing::warn!("eth_call execution error: {:?}", e);
+                    Ok(json!("0x"))
+                }
+            }
+        } else {
+            // Fallback: no shared executor, create a fresh one (no storage — legacy behavior)
+            let fallback = luxtensor_contracts::EvmExecutor::default();
+            fallback.deploy_code(&luxtensor_core::Address::from(to_addr), contract_code.clone());
+            match fallback.static_call(
+                luxtensor_core::Address::from(from_addr),
+                luxtensor_contracts::ContractAddress::from(to_addr),
+                contract_code,
+                data,
+                gas_limit,
+                block_number,
+                timestamp,
+                1,
+            ) {
+                Ok((output, _gas_used, _logs)) => Ok(json!(format!("0x{}", hex::encode(output)))),
+                Err(e) => {
+                    tracing::warn!("eth_call fallback execution error: {:?}", e);
+                    Ok(json!("0x"))
+                }
             }
         }
     });
@@ -1254,8 +1215,9 @@ pub fn register_eth_methods(
         }
 
         // Create ReadyTransaction with signature
+        let gas_price = decoded.gas_price;
         let ready_tx =
-            ReadyTransaction { nonce, from, to, value, data: data.clone(), gas, r, s, v };
+            ReadyTransaction { nonce, from, to, value, data: data.clone(), gas, gas_price, r, s, v };
 
         let mut mempool_guard = mp_for_sendraw.write();
 

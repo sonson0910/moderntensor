@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_context_creation() {
-        let ctx = ZkmlRpcContext::new();
+        let ctx = ZkmlRpcContext::dev();
         assert!(ctx.proofs.read().is_empty());
         assert!(ctx.trusted_images.read().is_empty());
     }

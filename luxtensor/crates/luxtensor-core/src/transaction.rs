@@ -2,6 +2,12 @@ use crate::{Address, Hash, Result};
 use luxtensor_crypto::keccak256;
 use serde::{Deserialize, Serialize};
 
+/// Strip leading zero bytes for canonical RLP encoding of big integers.
+fn strip_leading_zeros(bytes: &[u8]) -> &[u8] {
+    let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
+    &bytes[start..]
+}
+
 /// Transaction structure with chain_id for replay protection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -62,38 +68,82 @@ impl Transaction {
         }
     }
 
-    /// Calculate transaction hash (excludes signature fields to prevent malleability)
+    /// Calculate Ethereum-standard transaction hash.
+    ///
+    /// This is `keccak256(RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s]))`
+    /// where `v` follows EIP-155: `v = recovery_id + 2 * chain_id + 35`.
+    ///
+    /// This matches what `eth_sendRawTransaction` returns and what wallets/explorers
+    /// use to identify transactions.
     pub fn hash(&self) -> Hash {
-        // Hash only pre-signature fields to ensure TX ID stability
-        // This prevents signature malleability from changing the txid
+        keccak256(&self.rlp_signed())
+    }
+
+    /// Get the EIP-155 signing hash (used for signature verification).
+    ///
+    /// This is `keccak256(RLP([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]))`.
+    /// Used internally for ecrecover — NOT the transaction ID.
+    pub fn signing_hash(&self) -> Hash {
         keccak256(&self.signing_message())
     }
 
-    /// Get signing message for this transaction (includes chain_id for replay protection)
-    /// Uses length-prefixed encoding to prevent field collision attacks
+    /// Get signing message for this transaction (EIP-155 standard format).
+    ///
+    /// Produces `RLP([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0])`
+    /// which is the standard EIP-155 unsigned transaction encoding.
+    /// This ensures compatibility with all Ethereum wallets (MetaMask, eth_account, ethers.js).
     pub fn signing_message(&self) -> Vec<u8> {
-        let mut msg = Vec::new();
-        // Include chain_id FIRST to prevent cross-chain replay attacks
-        msg.extend_from_slice(&self.chain_id.to_le_bytes());
-        msg.extend_from_slice(&self.nonce.to_le_bytes());
-        msg.extend_from_slice(self.from.as_bytes());
-        // Use presence byte to distinguish None from Some (prevents collision)
-        match self.to {
-            Some(to) => {
-                msg.push(0x01); // present
-                msg.extend_from_slice(to.as_bytes());
-            }
-            None => {
-                msg.push(0x00); // absent
-            }
-        }
-        msg.extend_from_slice(&self.value.to_le_bytes());
-        msg.extend_from_slice(&self.gas_price.to_le_bytes());
-        msg.extend_from_slice(&self.gas_limit.to_le_bytes());
-        // Length-prefix data to prevent collision with other fields
-        msg.extend_from_slice(&(self.data.len() as u64).to_le_bytes());
-        msg.extend_from_slice(&self.data);
-        msg
+        use crate::rlp::{rlp_encode_bytes, rlp_encode_u64, rlp_encode_u128, rlp_encode_list};
+
+        let to_encoded = match &self.to {
+            Some(addr) => rlp_encode_bytes(addr.as_bytes()),
+            None => rlp_encode_bytes(&[]),
+        };
+
+        rlp_encode_list(&[
+            rlp_encode_u64(self.nonce),
+            rlp_encode_u64(self.gas_price),
+            rlp_encode_u64(self.gas_limit),
+            to_encoded,
+            rlp_encode_u128(self.value),
+            rlp_encode_bytes(&self.data),
+            rlp_encode_u64(self.chain_id),
+            rlp_encode_bytes(&[]), // 0 (EIP-155)
+            rlp_encode_bytes(&[]), // 0 (EIP-155)
+        ])
+    }
+
+    /// Encode the full signed transaction as RLP.
+    ///
+    /// Produces `RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s])`
+    /// where v follows EIP-155: `v = recovery_id + 2 * chain_id + 35`.
+    /// This is the standard Ethereum "raw transaction" encoding.
+    pub fn rlp_signed(&self) -> Vec<u8> {
+        use crate::rlp::{rlp_encode_bytes, rlp_encode_u64, rlp_encode_u128, rlp_encode_list};
+
+        let to_encoded = match &self.to {
+            Some(addr) => rlp_encode_bytes(addr.as_bytes()),
+            None => rlp_encode_bytes(&[]),
+        };
+
+        // EIP-155: v = recovery_id + 2 * chain_id + 35
+        let v_eip155 = (self.v as u64) + 2 * self.chain_id + 35;
+
+        // Strip leading zeros from r and s for canonical RLP encoding
+        let r_trimmed = strip_leading_zeros(&self.r);
+        let s_trimmed = strip_leading_zeros(&self.s);
+
+        rlp_encode_list(&[
+            rlp_encode_u64(self.nonce),
+            rlp_encode_u64(self.gas_price),
+            rlp_encode_u64(self.gas_limit),
+            to_encoded,
+            rlp_encode_u128(self.value),
+            rlp_encode_bytes(&self.data),
+            rlp_encode_u64(v_eip155),
+            rlp_encode_bytes(r_trimmed),
+            rlp_encode_bytes(s_trimmed),
+        ])
     }
 
     /// Verify transaction signature

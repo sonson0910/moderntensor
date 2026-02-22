@@ -4,7 +4,7 @@
 //! and list bridge messages with optional status filtering.
 
 use jsonrpc_core::{IoHandler, Params};
-use luxtensor_core::bridge::{BridgeMessageStatus, InMemoryBridge};
+use luxtensor_core::bridge::{Bridge, BridgeMessageStatus, InMemoryBridge};
 use std::sync::Arc;
 
 /// Shared context for Bridge RPC handlers.
@@ -36,16 +36,14 @@ fn register_bridge_get_config(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     io.add_sync_method("bridge_getConfig", move |_params: Params| {
         let config = bridge.config();
         Ok(serde_json::json!({
-            "min_transfer_amount": config.min_transfer_amount,
-            "max_transfer_amount": config.max_transfer_amount,
-            "confirmation_threshold": config.confirmation_threshold,
+            "min_transfer_amount": config.min_transfer_amount.to_string(),
+            "min_attestations": config.min_attestations,
+            "max_message_age_blocks": config.max_message_age_blocks,
             "relayers": config.relayers.iter()
                 .map(|r| format!("0x{}", hex::encode(r)))
                 .collect::<Vec<_>>(),
-            "supported_chains": config.supported_chains.iter()
-                .map(|c| c.as_u64())
-                .collect::<Vec<_>>(),
             "paused": config.paused,
+            "attestation_only_mode": config.attestation_only_mode,
         }))
     });
 }
@@ -67,7 +65,7 @@ fn register_bridge_get_message(ctx: &BridgeRpcContext, io: &mut IoHandler) {
 
         match bridge.get_message(hash) {
             Ok(msg) => Ok(serde_json::json!({
-                "hash": format!("0x{}", hex::encode(msg.hash)),
+                "hash": format!("0x{}", hex::encode(msg.message_hash)),
                 "sender": format!("0x{}", hex::encode(msg.sender)),
                 "recipient": format!("0x{}", hex::encode(msg.recipient)),
                 "amount": msg.amount.to_string(),
@@ -76,10 +74,10 @@ fn register_bridge_get_message(ctx: &BridgeRpcContext, io: &mut IoHandler) {
                 "direction": format!("{:?}", msg.direction),
                 "status": format!("{:?}", msg.status),
                 "nonce": msg.nonce,
-                "block_number": msg.block_number,
-                "timestamp": msg.timestamp,
+                "source_block": msg.source_block,
+                "source_timestamp": msg.source_timestamp,
             })),
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            Err(e) => Err(jsonrpc_core::Error::invalid_params(format!("{}", e))),
         }
     });
 }
@@ -109,7 +107,7 @@ fn register_bridge_list_messages(ctx: &BridgeRpcContext, io: &mut IoHandler) {
             .iter()
             .map(|msg| {
                 serde_json::json!({
-                    "hash": format!("0x{}", hex::encode(msg.hash)),
+                    "hash": format!("0x{}", hex::encode(msg.message_hash)),
                     "sender": format!("0x{}", hex::encode(msg.sender)),
                     "recipient": format!("0x{}", hex::encode(msg.recipient)),
                     "amount": msg.amount.to_string(),

@@ -3,29 +3,27 @@
 // Now with on-chain persistent storage
 
 use crate::types::SubnetInfo;
+use dashmap::DashMap;
 use jsonrpc_core::{Params, Value};
 use luxtensor_storage::BlockchainDB;
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Register subnet-related RPC methods
 /// Subnets are persisted to BlockchainDB for on-chain storage
 pub fn register_subnet_handlers(
     io: &mut jsonrpc_core::IoHandler,
-    subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+    subnets: Arc<DashMap<u64, SubnetInfo>>,
     db: Arc<BlockchainDB>,
 ) {
     // Load existing subnets from DB into memory on startup
     if let Ok(stored_subnets) = db.get_all_subnets() {
-        let mut subnets_map = subnets.write();
         for (id, data) in stored_subnets {
             if let Ok(subnet) = bincode::deserialize::<SubnetInfo>(&data) {
-                subnets_map.insert(id, subnet);
+                subnets.insert(id, subnet);
             }
         }
-        if !subnets_map.is_empty() {
-            tracing::info!("📊 Loaded {} subnets from blockchain DB", subnets_map.len());
+        if !subnets.is_empty() {
+            tracing::info!("📊 Loaded {} subnets from blockchain DB", subnets.len());
         }
     }
 
@@ -42,9 +40,7 @@ pub fn register_subnet_handlers(
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
 
-        let subnets_map = subnets_clone.read();
-
-        if let Some(subnet) = subnets_map.get(&subnet_id) {
+        if let Some(subnet) = subnets_clone.get(&subnet_id) {
             let subnet_json = serde_json::json!({
                 "id": subnet.id,
                 "name": subnet.name,
@@ -64,11 +60,10 @@ pub fn register_subnet_handlers(
 
     // subnet_listAll - List all subnets
     io.add_sync_method("subnet_listAll", move |_params: Params| {
-        let subnets_map = subnets_clone.read();
-
-        let subnets_list: Vec<Value> = subnets_map
-            .values()
-            .map(|subnet| {
+        let subnets_list: Vec<Value> = subnets_clone
+            .iter()
+            .map(|entry| {
+                let subnet = entry.value();
                 serde_json::json!({
                     "id": subnet.id,
                     "name": subnet.name,
@@ -111,8 +106,7 @@ pub fn register_subnet_handlers(
         let emission_rate = u128::from_str_radix(emission_rate_str.trim_start_matches("0x"), 16)
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid emission rate format"))?;
 
-        let mut subnets_map = subnets_clone.write();
-        let subnet_id = subnets_map.len() as u64;
+        let subnet_id = subnets_clone.len() as u64;
 
         let subnet = SubnetInfo {
             id: subnet_id,
@@ -127,7 +121,7 @@ pub fn register_subnet_handlers(
                 .as_secs(),
         };
 
-        subnets_map.insert(subnet_id, subnet.clone());
+        subnets_clone.insert(subnet_id, subnet.clone());
 
         // Persist to blockchain DB
         if let Ok(data) = bincode::serialize(&subnet) {
@@ -143,8 +137,7 @@ pub fn register_subnet_handlers(
     // subnet_getCount - Get total subnet count
     let subnets_clone = subnets.clone();
     io.add_sync_method("subnet_getCount", move |_params: Params| {
-        let subnets_map = subnets_clone.read();
-        Ok(Value::Number(subnets_map.len().into()))
+        Ok(Value::Number(subnets_clone.len().into()))
     });
 
     // === SDK Aliases ===
@@ -152,10 +145,10 @@ pub fn register_subnet_handlers(
     // query_getSubnets - Alias for subnet_listAll
     let subnets_clone = subnets.clone();
     io.add_sync_method("query_getSubnets", move |_params: Params| {
-        let subnets_map = subnets_clone.read();
-        let subnets_list: Vec<Value> = subnets_map
-            .values()
-            .map(|subnet| {
+        let subnets_list: Vec<Value> = subnets_clone
+            .iter()
+            .map(|entry| {
+                let subnet = entry.value();
                 serde_json::json!({
                     "id": subnet.id,
                     "name": subnet.name,
@@ -179,8 +172,7 @@ pub fn register_subnet_handlers(
         let subnet_id = parsed[0]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
-        let subnets_map = subnets_clone.read();
-        if let Some(subnet) = subnets_map.get(&subnet_id) {
+        if let Some(subnet) = subnets_clone.get(&subnet_id) {
             Ok(serde_json::json!({
                 "id": subnet.id,
                 "name": subnet.name,

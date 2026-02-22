@@ -1,0 +1,64 @@
+﻿python : C:\Users\Admin\anaconda3\Lib\site-packa
+ges\pytest_asyncio\plugin.py:211: 
+PytestDeprecationWarning: The configuration 
+option "asyncio_default_fixture_loop_scope" is 
+unset.
+At line:1 char:20
++ ... THONUTF8=1; python -m pytest 
+tests/e2e/test_core_blockchain.py -v --t ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C: 
+   \Users\Admin\...cope" is unset.:String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+The event loop scope for asynchronous fixtures 
+will default to the fixture caching scope. 
+Future versions of pytest-asyncio will default 
+the loop scope for asynchronous fixtures to 
+function scope. Set the default fixture loop 
+scope explicitly in order to avoid unexpected 
+behavior in the future. Valid fixture loop 
+scopes are: "function", "class", "module", 
+"package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAUL
+T_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.13.5, pytest-8.3.4, pluggy-1.5.0 -- C:\Users\Admin\anaconda3\python.exe
+cachedir: .pytest_cache
+rootdir: D:\venera\cardano\moderntensor\moderntensor
+configfile: pytest.ini
+plugins: anyio-3.7.1, asyncio-1.1.0, cov-6.2.1, typeguard-4.4.4
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 15 items
+
+tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_faucet_funding PASSED [  6%]
+tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_send_transaction_and_query PASSED [ 13%]
+tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_transaction_receipt_after_mining PASSED [ 20%]
+tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_balance_transfer FAILED [ 26%]
+tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_nonce_increments FAILED [ 33%]
+tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_deploy_contract FAILED [ 40%]
+tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_call_contract_function PASSED [ 46%]
+tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_contract_storage_query FAILED [ 53%]
+tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_estimate_gas_for_contract PASSED [ 60%]
+tests/e2e/test_core_blockchain.py::TestCrossNodeQueries::test_cross_node_balance_query PASSED [ 66%]
+tests/e2e/test_core_blockchain.py::TestCrossNodeQueries::test_cross_node_transaction_query PASSED [ 73%]
+tests/e2e/test_core_blockchain.py::TestEdgeCases::test_gas_price_query PASSED [ 80%]
+tests/e2e/test_core_blockchain.py::TestEdgeCases::test_transaction_not_found PASSED [ 86%]
+tests/e2e/test_core_blockchain.py::TestEdgeCases::test_block_number_advancing PASSED [ 93%]
+tests/e2e/test_core_blockchain.py::TestEdgeCases::test_chain_id PASSED   [100%]
+
+================================== FAILURES ===================================
+D:\venera\cardano\moderntensor\moderntensor\tests\e2e\test_core_blockchain.py:197: AssertionError: Receiver balance: 0 -> 0
+D:\venera\cardano\moderntensor\moderntensor\tests\e2e\test_core_blockchain.py:225: AssertionError: Nonce: 0 -> 0
+D:\venera\cardano\moderntensor\moderntensor\tests\e2e\test_core_blockchain.py:269: AssertionError: Code empty: 0x
+D:\venera\cardano\moderntensor\moderntensor\tests\e2e\test_core_blockchain.py:316: AssertionError: Storage slot 0 should be 42, got 0
+=========================== short test summary info ===========================
+FAILED tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_balance_transfer
+FAILED tests/e2e/test_core_blockchain.py::TestTransactionLifecycle::test_nonce_increments
+FAILED tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_deploy_contract
+FAILED tests/e2e/test_core_blockchain.py::TestSmartContractDeployment::test_contract_storage_query
+======================== 4 failed, 11 passed in 27.51s ========================

@@ -3,29 +3,27 @@
 // Now with on-chain persistent storage
 
 use crate::types::WeightInfo;
+use dashmap::DashMap;
 use jsonrpc_core::{Params, Value};
 use luxtensor_storage::BlockchainDB;
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Register weight-related RPC methods
 /// Weights are persisted to BlockchainDB for on-chain storage
 pub fn register_weight_handlers(
     io: &mut jsonrpc_core::IoHandler,
-    weights: Arc<RwLock<HashMap<(u64, u64), Vec<WeightInfo>>>>,
+    weights: Arc<DashMap<(u64, u64), Vec<WeightInfo>>>,
     db: Arc<BlockchainDB>,
 ) {
     // Load existing weights from DB into memory on startup
     if let Ok(stored_weights) = db.get_all_weights() {
-        let mut weights_map = weights.write();
         for ((subnet_id, uid), data) in stored_weights {
             if let Ok(weight_list) = bincode::deserialize::<Vec<WeightInfo>>(&data) {
-                weights_map.insert((subnet_id, uid), weight_list);
+                weights.insert((subnet_id, uid), weight_list);
             }
         }
-        if !weights_map.is_empty() {
-            tracing::info!("📊 Loaded {} weight entries from blockchain DB", weights_map.len());
+        if !weights.is_empty() {
+            tracing::info!("📊 Loaded {} weight entries from blockchain DB", weights.len());
         }
     }
 
@@ -48,9 +46,7 @@ pub fn register_weight_handlers(
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron UID"))?;
 
-        let weights_map = weights_clone.read();
-
-        if let Some(weight_list) = weights_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(weight_list) = weights_clone.get(&(subnet_id, neuron_uid)) {
             let weights_json: Vec<Value> = weight_list
                 .iter()
                 .map(|w| {
@@ -107,8 +103,6 @@ pub fn register_weight_handlers(
             ));
         }
 
-        let mut weights_map = weights_clone.write();
-
         let weight_info: Vec<WeightInfo> = target_uids
             .into_iter()
             .zip(weight_values.into_iter())
@@ -118,7 +112,7 @@ pub fn register_weight_handlers(
             })
             .collect();
 
-        weights_map.insert((subnet_id, neuron_uid), weight_info.clone());
+        weights_clone.insert((subnet_id, neuron_uid), weight_info.clone());
 
         // Persist weights to blockchain DB
         if let Ok(data) = bincode::serialize(&weight_info) {
@@ -143,12 +137,12 @@ pub fn register_weight_handlers(
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
 
-        let weights_map = weights_clone.read();
-
-        let all_weights: Vec<Value> = weights_map
+        let all_weights: Vec<Value> = weights_clone
             .iter()
-            .filter(|((sid, _), _)| *sid == subnet_id)
-            .map(|((_, neuron_uid), weights)| {
+            .filter(|entry| entry.key().0 == subnet_id)
+            .map(|entry| {
+                let neuron_uid = entry.key().1;
+                let weights = entry.value();
                 serde_json::json!({
                     "neuron_uid": neuron_uid,
                     "weights": weights.iter().map(|w| {
@@ -176,11 +170,12 @@ pub fn register_weight_handlers(
         let subnet_id = parsed[0]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
-        let weights_map = weights_clone.read();
-        let all_weights: Vec<Value> = weights_map
+        let all_weights: Vec<Value> = weights_clone
             .iter()
-            .filter(|((sid, _), _)| *sid == subnet_id)
-            .map(|((_, neuron_uid), weights)| {
+            .filter(|entry| entry.key().0 == subnet_id)
+            .map(|entry| {
+                let neuron_uid = entry.key().1;
+                let weights = entry.value();
                 serde_json::json!({
                     "neuron_uid": neuron_uid,
                     "weights": weights.iter().map(|w| {
@@ -211,13 +206,13 @@ pub fn register_weight_handlers(
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
 
-        let weights_map = weights_clone.read();
-
         // Get all neurons that have set weights in this subnet
-        let commits: Vec<Value> = weights_map
+        let commits: Vec<Value> = weights_clone
             .iter()
-            .filter(|((sid, _), _)| *sid == subnet_id)
-            .map(|((_, neuron_uid), weights)| {
+            .filter(|entry| entry.key().0 == subnet_id)
+            .map(|entry| {
+                let neuron_uid = entry.key().1;
+                let weights = entry.value();
                 let total_weight: u64 = weights.iter().map(|w| w.weight as u64).sum();
                 serde_json::json!({
                     "neuron_uid": neuron_uid,
@@ -232,11 +227,11 @@ pub fn register_weight_handlers(
             })
             .collect();
 
+        let count = commits.len();
         Ok(serde_json::json!({
             "subnet_id": subnet_id,
             "commits": commits,
-            "count": commits.len()
+            "count": count
         }))
     });
 }
-

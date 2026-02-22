@@ -6,6 +6,7 @@ pub mod error;
 pub mod hnsw;
 pub mod multisig;
 pub mod receipt;
+pub mod rlp;
 pub mod semantic;
 pub mod semantic_registry;
 pub mod state;

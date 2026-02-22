@@ -168,7 +168,7 @@ fn register_multisig_propose_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
                 "to": format!("0x{}", hex::encode(tx.to)),
                 "value": tx.value.to_string(),
                 "approval_count": tx.approval_count(),
-                "created_at": tx.created_at,
+                "proposed_at": tx.proposed_at,
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
@@ -241,7 +241,7 @@ fn register_multisig_get_transaction(ctx: &MultisigRpcContext, io: &mut IoHandle
                 "value": tx.value.to_string(),
                 "approval_count": tx.approval_count(),
                 "executed": tx.executed,
-                "created_at": tx.created_at,
+                "proposed_at": tx.proposed_at,
                 "expires_at": tx.expires_at,
                 "approvals": tx.approvals.iter()
                     .map(|a| format!("0x{}", hex::encode(a)))
@@ -286,7 +286,7 @@ fn register_multisig_get_pending(ctx: &MultisigRpcContext, io: &mut IoHandler) {
                     "to": format!("0x{}", hex::encode(tx.to)),
                     "value": tx.value.to_string(),
                     "approval_count": tx.approval_count(),
-                    "created_at": tx.created_at,
+                    "proposed_at": tx.proposed_at,
                     "expires_at": tx.expires_at,
                 })
             })
@@ -314,7 +314,7 @@ fn parse_address(hex_str: &str) -> std::result::Result<luxtensor_core::Address, 
     }
     let mut arr = [0u8; 20];
     arr.copy_from_slice(&bytes);
-    Ok(arr)
+    Ok(arr.into())
 }
 
 /// Parse hex-encoded bytes (generic length).
@@ -339,7 +339,7 @@ mod tests {
         let hex = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let result = parse_address(hex);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), [0xAA; 20]);
+        assert_eq!(result.unwrap(), luxtensor_core::Address::from([0xAA; 20]));
     }
 
     #[test]

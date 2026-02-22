@@ -163,7 +163,12 @@ async fn handle_new_block(
 
     if block_height > current_height + 1 {
         // We're missing blocks, need to sync
-        warn!("Missing blocks between {} and {}, initiating sync", current_height, block_height);
+        // 🔧 FIX: Cap sync range to MAX_SYNC_RANGE (1000) to avoid oversized sync
+        // rejection. The periodic sync will continue requesting subsequent chunks.
+        const MAX_SYNC_RANGE: u64 = 1000;
+        let sync_to = (current_height + MAX_SYNC_RANGE).min(block_height);
+        warn!("Missing blocks between {} and {}, requesting sync {}-{}",
+              current_height, block_height, current_height + 1, sync_to);
 
         // Request sync if we have a sync command sender and not already syncing
         if let Some(tx) = sync_command_tx {
@@ -174,7 +179,7 @@ async fn handle_new_block(
 
                 let sync_cmd = SwarmCommand::RequestSync {
                     from_height: current_height + 1,
-                    to_height: block_height,
+                    to_height: sync_to,
                     my_id: state.node_id.clone(),
                 };
 
@@ -182,7 +187,7 @@ async fn handle_new_block(
                     error!("Failed to send sync request: {}", e);
                     state.is_syncing = false;
                 } else {
-                    info!("🔄 Sync request sent for blocks {}-{}", current_height + 1, block_height);
+                    info!("🔄 Sync request sent for blocks {}-{}", current_height + 1, sync_to);
                 }
             } else {
                 debug!("Already syncing to height {}", state.target_height);

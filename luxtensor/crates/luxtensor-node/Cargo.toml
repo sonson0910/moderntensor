@@ -24,6 +24,7 @@ bincode = { workspace = true }
 hex = { workspace = true }
 futures = { workspace = true }
 sha3 = { workspace = true }
+dashmap = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
@@ -33,6 +34,11 @@ luxtensor-storage = { path = "../luxtensor-storage" }
 luxtensor-rpc = { path = "../luxtensor-rpc" }
 luxtensor-contracts = { path = "../luxtensor-contracts" }
 luxtensor-oracle = { path = "../luxtensor-oracle" }
+rayon = { workspace = true }
+
+# jemalloc for high-performance concurrent allocation (Linux/macOS only)
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
 
 [features]
 legacy = ["luxtensor-network/legacy"]

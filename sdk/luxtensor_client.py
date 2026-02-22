@@ -1252,10 +1252,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("query_subnetEmission", [subnet_id])
-            return int(result)
+            return self._parse_hex_int(result)
         except Exception as e:
             logger.error(f"Error getting emission for subnet {subnet_id}: {e}")
-            raise
+            return 0
 
     def get_subnet_tempo(self, subnet_id: int) -> int:
         """
@@ -1269,10 +1269,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("query_subnetTempo", [subnet_id])
-            return int(result)
+            return self._parse_hex_int(result)
         except Exception as e:
             logger.error(f"Error getting tempo for subnet {subnet_id}: {e}")
-            raise
+            return 0
 
     # =============================================================================
     # Staking Queries
@@ -1291,10 +1291,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("query_stakeForColdkeyAndHotkey", [coldkey, hotkey])
-            return int(result)
+            return self._parse_hex_int(result)
         except Exception as e:
             logger.error(f"Error getting stake for {coldkey}-{hotkey}: {e}")
-            raise
+            return 0
 
     def get_all_stake_for_coldkey(self, coldkey: str) -> Dict[str, int]:
         """
@@ -1342,10 +1342,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("query_totalStakeForColdkey", [coldkey])
-            return int(result)
+            return self._parse_hex_int(result)
         except Exception as e:
             logger.error(f"Error getting total stake for coldkey {coldkey}: {e}")
-            raise
+            return 0
 
     def get_total_stake_for_hotkey(self, hotkey: str) -> int:
         """
@@ -1732,11 +1732,11 @@ class LuxtensorClient(
             Total tokens issued
         """
         try:
-            # query_totalIssuance not available on LuxTensor server
-            raise NotImplementedError("Total issuance query not available on LuxTensor server")
+            result = self._call_rpc("query_totalIssuance", [])
+            return self._parse_hex_int(result)
         except Exception as e:
-            logger.error(f"Error getting total issuance: {e}")
-            raise
+            logger.warning(f"Total issuance query not available: {e}")
+            return 0
 
     def get_total_subnets(self) -> int:
         """
@@ -1747,10 +1747,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("subnet_getCount")
-            return int(result)
+            return self._parse_hex_int(result)
         except Exception as e:
             logger.error(f"Error getting total subnets: {e}")
-            raise
+            return 0
 
     def get_max_subnets(self) -> int:
         """
@@ -1763,11 +1763,11 @@ class LuxtensorClient(
             # query_maxSubnets not available; derive from subnet_getConfig
             config = self._call_rpc("subnet_getConfig", [])
             if config and isinstance(config, dict):
-                return int(config.get("max_subnets", 32))
+                return self._parse_hex_int(config.get("max_subnets", 32))
             return 32
         except Exception as e:
-            logger.error(f"Error getting max subnets: {e}")
-            raise
+            logger.warning(f"subnet_getConfig not available, using default: {e}")
+            return 32
 
     def get_total_neurons(self) -> int:
         """
@@ -1839,10 +1839,10 @@ class LuxtensorClient(
         """
         try:
             result = self._call_rpc("staking_getDelegates")
-            return result
+            return result if result else []
         except Exception as e:
-            logger.error(f"Error getting delegates: {e}")
-            raise
+            logger.warning(f"staking_getDelegates not available: {e}")
+            return []
 
     def get_delegate_info(self, hotkey: str) -> Dict[str, Any]:
         """
@@ -1863,8 +1863,8 @@ class LuxtensorClient(
                         return d
             return {}
         except Exception as e:
-            logger.error(f"Error getting delegate info for {hotkey}: {e}")
-            raise
+            logger.warning(f"staking_getDelegates not available: {e}")
+            return {}
 
     def get_delegate_take(self, hotkey: str) -> float:
         """
@@ -1885,8 +1885,8 @@ class LuxtensorClient(
                         return float(d.get("take", d.get("commission_rate", 0.18)))
             return 0.18  # Default commission
         except Exception as e:
-            logger.error(f"Error getting delegate take for {hotkey}: {e}")
-            raise
+            logger.warning(f"staking_getDelegates not available: {e}")
+            return 0.18
 
     def get_nominators(self, hotkey: str) -> List[str]:
         """
@@ -1907,8 +1907,8 @@ class LuxtensorClient(
                         return d.get("nominators", d.get("delegators", []))
             return []
         except Exception as e:
-            logger.error(f"Error getting nominators for {hotkey}: {e}")
-            raise
+            logger.warning(f"staking_getDelegates not available: {e}")
+            return []
 
     def is_delegate(self, hotkey: str) -> bool:
         """
@@ -1927,8 +1927,8 @@ class LuxtensorClient(
                 return any(d.get("address", "") == hotkey or d.get("hotkey", "") == hotkey for d in delegates)
             return False
         except Exception as e:
-            logger.error(f"Error checking if {hotkey} is delegate: {e}")
-            raise
+            logger.warning(f"staking_getDelegates not available: {e}")
+            return False
 
     # =============================================================================
     # Transaction History Queries
@@ -2481,8 +2481,15 @@ class LuxtensorClient(
         Returns:
             True if valid, False otherwise
         """
-        # Basic validation - should be enhanced based on actual address format
-        return isinstance(address, str) and len(address) > 0
+        if not address or not isinstance(address, str):
+            return False
+        if not address.startswith("0x") or len(address) != 42:
+            return False
+        try:
+            int(address[2:], 16)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     # =============================================================================
     # Governance and Proposals (Additional 600+ lines of methods)

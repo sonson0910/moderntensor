@@ -14,8 +14,10 @@ members = [
     "crates/luxtensor-indexer",
     "crates/luxtensor-oracle",
     "crates/luxtensor-zkvm",
-    "crates/luxtensor-methods",
 ]
+# luxtensor-methods requires RISC Zero toolchain (RISC-V cross-compiler).
+# Excluded from workspace builds; use `cargo build -p luxtensor-methods` when RISC Zero is installed.
+exclude = ["crates/luxtensor-methods"]
 resolver = "2"
 
 # Root package for examples
@@ -105,6 +107,7 @@ bytes = "1.5"
 parking_lot = "0.12"
 rayon = "1.10"
 fixed = { version = "1.28", features = ["serde"] }
+dashmap = "6.1"
 
 # Testing
 criterion = "0.5"
@@ -116,6 +119,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"
 
 [profile.bench]
 inherits = "release"

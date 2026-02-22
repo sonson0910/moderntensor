@@ -5,25 +5,25 @@
 
 use crate::helpers::parse_address;
 use crate::types::{NeuronInfo, SubnetInfo};
+use dashmap::DashMap;
 use jsonrpc_core::{IoHandler, Params, Value};
 use luxtensor_consensus::{CommitRevealManager, ValidatorSet};
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Shared context for query RPC handlers
 /// Contains all necessary state references for query operations
 pub struct QueryRpcContext {
-    pub neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
-    pub subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+    pub neurons: Arc<DashMap<(u64, u64), NeuronInfo>>,
+    pub subnets: Arc<DashMap<u64, SubnetInfo>>,
     pub validators: Arc<RwLock<ValidatorSet>>,
     pub commit_reveal: Arc<RwLock<CommitRevealManager>>,
 }
 
 impl QueryRpcContext {
     pub fn new(
-        neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
-        subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+        neurons: Arc<DashMap<(u64, u64), NeuronInfo>>,
+        subnets: Arc<DashMap<u64, SubnetInfo>>,
         validators: Arc<RwLock<ValidatorSet>>,
         commit_reveal: Arc<RwLock<CommitRevealManager>>,
     ) -> Self {
@@ -68,8 +68,7 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
 
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!({
                 "uid": neuron.uid,
                 "address": neuron.address,
@@ -96,10 +95,9 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
         let subnet_id = parsed[0];
-        let neurons_map = neurons.read();
-        let count = neurons_map
-            .keys()
-            .filter(|(sid, _)| *sid == subnet_id)
+        let count = neurons
+            .iter()
+            .filter(|entry| entry.key().0 == subnet_id)
             .count();
         Ok(Value::Number(count.into()))
     });
@@ -113,11 +111,10 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
         let subnet_id = parsed[0];
-        let neurons_map = neurons.read();
-        let active_uids: Vec<u64> = neurons_map
+        let active_uids: Vec<u64> = neurons
             .iter()
-            .filter(|((sid, _), n)| *sid == subnet_id && n.active)
-            .map(|((_, uid), _)| *uid)
+            .filter(|entry| entry.key().0 == subnet_id && entry.value().active)
+            .map(|entry| entry.key().1)
             .collect();
         Ok(serde_json::to_value(active_uids).unwrap_or(Value::Array(vec![])))
     });
@@ -142,8 +139,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!(neuron.rank as f64 / 65535.0))
         } else {
             Ok(Value::Null)
@@ -166,8 +162,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!(neuron.trust))
         } else {
             Ok(Value::Null)
@@ -190,8 +185,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!(neuron.incentive))
         } else {
             Ok(Value::Null)
@@ -214,8 +208,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!(neuron.dividends))
         } else {
             Ok(Value::Null)
@@ -238,8 +231,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(serde_json::json!(neuron.consensus))
         } else {
             Ok(Value::Null)
@@ -256,10 +248,10 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
 
     // query_allSubnets - Get all subnets
     io.add_sync_method("query_allSubnets", move |_params: Params| {
-        let subnets_map = subnets.read();
-        let list: Vec<Value> = subnets_map
-            .values()
-            .map(|s| {
+        let list: Vec<Value> = subnets
+            .iter()
+            .map(|entry| {
+                let s = entry.value();
                 serde_json::json!({
                     "id": s.id,
                     "name": s.name,
@@ -281,8 +273,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
-        let subnets_map = subnets.read();
-        Ok(Value::Bool(subnets_map.contains_key(&parsed[0])))
+        Ok(Value::Bool(subnets.contains_key(&parsed[0])))
     });
 
     let subnets = ctx.subnets.clone();
@@ -293,8 +284,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
-        let subnets_map = subnets.read();
-        if let Some(subnet) = subnets_map.get(&parsed[0]) {
+        if let Some(subnet) = subnets.get(&parsed[0]) {
             Ok(Value::String(subnet.owner.clone()))
         } else {
             Ok(Value::Null)
@@ -309,8 +299,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
-        let subnets_map = subnets.read();
-        if let Some(subnet) = subnets_map.get(&parsed[0]) {
+        if let Some(subnet) = subnets.get(&parsed[0]) {
             Ok(Value::String(format!("0x{:x}", subnet.emission_rate)))
         } else {
             Ok(Value::Null)
@@ -325,8 +314,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
-        let subnets_map = subnets.read();
-        if let Some(subnet) = subnets_map.get(&parsed[0]) {
+        if let Some(subnet) = subnets.get(&parsed[0]) {
             Ok(serde_json::json!({
                 "tempo": 360,
                 "rho": 10,
@@ -350,8 +338,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
-        let subnets_map = subnets.read();
-        if subnets_map.contains_key(&parsed[0]) {
+        if subnets.contains_key(&parsed[0]) {
             Ok(Value::Number(360.into())) // Default tempo
         } else {
             Ok(Value::Null)
@@ -480,10 +467,9 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let hotkey = parsed[1]
             .as_str()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
-        let neurons_map = neurons.read();
-        let is_registered = neurons_map
+        let is_registered = neurons
             .iter()
-            .any(|((sid, _), n)| *sid == subnet_id && n.address == hotkey);
+            .any(|entry| entry.key().0 == subnet_id && entry.value().address == hotkey);
         Ok(Value::Bool(is_registered))
     });
 
@@ -503,11 +489,10 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let hotkey = parsed[1]
             .as_str()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid hotkey"))?;
-        let neurons_map = neurons.read();
-        let uid = neurons_map
+        let uid = neurons
             .iter()
-            .find(|((sid, _), n)| *sid == subnet_id && n.address == hotkey)
-            .map(|((_, uid), _)| *uid);
+            .find(|entry| entry.key().0 == subnet_id && entry.value().address == hotkey)
+            .map(|entry| entry.key().1);
         match uid {
             Some(u) => Ok(Value::Number(u.into())),
             None => Ok(Value::Null),
@@ -530,8 +515,7 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         let neuron_uid = parsed[1]
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid uid"))?;
-        let neurons_map = neurons.read();
-        if let Some(neuron) = neurons_map.get(&(subnet_id, neuron_uid)) {
+        if let Some(neuron) = neurons.get(&(subnet_id, neuron_uid)) {
             Ok(Value::String(neuron.address.clone()))
         } else {
             Ok(Value::Null)
@@ -618,15 +602,15 @@ mod tests {
     #[test]
     fn test_query_rpc_context_creation() {
         // Test that QueryRpcContext can be created
-        let neurons = Arc::new(RwLock::new(HashMap::new()));
-        let subnets = Arc::new(RwLock::new(HashMap::new()));
+        let neurons = Arc::new(DashMap::new());
+        let subnets = Arc::new(DashMap::new());
         let validators = Arc::new(RwLock::new(ValidatorSet::new()));
         let commit_reveal = Arc::new(RwLock::new(CommitRevealManager::new(
             luxtensor_consensus::CommitRevealConfig::default(),
         )));
 
         let ctx = QueryRpcContext::new(neurons, subnets, validators, commit_reveal);
-        assert!(ctx.neurons.read().is_empty());
-        assert!(ctx.subnets.read().is_empty());
+        assert!(ctx.neurons.is_empty());
+        assert!(ctx.subnets.is_empty());
     }
 }

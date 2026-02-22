@@ -47,13 +47,15 @@ pub enum NetworkMessage {
     GetBlocks(Vec<Hash>),
 
     /// Response with blocks
-    Blocks(Vec<Block>),
+    /// `nonce` breaks gossipsub dedup for repeated sync responses with identical blocks
+    Blocks { blocks: Vec<Block>, nonce: u64 },
 
     /// Status message with chain info
     Status { best_hash: Hash, best_height: u64, genesis_hash: Hash },
 
     /// Sync request - asking for blocks from a range
-    SyncRequest { from_height: u64, to_height: u64, requester_id: String },
+    /// `nonce` breaks gossipsub message_id deduplication for repeated requests
+    SyncRequest { from_height: u64, to_height: u64, requester_id: String, nonce: u64 },
 
     /// Ping message
     Ping,
@@ -82,7 +84,7 @@ impl NetworkMessage {
             Self::GetBlockHeaders { .. } => "GetBlockHeaders",
             Self::BlockHeaders(_) => "BlockHeaders",
             Self::GetBlocks(_) => "GetBlocks",
-            Self::Blocks(_) => "Blocks",
+            Self::Blocks { .. } => "Blocks",
             Self::Status { .. } => "Status",
             Self::SyncRequest { .. } => "SyncRequest",
             Self::Ping => "Ping",

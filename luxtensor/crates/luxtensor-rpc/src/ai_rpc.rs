@@ -6,28 +6,28 @@
 
 use crate::helpers::parse_address;
 use crate::types::{AITaskInfo, AITaskRequest, AITaskStatus, NeuronInfo, SubnetInfo};
+use dashmap::DashMap;
 use jsonrpc_core::{IoHandler, Params, Value};
 use luxtensor_consensus::ValidatorSet;
 use luxtensor_core::Hash;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
 /// Shared context for AI RPC handlers
 pub struct AiRpcContext {
-    pub ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
+    pub ai_tasks: Arc<DashMap<Hash, AITaskInfo>>,
     pub validators: Arc<RwLock<ValidatorSet>>,
-    pub neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
-    pub subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+    pub neurons: Arc<DashMap<(u64, u64), NeuronInfo>>,
+    pub subnets: Arc<DashMap<u64, SubnetInfo>>,
 }
 
 impl AiRpcContext {
     pub fn new(
-        ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
+        ai_tasks: Arc<DashMap<Hash, AITaskInfo>>,
         validators: Arc<RwLock<ValidatorSet>>,
-        neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
-        subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
+        neurons: Arc<DashMap<(u64, u64), NeuronInfo>>,
+        subnets: Arc<DashMap<u64, SubnetInfo>>,
     ) -> Self {
         Self {
             ai_tasks,
@@ -102,8 +102,7 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
         };
 
         {
-            let mut tasks = ai_tasks.write();
-            tasks.insert(task_id, task_info);
+            ai_tasks.insert(task_id, task_info);
             info!("AI task submitted: 0x{}", hex::encode(&task_id));
         }
 
@@ -124,8 +123,7 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
 
         let task_id = parse_task_id(&parsed[0])?;
 
-        let tasks = ai_tasks.read();
-        if let Some(task) = tasks.get(&task_id) {
+        if let Some(task) = ai_tasks.get(&task_id) {
             let status_str = match task.status {
                 AITaskStatus::Pending => "pending",
                 AITaskStatus::Processing => "processing",
@@ -201,14 +199,11 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
 
-        let neurons_map = neurons.read();
-        let subnets_map = subnets.read();
-
-        let subnet_info = subnets_map.get(&subnet_id);
-        let neurons_in_subnet: Vec<serde_json::Value> = neurons_map
+        let neurons_in_subnet: Vec<serde_json::Value> = neurons
             .iter()
-            .filter(|((sid, _), _)| *sid == subnet_id)
-            .map(|(_, n)| {
+            .filter(|entry| entry.key().0 == subnet_id)
+            .map(|entry| {
+                let n = entry.value();
                 serde_json::json!({
                     "uid": n.uid,
                     "address": n.address,
@@ -222,11 +217,15 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             })
             .collect();
 
+        let total_stake = subnets.get(&subnet_id)
+            .map(|s| format!("0x{:x}", s.total_stake))
+            .unwrap_or_else(|| "0x0".to_string());
+
         Ok(serde_json::json!({
             "subnet_id": subnet_id,
             "neurons": neurons_in_subnet,
             "neuron_count": neurons_in_subnet.len(),
-            "total_stake": subnet_info.map(|s| format!("0x{:x}", s.total_stake)).unwrap_or_else(|| "0x0".to_string()),
+            "total_stake": total_stake,
         }))
     });
 
@@ -242,11 +241,11 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             .as_u64()
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid subnet ID"))?;
 
-        let neurons_map = neurons.read();
-        let incentives: Vec<serde_json::Value> = neurons_map
+        let incentives: Vec<serde_json::Value> = neurons
             .iter()
-            .filter(|((sid, _), _)| *sid == subnet_id)
-            .map(|(_, n)| {
+            .filter(|entry| entry.key().0 == subnet_id)
+            .map(|entry| {
+                let n = entry.value();
                 serde_json::json!({
                     "uid": n.uid,
                     "incentive": n.incentive,
@@ -327,12 +326,12 @@ mod tests {
 
     #[test]
     fn test_ai_rpc_context_creation() {
-        let ai_tasks = Arc::new(RwLock::new(HashMap::new()));
+        let ai_tasks = Arc::new(DashMap::new());
         let validators = Arc::new(RwLock::new(ValidatorSet::new()));
-        let neurons = Arc::new(RwLock::new(HashMap::new()));
-        let subnets = Arc::new(RwLock::new(HashMap::new()));
+        let neurons = Arc::new(DashMap::new());
+        let subnets = Arc::new(DashMap::new());
 
         let ctx = AiRpcContext::new(ai_tasks, validators, neurons, subnets);
-        assert!(ctx.ai_tasks.read().is_empty());
+        assert!(ctx.ai_tasks.is_empty());
     }
 }

@@ -12,6 +12,7 @@ use luxtensor_consensus::{
 };
 use luxtensor_core::{Hash, Transaction, UnifiedStateDB};
 use luxtensor_storage::{BlockchainDB, CachedStateDB, MetagraphDB};
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde_json::json;
 use std::collections::HashMap;
@@ -67,11 +68,11 @@ pub struct RpcServer {
     // Persistent storage (RocksDB)
     metagraph: Arc<MetagraphDB>,
     // In-memory caches for fast access
-    subnets: Arc<RwLock<HashMap<u64, SubnetInfo>>>,
-    neurons: Arc<RwLock<HashMap<(u64, u64), NeuronInfo>>>,
-    weights: Arc<RwLock<HashMap<(u64, u64), Vec<WeightInfo>>>>,
-    pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
-    ai_tasks: Arc<RwLock<HashMap<Hash, AITaskInfo>>>,
+    subnets: Arc<DashMap<u64, SubnetInfo>>,
+    neurons: Arc<DashMap<(u64, u64), NeuronInfo>>,
+    weights: Arc<DashMap<(u64, u64), Vec<WeightInfo>>>,
+    pending_txs: Arc<DashMap<Hash, Transaction>>,
+    ai_tasks: Arc<DashMap<Hash, AITaskInfo>>,
     broadcaster: Arc<dyn TransactionBroadcaster>,
     mempool: Arc<RwLock<Mempool>>,
     commit_reveal: Arc<RwLock<CommitRevealManager>>,
@@ -97,6 +98,8 @@ pub struct RpcServer {
     multisig_manager: Option<Arc<MultisigManager>>,
     /// Merkle root cache for state root caching stats (optional)
     merkle_cache: Option<Arc<CachedStateDB>>,
+    /// Shared EVM executor from block execution for eth_call storage reads
+    evm_executor: Option<luxtensor_contracts::EvmExecutor>,
 }
 
 impl RpcServer {
@@ -136,8 +139,8 @@ impl RpcServer {
         chain_id: u64,
     ) -> Self {
         // Load initial data from metagraph into caches
-        let subnets = Arc::new(RwLock::new(Self::load_subnets_cache(&metagraph)));
-        let neurons = Arc::new(RwLock::new(Self::load_neurons_cache(&metagraph)));
+        let subnets = Arc::new(DashMap::from_iter(Self::load_subnets_cache(&metagraph)));
+        let neurons = Arc::new(DashMap::from_iter(Self::load_neurons_cache(&metagraph)));
 
         Self {
             db,
@@ -145,9 +148,9 @@ impl RpcServer {
             metagraph,
             subnets,
             neurons,
-            weights: Arc::new(RwLock::new(HashMap::new())),
-            pending_txs: Arc::new(RwLock::new(HashMap::new())),
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(DashMap::new()),
+            pending_txs: Arc::new(DashMap::new()),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster,
             mempool: Arc::new(RwLock::new(Mempool::new())),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -164,6 +167,7 @@ impl RpcServer {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 
@@ -211,6 +215,11 @@ impl RpcServer {
         self.merkle_cache = Some(cache);
     }
 
+    /// Set the shared EVM executor for eth_call storage reads
+    pub fn set_evm_executor(&mut self, executor: luxtensor_contracts::EvmExecutor) {
+        self.evm_executor = Some(executor);
+    }
+
     /// Create a new RPC server for testing with external mempool
     #[cfg(test)]
     pub fn new_for_testing_with_mempool(
@@ -226,11 +235,11 @@ impl RpcServer {
             db,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
-            subnets: Arc::new(RwLock::new(HashMap::new())),
-            neurons: Arc::new(RwLock::new(HashMap::new())),
-            weights: Arc::new(RwLock::new(HashMap::new())),
-            pending_txs: Arc::new(RwLock::new(HashMap::new())),
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            subnets: Arc::new(DashMap::new()),
+            neurons: Arc::new(DashMap::new()),
+            weights: Arc::new(DashMap::new()),
+            pending_txs: Arc::new(DashMap::new()),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster: Arc::new(NoOpBroadcaster),
             mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -247,6 +256,7 @@ impl RpcServer {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 
@@ -281,11 +291,11 @@ impl RpcServer {
             db,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
-            subnets: Arc::new(RwLock::new(HashMap::new())),
-            neurons: Arc::new(RwLock::new(HashMap::new())),
-            weights: Arc::new(RwLock::new(HashMap::new())),
-            pending_txs: Arc::new(RwLock::new(HashMap::new())),
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            subnets: Arc::new(DashMap::new()),
+            neurons: Arc::new(DashMap::new()),
+            weights: Arc::new(DashMap::new()),
+            pending_txs: Arc::new(DashMap::new()),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster,
             mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -302,6 +312,7 @@ impl RpcServer {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 
@@ -312,7 +323,7 @@ impl RpcServer {
         db: Arc<BlockchainDB>,
         mempool: Arc<RwLock<Mempool>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
-        pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+        pending_txs: Arc<DashMap<Hash, Transaction>>,
         chain_id: u64,
     ) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
@@ -336,11 +347,11 @@ impl RpcServer {
             db,
             validators: Arc::new(RwLock::new(ValidatorSet::new())),
             metagraph,
-            subnets: Arc::new(RwLock::new(HashMap::new())),
-            neurons: Arc::new(RwLock::new(HashMap::new())),
-            weights: Arc::new(RwLock::new(HashMap::new())),
+            subnets: Arc::new(DashMap::new()),
+            neurons: Arc::new(DashMap::new()),
+            weights: Arc::new(DashMap::new()),
             pending_txs,
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster,
             mempool,
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -357,6 +368,7 @@ impl RpcServer {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 
@@ -368,8 +380,8 @@ impl RpcServer {
         broadcaster: Arc<dyn TransactionBroadcaster>,
         chain_id: u64,
     ) -> Self {
-        let subnets = Arc::new(RwLock::new(Self::load_subnets_cache(&metagraph)));
-        let neurons = Arc::new(RwLock::new(Self::load_neurons_cache(&metagraph)));
+        let subnets = Arc::new(DashMap::from_iter(Self::load_subnets_cache(&metagraph)));
+        let neurons = Arc::new(DashMap::from_iter(Self::load_neurons_cache(&metagraph)));
 
         Self {
             db,
@@ -377,9 +389,9 @@ impl RpcServer {
             metagraph,
             subnets,
             neurons,
-            weights: Arc::new(RwLock::new(HashMap::new())),
-            pending_txs: Arc::new(RwLock::new(HashMap::new())),
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(DashMap::new()),
+            pending_txs: Arc::new(DashMap::new()),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster,
             mempool: Arc::new(RwLock::new(Mempool::new())),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -396,6 +408,7 @@ impl RpcServer {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 
@@ -645,12 +658,14 @@ impl RpcServer {
 
         // Register Ethereum-compatible methods (eth_*)
         // Uses mempool for pending txs, unified_state for state reads, db for confirmed tx lookup
+        // evm_executor for eth_call storage reads (shared EVM state from block execution)
         register_eth_methods(
             &mut io,
             self.mempool.clone(),
             self.unified_state.clone(),
             self.db.clone(),
             self.broadcaster.clone(),
+            self.evm_executor.clone(),
         );
 
         // Register log query methods (eth_getLogs, eth_newFilter, etc.)
@@ -915,13 +930,10 @@ impl RpcServer {
             hash.copy_from_slice(&hash_bytes);
 
             // 1. Check pending transactions first (in-memory mempool)
-            {
-                let pending = pending_txs_query.read();
-                if let Some(tx) = pending.get(&hash) {
-                    let rpc_tx = RpcTransaction::from(tx.clone());
-                    return serde_json::to_value(rpc_tx)
-                        .map_err(|_| jsonrpc_core::Error::internal_error());
-                }
+            if let Some(tx) = pending_txs_query.get(&hash) {
+                let rpc_tx = RpcTransaction::from(tx.value().clone());
+                return serde_json::to_value(rpc_tx)
+                    .map_err(|_| jsonrpc_core::Error::internal_error());
             }
 
             // 2. Fallback to confirmed transactions in database
@@ -1041,7 +1053,7 @@ pub struct RpcServerBuilder {
     metagraph: Option<Arc<MetagraphDB>>,
     broadcaster: Option<Arc<dyn TransactionBroadcaster>>,
     mempool: Option<Arc<RwLock<Mempool>>>,
-    pending_txs: Option<Arc<RwLock<HashMap<Hash, Transaction>>>>,
+    pending_txs: Option<Arc<DashMap<Hash, Transaction>>>,
     validators: Option<Arc<RwLock<ValidatorSet>>>,
     data_dir: Option<PathBuf>,
 }
@@ -1066,7 +1078,7 @@ impl RpcServerBuilder {
     }
 
     /// Set shared pending transactions map (defaults to a new empty map).
-    pub fn pending_txs(mut self, p: Arc<RwLock<HashMap<Hash, Transaction>>>) -> Self {
+    pub fn pending_txs(mut self, p: Arc<DashMap<Hash, Transaction>>) -> Self {
         self.pending_txs = Some(p);
         self
     }
@@ -1101,8 +1113,8 @@ impl RpcServerBuilder {
             }))
         });
 
-        let subnets = Arc::new(RwLock::new(RpcServer::load_subnets_cache(&metagraph)));
-        let neurons = Arc::new(RwLock::new(RpcServer::load_neurons_cache(&metagraph)));
+        let subnets = Arc::new(DashMap::from_iter(RpcServer::load_subnets_cache(&metagraph)));
+        let neurons = Arc::new(DashMap::from_iter(RpcServer::load_neurons_cache(&metagraph)));
         let data_dir = self.data_dir.unwrap_or_else(|| PathBuf::from("./data"));
 
         RpcServer {
@@ -1111,9 +1123,9 @@ impl RpcServerBuilder {
             metagraph,
             subnets,
             neurons,
-            weights: Arc::new(RwLock::new(HashMap::new())),
-            pending_txs: self.pending_txs.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
-            ai_tasks: Arc::new(RwLock::new(HashMap::new())),
+            weights: Arc::new(DashMap::new()),
+            pending_txs: self.pending_txs.unwrap_or_else(|| Arc::new(DashMap::new())),
+            ai_tasks: Arc::new(DashMap::new()),
             broadcaster: self.broadcaster.unwrap_or_else(|| Arc::new(NoOpBroadcaster)),
             mempool: self.mempool.unwrap_or_else(|| Arc::new(RwLock::new(Mempool::new()))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
@@ -1130,6 +1142,7 @@ impl RpcServerBuilder {
             bridge: None,
             multisig_manager: None,
             merkle_cache: None,
+            evm_executor: None,
         }
     }
 }

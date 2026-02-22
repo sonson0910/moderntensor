@@ -270,10 +270,8 @@ impl TransactionExecutor {
                     (ExecutionStatus::Success, Some(contract_addr))
                 }
                 Err(e) => {
-                    tracing::error!("❌ Contract deployment FAILED: {:?}", e);
-                    tracing::error!("   From: 0x{}", hex::encode(tx.from.as_bytes()));
-                    tracing::error!("   Data len: {} bytes", tx.data.len());
-                    tracing::error!("   Gas limit: {}", tx.gas_limit);
+                    tracing::error!("❌ Contract deployment FAILED: {:?} (from=0x{}, data_len={}, gas={})",
+                        e, hex::encode(tx.from.as_bytes()), tx.data.len(), tx.gas_limit);
                     if tx.value > 0 {
                         let mut sender_refund = state.get_account(&tx.from)
                             .unwrap_or_else(|| Account::new());

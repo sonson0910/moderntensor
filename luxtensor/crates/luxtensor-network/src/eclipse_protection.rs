@@ -31,7 +31,7 @@ impl Default for EclipseConfig {
     fn default() -> Self {
         Self {
             max_peers_per_subnet16: 4,
-            max_peers_per_subnet24: 2,
+            max_peers_per_subnet24: 8,  // Relaxed from 2 for devnet/testnet compatibility
             min_outbound_connections: 8,
             max_inbound_connections: 100,
             peer_rotation_interval: 3600, // 1 hour

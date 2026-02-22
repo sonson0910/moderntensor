@@ -42,6 +42,7 @@ use luxtensor_consensus::{
 };
 use luxtensor_core::{Block, StateDB, Transaction};
 use luxtensor_storage::CachedStateDB;
+use dashmap::DashMap;
 use luxtensor_core::bridge::{BridgeConfig, InMemoryBridge};
 use luxtensor_core::multisig::MultisigManager;
 use luxtensor_crypto::{KeyPair, MerkleTree};
@@ -238,8 +239,11 @@ impl NodeService {
         }
         info!("  ✓ State database initialized");
 
-        // Initialize Merkle cache wrapping the shared state_db
-        let merkle_cache = Arc::new(CachedStateDB::with_defaults(state_db.clone()));
+        // Initialize Merkle cache wrapping a storage-layer StateDB (RocksDB-backed)
+        let storage_state_db = Arc::new(parking_lot::RwLock::new(
+            luxtensor_storage::StateDB::new(storage.inner_db()),
+        ));
+        let merkle_cache = Arc::new(CachedStateDB::with_defaults(storage_state_db));
         info!("  ✓ Merkle cache initialized (height_cache=256, account_hashes=4096)");
 
         // Initialize transaction executor
@@ -559,9 +563,8 @@ impl NodeService {
         // ============================================================
         // Create shared pending_txs for unified TX storage (RPC + P2P)
         // ============================================================
-        let shared_pending_txs: Arc<
-            parking_lot::RwLock<std::collections::HashMap<luxtensor_core::Hash, Transaction>>,
-        > = Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
+        let shared_pending_txs: Arc<DashMap<luxtensor_core::Hash, Transaction>> =
+            Arc::new(DashMap::new());
 
         // ============================================================
         // PHASE 1: Start P2P Swarm FIRST (to get command channel)
@@ -689,9 +692,13 @@ impl NodeService {
                                 let height = block.header.height;
                                 let block_hash = block.hash();
 
-                                // 🛡️ Rate-limit: check per-peer message rate
+                                // 🛡️ Rate-limit: only for blocks far ahead of our chain tip.
+                                // Sync batches deliver many historical blocks at once (same proposer)
+                                // which would be incorrectly rate-limited.
+                                let current_best = best_height_for_p2p
+                                    .load(std::sync::atomic::Ordering::Relaxed);
                                 let proposer_id = hex::encode(&block.header.validator);
-                                if !rate_limiter_for_p2p.check(&proposer_id) {
+                                if height > current_best + 100 && !rate_limiter_for_p2p.check(&proposer_id) {
                                     warn!(
                                         "🛡️ Block #{} rate-limited from proposer {}",
                                         height, proposer_id
@@ -740,15 +747,20 @@ impl NodeService {
                                     .unwrap_or(0);
                                 if height > my_height + 1 {
                                     // Gap — request sync instead of storing out-of-order block
+                                    // 🔧 FIX: Cap sync range to MAX_SYNC_RANGE (1000) to avoid
+                                    // oversized sync rejection. The periodic sync will continue
+                                    // requesting subsequent chunks until caught up.
+                                    const MAX_SYNC_RANGE: u64 = 1000;
+                                    let sync_to = (my_height + MAX_SYNC_RANGE).min(height);
                                     debug!(
-                                        "Block #{} is ahead of our height {}, requesting sync",
-                                        height, my_height
+                                        "Block #{} is ahead of our height {}, requesting sync {}-{}",
+                                        height, my_height, my_height + 1, sync_to
                                     );
                                     if let Some(ref tx) = broadcast_tx_for_sync {
                                         if let Err(e) = tx
                                             .send(SwarmCommand::RequestSync {
                                                 from_height: my_height + 1,
-                                                to_height: height,
+                                                to_height: sync_to,
                                                 my_id: node_name.clone(),
                                             })
                                             .await
@@ -850,39 +862,32 @@ impl NodeService {
                                     continue;
                                 }
 
-                                // 🔧 FIX #9: Atomic CAS to prevent block height race
-                                // If block production stored at this height first, skip
-                                let expected_height = height - 1;
-                                if best_height_for_p2p
-                                    .compare_exchange(
-                                        expected_height,
-                                        height,
-                                        std::sync::atomic::Ordering::SeqCst,
-                                        std::sync::atomic::Ordering::SeqCst,
-                                    )
-                                    .is_err()
-                                {
-                                    debug!("Block #{} skipped: height race detected (another path committed first)", height);
+                                // 🔧 FIX #9 (revised): Sequential height check instead of CAS
+                                // CAS was silently rejecting blocks that arrived out-of-order
+                                // during sync batches. Simple check is safe because P2P ingestion
+                                // runs in a single task — no concurrent writes from this path.
+                                let my_height = best_height_for_p2p
+                                    .load(std::sync::atomic::Ordering::SeqCst);
+                                if height != my_height + 1 {
+                                    debug!("Block #{} out of order (current={}), skipping", height, my_height);
                                     continue;
                                 }
 
                                 if let Err(e) = storage_for_p2p.store_block(&block) {
-                                    // Roll back atomic on store failure
-                                    best_height_for_p2p.store(
-                                        expected_height,
-                                        std::sync::atomic::Ordering::SeqCst,
-                                    );
                                     warn!("Failed to store received block: {}", e);
                                 } else {
+                                    best_height_for_p2p.store(
+                                        height,
+                                        std::sync::atomic::Ordering::SeqCst,
+                                    );
                                     info!("📥 Synced block #{} from peer", height);
 
                                     // 🔧 FIX #21: Remove confirmed txs from pending pool to prevent ghost entries
                                     {
                                         let tx_hashes: Vec<[u8; 32]> =
                                             block.transactions.iter().map(|tx| tx.hash()).collect();
-                                        let mut pending = shared_pending_txs_for_p2p.write();
                                         for hash in &tx_hashes {
-                                            pending.remove(hash);
+                                            shared_pending_txs_for_p2p.remove(hash);
                                         }
                                         mempool_for_p2p.remove_transactions(&tx_hashes);
                                     }
@@ -983,8 +988,7 @@ impl NodeService {
                                 // transactions from polluting the shared pool.
                                 let tx_hash = tx.hash();
                                 {
-                                    let pending = shared_pending_txs_for_p2p.read();
-                                    if pending.contains_key(&tx_hash) {
+                                    if shared_pending_txs_for_p2p.contains_key(&tx_hash) {
                                         // Already in pool, skip duplicate
                                         continue;
                                     }
@@ -994,8 +998,7 @@ impl NodeService {
                                 match mempool_for_p2p.add_transaction(tx.clone()) {
                                     Ok(_) => {
                                         // Mempool accepted — now add to shared pending pool
-                                        let mut pending = shared_pending_txs_for_p2p.write();
-                                        pending.insert(tx_hash, tx);
+                                        shared_pending_txs_for_p2p.insert(tx_hash, tx);
                                         info!("📥 Added validated transaction from peer to shared pool");
                                     }
                                     Err(e) => {
@@ -1081,17 +1084,11 @@ impl NodeService {
                                     .update_peer_count(current_peer_count);
                             }
                             SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
-                                // 🛡️ Rate-limit sync requests (cost 5 tokens — heavier than single msg)
-                                if !rate_limiter_for_p2p.check_with_cost(&requester_id, 5.0) {
-                                    warn!("🛡️ SyncRequest rate-limited from {}", requester_id);
-                                    continue;
-                                }
-
                                 // Cap sync response to prevent memory exhaustion
                                 let max_blocks_per_response = 50u64;
                                 let capped_to =
                                     to_height.min(from_height + max_blocks_per_response - 1);
-                                info!(
+                                debug!(
                                     "🔄 Got sync request from {} for blocks {}-{} (capped at {})",
                                     requester_id, from_height, to_height, capped_to
                                 );
@@ -1104,9 +1101,13 @@ impl NodeService {
                                     }
                                 }
                                 if !blocks_to_send.is_empty() {
-                                    info!(
-                                        "📤 Sending {} blocks to {}",
+                                    let first_h = blocks_to_send.first().map(|b| b.header.height).unwrap_or(0);
+                                    let last_h = blocks_to_send.last().map(|b| b.header.height).unwrap_or(0);
+                                    debug!(
+                                        "📤 Sending {} blocks (#{}-#{}) to {}",
                                         blocks_to_send.len(),
+                                        first_h,
+                                        last_h,
                                         requester_id
                                     );
                                     if let Some(ref tx) = broadcast_tx_for_sync {
@@ -1119,6 +1120,8 @@ impl NodeService {
                                             warn!("Failed to send blocks in sync response: {}", e);
                                         }
                                     }
+                                } else {
+                                    debug!("📭 No blocks found for range {}-{}", from_height, capped_to);
                                 }
                             }
                         }
@@ -1138,19 +1141,29 @@ impl NodeService {
                 let sync_storage = self.storage.clone();
                 let sync_node_name = self.config.node.name.clone();
                 let sync_task = tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
                     let mut last_sync_height = 0u64;
+                    let mut sync_interval_secs = 10u64;
+                    let mut consecutive_no_progress = 0u32;
                     loop {
-                        interval.tick().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(sync_interval_secs)).await;
 
-                        // Check if we're behind
+                        // Check current height from storage
                         let my_height =
                             sync_storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
 
+                        if my_height > last_sync_height {
+                            // Made progress since last check → stay aggressive
+                            consecutive_no_progress = 0;
+                            sync_interval_secs = 10;
+                        } else {
+                            // No progress → backoff: 10 → 20 → 40 → 60 (cap)
+                            consecutive_no_progress += 1;
+                            sync_interval_secs = (10u64 * 2u64.saturating_pow(consecutive_no_progress.min(3))).min(60);
+                        }
+
                         // Only request sync if we've made no progress since last check
-                        // This prevents spamming when we're already caught up
                         if my_height == last_sync_height {
-                            let batch_size = 50u64.min(100); // Cap batch to avoid huge responses
+                            let batch_size = 50u64;
                             if let Err(e) = sync_command_tx
                                 .send(SwarmCommand::RequestSync {
                                     from_height: my_height + 1,
@@ -1163,7 +1176,12 @@ impl NodeService {
                             }
 
                             if my_height == 0 {
-                                info!("🔄 Periodic sync: Still at height 0, requesting blocks...");
+                                info!("🔄 Initial sync: requesting blocks 1-{}...", batch_size);
+                            } else {
+                                debug!(
+                                    "🔄 Periodic sync check: height={}, next check in {}s",
+                                    my_height, sync_interval_secs
+                                );
                             }
                         }
                         last_sync_height = my_height;
@@ -1214,6 +1232,11 @@ impl NodeService {
             rpc_server.set_bridge(self.bridge.clone());
             rpc_server.set_multisig_manager(self.multisig_manager.clone());
             rpc_server.set_merkle_cache(self.merkle_cache.clone());
+
+            // Wire shared EVM executor for eth_call storage reads.
+            // Clone shares the underlying Arc<RwLock<...>> state, so eth_call
+            // reads the same storage that block execution has committed to.
+            rpc_server.set_evm_executor(self.executor.evm().clone());
 
             // Extract unified_state Arc BEFORE moving rpc_server into the spawn closure.
             // This allows block production to sync state into the RPC layer after each block.
@@ -1498,9 +1521,8 @@ impl NodeService {
                     // 🔧 FIX: Drain tx_queue EVERY slot to ensure TXs are not missed
                     // Add to mempool regardless of leader status, produce block only if leader
                     let pending_txs = rpc_mempool.read().drain_tx_queue();
-                    debug!("📤 Drained {} transactions from tx_queue", pending_txs.len());
                     if !pending_txs.is_empty() {
-                        info!("📤 Found {} pending transactions to process", pending_txs.len());
+                        debug!("📤 Drained {} transactions from tx_queue", pending_txs.len());
                     }
                     for ready_tx in pending_txs {
                         let from_addr = luxtensor_core::Address::from(ready_tx.from);
@@ -1512,7 +1534,7 @@ impl NodeService {
                             from_addr,
                             to_addr,
                             ready_tx.value,
-                            1_000_000_000,  // gas_price: 1 Gwei (mempool minimum)
+                            ready_tx.gas_price,
                             ready_tx.gas,
                             ready_tx.data.clone(),
                         );
@@ -1539,10 +1561,12 @@ impl NodeService {
                             continue;
                         }
 
+                        // With EIP-155 aligned signing_message(), all transactions
+                        // (external signed + dev-key signed) can use the standard path.
                         if let Err(e) = mempool.add_transaction(tx) {
                             warn!("Failed to add TX to mempool: {}", e);
                         } else {
-                            info!("📥 Transaction added to mempool");
+                            debug!("✅ Transaction added to node mempool successfully");
                         }
                     }
 

@@ -14,10 +14,10 @@
 //!
 //! Extracted from server.rs to reduce complexity and improve maintainability.
 
+use dashmap::DashMap;
 use jsonrpc_core::{IoHandler, Params};
 use parking_lot::RwLock;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -29,7 +29,7 @@ use luxtensor_storage::BlockchainDB;
 /// Context for transaction RPC handlers
 pub struct TxRpcContext {
     pub mempool: Arc<RwLock<Mempool>>,
-    pub pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+    pub pending_txs: Arc<DashMap<Hash, Transaction>>,
     /// [C1 FIX] Unified state for consistent nonce/balance reads
     pub unified_state: Arc<RwLock<UnifiedStateDB>>,
     pub broadcaster: Arc<dyn TransactionBroadcaster>,
@@ -39,7 +39,7 @@ pub struct TxRpcContext {
 impl TxRpcContext {
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
-        pending_txs: Arc<RwLock<HashMap<Hash, Transaction>>>,
+        pending_txs: Arc<DashMap<Hash, Transaction>>,
         unified_state: Arc<RwLock<UnifiedStateDB>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         db: Arc<BlockchainDB>,
@@ -157,15 +157,15 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
 
         // Check for duplicate nonce in pending transactions
         {
-            let pending = pending_txs.read();
-            for (_, tx) in pending.iter() {
-                if tx.from == Address::from(from) && tx.nonce == nonce {
-                    return Err(jsonrpc_core::Error {
-                        code: jsonrpc_core::ErrorCode::ServerError(-32000),
-                        message: format!("known transaction: nonce {} already pending", nonce),
-                        data: None,
-                    });
-                }
+            let has_dup = pending_txs
+                .iter()
+                .any(|entry| entry.value().from == Address::from(from) && entry.value().nonce == nonce);
+            if has_dup {
+                return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::ServerError(-32000),
+                    message: format!("known transaction: nonce {} already pending", nonce),
+                    data: None,
+                });
             }
         }
 
@@ -186,8 +186,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
 
         // Add to pending transactions
         {
-            let mut pending = pending_txs.write();
-            pending.insert(tx_hash, core_tx.clone());
+            pending_txs.insert(tx_hash, core_tx.clone());
             info!("📤 Transaction added to mempool: 0x{}", hex::encode(&tx_hash));
         }
 
@@ -211,6 +210,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
                 value,
                 data: data.clone(),
                 gas,
+                gas_price: 1_000_000_000, // default gas price for internal/dev transactions
                 r: [0u8; 32],
                 s: [0u8; 32],
                 v: 0,
@@ -252,11 +252,8 @@ fn register_get_receipt(ctx: &TxRpcContext, io: &mut IoHandler) {
         hash.copy_from_slice(&hash_bytes);
 
         // 1. Check pending transactions first (in-memory mempool)
-        {
-            let pending = pending_txs.read();
-            if let Some(tx) = pending.get(&hash) {
-                return Ok(build_pending_receipt(&hash, tx));
-            }
+        if let Some(tx) = pending_txs.get(&hash) {
+            return Ok(build_pending_receipt(&hash, tx.value()));
         }
 
         // 2. Check stored receipts in database (from mined blocks)
