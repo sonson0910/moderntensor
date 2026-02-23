@@ -1,7 +1,7 @@
 use crate::logs::LogStore;
 use crate::rate_limiter::RateLimiter;
 use crate::{
-    eth_rpc::{register_aa_methods, register_eth_methods, register_log_methods, Mempool},
+    eth_rpc::{register_aa_methods, register_eth_methods, register_log_methods, FaucetRpcConfig},
     types::*,
     NoOpBroadcaster, Result, RpcError, TransactionBroadcaster,
 };
@@ -74,7 +74,7 @@ pub struct RpcServer {
     pending_txs: Arc<DashMap<Hash, Transaction>>,
     ai_tasks: Arc<DashMap<Hash, AITaskInfo>>,
     broadcaster: Arc<dyn TransactionBroadcaster>,
-    mempool: Arc<RwLock<Mempool>>,
+    mempool: Arc<luxtensor_core::UnifiedMempool>,
     commit_reveal: Arc<RwLock<CommitRevealManager>>,
     /// Circuit breaker for AI layer operations
     ai_circuit_breaker: Arc<AILayerCircuitBreaker>,
@@ -157,7 +157,7 @@ impl RpcServer {
             pending_txs: Arc::new(DashMap::new()),
             ai_tasks: Arc::new(DashMap::new()),
             broadcaster: Arc::new(NoOpBroadcaster),
-            mempool: Arc::new(RwLock::new(Mempool::new())),
+            mempool: Arc::new(luxtensor_core::UnifiedMempool::new(1000, 8898)),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
                 CommitRevealConfig::default(),
             ))),
@@ -180,7 +180,7 @@ impl RpcServer {
     }
 
     /// Get mempool reference for block production polling
-    pub fn mempool(&self) -> Arc<RwLock<Mempool>> {
+    pub fn mempool(&self) -> Arc<luxtensor_core::UnifiedMempool> {
         self.mempool.clone()
     }
 
@@ -197,6 +197,13 @@ impl RpcServer {
     /// Get unified state reference (C1 Phase 2B)
     pub fn unified_state(&self) -> Arc<RwLock<UnifiedStateDB>> {
         self.unified_state.clone()
+    }
+
+    /// Replace the internal UnifiedStateDB with an externally-created instance.
+    /// This allows P2P handler and block production to share the same UnifiedStateDB
+    /// so that `sync_from_state_db` calls from either path update the RPC layer.
+    pub fn set_unified_state(&mut self, state: Arc<RwLock<UnifiedStateDB>>) {
+        self.unified_state = state;
     }
 
     /// Set the cross-chain bridge instance (optional, enables bridge_* RPC methods)
@@ -246,7 +253,7 @@ impl RpcServer {
     /// 🔧 FIX: Added chain_id parameter — was hardcoded to 1337
     pub fn new_with_shared_pending_txs(
         db: Arc<BlockchainDB>,
-        mempool: Arc<RwLock<Mempool>>,
+        mempool: Arc<luxtensor_core::UnifiedMempool>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
         pending_txs: Arc<DashMap<Hash, Transaction>>,
         chain_id: u64,
@@ -419,86 +426,96 @@ impl RpcServer {
 
         // Register AI layer circuit breaker status endpoint
         let ai_cb = self.ai_circuit_breaker.clone();
-        io.add_sync_method("system_getAICircuitBreakerStatus", move |_params: Params| {
-            let status = ai_cb.summary();
-            Ok(serde_json::json!({
-                "healthy": status.healthy,
-                "weight_consensus": {
-                    "state": format!("{:?}", status.weight_consensus_state),
-                    "operational": status.weight_consensus_state == luxtensor_consensus::CircuitState::Closed
-                },
-                "commit_reveal": {
-                    "state": format!("{:?}", status.commit_reveal_state),
-                    "operational": status.commit_reveal_state == luxtensor_consensus::CircuitState::Closed
-                },
-                "emission": {
-                    "state": format!("{:?}", status.emission_state),
-                    "operational": status.emission_state == luxtensor_consensus::CircuitState::Closed
-                }
-            }))
+        io.add_method("system_getAICircuitBreakerStatus", move |_params: Params| {
+            let ai_cb = ai_cb.clone();
+            async move {
+                let status = ai_cb.summary();
+                Ok(serde_json::json!({
+                    "healthy": status.healthy,
+                    "weight_consensus": {
+                        "state": format!("{:?}", status.weight_consensus_state),
+                        "operational": status.weight_consensus_state == luxtensor_consensus::CircuitState::Closed
+                    },
+                    "commit_reveal": {
+                        "state": format!("{:?}", status.commit_reveal_state),
+                        "operational": status.commit_reveal_state == luxtensor_consensus::CircuitState::Closed
+                    },
+                    "emission": {
+                        "state": format!("{:?}", status.emission_state),
+                        "operational": status.emission_state == luxtensor_consensus::CircuitState::Closed
+                    }
+                }))
+            }
         });
 
         // Register rate limiter status endpoint for monitoring
         let _rl = self.rate_limiter.clone();
-        io.add_sync_method("system_getRateLimitStatus", move |_params: Params| {
-            Ok(serde_json::json!({
-                "enabled": true,
-                "config": {
-                    "max_requests_per_minute": 100,
-                    "window_seconds": 60
-                },
-                "message": "Rate limiting active for DoS protection"
-            }))
+        io.add_method("system_getRateLimitStatus", move |_params: Params| {
+            async move {
+                Ok(serde_json::json!({
+                    "enabled": true,
+                    "config": {
+                        "max_requests_per_minute": 100,
+                        "window_seconds": 60
+                    },
+                    "message": "Rate limiting active for DoS protection"
+                }))
+            }
         });
 
         // system_health - Return node health status (for monitoring and load balancers)
         let db_for_health = self.db.clone();
         let unified_for_health = self.unified_state.clone();
         let health_fn_for_rpc = self.health_fn.clone();
-        io.add_sync_method("system_health", move |_params: Params| {
-            // Enhanced: Use HealthMonitor callback if available
-            if let Some(ref health_fn) = health_fn_for_rpc {
-                return Ok(health_fn());
-            }
+        io.add_method("system_health", move |_params: Params| {
+            let health_fn_for_rpc = health_fn_for_rpc.clone();
+            let db_for_health = db_for_health.clone();
+            let unified_for_health = unified_for_health.clone();
+            async move {
+                // Enhanced: Use HealthMonitor callback if available
+                if let Some(ref health_fn) = health_fn_for_rpc {
+                    return Ok(health_fn());
+                }
 
-            // Fallback: basic health from block scanning
-            let block_height = {
-                let mut ceiling: u64 = 1;
-                loop {
-                    match db_for_health.get_block_by_height(ceiling) {
-                        Ok(Some(_)) => {
-                            ceiling *= 2;
-                            if ceiling > 1_000_000 {
-                                break;
+                // Fallback: basic health from block scanning
+                let block_height = {
+                    let mut ceiling: u64 = 1;
+                    loop {
+                        match db_for_health.get_block_by_height(ceiling) {
+                            Ok(Some(_)) => {
+                                ceiling *= 2;
+                                if ceiling > 1_000_000 {
+                                    break;
+                                }
                             }
+                            Ok(None) => break,
+                            Err(_) => break,
                         }
-                        Ok(None) => break,
-                        Err(_) => break,
                     }
-                }
-                let mut low = ceiling / 2;
-                let mut high = ceiling;
-                while low < high {
-                    let mid = (low + high + 1) / 2;
-                    match db_for_health.get_block_by_height(mid) {
-                        Ok(Some(_)) => low = mid,
-                        Ok(None) => high = mid - 1,
-                        Err(_) => break,
+                    let mut low = ceiling / 2;
+                    let mut high = ceiling;
+                    while low < high {
+                        let mid = (low + high + 1) / 2;
+                        match db_for_health.get_block_by_height(mid) {
+                            Ok(Some(_)) => low = mid,
+                            Ok(None) => high = mid - 1,
+                            Err(_) => break,
+                        }
                     }
-                }
-                low
-            };
+                    low
+                };
 
-            let chain_id = unified_for_health.read().chain_id();
+                let chain_id = unified_for_health.read().chain_id();
 
-            Ok(serde_json::json!({
-                "is_syncing": false,
-                "block": block_height,
-                "healthy": true,
-                "chain_id": chain_id,
-                "version": "0.1.0",
-                "node_name": "luxtensor-node"
-            }))
+                Ok(serde_json::json!({
+                    "is_syncing": false,
+                    "block": block_height,
+                    "healthy": true,
+                    "chain_id": chain_id,
+                    "version": "0.1.0",
+                    "node_name": "luxtensor-node"
+                }))
+            }
         });
 
         // system_nodeStats - Return node statistics (height, chain_id, mempool, validators)
@@ -506,149 +523,170 @@ impl RpcServer {
         let mempool_for_stats = self.mempool.clone();
         let validators_for_stats = self.validators.clone();
         let chain_id_for_stats = self.chain_id();
-        io.add_sync_method("system_nodeStats", move |_params: Params| {
-            // Get block height via binary search (same pattern as system_health)
-            let block_height = {
-                let mut ceiling: u64 = 1;
-                loop {
-                    match db_for_stats.get_block_by_height(ceiling) {
-                        Ok(Some(_)) => {
-                            ceiling *= 2;
-                            if ceiling > 1_000_000 {
-                                break;
+        io.add_method("system_nodeStats", move |_params: Params| {
+            let db_for_stats = db_for_stats.clone();
+            let mempool_for_stats = mempool_for_stats.clone();
+            let validators_for_stats = validators_for_stats.clone();
+            async move {
+                // Get block height via binary search (same pattern as system_health)
+                let block_height = {
+                    let mut ceiling: u64 = 1;
+                    loop {
+                        match db_for_stats.get_block_by_height(ceiling) {
+                            Ok(Some(_)) => {
+                                ceiling *= 2;
+                                if ceiling > 1_000_000 {
+                                    break;
+                                }
                             }
+                            Ok(None) => break,
+                            Err(_) => break,
                         }
-                        Ok(None) => break,
-                        Err(_) => break,
                     }
-                }
-                let mut low = ceiling / 2;
-                let mut high = ceiling;
-                while low < high {
-                    let mid = (low + high + 1) / 2;
-                    match db_for_stats.get_block_by_height(mid) {
-                        Ok(Some(_)) => low = mid,
-                        Ok(None) => high = mid - 1,
-                        Err(_) => break,
+                    let mut low = ceiling / 2;
+                    let mut high = ceiling;
+                    while low < high {
+                        let mid = (low + high + 1) / 2;
+                        match db_for_stats.get_block_by_height(mid) {
+                            Ok(Some(_)) => low = mid,
+                            Ok(None) => high = mid - 1,
+                            Err(_) => break,
+                        }
                     }
-                }
-                low
-            };
+                    low
+                };
 
-            let mempool_size = mempool_for_stats.read().pending_txs.len();
-            let validator_count = validators_for_stats.read().len();
+                let mempool_size = mempool_for_stats.get_pending_transactions().len();
+                let validator_count = validators_for_stats.read().len();
 
-            Ok(serde_json::json!({
-                "height": block_height,
-                "chain_id": chain_id_for_stats,
-                "mempool_size": mempool_size,
-                "validator_count": validator_count,
-                "version": env!("CARGO_PKG_VERSION")
-            }))
+                Ok(serde_json::json!({
+                    "height": block_height,
+                    "chain_id": chain_id_for_stats,
+                    "mempool_size": mempool_size,
+                    "validator_count": validator_count,
+                    "version": env!("CARGO_PKG_VERSION")
+                }))
+            }
         });
 
         // system_cacheStats - Return Merkle cache statistics for monitoring
         if let Some(ref cache) = self.merkle_cache {
             let cache_for_stats = cache.clone();
-            io.add_sync_method("system_cacheStats", move |_params: Params| {
-                let stats = cache_for_stats.stats();
-                Ok(serde_json::json!({
-                    "full_computations": stats.full_computations,
-                    "incremental_computations": stats.incremental_computations,
-                    "root_cache_hits": stats.root_cache_hits,
-                    "root_cache_misses": stats.root_cache_misses,
-                    "hash_cache_hits": stats.hash_cache_hits,
-                    "hit_ratio": stats.hit_ratio(),
-                    "incremental_ratio": stats.incremental_ratio()
-                }))
+            io.add_method("system_cacheStats", move |_params: Params| {
+                let cache_for_stats = cache_for_stats.clone();
+                async move {
+                    let stats = cache_for_stats.stats();
+                    Ok(serde_json::json!({
+                        "full_computations": stats.full_computations,
+                        "incremental_computations": stats.incremental_computations,
+                        "root_cache_hits": stats.root_cache_hits,
+                        "root_cache_misses": stats.root_cache_misses,
+                        "hash_cache_hits": stats.hash_cache_hits,
+                        "hit_ratio": stats.hit_ratio(),
+                        "incremental_ratio": stats.incremental_ratio()
+                    }))
+                }
             });
         }
 
         // system_metrics - Return node metrics as JSON (for dashboards)
         if let Some(ref metrics_fn) = self.metrics_json_fn {
             let fn_clone = metrics_fn.clone();
-            io.add_sync_method("system_metrics", move |_params: Params| {
-                Ok(fn_clone())
+            io.add_method("system_metrics", move |_params: Params| {
+                let fn_clone = fn_clone.clone();
+                async move {
+                    Ok(fn_clone())
+                }
             });
         }
 
         // system_prometheusMetrics - Return Prometheus-compatible metrics text
         if let Some(ref prom_fn) = self.metrics_prometheus_fn {
             let fn_clone = prom_fn.clone();
-            io.add_sync_method("system_prometheusMetrics", move |_params: Params| {
-                Ok(serde_json::Value::String(fn_clone()))
+            io.add_method("system_prometheusMetrics", move |_params: Params| {
+                let fn_clone = fn_clone.clone();
+                async move {
+                    Ok(serde_json::Value::String(fn_clone()))
+                }
             });
         }
 
         // debug_forkChoiceState - Return block scores and attestation stakes for debugging
         let db_for_debug = self.db.clone();
-        io.add_sync_method("debug_forkChoiceState", move |_params: Params| {
-            let block_scores = match db_for_debug.load_all_block_scores() {
-                Ok(scores) => scores.iter().map(|(hash, score)| {
-                    serde_json::json!({
-                        "hash": format!("0x{}", hex::encode(hash)),
-                        "score": score
-                    })
-                }).collect::<Vec<_>>(),
-                Err(e) => return Err(jsonrpc_core::Error {
-                    code: jsonrpc_core::ErrorCode::InternalError,
-                    message: format!("Failed to load block scores: {}", e),
-                    data: None,
-                }),
-            };
+        io.add_method("debug_forkChoiceState", move |_params: Params| {
+            let db_for_debug = db_for_debug.clone();
+            async move {
+                let block_scores = match db_for_debug.load_all_block_scores() {
+                    Ok(scores) => scores.iter().map(|(hash, score)| {
+                        serde_json::json!({
+                            "hash": format!("0x{}", hex::encode(hash)),
+                            "score": score
+                        })
+                    }).collect::<Vec<_>>(),
+                    Err(e) => return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::InternalError,
+                        message: format!("Failed to load block scores: {}", e),
+                        data: None,
+                    }),
+                };
 
-            let attestation_stakes = match db_for_debug.load_all_attestation_stakes() {
-                Ok(stakes) => stakes.iter().map(|(hash, stake)| {
-                    serde_json::json!({
-                        "hash": format!("0x{}", hex::encode(hash)),
-                        "stake": stake.to_string()
-                    })
-                }).collect::<Vec<_>>(),
-                Err(e) => return Err(jsonrpc_core::Error {
-                    code: jsonrpc_core::ErrorCode::InternalError,
-                    message: format!("Failed to load attestation stakes: {}", e),
-                    data: None,
-                }),
-            };
+                let attestation_stakes = match db_for_debug.load_all_attestation_stakes() {
+                    Ok(stakes) => stakes.iter().map(|(hash, stake)| {
+                        serde_json::json!({
+                            "hash": format!("0x{}", hex::encode(hash)),
+                            "stake": stake.to_string()
+                        })
+                    }).collect::<Vec<_>>(),
+                    Err(e) => return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::InternalError,
+                        message: format!("Failed to load attestation stakes: {}", e),
+                        data: None,
+                    }),
+                };
 
-            Ok(serde_json::json!({
-                "blockScores": block_scores,
-                "attestationStakes": attestation_stakes,
-                "totalScoredBlocks": block_scores.len(),
-                "totalAttestedBlocks": attestation_stakes.len()
-            }))
+                Ok(serde_json::json!({
+                    "blockScores": block_scores,
+                    "attestationStakes": attestation_stakes,
+                    "totalScoredBlocks": block_scores.len(),
+                    "totalAttestedBlocks": attestation_stakes.len()
+                }))
+            }
         });
 
         // sync_getSyncStatus - Return current sync status for state sync protocol
         let db_for_sync = self.db.clone();
         let unified_for_sync = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
-        io.add_sync_method("sync_getSyncStatus", move |_params: Params| {
-            let current_block = unified_for_sync.read().block_number();
-            let highest_block = {
-                // Simple linear scan from current to find highest
-                let mut highest = current_block;
-                for h in (current_block + 1)..(current_block + 100) {
-                    if db_for_sync.get_block_by_height(h).ok().flatten().is_some() {
-                        highest = h;
-                    } else {
-                        break;
+        io.add_method("sync_getSyncStatus", move |_params: Params| {
+            let db_for_sync = db_for_sync.clone();
+            let unified_for_sync = unified_for_sync.clone();
+            async move {
+                let current_block = unified_for_sync.read().block_number();
+                let highest_block = {
+                    // Simple linear scan from current to find highest
+                    let mut highest = current_block;
+                    for h in (current_block + 1)..(current_block + 100) {
+                        if db_for_sync.get_block_by_height(h).ok().flatten().is_some() {
+                            highest = h;
+                        } else {
+                            break;
+                        }
                     }
-                }
-                highest
-            };
-            let is_syncing = highest_block > current_block;
+                    highest
+                };
+                let is_syncing = highest_block > current_block;
 
-            Ok(json!({
-                "syncing": is_syncing,
-                "currentBlock": format!("0x{:x}", current_block),
-                "highestBlock": format!("0x{:x}", highest_block),
-                "startingBlock": "0x0",
-                "progress": if highest_block > 0 {
-                    (current_block as f64 / highest_block as f64 * 100.0).min(100.0)
-                } else {
-                    100.0
-                }
-            }))
+                Ok(json!({
+                    "syncing": is_syncing,
+                    "currentBlock": format!("0x{:x}", current_block),
+                    "highestBlock": format!("0x{:x}", highest_block),
+                    "startingBlock": "0x0",
+                    "progress": if highest_block > 0 {
+                        (current_block as f64 / highest_block as f64 * 100.0).min(100.0)
+                    } else {
+                        100.0
+                    }
+                }))
+            }
         });
 
         // Register Ethereum-compatible methods (eth_*)
@@ -661,6 +699,7 @@ impl RpcServer {
             self.db.clone(),
             self.broadcaster.clone(),
             self.evm_executor.clone(),
+            FaucetRpcConfig::default(),
         );
 
         // Register log query methods (eth_getLogs, eth_newFilter, etc.)
@@ -783,122 +822,135 @@ impl RpcServer {
         let cached_block_num = self.cached_block_number.clone();
         let unified_for_block_num = self.unified_state.clone();
         let db_for_block_num = self.db.clone();
-        io.add_sync_method("eth_blockNumber", move |_params: Params| {
-            // Get block number from UnifiedStateDB first (source of truth)
-            let unified_block = unified_for_block_num.read().block_number();
-            if unified_block > 0 {
-                // Update cache atomically with Release ordering for visibility
-                cached_block_num.store(unified_block, Ordering::Release);
-                return Ok(Value::String(format!("0x{:x}", unified_block)));
-            }
+        io.add_method("eth_blockNumber", move |_params: Params| {
+            let unified_for_block_num = unified_for_block_num.clone();
+            let cached_block_num = cached_block_num.clone();
+            let db_for_block_num = db_for_block_num.clone();
+            async move {
+                // Get block number from UnifiedStateDB first (source of truth)
+                let unified_block = unified_for_block_num.read().block_number();
+                if unified_block > 0 {
+                    // Update cache atomically with Release ordering for visibility
+                    cached_block_num.store(unified_block, Ordering::Release);
+                    return Ok(Value::String(format!("0x{:x}", unified_block)));
+                }
 
-            // Fallback: Check atomic cache (with Acquire for proper visibility)
-            let cached = cached_block_num.load(Ordering::Acquire);
-            if cached > 0 {
-                return Ok(Value::String(format!("0x{:x}", cached)));
-            }
+                // Fallback: Check atomic cache (with Acquire for proper visibility)
+                let cached = cached_block_num.load(Ordering::Acquire);
+                if cached > 0 {
+                    return Ok(Value::String(format!("0x{:x}", cached)));
+                }
 
-            // SLOW PATH: Initialize from DB (only at startup)
-            // Check genesis first
-            match db_for_block_num.get_block_by_height(0) {
-                Ok(None) => return Ok(Value::String("0x0".to_string())),
-                Err(_) => return Err(jsonrpc_core::Error::internal_error()),
-                Ok(Some(_)) => {}
-            }
+                // SLOW PATH: Initialize from DB (only at startup)
+                // Check genesis first
+                match db_for_block_num.get_block_by_height(0) {
+                    Ok(None) => return Ok(Value::String("0x0".to_string())),
+                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                    Ok(Some(_)) => {}
+                }
 
-            // Jump search to find ceiling
-            let mut ceiling: u64 = 1;
-            loop {
-                match db_for_block_num.get_block_by_height(ceiling) {
-                    Ok(Some(_)) => {
-                        ceiling *= 2;
-                        if ceiling > 1_000_000 {
-                            break;
+                // Jump search to find ceiling
+                let mut ceiling: u64 = 1;
+                loop {
+                    match db_for_block_num.get_block_by_height(ceiling) {
+                        Ok(Some(_)) => {
+                            ceiling *= 2;
+                            if ceiling > 1_000_000 {
+                                break;
+                            }
                         }
+                        Ok(None) => break,
+                        Err(_) => return Err(jsonrpc_core::Error::internal_error()),
                     }
-                    Ok(None) => break,
-                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
                 }
-            }
 
-            // Binary search for exact height
-            let mut low = ceiling / 2;
-            let mut high = ceiling;
-            while low < high {
-                let mid = (low + high + 1) / 2;
-                match db_for_block_num.get_block_by_height(mid) {
-                    Ok(Some(_)) => low = mid,
-                    Ok(None) => high = mid - 1,
-                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                // Binary search for exact height
+                let mut low = ceiling / 2;
+                let mut high = ceiling;
+                while low < high {
+                    let mid = (low + high + 1) / 2;
+                    match db_for_block_num.get_block_by_height(mid) {
+                        Ok(Some(_)) => low = mid,
+                        Ok(None) => high = mid - 1,
+                        Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                    }
                 }
-            }
 
-            // Cache the result
-            cached_block_num.store(low, Ordering::Relaxed);
-            Ok(Value::String(format!("0x{:x}", low)))
+                // Cache the result
+                cached_block_num.store(low, Ordering::Relaxed);
+                Ok(Value::String(format!("0x{:x}", low)))
+            }
         });
 
         // eth_getBlockByNumber - Get block by number
         let db_for_get_block = self.db.clone();
         let cached_for_get_block = self.cached_block_number.clone();
         let unified_for_get_block = self.unified_state.clone();
-        io.add_sync_method("eth_getBlockByNumber", move |params: Params| {
-            let parsed: Vec<serde_json::Value> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing block number"));
-            }
-
-            // Resolve "latest"/"pending" to the actual chain tip height
-            let latest = {
-                let ub = unified_for_get_block.read().block_number();
-                if ub > 0 {
-                    ub
-                } else {
-                    cached_for_get_block.load(Ordering::Acquire)
+        io.add_method("eth_getBlockByNumber", move |params: Params| {
+            let db_for_get_block = db_for_get_block.clone();
+            let unified_for_get_block = unified_for_get_block.clone();
+            let cached_for_get_block = cached_for_get_block.clone();
+            async move {
+                let parsed: Vec<serde_json::Value> = params.parse()?;
+                if parsed.is_empty() {
+                    return Err(jsonrpc_core::Error::invalid_params("Missing block number"));
                 }
-            };
-            let height = parse_block_number_with_latest(&parsed[0], latest)?;
-            let _include_txs = parsed.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
 
-            match db_for_get_block.get_block_by_height(height) {
-                Ok(Some(block)) => {
-                    let rpc_block = RpcBlock::from(block);
-                    serde_json::to_value(rpc_block)
-                        .map_err(|_| jsonrpc_core::Error::internal_error())
+                // Resolve "latest"/"pending" to the actual chain tip height
+                let latest = {
+                    let ub = unified_for_get_block.read().block_number();
+                    if ub > 0 {
+                        ub
+                    } else {
+                        cached_for_get_block.load(Ordering::Acquire)
+                    }
+                };
+                let height = parse_block_number_with_latest(&parsed[0], latest)?;
+                let _include_txs = parsed.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+
+                match db_for_get_block.get_block_by_height(height) {
+                    Ok(Some(block)) => {
+                        let rpc_block = RpcBlock::from(block);
+                        serde_json::to_value(rpc_block)
+                            .map_err(|_| jsonrpc_core::Error::internal_error())
+                    }
+                    Ok(None) => Ok(Value::Null),
+                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
                 }
-                Ok(None) => Ok(Value::Null),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
             }
         });
 
         let db = self.db.clone();
 
         // eth_getBlockByHash - Get block by hash
-        io.add_sync_method("eth_getBlockByHash", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing block hash"));
-            }
-
-            let hash_str = parsed[0].trim_start_matches("0x");
-            let hash_bytes = hex::decode(hash_str)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-            if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-            }
-
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&hash_bytes);
-
-            match db.get_block(&hash) {
-                Ok(Some(block)) => {
-                    let rpc_block = RpcBlock::from(block);
-                    serde_json::to_value(rpc_block)
-                        .map_err(|_| jsonrpc_core::Error::internal_error())
+        io.add_method("eth_getBlockByHash", move |params: Params| {
+            let db = db.clone();
+            async move {
+                let parsed: Vec<String> = params.parse()?;
+                if parsed.is_empty() {
+                    return Err(jsonrpc_core::Error::invalid_params("Missing block hash"));
                 }
-                Ok(None) => Ok(Value::Null),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
+
+                let hash_str = parsed[0].trim_start_matches("0x");
+                let hash_bytes = hex::decode(hash_str)
+                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+
+                if hash_bytes.len() != 32 {
+                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+                }
+
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&hash_bytes);
+
+                match db.get_block(&hash) {
+                    Ok(Some(block)) => {
+                        let rpc_block = RpcBlock::from(block);
+                        serde_json::to_value(rpc_block)
+                            .map_err(|_| jsonrpc_core::Error::internal_error())
+                    }
+                    Ok(None) => Ok(Value::Null),
+                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
+                }
             }
         });
 
@@ -908,58 +960,64 @@ impl RpcServer {
 
         // eth_getTransactionByHash - Get transaction by hash
         // 3-tier lookup: pending_txs (hot cache) → mempool → confirmed DB
-        io.add_sync_method("eth_getTransactionByHash", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-            }
+        io.add_method("eth_getTransactionByHash", move |params: Params| {
+            let db = db.clone();
+            let pending_txs_query = pending_txs_query.clone();
+            let mempool_for_tx_query = mempool_for_tx_query.clone();
+            async move {
+                let parsed: Vec<String> = params.parse()?;
+                if parsed.is_empty() {
+                    return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
+                }
 
-            let hash_str = parsed[0].trim_start_matches("0x");
-            let hash_bytes = hex::decode(hash_str)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+                let hash_str = parsed[0].trim_start_matches("0x");
+                let hash_bytes = hex::decode(hash_str)
+                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
 
-            if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-            }
+                if hash_bytes.len() != 32 {
+                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+                }
 
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&hash_bytes);
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&hash_bytes);
 
-            // 1. Check pending_txs hot cache first
-            if let Some(tx) = pending_txs_query.get(&hash) {
-                let rpc_tx = RpcTransaction::from(tx.value().clone());
-                return serde_json::to_value(rpc_tx)
-                    .map_err(|_| jsonrpc_core::Error::internal_error());
-            }
-
-            // 2. Check mempool pending transactions
-            {
-                let mp = mempool_for_tx_query.read();
-                if let Some(pending_tx) = mp.pending_txs.get(&hash) {
-                    return serde_json::to_value(pending_tx)
+                // 1. Check pending_txs hot cache first
+                if let Some(tx) = pending_txs_query.get(&hash) {
+                    let rpc_tx = RpcTransaction::from(tx.value().clone());
+                    return serde_json::to_value(rpc_tx)
                         .map_err(|_| jsonrpc_core::Error::internal_error());
                 }
-            }
 
-            // 3. Fallback to confirmed transactions in database
-            match db.get_transaction(&hash) {
-                Ok(Some(tx)) => {
+                // 2. Check mempool pending transactions
+                if let Some(tx) = mempool_for_tx_query.get_transaction(&hash) {
                     let rpc_tx = RpcTransaction::from(tx);
-                    serde_json::to_value(rpc_tx).map_err(|_| jsonrpc_core::Error::internal_error())
+                    return serde_json::to_value(rpc_tx)
+                        .map_err(|_| jsonrpc_core::Error::internal_error());
                 }
-                Ok(None) => Ok(Value::Null),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
+
+                // 3. Fallback to confirmed transactions in database
+                match db.get_transaction(&hash) {
+                    Ok(Some(tx)) => {
+                        let rpc_tx = RpcTransaction::from(tx);
+                        serde_json::to_value(rpc_tx).map_err(|_| jsonrpc_core::Error::internal_error())
+                    }
+                    Ok(None) => Ok(Value::Null),
+                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
+                }
             }
         });
 
         // eth_pendingTransactions - Get all pending transactions from mempool
         let pending_txs_for_list = self.pending_txs.clone();
-        io.add_sync_method("eth_pendingTransactions", move |_params: Params| {
-            let rpc_txs: Vec<RpcTransaction> = pending_txs_for_list
-                .iter()
-                .map(|entry| RpcTransaction::from(entry.value().clone()))
-                .collect();
-            serde_json::to_value(rpc_txs).map_err(|_| jsonrpc_core::Error::internal_error())
+        io.add_method("eth_pendingTransactions", move |_params: Params| {
+            let pending_txs_for_list = pending_txs_for_list.clone();
+            async move {
+                let rpc_txs: Vec<RpcTransaction> = pending_txs_for_list
+                    .iter()
+                    .map(|entry| RpcTransaction::from(entry.value().clone()))
+                    .collect();
+                serde_json::to_value(rpc_txs).map_err(|_| jsonrpc_core::Error::internal_error())
+            }
         });
     }
 
@@ -968,16 +1026,19 @@ impl RpcServer {
         let unified_state = self.unified_state.clone();
 
         // eth_getBalance - Get account balance
-        io.add_sync_method("eth_getBalance", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        io.add_method("eth_getBalance", move |params: Params| {
+            let unified_state = unified_state.clone();
+            async move {
+                let parsed: Vec<String> = params.parse()?;
+                if parsed.is_empty() {
+                    return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+                }
+
+                let address = parse_address(&parsed[0])?;
+
+                let balance = unified_state.read().get_balance(&address);
+                Ok(Value::String(format!("0x{:x}", balance)))
             }
-
-            let address = parse_address(&parsed[0])?;
-
-            let balance = unified_state.read().get_balance(&address);
-            Ok(Value::String(format!("0x{:x}", balance)))
         });
 
         // NOTE: eth_getTransactionCount and eth_sendRawTransaction are registered
@@ -987,66 +1048,69 @@ impl RpcServer {
         // tx_getReceipt - Get transaction receipt
         let db = self.db.clone();
 
-        io.add_sync_method("tx_getReceipt", move |params: Params| {
-            let parsed: Vec<String> = params.parse()?;
-            if parsed.is_empty() {
-                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-            }
-
-            let hash_str = parsed[0].trim_start_matches("0x");
-            let hash_bytes = hex::decode(hash_str)
-                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-            if hash_bytes.len() != 32 {
-                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-            }
-
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&hash_bytes);
-
-            // Query transaction from database
-            match db.get_transaction(&hash) {
-                Ok(Some(tx)) => {
-                    // Try to get the real receipt from DB (bincode-serialized)
-                    let (status, gas_used, logs_json, contract_addr, block_height) = match db.get_receipt(&hash) {
-                        Ok(Some(receipt_bytes)) => {
-                            match bincode::deserialize::<luxtensor_core::receipt::Receipt>(&receipt_bytes) {
-                                Ok(r) => {
-                                    let status_hex = match r.status {
-                                        luxtensor_core::receipt::ExecutionStatus::Success => "0x1",
-                                        luxtensor_core::receipt::ExecutionStatus::Failed => "0x0",
-                                    };
-                                    let logs: Vec<serde_json::Value> = r.logs.iter().map(|log| {
-                                        serde_json::json!({
-                                            "address": format!("0x{}", hex::encode(log.address.as_bytes())),
-                                            "topics": log.topics.iter().map(|t| format!("0x{}", hex::encode(t))).collect::<Vec<_>>(),
-                                            "data": format!("0x{}", hex::encode(&log.data)),
-                                        })
-                                    }).collect();
-                                    let ca = r.contract_address.map(|a| format!("0x{}", hex::encode(a.as_bytes())));
-                                    (status_hex.to_string(), r.gas_used, serde_json::json!(logs), ca, r.block_height)
-                                }
-                                Err(_) => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
-                            }
-                        }
-                        _ => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
-                    };
-
-                    let receipt = serde_json::json!({
-                        "transactionHash": format!("0x{}", hex::encode(hash)),
-                        "status": status,
-                        "blockNumber": format!("0x{:x}", block_height),
-                        "gasUsed": format!("0x{:x}", gas_used),
-                        "cumulativeGasUsed": format!("0x{:x}", gas_used),
-                        "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
-                        "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
-                        "logs": logs_json,
-                        "contractAddress": contract_addr,
-                    });
-                    Ok(receipt)
+        io.add_method("tx_getReceipt", move |params: Params| {
+            let db = db.clone();
+            async move {
+                let parsed: Vec<String> = params.parse()?;
+                if parsed.is_empty() {
+                    return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
                 }
-                Ok(None) => Ok(Value::Null),
-                Err(_) => Err(jsonrpc_core::Error::internal_error()),
+
+                let hash_str = parsed[0].trim_start_matches("0x");
+                let hash_bytes = hex::decode(hash_str)
+                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+
+                if hash_bytes.len() != 32 {
+                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+                }
+
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&hash_bytes);
+
+                // Query transaction from database
+                match db.get_transaction(&hash) {
+                    Ok(Some(tx)) => {
+                        // Try to get the real receipt from DB (bincode-serialized)
+                        let (status, gas_used, logs_json, contract_addr, block_height) = match db.get_receipt(&hash) {
+                            Ok(Some(receipt_bytes)) => {
+                                match bincode::deserialize::<luxtensor_core::receipt::Receipt>(&receipt_bytes) {
+                                    Ok(r) => {
+                                        let status_hex = match r.status {
+                                            luxtensor_core::receipt::ExecutionStatus::Success => "0x1",
+                                            luxtensor_core::receipt::ExecutionStatus::Failed => "0x0",
+                                        };
+                                        let logs: Vec<serde_json::Value> = r.logs.iter().map(|log| {
+                                            serde_json::json!({
+                                                "address": format!("0x{}", hex::encode(log.address.as_bytes())),
+                                                "topics": log.topics.iter().map(|t| format!("0x{}", hex::encode(t))).collect::<Vec<_>>(),
+                                                "data": format!("0x{}", hex::encode(&log.data)),
+                                            })
+                                        }).collect();
+                                        let ca = r.contract_address.map(|a| format!("0x{}", hex::encode(a.as_bytes())));
+                                        (status_hex.to_string(), r.gas_used, serde_json::json!(logs), ca, r.block_height)
+                                    }
+                                    Err(_) => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
+                                }
+                            }
+                            _ => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
+                        };
+
+                        let receipt = serde_json::json!({
+                            "transactionHash": format!("0x{}", hex::encode(hash)),
+                            "status": status,
+                            "blockNumber": format!("0x{:x}", block_height),
+                            "gasUsed": format!("0x{:x}", gas_used),
+                            "cumulativeGasUsed": format!("0x{:x}", gas_used),
+                            "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
+                            "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
+                            "logs": logs_json,
+                            "contractAddress": contract_addr,
+                        });
+                        Ok(receipt)
+                    }
+                    Ok(None) => Ok(Value::Null),
+                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
+                }
             }
         });
 
@@ -1067,7 +1131,7 @@ pub struct RpcServerBuilder {
     chain_id: u64,
     metagraph: Option<Arc<MetagraphDB>>,
     broadcaster: Option<Arc<dyn TransactionBroadcaster>>,
-    mempool: Option<Arc<RwLock<Mempool>>>,
+    mempool: Option<Arc<luxtensor_core::UnifiedMempool>>,
     pending_txs: Option<Arc<DashMap<Hash, Transaction>>>,
     validators: Option<Arc<RwLock<ValidatorSet>>>,
     data_dir: Option<PathBuf>,
@@ -1087,7 +1151,7 @@ impl RpcServerBuilder {
     }
 
     /// Set external mempool (defaults to a new empty mempool).
-    pub fn mempool(mut self, m: Arc<RwLock<Mempool>>) -> Self {
+    pub fn mempool(mut self, m: Arc<luxtensor_core::UnifiedMempool>) -> Self {
         self.mempool = Some(m);
         self
     }
@@ -1142,7 +1206,7 @@ impl RpcServerBuilder {
             pending_txs: self.pending_txs.unwrap_or_else(|| Arc::new(DashMap::new())),
             ai_tasks: Arc::new(DashMap::new()),
             broadcaster: self.broadcaster.unwrap_or_else(|| Arc::new(NoOpBroadcaster)),
-            mempool: self.mempool.unwrap_or_else(|| Arc::new(RwLock::new(Mempool::new()))),
+            mempool: self.mempool.unwrap_or_else(|| Arc::new(luxtensor_core::UnifiedMempool::new(1000, 8898))),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
                 CommitRevealConfig::default(),
             ))),

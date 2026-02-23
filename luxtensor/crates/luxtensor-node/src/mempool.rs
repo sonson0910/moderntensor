@@ -131,14 +131,19 @@ impl Mempool {
             return Err(MempoolError::TransactionTooLarge { size: tx_size, max: self.max_tx_size });
         }
 
-        // DoS Protection 2: Check minimum gas price
-        if tx.gas_price < self.min_gas_price {
+        // 🔧 FIX: Faucet mint TXs (from Address::zero()) skip gas price
+        // and signature checks — they are special "mint" transactions.
+        let is_faucet_mint = tx.from == Address::zero();
+
+        // DoS Protection 2: Check minimum gas price (skip for faucet mints)
+        if !is_faucet_mint && tx.gas_price < self.min_gas_price {
             debug!("🛡️ Rejected transaction: gas_price {} < min {}", tx.gas_price, self.min_gas_price);
             return Err(MempoolError::GasPriceTooLow { price: tx.gas_price, min: self.min_gas_price });
         }
 
         // SECURITY: Validate signature before accepting into mempool
-        if self.validate_signatures {
+        // (skip for faucet mints — they don't have real signatures)
+        if !is_faucet_mint && self.validate_signatures {
             if let Err(e) = tx.verify_signature() {
                 warn!("Rejected transaction with invalid signature: {:?}", e);
                 return Err(MempoolError::InvalidSignature);

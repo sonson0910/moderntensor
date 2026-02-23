@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 // ============================================================
@@ -134,8 +134,11 @@ impl Default for DispatcherConfig {
 /// Task Dispatcher handles distributing AI tasks to miners
 pub struct TaskDispatcher {
     config: DispatcherConfig,
-    #[allow(dead_code)]
+    /// MetagraphDB for neuron reputation lookups during task routing
     db: Arc<MetagraphDB>,
+    /// Cached reputation map: (last_refresh, hotkey → (trust, rank))
+    /// Avoids re-querying MetagraphDB on every `get_available_miners()` call.
+    reputation_cache: RwLock<(Instant, HashMap<[u8; 20], (u32, u32)>)>,
     /// Pending tasks waiting for assignment (stores full task info)
     pending_queue: Arc<RwLock<VecDeque<PendingTask>>>,
     /// Active task assignments
@@ -154,6 +157,11 @@ impl TaskDispatcher {
         Self {
             config,
             db,
+            // Force first refresh by setting timestamp far in the past
+            reputation_cache: RwLock::new((
+                Instant::now() - Duration::from_secs(120),
+                HashMap::new(),
+            )),
             pending_queue: Arc::new(RwLock::new(VecDeque::new())),
             assignments: Arc::new(RwLock::new(HashMap::new())),
             task_metadata: Arc::new(RwLock::new(HashMap::new())),
@@ -193,7 +201,51 @@ impl TaskDispatcher {
         debug!("Miner registered: 0x{}", hex::encode(&address[..8]));
     }
 
-    /// Get available miners sorted by suitability
+    /// TTL for the reputation cache (30 seconds).
+    const REPUTATION_CACHE_TTL: Duration = Duration::from_secs(30);
+
+    /// Build a hotkey→trust lookup from MetagraphDB neurons (root subnet 0).
+    ///
+    /// Returns a map from neuron hotkey `[u8; 20]` to `(trust, rank)` where
+    /// both values are fixed-point u32 (divide by 65535 to normalize to [0, 1]).
+    /// Gracefully returns empty map if MetagraphDB is unavailable.
+    ///
+    /// 🔧 FIX: Uses a 30-second TTL cache to avoid re-querying MetagraphDB
+    /// on every `get_available_miners()` call (previously a performance bottleneck).
+    fn build_reputation_map(&self) -> HashMap<[u8; 20], (u32, u32)> {
+        // Fast path: return cached data if still valid
+        {
+            let cache = self.reputation_cache.read();
+            if cache.0.elapsed() < Self::REPUTATION_CACHE_TTL {
+                return cache.1.clone();
+            }
+        }
+
+        // Slow path: refresh from MetagraphDB
+        let map = match self.db.get_neurons_by_subnet(0) {
+            Ok(neurons) => neurons
+                .into_iter()
+                .filter(|n| n.active)
+                .map(|n| (n.hotkey, (n.trust, n.rank)))
+                .collect(),
+            Err(e) => {
+                warn!("MetagraphDB reputation lookup failed, using base scores: {}", e);
+                HashMap::new()
+            }
+        };
+
+        // Update cache
+        let mut cache = self.reputation_cache.write();
+        *cache = (Instant::now(), map.clone());
+        debug!("Reputation cache refreshed ({} entries)", map.len());
+        map
+    }
+
+    /// Get available miners sorted by suitability (reputation-boosted scoring).
+    ///
+    /// Scoring formula: `(stake × success_rate × reputation_boost) / avg_time`
+    /// where `reputation_boost = 1.0 + trust_normalized` (trust from MetagraphDB).
+    /// Miners with no neuron data get boost = 1.0 (no penalty, just no bonus).
     pub fn get_available_miners(&self) -> Vec<MinerInfo> {
         let miners = self.miners.read();
         let mut available: Vec<_> = miners
@@ -205,10 +257,23 @@ impl TaskDispatcher {
             .cloned()
             .collect();
 
-        // Sort by: stake * success_rate / avg_execution_time
+        // Look up neuron reputation from MetagraphDB
+        let reputation = self.build_reputation_map();
+
+        // Sort by: stake * success_rate * reputation_boost / avg_execution_time
         available.sort_by(|a, b| {
-            let score_a = (a.stake as f64 * a.success_rate) / (a.avg_execution_time.max(1) as f64);
-            let score_b = (b.stake as f64 * b.success_rate) / (b.avg_execution_time.max(1) as f64);
+            let boost_a = reputation
+                .get(&a.address)
+                .map(|(trust, _)| 1.0 + (*trust as f64 / 65535.0))
+                .unwrap_or(1.0);
+            let boost_b = reputation
+                .get(&b.address)
+                .map(|(trust, _)| 1.0 + (*trust as f64 / 65535.0))
+                .unwrap_or(1.0);
+            let score_a =
+                (a.stake as f64 * a.success_rate * boost_a) / (a.avg_execution_time.max(1) as f64);
+            let score_b =
+                (b.stake as f64 * b.success_rate * boost_b) / (b.avg_execution_time.max(1) as f64);
             score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -543,12 +608,21 @@ impl DispatchService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use luxtensor_storage::NeuronData;
     use tempfile::TempDir;
 
     fn create_test_dispatcher() -> TaskDispatcher {
         let temp_dir = TempDir::new().unwrap();
         let db = MetagraphDB::open(temp_dir.path()).unwrap();
         TaskDispatcher::new(Arc::new(db), DispatcherConfig::default())
+    }
+
+    /// Create dispatcher with access to the underlying MetagraphDB for seeding test data
+    fn create_test_dispatcher_with_db() -> (TaskDispatcher, Arc<MetagraphDB>) {
+        let temp_dir = TempDir::new().unwrap();
+        let db = Arc::new(MetagraphDB::open(temp_dir.path()).unwrap());
+        let dispatcher = TaskDispatcher::new(db.clone(), DispatcherConfig::default());
+        (dispatcher, db)
     }
 
     #[test]
@@ -629,5 +703,51 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(dispatcher.active_count(), 0);
         assert_eq!(dispatcher.completed_count(), 1);
+    }
+
+    #[test]
+    fn test_reputation_boosted_scoring() {
+        let (dispatcher, db) = create_test_dispatcher_with_db();
+
+        let miner_a = [0xAA; 20]; // high trust
+        let miner_b = [0xBB; 20]; // no trust data
+
+        // Seed MetagraphDB with neuron data for miner_a (high trust)
+        let neuron = NeuronData {
+            uid: 1,
+            subnet_id: 0,
+            hotkey: miner_a,
+            coldkey: [0u8; 20],
+            stake: 0,
+            trust: 60000,    // ~0.915 normalized (near max)
+            rank: 50000,
+            incentive: 40000,
+            dividends: 0,
+            emission: 0,
+            last_update: 0,
+            active: true,
+            endpoint: String::new(),
+        };
+        db.store_neuron(&neuron).unwrap();
+
+        // Register both miners with IDENTICAL stats
+        for addr in [miner_a, miner_b] {
+            dispatcher.register_miner(MinerInfo {
+                address: addr,
+                stake: 10_000_000_000_000_000_000,
+                capacity: 10,
+                current_tasks: 0,
+                success_rate: 0.90,
+                avg_execution_time: 1000,
+                last_seen: 0,
+            });
+        }
+
+        let available = dispatcher.get_available_miners();
+        assert_eq!(available.len(), 2);
+
+        // Miner A (high trust) should rank FIRST because of reputation boost
+        assert_eq!(available[0].address, miner_a, "Trusted miner should rank first");
+        assert_eq!(available[1].address, miner_b, "Untrusted miner should rank second");
     }
 }

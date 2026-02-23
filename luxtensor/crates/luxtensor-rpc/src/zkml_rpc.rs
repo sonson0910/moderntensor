@@ -139,7 +139,10 @@ fn register_proof_submission_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
     let verifier = ctx.verifier.clone();
 
     // zkml_submitProof - Submit a zkML proof
-    io.add_sync_method("zkml_submitProof", move |params: Params| {
+    io.add_method("zkml_submitProof", move |params: Params| {
+        let proofs = proofs.clone();
+        let verifier = verifier.clone();
+        async move {
         let submission: ProofSubmission = params.parse()?;
 
         // Parse task_id
@@ -200,12 +203,15 @@ fn register_proof_submission_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
             "verification_time_us": verification_result.verification_time_us,
             "error": verification_result.error,
         }))
+        }
     });
 
     let proofs = ctx.proofs.clone();
 
     // zkml_getProof - Get proof status
-    io.add_sync_method("zkml_getProof", move |params: Params| {
+    io.add_method("zkml_getProof", move |params: Params| {
+        let proofs = proofs.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing task ID"));
@@ -228,6 +234,7 @@ fn register_proof_submission_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
         } else {
             Ok(Value::Null)
         }
+        }
     });
 }
 
@@ -235,7 +242,9 @@ fn register_proof_verification_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHan
     let verifier = ctx.verifier.clone();
 
     // zkml_verifyProof - Verify a proof without storing
-    io.add_sync_method("zkml_verifyProof", move |params: Params| {
+    io.add_method("zkml_verifyProof", move |params: Params| {
+        let verifier = verifier.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing proof receipt"));
@@ -262,12 +271,15 @@ fn register_proof_verification_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHan
             "verification_time_us": result.verification_time_us,
             "error": result.error,
         }))
+        }
     });
 
     let prover = ctx.prover.clone();
 
     // zkml_generateProof - Generate a proof (development/testing)
-    io.add_sync_method("zkml_generateProof", move |params: Params| {
+    io.add_method("zkml_generateProof", move |params: Params| {
+        let prover = prover.clone();
+        async move {
         let req: ProofRequest = params.parse()?;
 
         // Parse image_id
@@ -312,6 +324,7 @@ fn register_proof_verification_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHan
             "proving_time_ms": receipt.metadata.proving_time_ms,
             "gpu_used": receipt.metadata.gpu_used,
         }))
+        }
     });
 }
 
@@ -321,7 +334,10 @@ fn register_model_management_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
 
     // zkml_registerModel - Register a trusted model
     // SECURITY: Now requires signature verification
-    io.add_sync_method("zkml_registerModel", move |params: Params| {
+    io.add_method("zkml_registerModel", move |params: Params| {
+        let trusted_images = trusted_images.clone();
+        let verifier = verifier.clone();
+        async move {
         #[derive(Deserialize)]
         struct RegisterRequest {
             image_id: String,
@@ -385,12 +401,15 @@ fn register_model_management_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
             "name": req.name,
             "message": "Model registered (signature verified)"
         }))
+        }
     });
 
     let trusted_images = ctx.trusted_images.clone();
 
     // zkml_listTrustedModels - List all trusted models
-    io.add_sync_method("zkml_listTrustedModels", move |_params: Params| {
+    io.add_method("zkml_listTrustedModels", move |_params: Params| {
+        let trusted_images = trusted_images.clone();
+        async move {
         let images = trusted_images.read();
         let list: Vec<serde_json::Value> = images
             .values()
@@ -409,12 +428,15 @@ fn register_model_management_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
             "models": list,
             "count": list.len(),
         }))
+        }
     });
 
     let trusted_images = ctx.trusted_images.clone();
 
     // zkml_isModelTrusted - Check if model is trusted
-    io.add_sync_method("zkml_isModelTrusted", move |params: Params| {
+    io.add_method("zkml_isModelTrusted", move |params: Params| {
+        let trusted_images = trusted_images.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing image ID"));
@@ -433,6 +455,7 @@ fn register_model_management_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
             "name": info.map(|i| i.name.clone()),
             "registered_at": info.map(|i| i.registered_at),
         }))
+        }
     });
 }
 

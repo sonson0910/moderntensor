@@ -54,7 +54,9 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
     let ai_tasks = ctx.ai_tasks.clone();
 
     // lux_submitAITask - Submit AI computation task
-    io.add_sync_method("lux_submitAITask", move |params: Params| {
+    io.add_method("lux_submitAITask", move |params: Params| {
+        let ai_tasks = ai_tasks.clone();
+        async move {
         let task_request: AITaskRequest = params.parse()?;
 
         // Validate
@@ -110,12 +112,14 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             "success": true,
             "task_id": format!("0x{}", hex::encode(task_id))
         }))
-    });
+    }});
 
     let ai_tasks = ctx.ai_tasks.clone();
 
     // lux_getAIResult - Get AI task result
-    io.add_sync_method("lux_getAIResult", move |params: Params| {
+    io.add_method("lux_getAIResult", move |params: Params| {
+        let ai_tasks = ai_tasks.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing task ID"));
@@ -145,7 +149,7 @@ fn register_task_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -156,7 +160,9 @@ fn register_validator_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
     let validators = ctx.validators.clone();
 
     // lux_getValidatorStatus - Get validator information
-    io.add_sync_method("lux_getValidatorStatus", move |params: Params| {
+    io.add_method("lux_getValidatorStatus", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -178,6 +184,7 @@ fn register_validator_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 }
 
@@ -190,7 +197,10 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
     let subnets = ctx.subnets.clone();
 
     // ai_getMetagraph - Get metagraph for subnet
-    io.add_sync_method("ai_getMetagraph", move |params: Params| {
+    io.add_method("ai_getMetagraph", move |params: Params| {
+        let neurons = neurons.clone();
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -227,12 +237,14 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             "neuron_count": neurons_in_subnet.len(),
             "total_stake": total_stake,
         }))
-    });
+    }});
 
     let neurons = ctx.neurons.clone();
 
     // ai_getIncentive - Get incentive info for subnet
-    io.add_sync_method("ai_getIncentive", move |params: Params| {
+    io.add_method("ai_getIncentive", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -258,7 +270,7 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
             "subnet_id": subnet_id,
             "incentives": incentives,
         }))
-    });
+    }});
 }
 
 // =============================================================================
@@ -267,23 +279,23 @@ fn register_metagraph_methods(ctx: &AiRpcContext, io: &mut IoHandler) {
 
 fn register_network_methods(io: &mut IoHandler) {
     // net_version - Get network version
-    io.add_sync_method("net_version", move |_params: Params| {
+    io.add_method("net_version", move |_params: Params| { async move {
         Ok(Value::String("1".to_string()))
-    });
+    }});
 
     // net_peerCount - Get peer count
-    io.add_sync_method("net_peerCount", move |_params: Params| {
+    io.add_method("net_peerCount", move |_params: Params| { async move {
         let count = crate::peer_count::get_peer_count();
         Ok(Value::String(format!("0x{:x}", count)))
-    });
+    }});
 
     // web3_clientVersion - Get client version
-    io.add_sync_method("web3_clientVersion", move |_params: Params| {
+    io.add_method("web3_clientVersion", move |_params: Params| { async move {
         Ok(Value::String(format!(
             "Luxtensor/{}",
             env!("CARGO_PKG_VERSION")
         )))
-    });
+    }});
 }
 
 // =============================================================================

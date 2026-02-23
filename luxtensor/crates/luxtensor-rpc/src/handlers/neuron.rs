@@ -31,7 +31,9 @@ pub fn register_neuron_handlers(
     let neurons_clone = neurons.clone();
 
     // neuron_getInfo - Get neuron information
-    io.add_sync_method("neuron_getInfo", move |params: Params| {
+    io.add_method("neuron_getInfo", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -64,12 +66,15 @@ pub fn register_neuron_handlers(
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons_clone = neurons.clone();
 
     // neuron_listBySubnet - List neurons in subnet
-    io.add_sync_method("neuron_listBySubnet", move |params: Params| {
+    io.add_method("neuron_listBySubnet", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -95,6 +100,7 @@ pub fn register_neuron_handlers(
             .collect();
 
         Ok(Value::Array(neurons_list))
+        }
     });
 
     let neurons_clone = neurons.clone();
@@ -102,7 +108,11 @@ pub fn register_neuron_handlers(
     let db_for_register = db.clone();
 
     // neuron_register - Register neuron on subnet (persisted to DB)
-    io.add_sync_method("neuron_register", move |params: Params| {
+    io.add_method("neuron_register", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        let subnets_clone = subnets_clone.clone();
+        let db_for_register = db_for_register.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -172,12 +182,15 @@ pub fn register_neuron_handlers(
             "success": true,
             "neuron_uid": neuron_uid
         }))
+        }
     });
 
     let neurons_clone = neurons.clone();
 
     // neuron_getCount - Get neuron count for subnet
-    io.add_sync_method("neuron_getCount", move |params: Params| {
+    io.add_method("neuron_getCount", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -193,13 +206,16 @@ pub fn register_neuron_handlers(
             .count();
 
         Ok(Value::Number(count.into()))
+        }
     });
 
     // === SDK Aliases ===
 
     // query_getNeurons - Alias for neuron_listBySubnet
     let neurons_clone = neurons.clone();
-    io.add_sync_method("query_getNeurons", move |params: Params| {
+    io.add_method("query_getNeurons", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -222,11 +238,14 @@ pub fn register_neuron_handlers(
             })
             .collect();
         Ok(Value::Array(neurons_list))
+        }
     });
 
     // query_getNeuronInfo - Alias for neuron_getInfo
     let neurons_clone = neurons.clone();
-    io.add_sync_method("query_getNeuronInfo", move |params: Params| {
+    io.add_method("query_getNeuronInfo", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID or neuron UID"));
@@ -252,6 +271,7 @@ pub fn register_neuron_handlers(
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     // =========================================================================
@@ -260,7 +280,9 @@ pub fn register_neuron_handlers(
 
     // neuron_get - Alias for neuron_getInfo (SDK uses this name)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_get", move |params: Params| {
+    io.add_method("neuron_get", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
@@ -287,11 +309,14 @@ pub fn register_neuron_handlers(
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     // neuron_getAll - Alias for neuron_listBySubnet (SDK uses this name)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_getAll", move |params: Params| {
+    io.add_method("neuron_getAll", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -317,11 +342,14 @@ pub fn register_neuron_handlers(
             })
             .collect();
         Ok(Value::Array(neurons_list))
+        }
     });
 
     // neuron_exists - Check if neuron exists (SDK uses this)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_exists", move |params: Params| {
+    io.add_method("neuron_exists", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or neuron_uid"));
@@ -334,11 +362,14 @@ pub fn register_neuron_handlers(
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid neuron_uid"))?;
         let exists = neurons_clone.contains_key(&(subnet_id, neuron_uid));
         Ok(Value::Bool(exists))
+        }
     });
 
     // neuron_getByHotkey - Get neuron by hotkey address (SDK neuron_client.py)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_getByHotkey", move |params: Params| {
+    io.add_method("neuron_getByHotkey", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or hotkey"));
@@ -370,11 +401,14 @@ pub fn register_neuron_handlers(
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     // neuron_getActive - Get active neuron UIDs (SDK neuron_client.py)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_getActive", move |params: Params| {
+    io.add_method("neuron_getActive", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -388,11 +422,14 @@ pub fn register_neuron_handlers(
             .map(|entry| entry.key().1)
             .collect();
         Ok(serde_json::json!(active_uids))
+        }
     });
 
     // neuron_count - Get neuron count (SDK neuron_client.py uses this name)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_count", move |params: Params| {
+    io.add_method("neuron_count", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
 
         if parsed.is_empty() {
@@ -409,11 +446,14 @@ pub fn register_neuron_handlers(
             .filter(|entry| entry.key().0 == subnet_id)
             .count();
         Ok(Value::Number(count.into()))
+        }
     });
 
     // neuron_batchGet - Batch get neurons by UIDs (SDK neuron_client.py)
     let neurons_clone = neurons.clone();
-    io.add_sync_method("neuron_batchGet", move |params: Params| {
+    io.add_method("neuron_batchGet", move |params: Params| {
+        let neurons_clone = neurons_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id or uids"));
@@ -447,5 +487,6 @@ pub fn register_neuron_handlers(
             })
             .collect();
         Ok(Value::Array(results))
+        }
     });
 }

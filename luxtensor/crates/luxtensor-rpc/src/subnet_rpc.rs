@@ -97,125 +97,143 @@ impl RootSubnetState {
 pub fn register_subnet_methods(io: &mut IoHandler, root_subnet: RootSubnet) {
     // subnet_getAll
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getAll", move |_params: Params| {
-        let state = subnet_state.read();
-        let subnets: Vec<Value> = state.get_all_subnets().iter().map(|s| json!({
-            "netuid": s.netuid,
-            "name": s.name,
-            "owner": format!("0x{}", hex::encode(s.owner)),
-            "registeredAt": s.registered_at,
-            "totalStake": format!("0x{:x}", s.total_stake),
-            "emissionShare": s.emission_share(),
-            "active": s.active
-        })).collect();
-        Ok(json!(subnets))
+    io.add_method("subnet_getAll", move |_params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let state = subnet_state.read();
+            let subnets: Vec<Value> = state.get_all_subnets().iter().map(|s| json!({
+                "netuid": s.netuid,
+                "name": s.name,
+                "owner": format!("0x{}", hex::encode(s.owner)),
+                "registeredAt": s.registered_at,
+                "totalStake": format!("0x{:x}", s.total_stake),
+                "emissionShare": s.emission_share(),
+                "active": s.active
+            })).collect();
+            Ok(json!(subnets))
+        }
     });
 
     // subnet_getInfo
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getInfo", move |params: Params| {
-        let p: Vec<serde_json::Value> = params.parse()?;
-        let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing netuid".to_string(),
-            data: None,
-        })? as u16;
-        let state = subnet_state.read();
-        match state.get_subnet(netuid) {
-            Some(s) => Ok(json!({
-                "netuid": s.netuid,
-                "name": s.name,
-                "owner": format!("0x{}", hex::encode(s.owner)),
-                "emissionShare": s.emission_share(),
-                "active": s.active
-            })),
-            None => Err(RpcError {
+    io.add_method("subnet_getInfo", move |params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let p: Vec<serde_json::Value> = params.parse()?;
+            let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
                 code: ErrorCode::InvalidParams,
-                message: format!("Subnet {} not found", netuid),
+                message: "Missing netuid".to_string(),
                 data: None,
-            })
+            })? as u16;
+            let state = subnet_state.read();
+            match state.get_subnet(netuid) {
+                Some(s) => Ok(json!({
+                    "netuid": s.netuid,
+                    "name": s.name,
+                    "owner": format!("0x{}", hex::encode(s.owner)),
+                    "emissionShare": s.emission_share(),
+                    "active": s.active
+                })),
+                None => Err(RpcError {
+                    code: ErrorCode::InvalidParams,
+                    message: format!("Subnet {} not found", netuid),
+                    data: None,
+                })
+            }
         }
     });
 
     // subnet_register
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_register", move |params: Params| {
-        let p: Vec<serde_json::Value> = params.parse()?;
-        let name = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing subnet name".to_string(),
-            data: None,
-        })?.to_string();
-        let owner_str = p.get(1).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing owner address".to_string(),
-            data: None,
-        })?;
-        let owner_str = owner_str.strip_prefix("0x").unwrap_or(owner_str);
-        let owner_bytes = hex::decode(owner_str).map_err(|_| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Invalid owner address".to_string(),
-            data: None,
-        })?;
-        if owner_bytes.len() != 20 {
-            return Err(RpcError {
+    io.add_method("subnet_register", move |params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let p: Vec<serde_json::Value> = params.parse()?;
+            let name = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
                 code: ErrorCode::InvalidParams,
-                message: "Owner address must be 20 bytes".to_string(),
+                message: "Missing subnet name".to_string(),
                 data: None,
-            });
+            })?.to_string();
+            let owner_str = p.get(1).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing owner address".to_string(),
+                data: None,
+            })?;
+            let owner_str = owner_str.strip_prefix("0x").unwrap_or(owner_str);
+            let owner_bytes = hex::decode(owner_str).map_err(|_| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Invalid owner address".to_string(),
+                data: None,
+            })?;
+            if owner_bytes.len() != 20 {
+                return Err(RpcError {
+                    code: ErrorCode::InvalidParams,
+                    message: "Owner address must be 20 bytes".to_string(),
+                    data: None,
+                });
+            }
+            let mut owner = [0u8; 20];
+            owner.copy_from_slice(&owner_bytes);
+            let mut state = subnet_state.write();
+            let result = state.register_subnet(name, owner, 0);
+            Ok(json!({ "success": result.success, "netuid": result.netuid, "error": result.error }))
         }
-        let mut owner = [0u8; 20];
-        owner.copy_from_slice(&owner_bytes);
-        let mut state = subnet_state.write();
-        let result = state.register_subnet(name, owner, 0);
-        Ok(json!({ "success": result.success, "netuid": result.netuid, "error": result.error }))
     });
 
     // subnet_getRootValidators
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getRootValidators", move |_params: Params| {
-        let state = subnet_state.read();
-        let validators: Vec<Value> = state.root_validators.iter().map(|v| json!({
-            "address": format!("0x{}", hex::encode(v.address)),
-            "stake": format!("0x{:x}", v.stake),
-            "rank": v.rank,
-            "isActive": v.is_active
-        })).collect();
-        Ok(json!(validators))
+    io.add_method("subnet_getRootValidators", move |_params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let state = subnet_state.read();
+            let validators: Vec<Value> = state.root_validators.iter().map(|v| json!({
+                "address": format!("0x{}", hex::encode(v.address)),
+                "stake": format!("0x{:x}", v.stake),
+                "rank": v.rank,
+                "isActive": v.is_active
+            })).collect();
+            Ok(json!(validators))
+        }
     });
 
     // subnet_getEmissions
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getEmissions", move |params: Params| {
-        // Empty params is valid (uses default emission); parse errors should propagate
-        let p: Vec<serde_json::Value> = params.parse().unwrap_or_default();
-        let total_emission = match p.get(0).and_then(|v| v.as_str()) {
-            Some(s) => {
-                let s = s.strip_prefix("0x").unwrap_or(s);
-                u128::from_str_radix(s, 16)
-                    .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid hex emission value: {}", e)))?
-            }
-            None => 1_000_000_000_000_000_000_000u128, // default 1000 MDT
-        };
-        let state = subnet_state.read();
-        let emissions: Vec<Value> = state.get_emission_distribution(total_emission).iter().map(|e| json!({
-            "netuid": e.netuid,
-            "share": e.share(),
-            "amount": format!("0x{:x}", e.amount)
-        })).collect();
-        Ok(json!(emissions))
+    io.add_method("subnet_getEmissions", move |params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            // Empty params is valid (uses default emission); parse errors should propagate
+            let p: Vec<serde_json::Value> = params.parse().unwrap_or_default();
+            let total_emission = match p.get(0).and_then(|v| v.as_str()) {
+                Some(s) => {
+                    let s = s.strip_prefix("0x").unwrap_or(s);
+                    u128::from_str_radix(s, 16)
+                        .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid hex emission value: {}", e)))?
+                }
+                None => 1_000_000_000_000_000_000_000u128, // default 1000 MDT
+            };
+            let state = subnet_state.read();
+            let emissions: Vec<Value> = state.get_emission_distribution(total_emission).iter().map(|e| json!({
+                "netuid": e.netuid,
+                "share": e.share(),
+                "amount": format!("0x{:x}", e.amount)
+            })).collect();
+            Ok(json!(emissions))
+        }
     });
 
     // subnet_getConfig
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getConfig", move |_params: Params| {
-        let state = subnet_state.read();
-        Ok(json!({
-            "maxSubnets": state.config.max_subnets,
-            "maxRootValidators": state.config.max_root_validators,
-            "minStakeForRoot": format!("0x{:x}", state.config.min_stake_for_root),
-            "subnetRegistrationCost": format!("0x{:x}", state.config.subnet_registration_cost)
-        }))
+    io.add_method("subnet_getConfig", move |_params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let state = subnet_state.read();
+            Ok(json!({
+                "maxSubnets": state.config.max_subnets,
+                "maxRootValidators": state.config.max_root_validators,
+                "minStakeForRoot": format!("0x{:x}", state.config.min_stake_for_root),
+                "subnetRegistrationCost": format!("0x{:x}", state.config.subnet_registration_cost)
+            }))
+        }
     });
 
     // =========================================================================
@@ -224,56 +242,65 @@ pub fn register_subnet_methods(io: &mut IoHandler, root_subnet: RootSubnet) {
 
     // subnet_exists - Check if subnet exists (SDK uses this)
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_exists", move |params: Params| {
-        let p: Vec<serde_json::Value> = params.parse()?;
-        let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing netuid".to_string(),
-            data: None,
-        })? as u16;
-        let state = subnet_state.read();
-        let exists = state.subnets.contains_key(&netuid);
-        Ok(Value::Bool(exists))
+    io.add_method("subnet_exists", move |params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let p: Vec<serde_json::Value> = params.parse()?;
+            let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Missing netuid".to_string(),
+                data: None,
+            })? as u16;
+            let state = subnet_state.read();
+            let exists = state.subnets.contains_key(&netuid);
+            Ok(Value::Bool(exists))
+        }
     });
 
     // subnet_getHyperparameters - Get subnet hyperparameters (SDK uses this)
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getHyperparameters", move |params: Params| {
-        let p: Vec<serde_json::Value> = params.parse()?;
-        let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
-            code: ErrorCode::InvalidParams,
-            message: "Missing netuid".to_string(),
-            data: None,
-        })? as u16;
-        let state = subnet_state.read();
-        match state.get_subnet(netuid) {
-            Some(s) => Ok(json!({
-                "netuid": s.netuid,
-                "name": s.name,
-                "tempo": 360,  // Default tempo
-                "rho": 10,
-                "kappa": 32767,
-                "immunity_period": 100,
-                "min_allowed_weights": 1,
-                "max_weights_limit": 1024,
-                "emissionValue": s.emission_share(),
-                "registeredAt": s.registered_at,
-                "owner": format!("0x{}", hex::encode(s.owner))
-            })),
-            None => Err(RpcError {
+    io.add_method("subnet_getHyperparameters", move |params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let p: Vec<serde_json::Value> = params.parse()?;
+            let netuid = p.get(0).and_then(|v| v.as_u64()).ok_or_else(|| RpcError {
                 code: ErrorCode::InvalidParams,
-                message: format!("Subnet {} not found", netuid),
+                message: "Missing netuid".to_string(),
                 data: None,
-            })
+            })? as u16;
+            let state = subnet_state.read();
+            match state.get_subnet(netuid) {
+                Some(s) => Ok(json!({
+                    "netuid": s.netuid,
+                    "name": s.name,
+                    "tempo": 360,  // Default tempo
+                    "rho": 10,
+                    "kappa": 32767,
+                    "immunity_period": 100,
+                    "min_allowed_weights": 1,
+                    "max_weights_limit": 1024,
+                    "emissionValue": s.emission_share(),
+                    "registeredAt": s.registered_at,
+                    "owner": format!("0x{}", hex::encode(s.owner))
+                })),
+                None => Err(RpcError {
+                    code: ErrorCode::InvalidParams,
+                    message: format!("Subnet {} not found", netuid),
+                    data: None,
+                })
+            }
         }
     });
 
     // subnet_getCount - Get total subnet count (SDK uses this)
     let subnet_state = root_subnet.clone();
-    io.add_sync_method("subnet_getCount", move |_params: Params| {
-        let state = subnet_state.read();
-        let count = state.subnets.len();
-        Ok(Value::Number(count.into()))
+    io.add_method("subnet_getCount", move |_params: Params| {
+        let subnet_state = subnet_state.clone();
+        async move {
+            let state = subnet_state.read();
+            let count = state.subnets.len();
+            Ok(Value::Number(count.into()))
+        }
     });
 
     info!("📡 Registered subnet RPC methods");

@@ -30,7 +30,9 @@ pub fn register_weight_handlers(
     let weights_clone = weights.clone();
 
     // weight_getWeights - Get weights for neuron
-    io.add_sync_method("weight_getWeights", move |params: Params| {
+    io.add_method("weight_getWeights", move |params: Params| {
+        let weights_clone = weights_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -60,13 +62,17 @@ pub fn register_weight_handlers(
         } else {
             Ok(Value::Array(vec![]))
         }
+        }
     });
 
     let weights_clone = weights.clone();
     let db_for_set = db.clone();
 
     // weight_setWeights - Set weights for neuron (persisted to DB)
-    io.add_sync_method("weight_setWeights", move |params: Params| {
+    io.add_method("weight_setWeights", move |params: Params| {
+        let weights_clone = weights_clone.clone();
+        let db_for_set = db_for_set.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -122,12 +128,15 @@ pub fn register_weight_handlers(
         Ok(serde_json::json!({
             "success": true
         }))
+        }
     });
 
     let weights_clone = weights.clone();
 
     // weight_getAll - Get all weights for a subnet
-    io.add_sync_method("weight_getAll", move |params: Params| {
+    io.add_method("weight_getAll", move |params: Params| {
+        let weights_clone = weights_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -156,13 +165,16 @@ pub fn register_weight_handlers(
             .collect();
 
         Ok(Value::Array(all_weights))
+        }
     });
 
     // === SDK Aliases ===
 
     // query_getWeights - Alias for weight_getAll
     let weights_clone = weights.clone();
-    io.add_sync_method("query_getWeights", move |params: Params| {
+    io.add_method("query_getWeights", move |params: Params| {
+        let weights_clone = weights_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -188,6 +200,7 @@ pub fn register_weight_handlers(
             })
             .collect();
         Ok(Value::Array(all_weights))
+        }
     });
 
     // =========================================================================
@@ -197,7 +210,9 @@ pub fn register_weight_handlers(
     // weight_getCommits - Get weight commits for a subnet (SDK neuron_client.py)
     // Returns list of recent weight submissions with metadata
     let weights_clone = weights.clone();
-    io.add_sync_method("weight_getCommits", move |params: Params| {
+    io.add_method("weight_getCommits", move |params: Params| {
+        let weights_clone = weights_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -233,5 +248,6 @@ pub fn register_weight_handlers(
             "commits": commits,
             "count": count
         }))
+        }
     });
 }

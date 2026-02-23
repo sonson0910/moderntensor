@@ -45,7 +45,7 @@ use std::sync::Arc;
 use tracing::{info, error};
 
 /// Main indexer service
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields are consumed by run() which moves them into spawned tasks
 pub struct Indexer {
     config: Config,
     storage: Arc<Storage>,

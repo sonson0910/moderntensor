@@ -78,7 +78,7 @@ pub use validation::{RpcLimits, ValidationError, validate_address, validate_hash
 pub use rewards_rpc::register_reward_methods;
 pub use allocation_rpc::register_allocation_methods;
 pub use node_rpc::register_node_methods;
-pub use eth_rpc::{register_eth_methods, register_log_methods, register_aa_methods, Mempool, ReadyTransaction};
+pub use eth_rpc::{register_eth_methods, register_log_methods, register_aa_methods, FaucetRpcConfig};
 pub use logs::{LogStore, LogEntry, LogFilter, LogStoreStats};
 pub use subnet_rpc::{register_subnet_methods, RootSubnet, new_root_subnet, RootSubnetState};
 pub use query_rpc::{QueryRpcContext, register_query_methods};

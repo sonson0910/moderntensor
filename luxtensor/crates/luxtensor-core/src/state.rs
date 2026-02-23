@@ -1,9 +1,19 @@
 use crate::hnsw::HnswVectorStore;
 use crate::{Account, Address, Hash, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Key prefix for state accounts in RocksDB
 const STATE_ACCOUNT_PREFIX: &[u8] = b"state:account:";
+
+/// Trait for lazy-loading contract bytecode by code_hash.
+/// Implemented by storage backends (e.g. BlockchainDB) to avoid keeping
+/// all contract bytecodes in memory.
+pub trait CodeStore: Send + Sync {
+    /// Retrieve contract bytecode by its keccak256 hash.
+    /// Returns `None` if no bytecode is stored for this hash.
+    fn get_code_by_hash(&self, code_hash: &Hash) -> Option<Vec<u8>>;
+}
 
 /// State database interface
 /// Provides an in-memory cache with optional RocksDB persistence.
@@ -12,6 +22,9 @@ pub struct StateDB {
     /// HNSW-backed vector store for Semantic Layer
     /// Provides O(log N) approximate nearest neighbor search
     pub vector_store: HnswVectorStore,
+    /// Optional lazy code store for on-demand bytecode loading.
+    /// When set, `get_code()` falls back to this if `account.code` is `None`.
+    code_store: Option<Arc<dyn CodeStore>>,
 }
 
 impl StateDB {
@@ -20,6 +33,7 @@ impl StateDB {
             cache: HashMap::new(),
             // Default dimension 768 (common for BERT/LLM embeddings)
             vector_store: HnswVectorStore::new(768),
+            code_store: None,
         }
     }
 
@@ -43,9 +57,50 @@ impl StateDB {
         self.get_account(address).map(|acc| acc.nonce).unwrap_or(0)
     }
 
-    /// Get contract bytecode from account
+    /// Get contract bytecode from account.
+    ///
+    /// Uses a two-tier lookup:
+    /// 1. **Inline** — returns `account.code` if already loaded in memory.
+    /// 2. **Lazy** — if `code` is `None` but `code_hash` is non-zero,
+    ///    falls back to the configured `CodeStore` (e.g. RocksDB CF_CONTRACTS).
     pub fn get_code(&self, address: &Address) -> Option<Vec<u8>> {
-        self.get_account(address).and_then(|acc| acc.code.clone())
+        let acc = self.cache.get(address)?;
+        // Fast path: code already loaded inline
+        if let Some(ref code) = acc.code {
+            return Some(code.clone());
+        }
+        // Lazy path: look up by code_hash via CodeStore
+        if acc.code_hash != [0u8; 32] {
+            if let Some(ref store) = self.code_store {
+                return store.get_code_by_hash(&acc.code_hash);
+            }
+        }
+        None
+    }
+
+    /// Set the lazy code store for on-demand bytecode loading.
+    /// Call this after construction to enable lazy loading from disk.
+    pub fn set_code_store(&mut self, store: Arc<dyn CodeStore>) {
+        self.code_store = Some(store);
+    }
+
+    /// Strip inline bytecodes from cached accounts to free RAM.
+    ///
+    /// Safe to call after `flush_to_db()` — the lazy `get_code()` path will
+    /// reload bytecodes from the configured `CodeStore` (e.g. RocksDB
+    /// CF_CONTRACTS) on demand.
+    ///
+    /// Only strips accounts that have a non-zero `code_hash`, ensuring
+    /// the lazy loader can reconstruct the bytecode later.
+    pub fn strip_inline_bytecodes(&mut self) -> usize {
+        let mut stripped = 0;
+        for account in self.cache.values_mut() {
+            if account.code.is_some() && account.code_hash != [0u8; 32] {
+                account.code = None;
+                stripped += 1;
+            }
+        }
+        stripped
     }
 
     /// Calculate state root using Merkle Tree (Hybrid: Account Tree + Vector Tree)
@@ -163,6 +218,7 @@ impl StateDB {
             cache: accounts,
             // Default dimension 768 (same as StateDB::new)
             vector_store: HnswVectorStore::new(768),
+            code_store: None,
         }
     }
 }

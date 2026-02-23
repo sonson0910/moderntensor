@@ -1,6 +1,6 @@
 use crate::{Result, StorageError};
-use luxtensor_core::{Block, BlockHeader, Transaction};
-use luxtensor_crypto::Hash;
+use luxtensor_core::{Account, Block, BlockHeader, Hash, Transaction};
+use luxtensor_crypto::keccak256;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::path::Path;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ const CF_METADATA: &str = "metadata";
 /// Key used to store schema version in the metadata column family
 const SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
 /// Current schema version — increment when making incompatible DB changes
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Blockchain database using RocksDB
 pub struct BlockchainDB {
@@ -92,12 +92,25 @@ impl BlockchainDB {
                             )
                         })?;
                     let found = u32::from_le_bytes(raw);
-                    if found != CURRENT_SCHEMA_VERSION {
+
+                    if found > CURRENT_SCHEMA_VERSION {
+                        // Downgrade not supported
                         return Err(StorageError::SchemaMismatch {
                             found,
                             expected: CURRENT_SCHEMA_VERSION,
                         });
                     }
+
+                    if found < CURRENT_SCHEMA_VERSION {
+                        // Run sequential migrations
+                        run_migrations(&db, found, CURRENT_SCHEMA_VERSION)?;
+                        db.put_cf(
+                            cf_meta,
+                            SCHEMA_VERSION_KEY,
+                            CURRENT_SCHEMA_VERSION.to_le_bytes(),
+                        )?;
+                    }
+                    // else: found == expected, nothing to do
                 }
                 None => {
                     // Fresh database — write current schema version
@@ -514,7 +527,7 @@ impl BlockchainDB {
         Ok(())
     }
 
-    /// Get contract code
+    /// Get contract code by address
     pub fn get_contract(&self, address: &[u8]) -> Result<Option<Vec<u8>>> {
         let cf = self.db.cf_handle(CF_CONTRACTS).ok_or_else(|| {
             StorageError::DatabaseError("CF_CONTRACTS not found".to_string())
@@ -523,6 +536,21 @@ impl BlockchainDB {
             Some(bytes) => Ok(Some(bytes.to_vec())),
             None => Ok(None),
         }
+    }
+
+    /// Store contract code keyed by its keccak256 hash.
+    /// This is used by the lazy bytecode loading system — code is stored once
+    /// and referenced by `Account.code_hash`.
+    pub fn store_code_by_hash(&self, code: &[u8]) -> Result<Hash> {
+        let code_hash = keccak256(code);
+        let cf = self.db.cf_handle(CF_CONTRACTS).ok_or_else(|| {
+            StorageError::DatabaseError("CF_CONTRACTS not found".to_string())
+        })?;
+        // Deduplicate: only write if not already stored
+        if self.db.get_cf(cf, &code_hash)?.is_none() {
+            self.db.put_cf(cf, &code_hash, code)?;
+        }
+        Ok(code_hash)
     }
 
     // ==================== PRUNING OPERATIONS ====================
@@ -707,6 +735,122 @@ impl BlockchainDB {
 
         self.db.write(batch)?;
         Ok(())
+    }
+}
+
+// ============================================================================
+// Schema Migration Framework
+// ============================================================================
+
+/// Run sequential schema migrations from `from_version` to `to_version`.
+/// Each migration step transforms the database schema by one version increment.
+fn run_migrations(db: &DB, from_version: u32, to_version: u32) -> Result<()> {
+    tracing::info!(
+        "Running schema migrations: v{} → v{}",
+        from_version,
+        to_version
+    );
+
+    for version in from_version..to_version {
+        tracing::info!("Applying migration v{} → v{}...", version, version + 1);
+        match version {
+            1 => migrate_v1_to_v2(db)?,
+            other => {
+                return Err(StorageError::DatabaseError(format!(
+                    "No migration path from v{} to v{}",
+                    other,
+                    other + 1
+                )));
+            }
+        }
+    }
+
+    tracing::info!(
+        "Schema migration complete: now at v{}",
+        to_version
+    );
+    Ok(())
+}
+
+/// Migration V1 → V2: Extract inline bytecode from Account records to CF_CONTRACTS.
+///
+/// **Before (V1):** Account records stored in `state:account:*` (default CF) contain
+/// `code: Option<Vec<u8>>` serialized inline — every account load also loads bytecode.
+///
+/// **After (V2):** Contract bytecodes are stored separately in CF_CONTRACTS keyed by
+/// their keccak256 hash. Account records have `code: None` — bytecode is loaded on
+/// demand via the `CodeStore` trait.
+fn migrate_v1_to_v2(db: &DB) -> Result<()> {
+    let cf_contracts = db
+        .cf_handle(CF_CONTRACTS)
+        .ok_or_else(|| StorageError::DatabaseError("CF_CONTRACTS not found".to_string()))?;
+
+    let prefix = b"state:account:";
+    let mut migrated_accounts = 0u32;
+    let mut extracted_codes = 0u32;
+    let mut batch = WriteBatch::default();
+
+    // Scan all state:account:* entries in the default CF
+    let iter = db.prefix_iterator(prefix);
+    for item in iter {
+        let (key, value) = item?;
+        if !key.starts_with(prefix) {
+            break;
+        }
+
+        // Try to deserialize the Account
+        let mut account: Account = match bincode::deserialize(&value) {
+            Ok(acc) => acc,
+            Err(_) => continue, // Skip malformed entries
+        };
+
+        // Extract inline bytecode if present
+        if let Some(ref code) = account.code {
+            if !code.is_empty() {
+                let code_hash = keccak256(code);
+
+                // Store code in CF_CONTRACTS keyed by hash (deduplicated)
+                if db.get_cf(cf_contracts, &code_hash)?.is_none() {
+                    batch.put_cf(cf_contracts, &code_hash, code);
+                    extracted_codes += 1;
+                }
+
+                // Ensure code_hash is set on the account
+                account.code_hash = code_hash;
+            }
+
+            // Strip inline code
+            account.code = None;
+
+            // Re-serialize and update the entry
+            let new_value = bincode::serialize(&account)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            batch.put(&key, &new_value);
+            migrated_accounts += 1;
+        }
+    }
+
+    // Write all changes atomically
+    if migrated_accounts > 0 || extracted_codes > 0 {
+        db.write(batch)?;
+    }
+
+    tracing::info!(
+        "V1→V2 migration: extracted {} unique bytecodes from {} accounts",
+        extracted_codes,
+        migrated_accounts
+    );
+
+    Ok(())
+}
+
+// ============================================================================
+// Implement CodeStore trait for BlockchainDB (lazy bytecode loading)
+// ============================================================================
+impl luxtensor_core::CodeStore for BlockchainDB {
+    fn get_code_by_hash(&self, code_hash: &Hash) -> Option<Vec<u8>> {
+        // Look up bytecode in CF_CONTRACTS keyed by code_hash
+        self.get_contract(code_hash).ok().flatten()
     }
 }
 

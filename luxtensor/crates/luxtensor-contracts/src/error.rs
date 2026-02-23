@@ -37,4 +37,16 @@ pub enum ContractError {
     ArithmeticOverflow,
 }
 
+impl From<luxtensor_core::CoreError> for ContractError {
+    fn from(err: luxtensor_core::CoreError) -> Self {
+        ContractError::ExecutionFailed(err.to_string())
+    }
+}
+
+impl From<luxtensor_storage::StorageError> for ContractError {
+    fn from(err: luxtensor_storage::StorageError) -> Self {
+        ContractError::ExecutionFailed(format!("Storage: {}", err))
+    }
+}
+
 pub type Result<T> = std::result::Result<T, ContractError>;

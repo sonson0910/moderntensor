@@ -25,6 +25,10 @@ pub struct Config {
     /// Mempool configuration
     #[serde(default)]
     pub mempool: MempoolConfig,
+
+    /// Faucet configuration (devnet only)
+    #[serde(default)]
+    pub faucet: FaucetConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,6 +206,38 @@ impl Default for MempoolConfig {
     }
 }
 
+/// Faucet configuration for development/test networks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaucetConfig {
+    /// Enable faucet endpoint
+    pub enabled: bool,
+    /// Amount to drip per request (in base units / wei)
+    /// Default: 1000 LUX = 1000 * 10^18 wei
+    pub drip_amount: String,
+    /// Cooldown period per address in seconds
+    pub cooldown_secs: u64,
+    /// Maximum drip requests per address per day
+    pub max_daily_drips: u32,
+}
+
+impl Default for FaucetConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            drip_amount: "1000000000000000000000".to_string(), // 1000 LUX (10^21 wei)
+            cooldown_secs: 60,
+            max_daily_drips: 10,
+        }
+    }
+}
+
+impl FaucetConfig {
+    /// Parse drip_amount string to u128
+    pub fn drip_amount_u128(&self) -> u128 {
+        self.drip_amount.parse::<u128>().unwrap_or(1_000_000_000_000_000_000_000)
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -253,6 +289,7 @@ impl Default for Config {
                 json_format: false,
             },
             mempool: MempoolConfig::default(),
+            faucet: FaucetConfig::default(),
         }
     }
 }

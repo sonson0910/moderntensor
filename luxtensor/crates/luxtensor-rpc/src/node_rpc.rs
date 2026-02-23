@@ -21,7 +21,9 @@ pub fn register_node_methods(
     let reg = registry.clone();
     // SECURITY: Node registration now requires signature verification
     // to prevent attackers from registering nodes under arbitrary addresses.
-    io.add_sync_method("node_register", move |params: Params| {
+    io.add_method("node_register", move |params: Params| {
+        let reg = reg.clone();
+        async move {
         let p: RegisterParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
@@ -68,12 +70,15 @@ pub fn register_node_methods(
                 data: None,
             }),
         }
+        }
     });
 
     let reg = registry.clone();
     // SECURITY: Stake updates now require signature verification
     // to prevent attackers from manipulating other nodes' stakes.
-    io.add_sync_method("node_updateStake", move |params: Params| {
+    io.add_method("node_updateStake", move |params: Params| {
+        let reg = reg.clone();
+        async move {
         let p: UpdateStakeParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
@@ -118,10 +123,13 @@ pub fn register_node_methods(
                 data: None,
             }),
         }
+        }
     });
 
     let reg = registry.clone();
-    io.add_sync_method("node_getTier", move |params: Params| {
+    io.add_method("node_getTier", move |params: Params| {
+        let reg = reg.clone();
+        async move {
         let p: AddressParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
@@ -142,10 +150,13 @@ pub fn register_node_methods(
                 data: None,
             }),
         }
+        }
     });
 
     let reg = registry.clone();
-    io.add_sync_method("node_getInfo", move |params: Params| {
+    io.add_method("node_getInfo", move |params: Params| {
+        let reg = reg.clone();
+        async move {
         let p: AddressParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
@@ -169,12 +180,15 @@ pub fn register_node_methods(
                 data: None,
             }),
         }
+        }
     });
 
     let reg = registry.clone();
     // SECURITY: node_unregister now requires signature verification
     // to prevent attackers from force-unregistering any validator node.
-    io.add_sync_method("node_unregister", move |params: Params| {
+    io.add_method("node_unregister", move |params: Params| {
+        let reg = reg.clone();
+        async move {
         let p: SignedAddressParams = params.parse()?;
 
         let address = parse_address(&p.address)?;
@@ -225,10 +239,13 @@ pub fn register_node_methods(
                 data: None,
             }),
         }
+        }
     });
 
     let reg = registry.clone();
-    io.add_sync_method("node_getValidators", move |_params: Params| {
+    io.add_method("node_getValidators", move |_params: Params| {
+        let reg = reg.clone();
+        async move {
         let validators = reg.read().get_validators();
 
         Ok(json!(validators.iter().map(|info| {
@@ -241,10 +258,13 @@ pub fn register_node_methods(
                 "blocks_produced": info.blocks_produced
             })
         }).collect::<Vec<_>>()))
+        }
     });
 
     let reg = registry.clone();
-    io.add_sync_method("node_getInfrastructureNodes", move |_params: Params| {
+    io.add_method("node_getInfrastructureNodes", move |_params: Params| {
+        let reg = reg.clone();
+        async move {
         let nodes = reg.read().get_infrastructure_nodes();
 
         Ok(json!(nodes.iter().map(|info| {
@@ -255,10 +275,13 @@ pub fn register_node_methods(
                 "stake_decimal": info.stake.to_string()
             })
         }).collect::<Vec<_>>()))
+        }
     });
 
     let reg = registry.clone();
-    io.add_sync_method("node_getStats", move |_params: Params| {
+    io.add_method("node_getStats", move |_params: Params| {
+        let reg = reg.clone();
+        async move {
         let counts = reg.read().count_by_tier();
         let total = reg.read().total_nodes();
         let total_stake = reg.read().total_stake();
@@ -274,9 +297,11 @@ pub fn register_node_methods(
                 "super_validator": counts.get(&NodeTier::SuperValidator).unwrap_or(&0)
             }
         }))
+        }
     });
 
-    io.add_sync_method("node_getTierRequirements", move |_params: Params| {
+    io.add_method("node_getTierRequirements", move |_params: Params| {
+        async move {
         Ok(json!({
             "tiers": [
                 {
@@ -309,6 +334,7 @@ pub fn register_node_methods(
                 }
             ]
         }))
+        }
     });
 }
 

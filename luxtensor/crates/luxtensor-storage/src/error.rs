@@ -42,4 +42,10 @@ impl From<bincode::Error> for StorageError {
     }
 }
 
+impl From<luxtensor_core::CoreError> for StorageError {
+    fn from(err: luxtensor_core::CoreError) -> Self {
+        StorageError::DatabaseError(err.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, StorageError>;

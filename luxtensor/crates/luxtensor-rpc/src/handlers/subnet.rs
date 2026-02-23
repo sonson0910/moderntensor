@@ -30,7 +30,9 @@ pub fn register_subnet_handlers(
     let subnets_clone = subnets.clone();
 
     // subnet_getInfo - Get subnet information
-    io.add_sync_method("subnet_getInfo", move |params: Params| {
+    io.add_method("subnet_getInfo", move |params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -54,12 +56,15 @@ pub fn register_subnet_handlers(
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let subnets_clone = subnets.clone();
 
     // subnet_listAll - List all subnets
-    io.add_sync_method("subnet_listAll", move |_params: Params| {
+    io.add_method("subnet_listAll", move |_params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        async move {
         let subnets_list: Vec<Value> = subnets_clone
             .iter()
             .map(|entry| {
@@ -76,13 +81,17 @@ pub fn register_subnet_handlers(
             .collect();
 
         Ok(Value::Array(subnets_list))
+        }
     });
 
     let subnets_clone = subnets.clone();
     let db_for_create = db.clone();
 
     // subnet_create - Create a new subnet (persisted to DB)
-    io.add_sync_method("subnet_create", move |params: Params| {
+    io.add_method("subnet_create", move |params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        let db_for_create = db_for_create.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -132,19 +141,25 @@ pub fn register_subnet_handlers(
             "success": true,
             "subnet_id": subnet_id
         }))
+        }
     });
 
     // subnet_getCount - Get total subnet count
     let subnets_clone = subnets.clone();
-    io.add_sync_method("subnet_getCount", move |_params: Params| {
+    io.add_method("subnet_getCount", move |_params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        async move {
         Ok(Value::Number(subnets_clone.len().into()))
+        }
     });
 
     // === SDK Aliases ===
 
     // query_getSubnets - Alias for subnet_listAll
     let subnets_clone = subnets.clone();
-    io.add_sync_method("query_getSubnets", move |_params: Params| {
+    io.add_method("query_getSubnets", move |_params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        async move {
         let subnets_list: Vec<Value> = subnets_clone
             .iter()
             .map(|entry| {
@@ -160,11 +175,14 @@ pub fn register_subnet_handlers(
             })
             .collect();
         Ok(Value::Array(subnets_list))
+        }
     });
 
     // query_getSubnetInfo - Alias for subnet_getInfo
     let subnets_clone = subnets.clone();
-    io.add_sync_method("query_getSubnetInfo", move |params: Params| {
+    io.add_method("query_getSubnetInfo", move |params: Params| {
+        let subnets_clone = subnets_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet ID"));
@@ -183,6 +201,7 @@ pub fn register_subnet_handlers(
             }))
         } else {
             Ok(Value::Null)
+        }
         }
     });
 }

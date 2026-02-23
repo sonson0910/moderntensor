@@ -163,7 +163,11 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
 
     // training_createJob - Create a new training job
     // SECURITY: Now requires signature verification to prevent impersonation
-    io.add_sync_method("training_createJob", move |params: Params| {
+    io.add_method("training_createJob", move |params: Params| {
+        let jobs = jobs.clone();
+        let job_counter = job_counter.clone();
+        let rounds = rounds.clone();
+        async move {
         let request: CreateJobRequest = params.parse()?;
 
         // SECURITY: Verify timestamp freshness
@@ -272,12 +276,15 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             "success": true,
             "job_id": format!("0x{}", hex::encode(job_id))
         }))
+        }
     });
 
     let jobs = ctx.jobs.clone();
 
     // training_getJob - Get job details
-    io.add_sync_method("training_getJob", move |params: Params| {
+    io.add_method("training_getJob", move |params: Params| {
+        let jobs = jobs.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing job ID"));
@@ -303,12 +310,15 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let jobs = ctx.jobs.clone();
 
     // training_listJobs - List all jobs with optional status filter
-    io.add_sync_method("training_listJobs", move |params: Params| {
+    io.add_method("training_listJobs", move |params: Params| {
+        let jobs = jobs.clone();
+        async move {
         // Empty params = list all jobs; explicit params = filter by status
         let parsed: Vec<String> = params.parse().unwrap_or_default();
         let status_filter = parsed.first().map(|s| s.as_str());
@@ -339,13 +349,16 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             "jobs": job_list,
             "total": job_list.len(),
         }))
+        }
     });
 
     let jobs = ctx.jobs.clone();
 
     // training_cancelJob - Cancel a job (creator only)
     // SECURITY: Now requires signature verification + creator check
-    io.add_sync_method("training_cancelJob", move |params: Params| {
+    io.add_method("training_cancelJob", move |params: Params| {
+        let jobs = jobs.clone();
+        async move {
         let request: CancelJobRequest = params.parse()?;
 
         // SECURITY: Verify timestamp freshness
@@ -415,6 +428,7 @@ fn register_job_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
         } else {
             Err(jsonrpc_core::Error::invalid_params("Job not found"))
         }
+        }
     });
 }
 
@@ -428,7 +442,10 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
 
     // training_registerTrainer - Register as a trainer for a job
     // SECURITY: Now requires signature verification to prevent impersonation
-    io.add_sync_method("training_registerTrainer", move |params: Params| {
+    io.add_method("training_registerTrainer", move |params: Params| {
+        let jobs = jobs.clone();
+        let trainer_stakes = trainer_stakes.clone();
+        async move {
         // Params: [job_id, trainer_address, timestamp, signature, optional_stake_bps]
         let parsed: Vec<String> = params.parse()?;
         if parsed.len() < 4 {
@@ -528,12 +545,15 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
         } else {
             Err(jsonrpc_core::Error::invalid_params("Job not found"))
         }
+        }
     });
 
     let jobs = ctx.jobs.clone();
 
     // training_getTrainers - Get trainers for a job
-    io.add_sync_method("training_getTrainers", move |params: Params| {
+    io.add_method("training_getTrainers", move |params: Params| {
+        let jobs = jobs.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing job ID"));
@@ -551,6 +571,7 @@ fn register_trainer_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
         } else {
             Err(jsonrpc_core::Error::invalid_params("Job not found"))
         }
+        }
     });
 }
 
@@ -565,7 +586,12 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let trainer_stakes = ctx.trainer_stakes.clone();
 
     // training_submitGradient - Submit gradient for current round
-    io.add_sync_method("training_submitGradient", move |params: Params| {
+    io.add_method("training_submitGradient", move |params: Params| {
+        let jobs = jobs.clone();
+        let rounds = rounds.clone();
+        let pot_verifier = pot_verifier.clone();
+        let trainer_stakes = trainer_stakes.clone();
+        async move {
         let request: SubmitGradientRequest = params.parse()?;
 
         let job_id = parse_job_id(&request.job_id)?;
@@ -726,12 +752,15 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             "submission_count": submission_count,
             "round_complete": round_complete,
         }))
+        }
     });
 
     let rounds = ctx.rounds.clone();
 
     // training_getGradients - Get gradient submissions for a round
-    io.add_sync_method("training_getGradients", move |params: Params| {
+    io.add_method("training_getGradients", move |params: Params| {
+        let rounds = rounds.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params("Required: job_id, round"));
@@ -773,6 +802,7 @@ fn register_gradient_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
         } else {
             Err(jsonrpc_core::Error::invalid_params("Round not found"))
         }
+        }
     });
 }
 
@@ -785,7 +815,10 @@ fn register_round_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
     let rounds = ctx.rounds.clone();
 
     // training_getRoundStatus - Get current round status
-    io.add_sync_method("training_getRoundStatus", move |params: Params| {
+    io.add_method("training_getRoundStatus", move |params: Params| {
+        let jobs = jobs.clone();
+        let rounds = rounds.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing job ID"));
@@ -819,6 +852,7 @@ fn register_round_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
                 "completed": false,
             }))
         }
+        }
     });
 
     let jobs = ctx.jobs.clone();
@@ -826,7 +860,10 @@ fn register_round_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
 
     // training_advanceRound - Manually advance to next round
     // SECURITY: Restricted to the job creator with signature verification
-    io.add_sync_method("training_advanceRound", move |params: Params| {
+    io.add_method("training_advanceRound", move |params: Params| {
+        let jobs = jobs.clone();
+        let rounds = rounds.clone();
+        async move {
         // Params: [job_id, caller_address, timestamp, signature]
         let parsed: Vec<String> = params.parse()?;
         if parsed.len() < 4 {
@@ -917,6 +954,7 @@ fn register_round_methods(ctx: &TrainingRpcContext, io: &mut IoHandler) {
             }))
         } else {
             Err(jsonrpc_core::Error::invalid_params("Job not found"))
+        }
         }
     });
 }

@@ -9,10 +9,13 @@ name = "node-1"
 chain_id = 8898
 
 # Data directory for blockchain data
-data_dir = "./data"
+data_dir = "./data_node1"
 
 # Whether this node is a validator
 is_validator = true
+
+# Development mode: enables pre-funded test accounts
+dev_mode = true
 
 # Path to validator private key (only if is_validator = true)
 # validator_key_path = "./validator.key"
@@ -62,7 +65,7 @@ enable_mdns = true
 
 [storage]
 # Database directory
-db_path = "./data/db"
+db_path = "./data_node1/db"
 
 # Enable database compression (LZ4)
 enable_compression = true
@@ -82,6 +85,12 @@ listen_addr = "127.0.0.1"
 
 # RPC listening port (Node 1: 8545)
 listen_port = 8545
+
+# WebSocket port
+ws_port = 8546
+
+# Enable WebSocket server
+ws_enabled = false
 
 # Number of RPC worker threads
 threads = 4

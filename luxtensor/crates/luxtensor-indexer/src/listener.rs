@@ -20,7 +20,6 @@ pub struct BlockListener {
 }
 
 #[derive(Debug, Serialize)]
-#[allow(dead_code)]
 struct RpcRequest {
     jsonrpc: String,
     method: String,
@@ -29,7 +28,7 @@ struct RpcRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields populated by serde deserialization, accessed structurally
 struct RpcResponse {
     jsonrpc: String,
     result: Option<serde_json::Value>,
@@ -38,14 +37,14 @@ struct RpcResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields populated by serde deserialization
 struct RpcError {
     code: i32,
     message: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields populated by serde deserialization
 struct SubscriptionEvent {
     jsonrpc: String,
     method: Option<String>,
@@ -53,7 +52,7 @@ struct SubscriptionEvent {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields populated by serde deserialization
 struct SubscriptionParams {
     subscription: String,
     result: serde_json::Value,

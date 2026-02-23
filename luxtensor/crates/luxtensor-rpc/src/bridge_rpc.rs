@@ -33,18 +33,21 @@ pub fn register_bridge_methods(ctx: &BridgeRpcContext, io: &mut IoHandler) {
 fn register_bridge_get_config(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     let bridge = ctx.bridge.clone();
 
-    io.add_sync_method("bridge_getConfig", move |_params: Params| {
-        let config = bridge.config();
-        Ok(serde_json::json!({
-            "min_transfer_amount": config.min_transfer_amount.to_string(),
-            "min_attestations": config.min_attestations,
-            "max_message_age_blocks": config.max_message_age_blocks,
-            "relayers": config.relayers.iter()
-                .map(|r| format!("0x{}", hex::encode(r)))
-                .collect::<Vec<_>>(),
-            "paused": config.paused,
-            "attestation_only_mode": config.attestation_only_mode,
-        }))
+    io.add_method("bridge_getConfig", move |_params: Params| {
+        let bridge = bridge.clone();
+        async move {
+            let config = bridge.config();
+            Ok(serde_json::json!({
+                "min_transfer_amount": config.min_transfer_amount.to_string(),
+                "min_attestations": config.min_attestations,
+                "max_message_age_blocks": config.max_message_age_blocks,
+                "relayers": config.relayers.iter()
+                    .map(|r| format!("0x{}", hex::encode(r)))
+                    .collect::<Vec<_>>(),
+                "paused": config.paused,
+                "attestation_only_mode": config.attestation_only_mode,
+            }))
+        }
     });
 }
 
@@ -55,29 +58,32 @@ fn register_bridge_get_config(ctx: &BridgeRpcContext, io: &mut IoHandler) {
 fn register_bridge_get_message(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     let bridge = ctx.bridge.clone();
 
-    io.add_sync_method("bridge_getMessage", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing message_hash"));
-        }
+    io.add_method("bridge_getMessage", move |params: Params| {
+        let bridge = bridge.clone();
+        async move {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing message_hash"));
+            }
 
-        let hash = parse_hash(&parsed[0])?;
+            let hash = parse_hash(&parsed[0])?;
 
-        match bridge.get_message(hash) {
-            Ok(msg) => Ok(serde_json::json!({
-                "hash": format!("0x{}", hex::encode(msg.message_hash)),
-                "sender": format!("0x{}", hex::encode(msg.sender)),
-                "recipient": format!("0x{}", hex::encode(msg.recipient)),
-                "amount": msg.amount.to_string(),
-                "source_chain": format!("{:?}", msg.source_chain),
-                "target_chain": format!("{:?}", msg.target_chain),
-                "direction": format!("{:?}", msg.direction),
-                "status": format!("{:?}", msg.status),
-                "nonce": msg.nonce,
-                "source_block": msg.source_block,
-                "source_timestamp": msg.source_timestamp,
-            })),
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(format!("{}", e))),
+            match bridge.get_message(hash) {
+                Ok(msg) => Ok(serde_json::json!({
+                    "hash": format!("0x{}", hex::encode(msg.message_hash)),
+                    "sender": format!("0x{}", hex::encode(msg.sender)),
+                    "recipient": format!("0x{}", hex::encode(msg.recipient)),
+                    "amount": msg.amount.to_string(),
+                    "source_chain": format!("{:?}", msg.source_chain),
+                    "target_chain": format!("{:?}", msg.target_chain),
+                    "direction": format!("{:?}", msg.direction),
+                    "status": format!("{:?}", msg.status),
+                    "nonce": msg.nonce,
+                    "source_block": msg.source_block,
+                    "source_timestamp": msg.source_timestamp,
+                })),
+                Err(e) => Err(jsonrpc_core::Error::invalid_params(format!("{}", e))),
+            }
         }
     });
 }
@@ -89,38 +95,41 @@ fn register_bridge_get_message(ctx: &BridgeRpcContext, io: &mut IoHandler) {
 fn register_bridge_list_messages(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     let bridge = ctx.bridge.clone();
 
-    io.add_sync_method("bridge_listMessages", move |params: Params| {
-        // Optional status filter: "Pending", "Confirmed", "Executed", "Failed"
-        let status_filter: Option<BridgeMessageStatus> = match params.parse::<Vec<String>>() {
-            Ok(args) if !args.is_empty() => match args[0].to_lowercase().as_str() {
-                "pending" => Some(BridgeMessageStatus::Pending),
-                "confirmed" => Some(BridgeMessageStatus::Confirmed),
-                "executed" => Some(BridgeMessageStatus::Executed),
-                "failed" => Some(BridgeMessageStatus::Failed),
+    io.add_method("bridge_listMessages", move |params: Params| {
+        let bridge = bridge.clone();
+        async move {
+            // Optional status filter: "Pending", "Confirmed", "Executed", "Failed"
+            let status_filter: Option<BridgeMessageStatus> = match params.parse::<Vec<String>>() {
+                Ok(args) if !args.is_empty() => match args[0].to_lowercase().as_str() {
+                    "pending" => Some(BridgeMessageStatus::Pending),
+                    "confirmed" => Some(BridgeMessageStatus::Confirmed),
+                    "executed" => Some(BridgeMessageStatus::Executed),
+                    "failed" => Some(BridgeMessageStatus::Failed),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        };
+            };
 
-        let messages = bridge.list_messages(status_filter);
-        let result: Vec<serde_json::Value> = messages
-            .iter()
-            .map(|msg| {
-                serde_json::json!({
-                    "hash": format!("0x{}", hex::encode(msg.message_hash)),
-                    "sender": format!("0x{}", hex::encode(msg.sender)),
-                    "recipient": format!("0x{}", hex::encode(msg.recipient)),
-                    "amount": msg.amount.to_string(),
-                    "status": format!("{:?}", msg.status),
-                    "nonce": msg.nonce,
+            let messages = bridge.list_messages(status_filter);
+            let result: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|msg| {
+                    serde_json::json!({
+                        "hash": format!("0x{}", hex::encode(msg.message_hash)),
+                        "sender": format!("0x{}", hex::encode(msg.sender)),
+                        "recipient": format!("0x{}", hex::encode(msg.recipient)),
+                        "amount": msg.amount.to_string(),
+                        "status": format!("{:?}", msg.status),
+                        "nonce": msg.nonce,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        Ok(serde_json::json!({
-            "messages": result,
-            "count": result.len(),
-        }))
+            Ok(serde_json::json!({
+                "messages": result,
+                "count": result.len(),
+            }))
+        }
     });
 }
 
@@ -131,20 +140,23 @@ fn register_bridge_list_messages(ctx: &BridgeRpcContext, io: &mut IoHandler) {
 fn register_bridge_get_stats(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     let bridge = ctx.bridge.clone();
 
-    io.add_sync_method("bridge_getStats", move |_params: Params| {
-        let all = bridge.list_messages(None);
-        let pending = all.iter().filter(|m| m.status == BridgeMessageStatus::Pending).count();
-        let confirmed = all.iter().filter(|m| m.status == BridgeMessageStatus::Confirmed).count();
-        let executed = all.iter().filter(|m| m.status == BridgeMessageStatus::Executed).count();
-        let failed = all.iter().filter(|m| m.status == BridgeMessageStatus::Failed).count();
+    io.add_method("bridge_getStats", move |_params: Params| {
+        let bridge = bridge.clone();
+        async move {
+            let all = bridge.list_messages(None);
+            let pending = all.iter().filter(|m| m.status == BridgeMessageStatus::Pending).count();
+            let confirmed = all.iter().filter(|m| m.status == BridgeMessageStatus::Confirmed).count();
+            let executed = all.iter().filter(|m| m.status == BridgeMessageStatus::Executed).count();
+            let failed = all.iter().filter(|m| m.status == BridgeMessageStatus::Failed).count();
 
-        Ok(serde_json::json!({
-            "total_messages": all.len(),
-            "pending": pending,
-            "confirmed": confirmed,
-            "executed": executed,
-            "failed": failed,
-        }))
+            Ok(serde_json::json!({
+                "total_messages": all.len(),
+                "pending": pending,
+                "confirmed": confirmed,
+                "executed": executed,
+                "failed": failed,
+            }))
+        }
     });
 }
 

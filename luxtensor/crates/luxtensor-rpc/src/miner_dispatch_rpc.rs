@@ -109,7 +109,9 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
     let tasks = ctx.tasks.clone();
 
     // lux_listPendingTasks - List available tasks for miners
-    io.add_sync_method("lux_listPendingTasks", move |params: Params| {
+    io.add_method("lux_listPendingTasks", move |params: Params| {
+        let tasks = tasks.clone();
+        async move {
         let parsed: Option<Vec<serde_json::Value>> = params.parse().ok();
         let limit = parsed
             .and_then(|v| v.first().and_then(|x| x.as_u64()))
@@ -134,6 +136,7 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
             "tasks": pending,
             "count": pending.len(),
         }))
+        }
     });
 
     let tasks = ctx.tasks.clone();
@@ -141,7 +144,10 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
 
     // lux_claimTask - Miner claims a pending task
     // SECURITY: Now requires signature verification to prevent impersonation
-    io.add_sync_method("lux_claimTask", move |params: Params| {
+    io.add_method("lux_claimTask", move |params: Params| {
+        let tasks = tasks.clone();
+        let miners_for_claim = miners_for_claim.clone();
+        async move {
         let claim: TaskClaimRequest = params.parse()?;
 
         // Parse task_id
@@ -210,13 +216,16 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
         } else {
             Err(jsonrpc_core::Error::invalid_params("Task not found"))
         }
+        }
     });
 
     let tasks = ctx.tasks.clone();
 
     // lux_submitResult - Miner submits task result
     // SECURITY: Now requires signature verification to prevent result spoofing
-    io.add_sync_method("lux_submitResult", move |params: Params| {
+    io.add_method("lux_submitResult", move |params: Params| {
+        let tasks = tasks.clone();
+        async move {
         let submission: TaskResultSubmission = params.parse()?;
 
         // Parse and verify miner address + signature
@@ -295,12 +304,15 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
         } else {
             Err(jsonrpc_core::Error::invalid_params("Task not found"))
         }
+        }
     });
 
     let tasks = ctx.tasks.clone();
 
     // lux_getTaskStatus - Get status of a specific task
-    io.add_sync_method("lux_getTaskStatus", move |params: Params| {
+    io.add_method("lux_getTaskStatus", move |params: Params| {
+        let tasks = tasks.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing task ID"));
@@ -336,6 +348,7 @@ fn register_task_dispatch_methods(ctx: &Arc<MinerDispatchContext>, io: &mut IoHa
         } else {
             Ok(Value::Null)
         }
+        }
     });
 }
 
@@ -344,7 +357,9 @@ fn register_miner_registration_methods(ctx: &Arc<MinerDispatchContext>, io: &mut
 
     // lux_registerMiner - Register as a miner
     // SECURITY: Now requires signature verification to prevent impersonation
-    io.add_sync_method("lux_registerMiner", move |params: Params| {
+    io.add_method("lux_registerMiner", move |params: Params| {
+        let miners = miners.clone();
+        async move {
         let reg: MinerRegistration = params.parse()?;
 
         // Parse address
@@ -394,12 +409,15 @@ fn register_miner_registration_methods(ctx: &Arc<MinerDispatchContext>, io: &mut
             "capacity": reg.capacity,
             "message": "Miner registered (signature verified)"
         }))
+        }
     });
 
     let miners = ctx.miners.clone();
 
     // lux_getMinerInfo - Get miner info
-    io.add_sync_method("lux_getMinerInfo", move |params: Params| {
+    io.add_method("lux_getMinerInfo", move |params: Params| {
+        let miners = miners.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing miner address"));
@@ -418,12 +436,15 @@ fn register_miner_registration_methods(ctx: &Arc<MinerDispatchContext>, io: &mut
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let miners = ctx.miners.clone();
 
     // lux_listMiners - List all registered miners
-    io.add_sync_method("lux_listMiners", move |_params: Params| {
+    io.add_method("lux_listMiners", move |_params: Params| {
+        let miners = miners.clone();
+        async move {
         let miners_map = miners.read();
         let list: Vec<serde_json::Value> = miners_map
             .values()
@@ -441,6 +462,7 @@ fn register_miner_registration_methods(ctx: &Arc<MinerDispatchContext>, io: &mut
             "miners": list,
             "count": list.len(),
         }))
+        }
     });
 }
 

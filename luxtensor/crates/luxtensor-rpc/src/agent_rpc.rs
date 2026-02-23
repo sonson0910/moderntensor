@@ -37,7 +37,9 @@ pub fn register_agent_methods(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_register(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_register", move |params: Params| {
+    io.add_method("agent_register", move |params: Params| {
+        let registry = registry.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let agent_id_hex = p
@@ -108,7 +110,7 @@ fn register_agent_register(ctx: &AgentRpcContext, io: &mut IoHandler) {
             }
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -118,7 +120,9 @@ fn register_agent_register(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_deregister(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_deregister", move |params: Params| {
+    io.add_method("agent_deregister", move |params: Params| {
+        let registry = registry.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let agent_id_hex = p
@@ -140,7 +144,7 @@ fn register_agent_deregister(ctx: &AgentRpcContext, io: &mut IoHandler) {
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -150,7 +154,9 @@ fn register_agent_deregister(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_deposit_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_depositGas", move |params: Params| {
+    io.add_method("agent_depositGas", move |params: Params| {
+        let registry = registry.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let agent_id_hex = p
@@ -173,7 +179,7 @@ fn register_agent_deposit_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -183,7 +189,9 @@ fn register_agent_deposit_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_withdraw_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_withdrawGas", move |params: Params| {
+    io.add_method("agent_withdrawGas", move |params: Params| {
+        let registry = registry.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let agent_id_hex = p
@@ -211,7 +219,7 @@ fn register_agent_withdraw_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -221,7 +229,9 @@ fn register_agent_withdraw_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_get_info(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_getInfo", move |params: Params| {
+    io.add_method("agent_getInfo", move |params: Params| {
+        let registry = registry.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing agent_id"));
@@ -233,7 +243,7 @@ fn register_agent_get_info(ctx: &AgentRpcContext, io: &mut IoHandler) {
             Some(agent) => Ok(agent_to_json(&agent)),
             None => Ok(Value::Null),
         }
-    });
+    }});
 }
 
 // =============================================================================
@@ -243,7 +253,9 @@ fn register_agent_get_info(ctx: &AgentRpcContext, io: &mut IoHandler) {
 fn register_agent_list_all(ctx: &AgentRpcContext, io: &mut IoHandler) {
     let registry = ctx.agent_registry.clone();
 
-    io.add_sync_method("agent_listAll", move |_params: Params| {
+    io.add_method("agent_listAll", move |_params: Params| {
+        let registry = registry.clone();
+        async move {
         let agents = registry.list_agents();
         let total = agents.len();
 
@@ -256,7 +268,7 @@ fn register_agent_list_all(ctx: &AgentRpcContext, io: &mut IoHandler) {
             "total": total,
             "agents": agent_list,
         }))
-    });
+    }});
 }
 
 // =============================================================================

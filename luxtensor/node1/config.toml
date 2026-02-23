@@ -83,6 +83,12 @@ listen_addr = "127.0.0.1"
 # RPC listening port (Node 1: 8545)
 listen_port = 8545
 
+# WebSocket port
+ws_port = 8546
+
+# Enable WebSocket server
+ws_enabled = false
+
 # Number of RPC worker threads
 threads = 4
 

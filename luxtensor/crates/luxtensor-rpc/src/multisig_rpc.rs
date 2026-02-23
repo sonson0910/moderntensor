@@ -35,7 +35,9 @@ pub fn register_multisig_methods(ctx: &MultisigRpcContext, io: &mut IoHandler) {
 fn register_multisig_create_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_createWallet", move |params: Params| {
+    io.add_method("multisig_createWallet", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let signers_raw = p
@@ -81,6 +83,7 @@ fn register_multisig_create_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler)
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
+        }
     });
 }
 
@@ -91,7 +94,9 @@ fn register_multisig_create_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler)
 fn register_multisig_get_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_getWallet", move |params: Params| {
+    io.add_method("multisig_getWallet", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing wallet_id"));
@@ -109,6 +114,7 @@ fn register_multisig_get_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler) {
             })),
             None => Ok(serde_json::Value::Null),
         }
+        }
     });
 }
 
@@ -119,7 +125,9 @@ fn register_multisig_get_wallet(ctx: &MultisigRpcContext, io: &mut IoHandler) {
 fn register_multisig_propose_transaction(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_proposeTransaction", move |params: Params| {
+    io.add_method("multisig_proposeTransaction", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let wallet_id = p
@@ -172,6 +180,7 @@ fn register_multisig_propose_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
+        }
     });
 }
 
@@ -182,7 +191,9 @@ fn register_multisig_propose_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
 fn register_multisig_approve_transaction(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_approveTransaction", move |params: Params| {
+    io.add_method("multisig_approveTransaction", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let tx_id = p
@@ -217,6 +228,7 @@ fn register_multisig_approve_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
             })),
             Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
+        }
     });
 }
 
@@ -227,7 +239,9 @@ fn register_multisig_approve_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
 fn register_multisig_get_transaction(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_getTransaction", move |params: Params| {
+    io.add_method("multisig_getTransaction", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing tx_id"));
@@ -249,6 +263,7 @@ fn register_multisig_get_transaction(ctx: &MultisigRpcContext, io: &mut IoHandle
             })),
             None => Ok(serde_json::Value::Null),
         }
+        }
     });
 }
 
@@ -259,7 +274,9 @@ fn register_multisig_get_transaction(ctx: &MultisigRpcContext, io: &mut IoHandle
 fn register_multisig_get_pending(ctx: &MultisigRpcContext, io: &mut IoHandler) {
     let manager = ctx.manager.clone();
 
-    io.add_sync_method("multisig_getPendingForWallet", move |params: Params| {
+    io.add_method("multisig_getPendingForWallet", move |params: Params| {
+        let manager = manager.clone();
+        async move {
         let p: serde_json::Value = params.parse()?;
 
         let wallet_id = p
@@ -297,6 +314,7 @@ fn register_multisig_get_pending(ctx: &MultisigRpcContext, io: &mut IoHandler) {
             "pending_transactions": result,
             "count": result.len(),
         }))
+        }
     });
 }
 

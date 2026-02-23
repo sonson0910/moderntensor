@@ -54,7 +54,9 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let neurons = ctx.neurons.clone();
 
     // query_neuron - Get specific neuron info
-    io.add_sync_method("query_neuron", move |params: Params| {
+    io.add_method("query_neuron", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -84,12 +86,15 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_neuronCount - Get neuron count in subnet
-    io.add_sync_method("query_neuronCount", move |params: Params| {
+    io.add_method("query_neuronCount", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -100,12 +105,15 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .filter(|entry| entry.key().0 == subnet_id)
             .count();
         Ok(Value::Number(count.into()))
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_activeNeurons - Get active neuron UIDs
-    io.add_sync_method("query_activeNeurons", move |params: Params| {
+    io.add_method("query_activeNeurons", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -117,6 +125,7 @@ fn register_neuron_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .map(|entry| entry.key().1)
             .collect();
         Ok(serde_json::to_value(active_uids).unwrap_or(Value::Array(vec![])))
+        }
     });
 
     register_neuron_metrics_methods(ctx, io);
@@ -126,7 +135,9 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let neurons = ctx.neurons.clone();
 
     // query_rank - Get neuron rank
-    io.add_sync_method("query_rank", move |params: Params| {
+    io.add_method("query_rank", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -144,12 +155,15 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_trust - Get neuron trust
-    io.add_sync_method("query_trust", move |params: Params| {
+    io.add_method("query_trust", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -167,12 +181,15 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_incentive - Get neuron incentive
-    io.add_sync_method("query_incentive", move |params: Params| {
+    io.add_method("query_incentive", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -190,12 +207,15 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_dividends - Get neuron dividends
-    io.add_sync_method("query_dividends", move |params: Params| {
+    io.add_method("query_dividends", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -213,12 +233,15 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_consensus - Get neuron consensus score
-    io.add_sync_method("query_consensus", move |params: Params| {
+    io.add_method("query_consensus", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -236,6 +259,7 @@ fn register_neuron_metrics_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 }
 
@@ -247,7 +271,9 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let subnets = ctx.subnets.clone();
 
     // query_allSubnets - Get all subnets
-    io.add_sync_method("query_allSubnets", move |_params: Params| {
+    io.add_method("query_allSubnets", move |_params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let list: Vec<Value> = subnets
             .iter()
             .map(|entry| {
@@ -263,23 +289,29 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             })
             .collect();
         Ok(Value::Array(list))
+        }
     });
 
     let subnets = ctx.subnets.clone();
 
     // query_subnetExists - Check if subnet exists
-    io.add_sync_method("query_subnetExists", move |params: Params| {
+    io.add_method("query_subnetExists", move |params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
         Ok(Value::Bool(subnets.contains_key(&parsed[0])))
+        }
     });
 
     let subnets = ctx.subnets.clone();
 
     // query_subnetOwner - Get subnet owner
-    io.add_sync_method("query_subnetOwner", move |params: Params| {
+    io.add_method("query_subnetOwner", move |params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -289,12 +321,15 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let subnets = ctx.subnets.clone();
 
     // query_subnetEmission - Get subnet emission rate
-    io.add_sync_method("query_subnetEmission", move |params: Params| {
+    io.add_method("query_subnetEmission", move |params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -304,12 +339,15 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let subnets = ctx.subnets.clone();
 
     // query_subnetHyperparameters - Get subnet hyperparams
-    io.add_sync_method("query_subnetHyperparameters", move |params: Params| {
+    io.add_method("query_subnetHyperparameters", move |params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -328,12 +366,15 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 
     let subnets = ctx.subnets.clone();
 
     // query_subnetTempo - Get subnet tempo
-    io.add_sync_method("query_subnetTempo", move |params: Params| {
+    io.add_method("query_subnetTempo", move |params: Params| {
+        let subnets = subnets.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -342,6 +383,7 @@ fn register_subnet_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             Ok(Value::Number(360.into())) // Default tempo
         } else {
             Ok(Value::Null)
+        }
         }
     });
 }
@@ -354,7 +396,9 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let validators = ctx.validators.clone();
 
     // query_stakeForColdkeyAndHotkey - Get stake for coldkey-hotkey pair
-    io.add_sync_method("query_stakeForColdkeyAndHotkey", move |params: Params| {
+    io.add_method("query_stakeForColdkeyAndHotkey", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -369,12 +413,15 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .map(|v| v.stake)
             .unwrap_or(0);
         Ok(Value::String(format!("0x{:x}", stake)))
+        }
     });
 
     let validators = ctx.validators.clone();
 
     // query_totalStakeForColdkey - Get total stake for coldkey
-    io.add_sync_method("query_totalStakeForColdkey", move |params: Params| {
+    io.add_method("query_totalStakeForColdkey", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing coldkey"));
@@ -386,12 +433,15 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .map(|v| v.stake)
             .unwrap_or(0);
         Ok(Value::String(format!("0x{:x}", stake)))
+        }
     });
 
     let validators = ctx.validators.clone();
 
     // query_totalStakeForHotkey - Get total stake for hotkey
-    io.add_sync_method("query_totalStakeForHotkey", move |params: Params| {
+    io.add_method("query_totalStakeForHotkey", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing hotkey"));
@@ -403,12 +453,15 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .map(|v| v.stake)
             .unwrap_or(0);
         Ok(Value::String(format!("0x{:x}", stake)))
+        }
     });
 
     let validators = ctx.validators.clone();
 
     // query_allStakeForColdkey - Get all stakes for coldkey
-    io.add_sync_method("query_allStakeForColdkey", move |params: Params| {
+    io.add_method("query_allStakeForColdkey", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing coldkey"));
@@ -423,12 +476,15 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             );
         }
         Ok(Value::Object(stakes))
+        }
     });
 
     let validators = ctx.validators.clone();
 
     // query_allStakeForHotkey - Get all stakes for hotkey
-    io.add_sync_method("query_allStakeForHotkey", move |params: Params| {
+    io.add_method("query_allStakeForHotkey", move |params: Params| {
+        let validators = validators.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing hotkey"));
@@ -443,6 +499,7 @@ fn register_stake_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             );
         }
         Ok(Value::Object(stakes))
+        }
     });
 }
 
@@ -454,7 +511,9 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let neurons = ctx.neurons.clone();
 
     // query_isHotkeyRegistered - Check if hotkey is registered
-    io.add_sync_method("query_isHotkeyRegistered", move |params: Params| {
+    io.add_method("query_isHotkeyRegistered", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -471,12 +530,15 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             .iter()
             .any(|entry| entry.key().0 == subnet_id && entry.value().address == hotkey);
         Ok(Value::Bool(is_registered))
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_uidForHotkey - Get UID for hotkey
-    io.add_sync_method("query_uidForHotkey", move |params: Params| {
+    io.add_method("query_uidForHotkey", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -497,12 +559,15 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
             Some(u) => Ok(Value::Number(u.into())),
             None => Ok(Value::Null),
         }
+        }
     });
 
     let neurons = ctx.neurons.clone();
 
     // query_hotkeyForUid - Get hotkey for UID
-    io.add_sync_method("query_hotkeyForUid", move |params: Params| {
+    io.add_method("query_hotkeyForUid", move |params: Params| {
+        let neurons = neurons.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 2 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -520,6 +585,7 @@ fn register_hotkey_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         } else {
             Ok(Value::Null)
         }
+        }
     });
 }
 
@@ -531,7 +597,9 @@ fn register_weight_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
     let commit_reveal = ctx.commit_reveal.clone();
 
     // query_weightCommits - Get weight commits for a subnet
-    io.add_sync_method("query_weightCommits", move |params: Params| {
+    io.add_method("query_weightCommits", move |params: Params| {
+        let commit_reveal = commit_reveal.clone();
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
@@ -576,15 +644,18 @@ fn register_weight_query_methods(ctx: &QueryRpcContext, io: &mut IoHandler) {
         result.insert("commitCount".into(), serde_json::json!(commits.len()));
 
         Ok(Value::Object(result))
+        }
     });
 
     // query_weightsVersion - Get weights version
-    io.add_sync_method("query_weightsVersion", move |params: Params| {
+    io.add_method("query_weightsVersion", move |params: Params| {
+        async move {
         let parsed: Vec<u64> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing subnet_id"));
         }
         Ok(Value::Number(1.into())) // Version 1
+        }
     });
 }
 

@@ -40,16 +40,21 @@ pub fn register_staking_handlers(
     let validators_clone = validators.clone();
 
     // staking_getTotalStake - Get total stake in network
-    io.add_sync_method("staking_getTotalStake", move |_params: Params| {
+    io.add_method("staking_getTotalStake", move |_params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let validator_set = validators_clone.read();
         let total_stake = validator_set.total_stake();
         Ok(Value::String(format!("0x{:x}", total_stake)))
+        }
     });
 
     let validators_clone = validators.clone();
 
     // staking_getStake - Get stake for specific address
-    io.add_sync_method("staking_getStake", move |params: Params| {
+    io.add_method("staking_getStake", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing address"));
@@ -64,12 +69,15 @@ pub fn register_staking_handlers(
             .unwrap_or(0);
 
         Ok(Value::String(format!("0x{:x}", stake)))
+        }
     });
 
     let validators_clone = validators.clone();
 
     // staking_getValidators - Get list of validators
-    io.add_sync_method("staking_getValidators", move |_params: Params| {
+    io.add_method("staking_getValidators", move |_params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let validator_set = validators_clone.read();
         let validators_list: Vec<Value> = validator_set
             .validators()
@@ -86,6 +94,7 @@ pub fn register_staking_handlers(
             .collect();
 
         Ok(Value::Array(validators_list))
+        }
     });
 
     let validators_clone = validators.clone();
@@ -95,7 +104,10 @@ pub fn register_staking_handlers(
     // SECURITY: Verifies EVM balance and debits it atomically
     // SECURITY: Now requires signature verification to prevent impersonation
     // LOCK ORDER: validators → unified_state (consistent with removeStake)
-    io.add_sync_method("staking_addStake", move |params: Params| {
+    io.add_method("staking_addStake", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        let state_for_add = state_for_add.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -173,6 +185,7 @@ pub fn register_staking_handlers(
         state.set_balance(address, balance.saturating_sub(amount));
 
         Ok(Value::Bool(true))
+        }
     });
 
     let validators_clone = validators.clone();
@@ -182,7 +195,10 @@ pub fn register_staking_handlers(
     // SECURITY: Credits EVM balance back when unstaking
     // SECURITY: Now requires signature verification to prevent unauthorized unstaking
     // LOCK ORDER: validators → unified_state (consistent with addStake)
-    io.add_sync_method("staking_removeStake", move |params: Params| {
+    io.add_method("staking_removeStake", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        let state_for_remove = state_for_remove.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 4 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -256,12 +272,15 @@ pub fn register_staking_handlers(
         }
 
         Ok(Value::Bool(true))
+        }
     });
 
     let validators_clone = validators.clone();
 
     // staking_claimRewards - Claim staking rewards
-    io.add_sync_method("staking_claimRewards", move |params: Params| {
+    io.add_method("staking_claimRewards", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing address"));
@@ -283,6 +302,7 @@ pub fn register_staking_handlers(
         } else {
             Err(jsonrpc_core::Error::invalid_params("Validator not found"))
         }
+        }
     });
 
     let validators_clone = validators.clone();
@@ -294,7 +314,10 @@ pub fn register_staking_handlers(
     // Minimum stake: 1000 LUX (persisted to DB)
     const MIN_STAKE: u128 = 1_000_000_000_000_000_000_000; // 1000 LUX
 
-    io.add_sync_method("staking_registerValidator", move |params: Params| {
+    io.add_method("staking_registerValidator", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        let db_for_register_validator = db_for_register_validator.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 5 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -400,12 +423,15 @@ pub fn register_staking_handlers(
             "name": name,
             "stake": format!("0x{:x}", stake)
         }))
+        }
     });
 
     let validators_clone = validators.clone();
 
     // staking_getActiveValidators - Get only active validators (for consensus)
-    io.add_sync_method("staking_getActiveValidators", move |_params: Params| {
+    io.add_method("staking_getActiveValidators", move |_params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let validator_set = validators_clone.read();
         let active_validators: Vec<Value> = validator_set
             .validators()
@@ -424,12 +450,14 @@ pub fn register_staking_handlers(
             "count": active_validators.len(),
             "validators": active_validators
         }))
+        }
     });
 
     let _validators_config = validators.clone();
 
     // staking_getConfig - Get staking configuration
-    io.add_sync_method("staking_getConfig", move |_params: Params| {
+    io.add_method("staking_getConfig", move |_params: Params| {
+        async move {
         // Min stake: 1000 MDT (18 decimals)
         let min_stake: u128 = 1_000_000_000_000_000_000_000;
         Ok(serde_json::json!({
@@ -441,13 +469,16 @@ pub fn register_staking_handlers(
             "lock_period_days": 7,
             "unbonding_period_days": 21
         }))
+        }
     });
 
     let validators_clone = validators.clone();
 
     // staking_deactivateValidator - Deactivate a validator
     // SECURITY: Requires signature verification - only the validator itself can deactivate
-    io.add_sync_method("staking_deactivateValidator", move |params: Params| {
+    io.add_method("staking_deactivateValidator", move |params: Params| {
+        let validators_clone = validators_clone.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -495,6 +526,7 @@ pub fn register_staking_handlers(
             Ok(serde_json::json!({ "success": true }))
         } else {
             Err(jsonrpc_core::Error::invalid_params("Validator not found"))
+        }
         }
     });
 
@@ -544,7 +576,9 @@ pub fn register_staking_handlers(
     // Params: [address, amount, lock_seconds, timestamp, signature]
     // Returns: { success, unlock_timestamp }
     let is_dev_chain = chain_id == 31337 || chain_id == 1337;
-    io.add_sync_method("staking_lockStakeSeconds", move |params: Params| {
+    io.add_method("staking_lockStakeSeconds", move |params: Params| {
+        let db_for_lock = db_for_lock.clone();
+        async move {
         if !is_dev_chain {
             return Err(jsonrpc_core::Error {
                 code: jsonrpc_core::ErrorCode::MethodNotFound,
@@ -667,13 +701,15 @@ pub fn register_staking_handlers(
             "message": format!("Locked {} MDT for {} seconds ({} days). Bonus: {}%. Unlock after timestamp {}",
                               amount / 1_000_000_000_000_000_000u128, lock_seconds, lock_days, bonus_rate, unlock_timestamp)
         }))
+        }
     });
 
     // staking_lockStake - Lock stake for a period to earn bonus rewards
     // SECURITY: Requires signature verification to prove ownership of the address.
     // Params: [address, amount, lock_days, timestamp, signature]
     // Returns: { success, unlock_timestamp, bonus_rate }
-    io.add_sync_method("staking_lockStake", move |params: Params| {
+    io.add_method("staking_lockStake", move |params: Params| {
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 5 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -772,6 +808,7 @@ pub fn register_staking_handlers(
             "bonus_rate": format!("{}%", bonus_rate),
             "message": format!("Stake locked for {} days. Unlock after timestamp {}", lock_days, unlock_timestamp)
         }))
+        }
     });
 
     // staking_unlockStake - Unlock stake after lock period expires
@@ -779,7 +816,9 @@ pub fn register_staking_handlers(
     // Params: [address, timestamp, signature]
     // Returns: { success, amount } or error if lock not expired
     let db_for_unlock = db.clone();
-    io.add_sync_method("staking_unlockStake", move |params: Params| {
+    io.add_method("staking_unlockStake", move |params: Params| {
+        let db_for_unlock = db_for_unlock.clone();
+        async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
             return Err(jsonrpc_core::Error::invalid_params(
@@ -878,10 +917,12 @@ pub fn register_staking_handlers(
                 }
             }
         }
+        }
     });
 
     // staking_getLockInfo - Get lock information for an address
-    io.add_sync_method("staking_getLockInfo", move |params: Params| {
+    io.add_method("staking_getLockInfo", move |params: Params| {
+        async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
             return Err(jsonrpc_core::Error::invalid_params("Missing address"));
@@ -921,6 +962,7 @@ pub fn register_staking_handlers(
                     "remaining_seconds": remaining
                 }))
             }
+        }
         }
     });
 }

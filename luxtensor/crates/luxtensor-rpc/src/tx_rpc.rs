@@ -21,14 +21,14 @@ use serde_json::json;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::eth_rpc::Mempool;
+use luxtensor_core::UnifiedMempool;
 use crate::TransactionBroadcaster;
 use luxtensor_core::{Address, Hash, Transaction, UnifiedStateDB};
 use luxtensor_storage::BlockchainDB;
 
 /// Context for transaction RPC handlers
 pub struct TxRpcContext {
-    pub mempool: Arc<RwLock<Mempool>>,
+    pub mempool: Arc<UnifiedMempool>,
     pub pending_txs: Arc<DashMap<Hash, Transaction>>,
     /// [C1 FIX] Unified state for consistent nonce/balance reads
     pub unified_state: Arc<RwLock<UnifiedStateDB>>,
@@ -38,7 +38,7 @@ pub struct TxRpcContext {
 
 impl TxRpcContext {
     pub fn new(
-        mempool: Arc<RwLock<Mempool>>,
+        mempool: Arc<UnifiedMempool>,
         pending_txs: Arc<DashMap<Hash, Transaction>>,
         unified_state: Arc<RwLock<UnifiedStateDB>>,
         broadcaster: Arc<dyn TransactionBroadcaster>,
@@ -61,8 +61,13 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
     let unified_state = ctx.unified_state.clone();
     let broadcaster = ctx.broadcaster.clone();
 
-    io.add_sync_method("eth_sendTransaction", move |params: Params| {
+    io.add_method("eth_sendTransaction", move |params: Params| {
         use crate::eth_rpc::hex_to_address;
+        let mempool = mempool.clone();
+        let pending_txs = pending_txs.clone();
+        let unified_state = unified_state.clone();
+        let broadcaster = broadcaster.clone();
+        async move {
 
         let p: Vec<serde_json::Value> = params.parse()?;
         let tx_obj = p.get(0).ok_or_else(||
@@ -198,27 +203,13 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
         }
 
         // Add to mempool queue for block production
-        // Note: Nonce is managed by persistent StateDB, not mempool
+        // Uses UnifiedMempool for unified transaction management
         {
-            let mempool_guard = mempool.read();
-
-            // Add transaction to tx_queue for block inclusion
-            let ready_tx = crate::eth_rpc::ReadyTransaction {
-                nonce,
-                from,
-                to,
-                value,
-                data: data.clone(),
-                gas,
-                gas_price: 1_000_000_000, // default gas price for internal/dev transactions
-                r: [0u8; 32],
-                s: [0u8; 32],
-                v: 0,
-            };
-            if !mempool_guard.queue_transaction(ready_tx) {
+            let metadata = luxtensor_core::PendingTxMetadata::default();
+            if let Err(e) = mempool.add_transaction_with_metadata(core_tx.clone(), metadata) {
                 return Err(jsonrpc_core::Error {
                     code: jsonrpc_core::ErrorCode::InternalError,
-                    message: "Transaction queue full".to_string(),
+                    message: format!("Failed to add to mempool: {}", e),
                     data: None,
                 });
             }
@@ -226,6 +217,7 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
         }
 
         Ok(json!(format!("0x{}", hex::encode(tx_hash))))
+        }
     });
 }
 
@@ -234,43 +226,47 @@ fn register_get_receipt(ctx: &TxRpcContext, io: &mut IoHandler) {
     let pending_txs = ctx.pending_txs.clone();
     let db = ctx.db.clone();
 
-    io.add_sync_method("eth_getTransactionReceipt", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-        }
-
-        let hash_str = parsed[0].trim_start_matches("0x");
-        let hash_bytes = hex::decode(hash_str)
-            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-        if hash_bytes.len() != 32 {
-            return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-        }
-
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&hash_bytes);
-
-        // 1. Check pending transactions first (in-memory mempool)
-        if let Some(tx) = pending_txs.get(&hash) {
-            return Ok(build_pending_receipt(&hash, tx.value()));
-        }
-
-        // 2. Check stored receipts in database (from mined blocks)
-        match db.get_receipt(&hash) {
-            Ok(Some(receipt_bytes)) => {
-                if let Some(receipt_json) = deserialize_receipt(&receipt_bytes) {
-                    return Ok(receipt_json);
-                }
+    io.add_method("eth_getTransactionReceipt", move |params: Params| {
+        let pending_txs = pending_txs.clone();
+        let db = db.clone();
+        async move {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
             }
-            _ => {}
-        }
 
-        // 3. Final fallback: check if TX exists at all
-        match db.get_transaction(&hash) {
-            Ok(Some(tx)) => Ok(build_fallback_receipt(&hash, &tx)),
-            Ok(None) => Ok(serde_json::Value::Null),
-            Err(_) => Err(jsonrpc_core::Error::internal_error()),
+            let hash_str = parsed[0].trim_start_matches("0x");
+            let hash_bytes = hex::decode(hash_str)
+                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
+
+            if hash_bytes.len() != 32 {
+                return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
+            }
+
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&hash_bytes);
+
+            // 1. Check pending transactions first (in-memory mempool)
+            if let Some(tx) = pending_txs.get(&hash) {
+                return Ok(build_pending_receipt(&hash, tx.value()));
+            }
+
+            // 2. Check stored receipts in database (from mined blocks)
+            match db.get_receipt(&hash) {
+                Ok(Some(receipt_bytes)) => {
+                    if let Some(receipt_json) = deserialize_receipt(&receipt_bytes) {
+                        return Ok(receipt_json);
+                    }
+                }
+                _ => {}
+            }
+
+            // 3. Final fallback: check if TX exists at all
+            match db.get_transaction(&hash) {
+                Ok(Some(tx)) => Ok(build_fallback_receipt(&hash, &tx)),
+                Ok(None) => Ok(serde_json::Value::Null),
+                Err(_) => Err(jsonrpc_core::Error::internal_error()),
+            }
         }
     });
 }

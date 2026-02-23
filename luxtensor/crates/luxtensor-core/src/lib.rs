@@ -4,6 +4,7 @@ pub mod bridge;
 pub mod constants;
 pub mod error;
 pub mod hnsw;
+pub mod mempool;
 pub mod multisig;
 pub mod receipt;
 pub mod rlp;
@@ -19,7 +20,8 @@ pub use account::{Account, BalanceError};
 pub use block::{Block, BlockHeader};
 pub use constants::{addresses, chain_id, consensus, network, tokenomics, transaction as transaction_constants};
 pub use error::{CoreError, Result};
-pub use state::{RocksDbLike, StateDB};
+pub use mempool::{MempoolError, PendingTxMetadata, UnifiedMempool};
+pub use state::{CodeStore, RocksDbLike, StateDB};
 pub use subnet::{
     EmissionShare, ProtocolGuardrails, RootConfig, RootValidatorInfo, SubnetConfig, SubnetInfo,
     SubnetRegistrationResult, SubnetType, SubnetWeights,

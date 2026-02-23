@@ -11,173 +11,194 @@ use std::sync::Arc;
 pub fn register_reward_methods(io: &mut IoHandler, executor: Arc<RwLock<RewardExecutor>>) {
     // rewards_getPending - Get pending rewards for an address
     let exec = executor.clone();
-    io.add_sync_method("rewards_getPending", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+    io.add_method("rewards_getPending", move |params: Params| {
+        let exec = exec.clone();
+        async move {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+            }
+
+            let address = parse_address(&parsed[0])?;
+            let pending = exec.read().get_pending_rewards(address);
+
+            Ok(serde_json::json!({
+                "address": format!("0x{}", hex::encode(address)),
+                "pending": format!("0x{:x}", pending),
+                "pendingDecimal": pending.to_string()
+            }))
         }
-
-        let address = parse_address(&parsed[0])?;
-        let pending = exec.read().get_pending_rewards(address);
-
-        Ok(serde_json::json!({
-            "address": format!("0x{}", hex::encode(address)),
-            "pending": format!("0x{:x}", pending),
-            "pendingDecimal": pending.to_string()
-        }))
     });
 
     // rewards_getBalance - Get full balance info for an address
     let exec = executor.clone();
-    io.add_sync_method("rewards_getBalance", move |params: Params| {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+    io.add_method("rewards_getBalance", move |params: Params| {
+        let exec = exec.clone();
+        async move {
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+            }
+
+            let address = parse_address(&parsed[0])?;
+            let balance = exec.read().get_balance(address);
+
+            Ok(serde_json::json!({
+                "address": format!("0x{}", hex::encode(address)),
+                "available": format!("0x{:x}", balance.available),
+                "availableDecimal": balance.available.to_string(),
+                "pendingRewards": format!("0x{:x}", balance.pending_rewards),
+                "staked": format!("0x{:x}", balance.staked),
+                "lockedUntil": balance.locked_until
+            }))
         }
-
-        let address = parse_address(&parsed[0])?;
-        let balance = exec.read().get_balance(address);
-
-        Ok(serde_json::json!({
-            "address": format!("0x{}", hex::encode(address)),
-            "available": format!("0x{:x}", balance.available),
-            "availableDecimal": balance.available.to_string(),
-            "pendingRewards": format!("0x{:x}", balance.pending_rewards),
-            "staked": format!("0x{:x}", balance.staked),
-            "lockedUntil": balance.locked_until
-        }))
     });
 
     // rewards_claim - Claim pending rewards
     // SECURITY: Requires signature verification to prevent unauthorized claims
     let exec = executor.clone();
-    io.add_sync_method("rewards_claim", move |params: Params| {
-        let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.len() < 3 {
-            return Err(jsonrpc_core::Error::invalid_params(
-                "Missing parameters. Required: address, timestamp, signature",
-            ));
+    io.add_method("rewards_claim", move |params: Params| {
+        let exec = exec.clone();
+        async move {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.len() < 3 {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Missing parameters. Required: address, timestamp, signature",
+                ));
+            }
+
+            let addr_str = parsed[0]
+                .as_str()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+            let address = parse_address(addr_str)?;
+
+            // SECURITY: Verify timestamp is recent (within 5 minutes)
+            let timestamp_str = parsed[1]
+                .as_str()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+            let timestamp: u64 = timestamp_str.parse()
+                .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now > timestamp + 300 || timestamp > now + 60 {
+                return Err(jsonrpc_core::Error::invalid_params(
+                    "Signature expired or future timestamp",
+                ));
+            }
+
+            // SECURITY: Verify caller owns the address via signature
+            let signature = parsed[2]
+                .as_str()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+            let rpc_address = helpers_parse_address(addr_str)?;
+            let message = format!("rewards_claim:{}:{}", hex::encode(rpc_address.as_bytes()), timestamp);
+            verify_caller_signature(&rpc_address, &message, signature, 0)
+                .or_else(|_| verify_caller_signature(&rpc_address, &message, signature, 1))
+                .map_err(|_| jsonrpc_core::Error::invalid_params(
+                    "Signature verification failed - caller does not own address",
+                ))?;
+
+            let result = exec.read().claim_rewards(address);
+
+            Ok(serde_json::json!({
+                "success": result.success,
+                "claimed": format!("0x{:x}", result.amount),
+                "claimedDecimal": result.amount.to_string(),
+                "newBalance": format!("0x{:x}", result.new_balance),
+                "message": result.message
+            }))
         }
-
-        let addr_str = parsed[0]
-            .as_str()
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
-        let address = parse_address(addr_str)?;
-
-        // SECURITY: Verify timestamp is recent (within 5 minutes)
-        let timestamp_str = parsed[1]
-            .as_str()
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
-        let timestamp: u64 = timestamp_str.parse()
-            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if now > timestamp + 300 || timestamp > now + 60 {
-            return Err(jsonrpc_core::Error::invalid_params(
-                "Signature expired or future timestamp",
-            ));
-        }
-
-        // SECURITY: Verify caller owns the address via signature
-        let signature = parsed[2]
-            .as_str()
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
-        let rpc_address = helpers_parse_address(addr_str)?;
-        let message = format!("rewards_claim:{}:{}", hex::encode(rpc_address.as_bytes()), timestamp);
-        verify_caller_signature(&rpc_address, &message, signature, 0)
-            .or_else(|_| verify_caller_signature(&rpc_address, &message, signature, 1))
-            .map_err(|_| jsonrpc_core::Error::invalid_params(
-                "Signature verification failed - caller does not own address",
-            ))?;
-
-        let result = exec.read().claim_rewards(address);
-
-        Ok(serde_json::json!({
-            "success": result.success,
-            "claimed": format!("0x{:x}", result.amount),
-            "claimedDecimal": result.amount.to_string(),
-            "newBalance": format!("0x{:x}", result.new_balance),
-            "message": result.message
-        }))
     });
 
     // rewards_getHistory - Get reward history for an address
     let exec = executor.clone();
-    io.add_sync_method("rewards_getHistory", move |params: Params| {
-        let parsed: Vec<serde_json::Value> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+    io.add_method("rewards_getHistory", move |params: Params| {
+        let exec = exec.clone();
+        async move {
+            let parsed: Vec<serde_json::Value> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+            }
+
+            let address_str = parsed[0].as_str()
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+            let limit = parsed.get(1)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10) as usize;
+
+            let address = parse_address(address_str)?;
+            let history = exec.read().get_reward_history(address, limit);
+
+            let history_json: Vec<serde_json::Value> = history.iter().map(|entry| {
+                serde_json::json!({
+                    "epoch": entry.epoch,
+                    "amount": format!("0x{:x}", entry.amount),
+                    "amountDecimal": entry.amount.to_string(),
+                    "type": format!("{:?}", entry.reward_type),
+                    "claimed": entry.claimed
+                })
+            }).collect();
+
+            Ok(serde_json::json!({
+                "address": format!("0x{}", hex::encode(address)),
+                "history": history_json
+            }))
         }
-
-        let address_str = parsed[0].as_str()
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
-        let limit = parsed.get(1)
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
-
-        let address = parse_address(address_str)?;
-        let history = exec.read().get_reward_history(address, limit);
-
-        let history_json: Vec<serde_json::Value> = history.iter().map(|entry| {
-            serde_json::json!({
-                "epoch": entry.epoch,
-                "amount": format!("0x{:x}", entry.amount),
-                "amountDecimal": entry.amount.to_string(),
-                "type": format!("{:?}", entry.reward_type),
-                "claimed": entry.claimed
-            })
-        }).collect();
-
-        Ok(serde_json::json!({
-            "address": format!("0x{}", hex::encode(address)),
-            "history": history_json
-        }))
     });
 
     // rewards_getStats - Get executor statistics
     let exec = executor.clone();
-    io.add_sync_method("rewards_getStats", move |_params: Params| {
-        let stats = exec.read().stats();
+    io.add_method("rewards_getStats", move |_params: Params| {
+        let exec = exec.clone();
+        async move {
+            let stats = exec.read().stats();
 
-        Ok(serde_json::json!({
-            "currentEpoch": stats.current_epoch,
-            "totalPending": format!("0x{:x}", stats.total_pending),
-            "totalPendingDecimal": stats.total_pending.to_string(),
-            "totalAvailable": format!("0x{:x}", stats.total_available),
-            "daoBalance": format!("0x{:x}", stats.dao_balance),
-            "daoBalanceDecimal": stats.dao_balance.to_string(),
-            "accountsWithPending": stats.accounts_with_pending,
-            "totalAccounts": stats.total_accounts
-        }))
+            Ok(serde_json::json!({
+                "currentEpoch": stats.current_epoch,
+                "totalPending": format!("0x{:x}", stats.total_pending),
+                "totalPendingDecimal": stats.total_pending.to_string(),
+                "totalAvailable": format!("0x{:x}", stats.total_available),
+                "daoBalance": format!("0x{:x}", stats.dao_balance),
+                "daoBalanceDecimal": stats.dao_balance.to_string(),
+                "accountsWithPending": stats.accounts_with_pending,
+                "totalAccounts": stats.total_accounts
+            }))
+        }
     });
 
     // rewards_getBurnStats - Get burn statistics
     let exec = executor.clone();
-    io.add_sync_method("rewards_getBurnStats", move |_params: Params| {
-        let stats = exec.read().burn_manager().stats();
+    io.add_method("rewards_getBurnStats", move |_params: Params| {
+        let exec = exec.clone();
+        async move {
+            let stats = exec.read().burn_manager().stats();
 
-        Ok(serde_json::json!({
-            "totalBurned": format!("0x{:x}", stats.total_burned),
-            "totalBurnedDecimal": stats.total_burned.to_string(),
-            "txFeeBurned": format!("0x{:x}", stats.tx_fee_burned),
-            "subnetBurned": format!("0x{:x}", stats.subnet_burned),
-            "quotaBurned": format!("0x{:x}", stats.quota_burned),
-            "slashingBurned": format!("0x{:x}", stats.slashing_burned),
-            "recycledToGrants": format!("0x{:x}", stats.recycled_to_grants)
-        }))
+            Ok(serde_json::json!({
+                "totalBurned": format!("0x{:x}", stats.total_burned),
+                "totalBurnedDecimal": stats.total_burned.to_string(),
+                "txFeeBurned": format!("0x{:x}", stats.tx_fee_burned),
+                "subnetBurned": format!("0x{:x}", stats.subnet_burned),
+                "quotaBurned": format!("0x{:x}", stats.quota_burned),
+                "slashingBurned": format!("0x{:x}", stats.slashing_burned),
+                "recycledToGrants": format!("0x{:x}", stats.recycled_to_grants)
+            }))
+        }
     });
 
     // rewards_getDaoBalance - Get DAO treasury balance
     let exec = executor.clone();
-    io.add_sync_method("rewards_getDaoBalance", move |_params: Params| {
-        let balance = exec.read().get_dao_balance();
+    io.add_method("rewards_getDaoBalance", move |_params: Params| {
+        let exec = exec.clone();
+        async move {
+            let balance = exec.read().get_dao_balance();
 
-        Ok(serde_json::json!({
-            "balance": format!("0x{:x}", balance),
-            "balanceDecimal": balance.to_string()
-        }))
+            Ok(serde_json::json!({
+                "balance": format!("0x{:x}", balance),
+                "balanceDecimal": balance.to_string()
+            }))
+        }
     });
 }
 

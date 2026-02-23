@@ -700,22 +700,22 @@ impl HnswVectorStore {
         self.index.search(query, k)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API — used by tests and downstream crates
     pub fn len(&self) -> usize {
         self.index.len()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API — used by tests and downstream crates
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API — serialization for persistence
     pub fn to_bytes(&self) -> Vec<u8> {
         self.index.to_bytes()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API — deserialization for persistence
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, HnswError> {
         let index = HnswIndex::from_bytes(bytes)?;
         Ok(Self {
@@ -726,7 +726,7 @@ impl HnswVectorStore {
     }
 
     /// Get current capacity limit.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API — used by tests and downstream crates
     pub fn capacity(&self) -> usize {
         self.max_capacity
     }

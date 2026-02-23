@@ -18,7 +18,26 @@ Thumbs.db
 # Data
 /data
 *.db
-*.log
+
+# Node runtime data (blockchain DB, LOCK files, etc.)
+data_node*/
+node*/data/
+node*/node.key
+node1.log
+node2.log
+node3.log
+node*.err.log
+node*.log
+
+# RocksDB files
+*.sst
+LOCK
+MANIFEST-*
+OPTIONS-*
+CURRENT
+IDENTITY
+LOG
+LOG.old.*
 
 # Build artifacts
 /dist

@@ -56,13 +56,7 @@ struct QueryRequest {
     offset: Option<i32>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-struct ApiResponse<T: Serialize> {
-    success: bool,
-    data: Option<T>,
-    error: Option<String>,
-}
+
 
 impl GraphQLServer {
     /// Create new HTTP API server

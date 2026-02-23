@@ -4,6 +4,8 @@
 
 mod config;
 mod service;
+mod block_production;
+mod startup;
 mod mempool;
 mod executor;
 mod genesis_config;
