@@ -40,7 +40,6 @@ pub struct Mempool {
     chain_id: u64,
 }
 
-#[allow(dead_code)]
 impl Mempool {
     /// Create a new mempool with maximum size and signature validation enabled
     pub fn new(max_size: usize, chain_id: u64) -> Self {
@@ -58,7 +57,6 @@ impl Mempool {
     }
 
     /// Create mempool with custom config
-    #[allow(dead_code)]
     pub fn with_config(
         max_size: usize,
         max_per_sender: usize,
@@ -81,7 +79,6 @@ impl Mempool {
 
     /// Create mempool for development (no signature validation, relaxed limits)
     /// WARNING: Only use for local development/testing!
-    #[allow(dead_code)]
     pub fn new_dev_mode(max_size: usize, chain_id: u64) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -194,89 +191,9 @@ impl Mempool {
         Ok(())
     }
 
-    /// Add a transaction that was already verified by the RPC layer
-    /// (e.g. via `eth_sendRawTransaction` which uses standard EIP-155 ecrecover).
-    ///
-    /// **DEPRECATED**: Since `signing_message()` now uses standard EIP-155 RLP encoding,
-    /// `verify_signature()` works natively with all Ethereum wallets.
-    /// Use `add_transaction()` instead.
-    ///
-    /// All other DoS protections (chain_id, size, gas price, sender limit, etc.)
-    /// are still enforced.
-    #[deprecated(note = "signing_message() is now EIP-155 aligned; use add_transaction() instead")]
-    #[allow(dead_code)]
-    pub fn add_pre_verified_transaction(&self, tx: Transaction) -> Result<(), MempoolError> {
-        // SECURITY: Validate chain_id
-        if tx.chain_id != self.chain_id {
-            warn!(
-                "🛡️ Rejected pre-verified transaction: chain_id {} != expected {}",
-                tx.chain_id, self.chain_id
-            );
-            return Err(MempoolError::WrongChainId {
-                expected: self.chain_id,
-                got: tx.chain_id,
-            });
-        }
 
-        // DoS Protection 1: Check transaction size
-        let tx_size = bincode::serialized_size(&tx).unwrap_or(u64::MAX) as usize;
-        if tx_size > self.max_tx_size {
-            warn!("🛡️ Rejected pre-verified transaction: size {} > max {}", tx_size, self.max_tx_size);
-            return Err(MempoolError::TransactionTooLarge { size: tx_size, max: self.max_tx_size });
-        }
-
-        // DoS Protection 2: Check minimum gas price
-        if tx.gas_price < self.min_gas_price {
-            debug!("🛡️ Rejected pre-verified transaction: gas_price {} < min {}", tx.gas_price, self.min_gas_price);
-            return Err(MempoolError::GasPriceTooLow { price: tx.gas_price, min: self.min_gas_price });
-        }
-
-        // NOTE: Signature verification is INTENTIONALLY SKIPPED here.
-        // The RPC layer already verified using standard EIP-155 ecrecover.
-
-        let sender = tx.from;
-
-        // DoS Protection 3: Per-sender limit
-        {
-            let sender_counts = self.sender_tx_count.read();
-            if let Some(&count) = sender_counts.get(&sender) {
-                if count >= self.max_per_sender {
-                    warn!("🛡️ Rejected pre-verified transaction from {:?}: sender limit {} reached", sender, self.max_per_sender);
-                    return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
-                }
-            }
-        }
-
-        self.cleanup_expired();
-
-        let mut txs = self.transactions.write();
-
-        if txs.len() >= self.max_size {
-            return Err(MempoolError::Full);
-        }
-
-        let hash = tx.hash();
-
-        if txs.contains_key(&hash) {
-            return Err(MempoolError::DuplicateTransaction);
-        }
-
-        {
-            let mut sender_counts = self.sender_tx_count.write();
-            *sender_counts.entry(sender).or_insert(0) += 1;
-        }
-
-        let timed_tx = TimedTransaction {
-            tx,
-            added_at: Instant::now(),
-        };
-        txs.insert(hash, timed_tx);
-        info!("📥 Pre-verified transaction added to mempool (sig check bypassed)");
-        Ok(())
-    }
 
     /// Get all pending transactions
-    #[allow(dead_code)]
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
         let txs = self.transactions.read();
         txs.values().map(|t| t.tx.clone()).collect()
@@ -334,11 +251,6 @@ impl Mempool {
     /// Check if mempool is empty
     pub fn is_empty(&self) -> bool {
         self.transactions.read().is_empty()
-    }
-
-    /// Clear all transactions
-    pub fn clear(&self) {
-        self.transactions.write().clear();
     }
 
     /// Get a specific transaction by hash

@@ -13,10 +13,9 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use luxtensor_rpc::{RpcServer, RpcServerConfig};
+//! use luxtensor_rpc::RpcServer;
 //!
-//! let config = RpcServerConfig::default();
-//! let server = RpcServer::new(config);
+//! let server = RpcServer::new_with_shared_pending_txs(db, mempool, broadcaster, pending_txs, chain_id);
 //! server.start("127.0.0.1:8545").await?;
 //! ```
 //!

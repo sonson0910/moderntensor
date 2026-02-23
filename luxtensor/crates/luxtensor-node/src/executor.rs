@@ -56,26 +56,6 @@ impl TransactionExecutor {
         }
     }
 
-    /// Create executor for development mode (signature verification disabled)
-    /// WARNING: Only use for local development/testing!
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn new_dev_mode(chain_id: u64) -> Self {
-        Self {
-            chain_id,
-            base_gas_cost: 21000,
-            gas_per_byte: 68,
-            skip_signature_verification: true,
-            evm: EvmExecutor::new(chain_id),
-        }
-    }
-
-    /// Get the chain_id this executor validates against
-    #[allow(dead_code)]
-    pub fn chain_id(&self) -> u64 {
-        self.chain_id
-    }
-
     /// Get a reference to the shared EVM executor (for state inspection or persistence)
     pub fn evm(&self) -> &EvmExecutor {
         &self.evm
@@ -322,21 +302,6 @@ impl TransactionExecutor {
         Ok(gas)
     }
 
-    /// Batch execute transactions
-    #[allow(dead_code)]
-    pub fn execute_batch(
-        &self,
-        transactions: &[Transaction],
-        state: &mut StateDB,
-        block_height: u64,
-        block_hash: [u8; 32],
-        block_timestamp: u64,
-    ) -> Vec<Result<Receipt>> {
-        transactions.iter()
-            .enumerate()
-            .map(|(idx, tx)| self.execute(tx, state, block_height, block_hash, idx, block_timestamp))
-            .collect()
-    }
 }
 
 impl Default for TransactionExecutor {
@@ -477,26 +442,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_batch_execution() {
-        let executor = TransactionExecutor::new(TEST_CHAIN_ID);
-        let mut state = StateDB::new();
-
-        let keypair = KeyPair::generate();
-        let from = Address::from(keypair.address());
-        let mut sender = Account::new();
-        sender.balance = 10_000_000;
-        sender.nonce = 0;
-        state.set_account(from, sender);
-
-        let txs = vec![
-            create_signed_transaction(&keypair, 0, Some(Address::zero()), 1000),
-            create_signed_transaction(&keypair, 1, Some(Address::zero()), 2000),
-        ];
-
-        let results = executor.execute_batch(&txs, &mut state, 1, [1u8; 32], 1000);
-        assert_eq!(results.len(), 2);
-    }
 
     #[test]
     fn test_receipts_root() {

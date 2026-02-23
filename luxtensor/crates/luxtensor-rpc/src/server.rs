@@ -60,7 +60,7 @@ use tracing::warn;
 ///     .with_p2p(p2p_sender)
 ///     .build();
 ///
-/// let server = RpcServer::new(db, state, metagraph_db, broadcaster);
+/// let server = RpcServer::new_with_shared_pending_txs(db, mempool, broadcaster, pending_txs, chain_id);
 /// ```
 pub struct RpcServer {
     db: Arc<BlockchainDB>,
@@ -100,6 +100,12 @@ pub struct RpcServer {
     merkle_cache: Option<Arc<CachedStateDB>>,
     /// Shared EVM executor from block execution for eth_call storage reads
     evm_executor: Option<luxtensor_contracts::EvmExecutor>,
+    /// Callback returning node metrics as JSON (from NodeMetrics::to_json)
+    metrics_json_fn: Option<Arc<dyn Fn() -> serde_json::Value + Send + Sync>>,
+    /// Callback returning Prometheus metrics text (from NodeMetrics::export)
+    metrics_prometheus_fn: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Callback returning health status as JSON (from HealthMonitor::get_health)
+    health_fn: Option<Arc<dyn Fn() -> serde_json::Value + Send + Sync>>,
 }
 
 impl RpcServer {
@@ -131,14 +137,13 @@ impl RpcServer {
         }
     }
 
-    /// Create a new RPC server with persistent MetagraphDB
-    pub fn new(
-        db: Arc<BlockchainDB>,
-        metagraph: Arc<MetagraphDB>,
-        broadcaster: Arc<dyn TransactionBroadcaster>,
-        chain_id: u64,
-    ) -> Self {
-        // Load initial data from metagraph into caches
+    /// Create a new RPC server for testing (uses temp storage)
+    #[cfg(test)]
+    pub fn new_for_testing(db: Arc<BlockchainDB>) -> Self {
+        let chain_id = 8898_u64; // LuxTensor devnet chain_id
+        let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
+        let metagraph =
+            Arc::new(MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB"));
         let subnets = Arc::new(DashMap::from_iter(Self::load_subnets_cache(&metagraph)));
         let neurons = Arc::new(DashMap::from_iter(Self::load_neurons_cache(&metagraph)));
 
@@ -151,14 +156,14 @@ impl RpcServer {
             weights: Arc::new(DashMap::new()),
             pending_txs: Arc::new(DashMap::new()),
             ai_tasks: Arc::new(DashMap::new()),
-            broadcaster,
+            broadcaster: Arc::new(NoOpBroadcaster),
             mempool: Arc::new(RwLock::new(Mempool::new())),
             commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
                 CommitRevealConfig::default(),
             ))),
             ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
             rate_limiter: Arc::new(RateLimiter::new()),
-            data_dir: PathBuf::from("./data"), // Default data directory
+            data_dir: temp_dir,
             cached_block_number: Arc::new(AtomicU64::new(0)),
             cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
             unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
@@ -168,16 +173,10 @@ impl RpcServer {
             multisig_manager: None,
             merkle_cache: None,
             evm_executor: None,
+            metrics_json_fn: None,
+            metrics_prometheus_fn: None,
+            health_fn: None,
         }
-    }
-
-    /// Create a new RPC server for testing (uses temp storage)
-    #[cfg(test)]
-    pub fn new_for_testing(db: Arc<BlockchainDB>) -> Self {
-        let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
-        let metagraph =
-            Arc::new(MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB"));
-        Self::new(db, metagraph, Arc::new(NoOpBroadcaster), 8898) // LuxTensor devnet chain_id
     }
 
     /// Get mempool reference for block production polling
@@ -220,101 +219,27 @@ impl RpcServer {
         self.evm_executor = Some(executor);
     }
 
-    /// Create a new RPC server for testing with external mempool
-    #[cfg(test)]
-    pub fn new_for_testing_with_mempool(
-        db: Arc<BlockchainDB>,
-        mempool: Arc<RwLock<Mempool>>,
-    ) -> Self {
-        let chain_id = 8898_u64; // LuxTensor devnet chain_id
-        let temp_dir = std::env::temp_dir().join(format!("luxtensor_test_{}", std::process::id()));
-        let metagraph =
-            Arc::new(MetagraphDB::open(&temp_dir).expect("Failed to create test MetagraphDB"));
-
-        Self {
-            db,
-            validators: Arc::new(RwLock::new(ValidatorSet::new())),
-            metagraph,
-            subnets: Arc::new(DashMap::new()),
-            neurons: Arc::new(DashMap::new()),
-            weights: Arc::new(DashMap::new()),
-            pending_txs: Arc::new(DashMap::new()),
-            ai_tasks: Arc::new(DashMap::new()),
-            broadcaster: Arc::new(NoOpBroadcaster),
-            mempool,
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
-                CommitRevealConfig::default(),
-            ))),
-            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
-            rate_limiter: Arc::new(RateLimiter::new()),
-            data_dir: temp_dir,
-            cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
-            agent_registry: None,
-            dispute_manager: None,
-            bridge: None,
-            multisig_manager: None,
-            merkle_cache: None,
-            evm_executor: None,
-        }
+    /// Set NodeMetrics provider callbacks for system_metrics / system_prometheusMetrics RPCs
+    pub fn set_metrics_provider(
+        &mut self,
+        json_fn: Arc<dyn Fn() -> serde_json::Value + Send + Sync>,
+        prometheus_fn: Arc<dyn Fn() -> String + Send + Sync>,
+    ) {
+        self.metrics_json_fn = Some(json_fn);
+        self.metrics_prometheus_fn = Some(prometheus_fn);
     }
 
-    /// Create a new RPC server with external mempool and P2P broadcaster
-    /// Use this for production multi-node setup
-    /// 🔧 FIX: Added chain_id parameter — was hardcoded to 1337
-    pub fn new_with_mempool_and_broadcaster(
-        db: Arc<BlockchainDB>,
-        mempool: Arc<RwLock<Mempool>>,
-        broadcaster: Arc<dyn TransactionBroadcaster>,
-        chain_id: u64,
-    ) -> Self {
-        let temp_dir = std::env::temp_dir().join(format!("luxtensor_{}", std::process::id()));
-        let metagraph = Arc::new(MetagraphDB::open(&temp_dir).unwrap_or_else(|e| {
-            tracing::error!(
-                "MetagraphDB::open failed at {:?}: {} — falling back to in-memory temp",
-                temp_dir,
-                e
-            );
-            // Retry with a unique fallback path
-            let fallback =
-                std::env::temp_dir().join(format!("luxtensor_fb_{}", std::process::id()));
-            MetagraphDB::open(&fallback)
-                .unwrap_or_else(|e2| {
-                    // SECURITY: Clean exit instead of panic to avoid stack-unwind side effects
-                    tracing::error!("FATAL: MetagraphDB fallback also failed: {} — shutting down", e2);
-                    std::process::exit(1);
-                })
-        }));
-
-        Self {
-            db,
-            validators: Arc::new(RwLock::new(ValidatorSet::new())),
-            metagraph,
-            subnets: Arc::new(DashMap::new()),
-            neurons: Arc::new(DashMap::new()),
-            weights: Arc::new(DashMap::new()),
-            pending_txs: Arc::new(DashMap::new()),
-            ai_tasks: Arc::new(DashMap::new()),
-            broadcaster,
-            mempool,
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
-                CommitRevealConfig::default(),
-            ))),
-            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
-            rate_limiter: Arc::new(RateLimiter::new()),
-            data_dir: temp_dir,
-            cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
-            agent_registry: None,
-            dispute_manager: None,
-            bridge: None,
-            multisig_manager: None,
-            merkle_cache: None,
-            evm_executor: None,
-        }
+    /// Set HealthMonitor provider callback for enhanced system_health RPC
+    pub fn set_health_provider(
+        &mut self,
+        health_fn: Arc<dyn Fn() -> serde_json::Value + Send + Sync>,
+    ) {
+        self.health_fn = Some(health_fn);
     }
+
+
+
+
 
     /// Create a new RPC server with external shared pending_txs for unified storage
     /// Use this when you need P2P handlers to share the same TX pool as RPC
@@ -369,48 +294,13 @@ impl RpcServer {
             multisig_manager: None,
             merkle_cache: None,
             evm_executor: None,
+            metrics_json_fn: None,
+            metrics_prometheus_fn: None,
+            health_fn: None,
         }
     }
 
-    /// Create a new RPC server with validator set
-    pub fn with_validators(
-        db: Arc<BlockchainDB>,
-        metagraph: Arc<MetagraphDB>,
-        validators: Arc<RwLock<ValidatorSet>>,
-        broadcaster: Arc<dyn TransactionBroadcaster>,
-        chain_id: u64,
-    ) -> Self {
-        let subnets = Arc::new(DashMap::from_iter(Self::load_subnets_cache(&metagraph)));
-        let neurons = Arc::new(DashMap::from_iter(Self::load_neurons_cache(&metagraph)));
 
-        Self {
-            db,
-            validators,
-            metagraph,
-            subnets,
-            neurons,
-            weights: Arc::new(DashMap::new()),
-            pending_txs: Arc::new(DashMap::new()),
-            ai_tasks: Arc::new(DashMap::new()),
-            broadcaster,
-            mempool: Arc::new(RwLock::new(Mempool::new())),
-            commit_reveal: Arc::new(RwLock::new(CommitRevealManager::new(
-                CommitRevealConfig::default(),
-            ))),
-            ai_circuit_breaker: Arc::new(AILayerCircuitBreaker::new()),
-            rate_limiter: Arc::new(RateLimiter::new()),
-            data_dir: PathBuf::from("./data"),
-            cached_block_number: Arc::new(AtomicU64::new(0)),
-            cached_chain_id: Arc::new(AtomicU64::new(chain_id)),
-            unified_state: Arc::new(RwLock::new(UnifiedStateDB::new(chain_id))),
-            agent_registry: None,
-            dispute_manager: None,
-            bridge: None,
-            multisig_manager: None,
-            merkle_cache: None,
-            evm_executor: None,
-        }
-    }
 
     /// Load subnets from MetagraphDB into cache
     fn load_subnets_cache(metagraph: &MetagraphDB) -> HashMap<u64, SubnetInfo> {
@@ -563,12 +453,17 @@ impl RpcServer {
 
         // system_health - Return node health status (for monitoring and load balancers)
         let db_for_health = self.db.clone();
-        let unified_for_health = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
+        let unified_for_health = self.unified_state.clone();
+        let health_fn_for_rpc = self.health_fn.clone();
         io.add_sync_method("system_health", move |_params: Params| {
-            // Get current block height
+            // Enhanced: Use HealthMonitor callback if available
+            if let Some(ref health_fn) = health_fn_for_rpc {
+                return Ok(health_fn());
+            }
+
+            // Fallback: basic health from block scanning
             let block_height = {
                 let mut ceiling: u64 = 1;
-                // Jump search for ceiling
                 loop {
                     match db_for_health.get_block_by_height(ceiling) {
                         Ok(Some(_)) => {
@@ -581,7 +476,6 @@ impl RpcServer {
                         Err(_) => break,
                     }
                 }
-                // Binary search for exact height
                 let mut low = ceiling / 2;
                 let mut high = ceiling;
                 while low < high {
@@ -607,6 +501,52 @@ impl RpcServer {
             }))
         });
 
+        // system_nodeStats - Return node statistics (height, chain_id, mempool, validators)
+        let db_for_stats = self.db.clone();
+        let mempool_for_stats = self.mempool.clone();
+        let validators_for_stats = self.validators.clone();
+        let chain_id_for_stats = self.chain_id();
+        io.add_sync_method("system_nodeStats", move |_params: Params| {
+            // Get block height via binary search (same pattern as system_health)
+            let block_height = {
+                let mut ceiling: u64 = 1;
+                loop {
+                    match db_for_stats.get_block_by_height(ceiling) {
+                        Ok(Some(_)) => {
+                            ceiling *= 2;
+                            if ceiling > 1_000_000 {
+                                break;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(_) => break,
+                    }
+                }
+                let mut low = ceiling / 2;
+                let mut high = ceiling;
+                while low < high {
+                    let mid = (low + high + 1) / 2;
+                    match db_for_stats.get_block_by_height(mid) {
+                        Ok(Some(_)) => low = mid,
+                        Ok(None) => high = mid - 1,
+                        Err(_) => break,
+                    }
+                }
+                low
+            };
+
+            let mempool_size = mempool_for_stats.read().pending_txs.len();
+            let validator_count = validators_for_stats.read().len();
+
+            Ok(serde_json::json!({
+                "height": block_height,
+                "chain_id": chain_id_for_stats,
+                "mempool_size": mempool_size,
+                "validator_count": validator_count,
+                "version": env!("CARGO_PKG_VERSION")
+            }))
+        });
+
         // system_cacheStats - Return Merkle cache statistics for monitoring
         if let Some(ref cache) = self.merkle_cache {
             let cache_for_stats = cache.clone();
@@ -623,6 +563,61 @@ impl RpcServer {
                 }))
             });
         }
+
+        // system_metrics - Return node metrics as JSON (for dashboards)
+        if let Some(ref metrics_fn) = self.metrics_json_fn {
+            let fn_clone = metrics_fn.clone();
+            io.add_sync_method("system_metrics", move |_params: Params| {
+                Ok(fn_clone())
+            });
+        }
+
+        // system_prometheusMetrics - Return Prometheus-compatible metrics text
+        if let Some(ref prom_fn) = self.metrics_prometheus_fn {
+            let fn_clone = prom_fn.clone();
+            io.add_sync_method("system_prometheusMetrics", move |_params: Params| {
+                Ok(serde_json::Value::String(fn_clone()))
+            });
+        }
+
+        // debug_forkChoiceState - Return block scores and attestation stakes for debugging
+        let db_for_debug = self.db.clone();
+        io.add_sync_method("debug_forkChoiceState", move |_params: Params| {
+            let block_scores = match db_for_debug.load_all_block_scores() {
+                Ok(scores) => scores.iter().map(|(hash, score)| {
+                    serde_json::json!({
+                        "hash": format!("0x{}", hex::encode(hash)),
+                        "score": score
+                    })
+                }).collect::<Vec<_>>(),
+                Err(e) => return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::InternalError,
+                    message: format!("Failed to load block scores: {}", e),
+                    data: None,
+                }),
+            };
+
+            let attestation_stakes = match db_for_debug.load_all_attestation_stakes() {
+                Ok(stakes) => stakes.iter().map(|(hash, stake)| {
+                    serde_json::json!({
+                        "hash": format!("0x{}", hex::encode(hash)),
+                        "stake": stake.to_string()
+                    })
+                }).collect::<Vec<_>>(),
+                Err(e) => return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::InternalError,
+                    message: format!("Failed to load attestation stakes: {}", e),
+                    data: None,
+                }),
+            };
+
+            Ok(serde_json::json!({
+                "blockScores": block_scores,
+                "attestationStakes": attestation_stakes,
+                "totalScoredBlocks": block_scores.len(),
+                "totalAttestedBlocks": attestation_stakes.len()
+            }))
+        });
 
         // sync_getSyncStatus - Return current sync status for state sync protocol
         let db_for_sync = self.db.clone();
@@ -909,9 +904,10 @@ impl RpcServer {
 
         let db = self.db.clone();
         let pending_txs_query = self.pending_txs.clone();
+        let mempool_for_tx_query = self.mempool.clone();
 
         // eth_getTransactionByHash - Get transaction by hash
-        // Checks pending transactions first, then confirmed transactions in DB
+        // 3-tier lookup: pending_txs (hot cache) → mempool → confirmed DB
         io.add_sync_method("eth_getTransactionByHash", move |params: Params| {
             let parsed: Vec<String> = params.parse()?;
             if parsed.is_empty() {
@@ -929,14 +925,23 @@ impl RpcServer {
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&hash_bytes);
 
-            // 1. Check pending transactions first (in-memory mempool)
+            // 1. Check pending_txs hot cache first
             if let Some(tx) = pending_txs_query.get(&hash) {
                 let rpc_tx = RpcTransaction::from(tx.value().clone());
                 return serde_json::to_value(rpc_tx)
                     .map_err(|_| jsonrpc_core::Error::internal_error());
             }
 
-            // 2. Fallback to confirmed transactions in database
+            // 2. Check mempool pending transactions
+            {
+                let mp = mempool_for_tx_query.read();
+                if let Some(pending_tx) = mp.pending_txs.get(&hash) {
+                    return serde_json::to_value(pending_tx)
+                        .map_err(|_| jsonrpc_core::Error::internal_error());
+                }
+            }
+
+            // 3. Fallback to confirmed transactions in database
             match db.get_transaction(&hash) {
                 Ok(Some(tx)) => {
                     let rpc_tx = RpcTransaction::from(tx);
@@ -945,6 +950,16 @@ impl RpcServer {
                 Ok(None) => Ok(Value::Null),
                 Err(_) => Err(jsonrpc_core::Error::internal_error()),
             }
+        });
+
+        // eth_pendingTransactions - Get all pending transactions from mempool
+        let pending_txs_for_list = self.pending_txs.clone();
+        io.add_sync_method("eth_pendingTransactions", move |_params: Params| {
+            let rpc_txs: Vec<RpcTransaction> = pending_txs_for_list
+                .iter()
+                .map(|entry| RpcTransaction::from(entry.value().clone()))
+                .collect();
+            serde_json::to_value(rpc_txs).map_err(|_| jsonrpc_core::Error::internal_error())
         });
     }
 
@@ -1143,6 +1158,9 @@ impl RpcServerBuilder {
             multisig_manager: None,
             merkle_cache: None,
             evm_executor: None,
+            metrics_json_fn: None,
+            metrics_prometheus_fn: None,
+            health_fn: None,
         }
     }
 }

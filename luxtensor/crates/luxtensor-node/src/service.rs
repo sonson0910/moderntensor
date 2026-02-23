@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::executor::{calculate_receipts_root, TransactionExecutor};
 use crate::mempool::Mempool;
+use crate::metrics::NodeMetrics;
 use crate::task_dispatcher::{DispatchService, DispatcherConfig, TaskDispatcher};
 
 /// Maximum allowed clock drift (in seconds) for future block timestamps.
@@ -189,6 +190,8 @@ pub struct NodeService {
     multisig_manager: Arc<MultisigManager>,
     /// Merkle root caching layer wrapping state_db for efficient block production
     merkle_cache: Arc<CachedStateDB>,
+    /// Node-level Prometheus metrics (block height, peers, TX throughput, etc.)
+    metrics: Arc<NodeMetrics>,
 }
 
 impl NodeService {
@@ -372,6 +375,16 @@ impl NodeService {
         let graceful_shutdown = Arc::new(GracefulShutdown::new(ShutdownConfig::default()));
         info!("  ✓ Graceful shutdown handler initialized");
 
+        // Restore mempool from previous shutdown backup (if exists)
+        {
+            let mempool_backup_path = format!("{}/mempool.bin", graceful_shutdown.config().backup_dir);
+            match mempool.load_from_file(&mempool_backup_path) {
+                Ok(0) => {} // No backup found or empty — silent
+                Ok(count) => info!("  ✓ Restored {} pending transactions from previous session", count),
+                Err(e) => warn!("  ⚠️ Failed to load mempool backup: {} (starting fresh)", e),
+            }
+        }
+
         // Initialize health monitor
         let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
         info!("  ✓ Health monitor initialized");
@@ -550,6 +563,7 @@ impl NodeService {
             bridge,
             multisig_manager,
             merkle_cache,
+            metrics: Arc::new(NodeMetrics::default()),
         })
     }
 
@@ -1238,6 +1252,43 @@ impl NodeService {
             // reads the same storage that block execution has committed to.
             rpc_server.set_evm_executor(self.executor.evm().clone());
 
+            // Wire NodeMetrics → RPC via callback closures
+            {
+                let metrics = self.metrics.clone();
+                let json_fn = Arc::new(move || metrics.to_json());
+                let metrics2 = self.metrics.clone();
+                let prom_fn = Arc::new(move || metrics2.export());
+                rpc_server.set_metrics_provider(json_fn, prom_fn);
+            }
+
+            // Wire HealthMonitor → RPC via callback closure
+            {
+                let hm = self.health_monitor.clone();
+                let health_fn = Arc::new(move || {
+                    let status = hm.read().get_health();
+                    serde_json::json!({
+                        "healthy": status.healthy,
+                        "block": status.block_height,
+                        "peerCount": status.peer_count,
+                        "is_syncing": status.is_syncing,
+                        "syncProgress": status.sync_progress,
+                        "secondsSinceLastBlock": status.seconds_since_last_block,
+                        "mempoolSize": status.mempool_size,
+                        "uptimeSeconds": status.uptime_seconds,
+                        "issues": status.issues.iter().map(|i| {
+                            serde_json::json!({
+                                "type": format!("{:?}", i),
+                                "severity": i.severity(),
+                                "critical": i.is_critical()
+                            })
+                        }).collect::<Vec<_>>(),
+                        "version": "0.1.0",
+                        "node_name": "luxtensor-node"
+                    })
+                });
+                rpc_server.set_health_provider(health_fn);
+            }
+
             // Extract unified_state Arc BEFORE moving rpc_server into the spawn closure.
             // This allows block production to sync state into the RPC layer after each block.
             unified_state_for_blocks = Some(rpc_server.unified_state());
@@ -1330,6 +1381,7 @@ impl NodeService {
             let agent_trigger_clone = self.agent_trigger_engine.clone();
             let dispute_manager_clone = self.dispute_manager.clone();
             let slashing_manager_clone = self.slashing_manager.clone();
+            let metrics_for_loop = self.metrics.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -1357,6 +1409,7 @@ impl NodeService {
                     dispute_manager_clone, // Optimistic AI dispute processing
                     slashing_manager_clone, // For dispute slashing
                     merkle_cache,        // Merkle root caching layer
+                    metrics_for_loop,    // NodeMetrics recording
                 )
                 .await
             });
@@ -1426,6 +1479,22 @@ impl NodeService {
 
         // Save shutdown checkpoint for recovery
         self.graceful_shutdown.begin_state_save();
+
+        // Save mempool transactions to disk (if configured)
+        if self.graceful_shutdown.config().save_mempool {
+            let backup_dir = &self.graceful_shutdown.config().backup_dir;
+            let mempool_path = format!("{}/mempool.bin", backup_dir);
+            // Ensure backup directory exists
+            if let Err(e) = std::fs::create_dir_all(backup_dir) {
+                warn!("Failed to create backup directory {}: {}", backup_dir, e);
+            } else {
+                match self.mempool.save_to_file(&mempool_path) {
+                    Ok(count) => info!("💾 Saved {} mempool transactions to {}", count, mempool_path),
+                    Err(e) => warn!("⚠️ Failed to save mempool: {}", e),
+                }
+            }
+        }
+
         let current_height = self.storage.get_best_height().ok().flatten().unwrap_or(0);
         let current_hash = self
             .storage
@@ -1491,6 +1560,8 @@ impl NodeService {
         slashing_manager: Arc<RwLock<SlashingManager>>,
         // Merkle root caching layer for efficient state root computation
         merkle_cache: Arc<CachedStateDB>,
+        // NodeMetrics for recording block production stats
+        metrics_for_blocks: Arc<NodeMetrics>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -1609,6 +1680,7 @@ impl NodeService {
                     info!("🎯 Slot {}: We are the leader! Producing block...", slot);
 
                     // Produce a block (TXs already in mempool from earlier drain)
+                    let block_start_time = std::time::Instant::now();
                     match Self::produce_block(
                         &consensus, &storage, &state_db, &mempool, &executor,
                         &reward_executor, epoch_length,
@@ -1625,6 +1697,14 @@ impl NodeService {
                         &merkle_cache,   // Merkle root caching
                     ).await {
                         Ok(block) => {
+                            // Record NodeMetrics for this block
+                            let production_ms = block_start_time.elapsed().as_millis() as u64;
+                            metrics_for_blocks.record_block(
+                                block.header.height,
+                                block.transactions.len(),
+                                production_ms,
+                            );
+
                             // 🔧 FIX MC-6: Accumulate TX count for the whole epoch
                             epoch_tx_accumulator += block.transactions.len() as u64;
 
@@ -2203,7 +2283,6 @@ impl NodeService {
     }
 
     /// Get node statistics
-    #[allow(dead_code)]
     pub async fn get_stats(&self) -> Result<NodeStats> {
         let height = self.storage.get_best_height()?.unwrap_or(0);
         let validator_count = {
@@ -2221,24 +2300,10 @@ impl NodeService {
         })
     }
 
-    /// Add transaction to mempool
-    #[allow(dead_code)]
-    pub fn add_transaction(&self, tx: Transaction) -> Result<()> {
-        self.mempool
-            .add_transaction(tx)
-            .map_err(|e| anyhow::anyhow!("Failed to add transaction: {}", e))
-    }
-
-    /// Get mempool
-    #[allow(dead_code)]
-    pub fn mempool(&self) -> &Arc<Mempool> {
-        &self.mempool
-    }
 }
 
 /// Node statistics
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct NodeStats {
     pub height: u64,
     pub validator_count: usize,

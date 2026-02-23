@@ -671,26 +671,6 @@ pub fn generate_tx_hash(from: &Address, nonce: u64) -> TxHash {
     data.extend_from_slice(&nonce.to_be_bytes());
     keccak256(&data)
 }
-
-/// Generate a deterministic contract address from deployer + nonce.
-///
-/// Uses keccak256(RLP([deployer, nonce]))[12..] following Ethereum CREATE semantics.
-#[allow(dead_code)]
-fn generate_contract_address(deployer: &Address, nonce: u64) -> Address {
-    use luxtensor_crypto::keccak256;
-
-    let mut data = Vec::with_capacity(64);
-    data.extend_from_slice(b"CONTRACT_ADDR:"); // domain separator
-    data.extend_from_slice(deployer);
-    data.extend_from_slice(&nonce.to_be_bytes());
-    let hash = keccak256(&data);
-
-    // Take last 20 bytes (Ethereum CREATE convention)
-    let mut result = [0u8; 20];
-    result.copy_from_slice(&hash[12..32]);
-    result
-}
-
 /// Register Ethereum-compatible RPC methods
 ///
 /// # Parameters

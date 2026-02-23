@@ -1003,7 +1003,6 @@ impl BlockchainDB {
     }
 
     /// Load all block scores from the fork choice CF
-    #[allow(dead_code)]
     pub fn load_all_block_scores(&self) -> Result<Vec<(Hash, u64)>> {
         let cf = self.db.cf_handle(CF_FORK_CHOICE)
             .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;
@@ -1028,7 +1027,6 @@ impl BlockchainDB {
     }
 
     /// Load all attestation stakes from the fork choice CF
-    #[allow(dead_code)]
     pub fn load_all_attestation_stakes(&self) -> Result<Vec<(Hash, u128)>> {
         let cf = self.db.cf_handle(CF_FORK_CHOICE)
             .ok_or_else(|| StorageError::DatabaseError("CF_FORK_CHOICE not found".to_string()))?;

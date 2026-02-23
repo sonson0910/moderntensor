@@ -100,14 +100,7 @@ impl ZkmlRpcContext {
         }
     }
 
-    /// Create a ZkmlRpcContext in **development mode** (alias for `dev()`).
-    ///
-    /// **DEPRECATED**: Use [`dev()`](Self::dev) explicitly to signal intent,
-    /// or [`production()`](Self::production) for real deployments.
-    #[deprecated(note = "Use ZkmlRpcContext::dev() or ::production() explicitly")]
-    pub fn new() -> Self {
-        Self::dev()
-    }
+
 
     /// Create with production config (real RISC Zero proofs)
     pub fn production() -> Self {
