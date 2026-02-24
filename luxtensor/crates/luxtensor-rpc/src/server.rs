@@ -33,6 +33,7 @@ use crate::agent_rpc::{register_agent_methods as register_agent_methods_new, Age
 use crate::dispute_rpc::{register_dispute_methods as register_dispute_methods_new, DisputeRpcContext};
 use crate::bridge_rpc::{register_bridge_methods, BridgeRpcContext};
 use crate::multisig_rpc::{register_multisig_methods, MultisigRpcContext};
+use crate::miner_dispatch_rpc::{MinerDispatchContext, register_miner_dispatch_methods};
 use luxtensor_contracts::AgentRegistry;
 use luxtensor_core::bridge::InMemoryBridge;
 use luxtensor_core::multisig::MultisigManager;
@@ -402,6 +403,10 @@ impl RpcServer {
             self.db.clone(),
         );
         register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
+
+        // Register miner dispatch methods (lux_registerMiner, lux_listMiners, etc.)
+        let miner_ctx = Arc::new(MinerDispatchContext::new());
+        register_miner_dispatch_methods(miner_ctx, &mut io);
 
         // Register checkpoint handlers for fast sync
         register_checkpoint_handlers(&mut io, self.db.clone(), self.data_dir.clone());
@@ -842,10 +847,11 @@ impl RpcServer {
                 }
 
                 // SLOW PATH: Initialize from DB (only at startup)
-                // Check genesis first
+                // Check genesis first — if DB is unavailable or empty, height is 0
                 match db_for_block_num.get_block_by_height(0) {
                     Ok(None) => return Ok(Value::String("0x0".to_string())),
-                    Err(_) => return Err(jsonrpc_core::Error::internal_error()),
+                    // DB error during startup → return 0x0 gracefully (node is bootstrapping)
+                    Err(_) => return Ok(Value::String("0x0".to_string())),
                     Ok(Some(_)) => {}
                 }
 

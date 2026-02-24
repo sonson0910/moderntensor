@@ -3,7 +3,7 @@
 
 use crate::error::NetworkError;
 use crate::eclipse_protection::{EclipseProtection, EclipseConfig};
-use crate::messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
+use crate::messages::{serialize_message, NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
 use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
 use futures::StreamExt;
 use std::sync::atomic::AtomicU64;
@@ -415,7 +415,7 @@ impl SwarmP2PNode {
                                 debug!("📤 SWARM: Broadcasting {} blocks for sync", blocks.len());
                                 let nonce = self.sync_nonce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 let message = NetworkMessage::Blocks { blocks, nonce };
-                                let data = match bincode::serialize(&message) {
+                                let data = match serialize_message(&message) {
                                     Ok(d) => d,
                                     Err(e) => {
                                         warn!("Failed to serialize blocks: {}", e);
@@ -461,7 +461,7 @@ impl SwarmP2PNode {
                                 reward,
                                 deadline,
                             };
-                            let data = match bincode::serialize(&message) {
+                            let data = match serialize_message(&message) {
                                 Ok(d) => d,
                                 Err(e) => {
                                     warn!("Failed to serialize AI task dispatch: {}", e);
@@ -613,7 +613,14 @@ impl SwarmP2PNode {
                 debug!("Received other message type");
             }
             Err(e) => {
-                warn!("Failed to deserialize gossip message: {}", e);
+                let first_bytes: Vec<String> = message.data.iter()
+                    .take(8)
+                    .map(|b| format!("{:02x}", b))
+                    .collect();
+                warn!(
+                    "Failed to deserialize gossip message from {} on topic '{}' ({} bytes, first 8: [{}]): {}",
+                    source, topic, msg_len, first_bytes.join(" "), e
+                );
             }
         }
     }
@@ -621,7 +628,7 @@ impl SwarmP2PNode {
     /// Broadcast a block to the network
     pub fn broadcast_block(&mut self, block: &Block) -> Result<(), NetworkError> {
         let message = NetworkMessage::NewBlock(block.clone());
-        let data = bincode::serialize(&message)
+        let data = serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         match self.swarm.behaviour_mut().gossipsub.publish(self.blocks_topic.clone(), data) {
@@ -645,7 +652,7 @@ impl SwarmP2PNode {
     /// to the transactions topic, falls back to the blocks topic for maximum reachability.
     pub fn broadcast_transaction(&mut self, tx: &Transaction) -> Result<(), NetworkError> {
         let message = NetworkMessage::NewTransaction(tx.clone());
-        let data = bincode::serialize(&message)
+        let data = serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         // Try the dedicated transactions topic first
@@ -711,7 +718,7 @@ impl SwarmP2PNode {
             requester_id: my_id.clone(),
             nonce,
         };
-        let data = bincode::serialize(&message)
+        let data = serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         match self.swarm.behaviour_mut().gossipsub.publish(self.sync_topic.clone(), data) {

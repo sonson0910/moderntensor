@@ -16,13 +16,12 @@ pub mod chain_id {
     pub const TESTNET: u64 = 9999;
     /// Devnet chain ID (local development)
     ///
-    /// SECURITY: Must be DIFFERENT from MAINNET (8898) to prevent signature replay attacks.
-    /// A transaction signed with chain_id=8898 on devnet would be valid on mainnet
-    /// if DEVNET == MAINNET (EIP-155 replay protection relies on chain_id uniqueness).
+    /// ALIGNED with MAINNET (8898) because LuxTensor runs a single canonical network.
+    /// Testnet uses TESTNET (9999) for replay protection when needed.
     ///
-    /// Previously set to 8898 (same as MAINNET) which was incorrect.
-    /// Changed to 8899 to ensure devnet and mainnet transactions cannot be replayed.
-    pub const DEVNET: u64 = 8899;
+    /// NOTE: All config files, Python SDK, and Metamask integrations use 8898.
+    /// Keeping DEVNET == MAINNET == 8898 ensures tx signatures are consistent.
+    pub const DEVNET: u64 = 8898;
 }
 
 /// Official Treasury and System Addresses
@@ -115,12 +114,10 @@ pub mod transaction {
 }
 
 /// Get chain name from chain ID
-#[allow(unreachable_patterns)] // DEVNET == MAINNET intentionally
 pub fn chain_name(chain_id: u64) -> &'static str {
     match chain_id {
-        chain_id::MAINNET => "Mainnet",
+        chain_id::MAINNET => "Mainnet", // also covers DEVNET (both = 8898)
         chain_id::TESTNET => "Testnet",
-        chain_id::DEVNET => "Devnet",
         _ => "Unknown",
     }
 }

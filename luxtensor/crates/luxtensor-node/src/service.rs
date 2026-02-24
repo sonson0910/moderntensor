@@ -324,8 +324,21 @@ impl NodeService {
             config.mempool.max_size, config.node.chain_id
         );
 
-        // Check if genesis block exists, create if not
-        if storage.get_block_by_height(0)?.is_none() {
+        // Check if genesis block exists, create if not.
+        // Treat DB serialization errors (corrupt entry from prior run) the same as absent.
+        let genesis_missing = match storage.get_block_by_height(0) {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            Err(e) => {
+                warn!(
+                    "  ⚠️ Corrupt genesis entry in DB ({}), overwriting with fresh genesis \
+                     — wipe data_dir for a clean start",
+                    e
+                );
+                true
+            }
+        };
+        if genesis_missing {
             info!("🌱 Creating genesis block...");
             let genesis = Block::genesis();
             storage.store_block(&genesis)?;
@@ -397,12 +410,24 @@ impl NodeService {
         let eclipse_protection = Arc::new(EclipseProtection::new(EclipseConfig::default()));
         info!("  ✓ Eclipse protection initialized");
 
-        // Initialize long-range attack protection
-        let genesis_hash = storage
-            .get_block_by_height(0)
-            .context("Failed to load genesis block for long-range protection")?
-            .map(|b| b.hash())
-            .unwrap_or([0u8; 32]);
+        // Initialize long-range attack protection.
+        // Gracefully handle corrupt/empty DB entries from a previously interrupted run
+        // by falling back to an all-zero genesis hash instead of crashing the node.
+        let genesis_hash = match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block.hash(),
+            Ok(None) => {
+                info!("  ℹ Long-range protection: no genesis block yet, using zero hash");
+                [0u8; 32]
+            }
+            Err(e) => {
+                warn!(
+                    "  ⚠️ Long-range protection: failed to read genesis block ({}), \
+                     using zero hash — wipe data_dir if this persists",
+                    e
+                );
+                [0u8; 32]
+            }
+        };
         let long_range_protection =
             Arc::new(LongRangeProtection::new(LongRangeConfig::default(), genesis_hash));
         info!("  ✓ Long-range protection initialized");
@@ -437,11 +462,23 @@ impl NodeService {
         ));
         info!("  ✓ Fast finality initialized (threshold: 67%)");
 
-        // Initialize ForkChoice (GHOST algorithm for canonical chain selection)
-        let genesis_block = storage
-            .get_block_by_height(0)
-            .context("Failed to read genesis block for fork choice initialization")?
-            .ok_or_else(|| anyhow::anyhow!("Genesis block required for fork choice"))?;
+        // Initialize ForkChoice (GHOST algorithm for canonical chain selection).
+        // Gracefully fall back to a fresh genesis block if the stored entry is corrupt.
+        let genesis_block = match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                info!("  ℹ Fork choice: genesis block not in DB yet, using fresh genesis");
+                Block::genesis()
+            }
+            Err(e) => {
+                warn!(
+                    "  ⚠️ Fork choice: failed to read genesis block from DB ({}), \
+                     using fresh genesis — wipe data_dir if this persists",
+                    e
+                );
+                Block::genesis()
+            }
+        };
         let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
         info!("  ✓ Fork choice (GHOST) initialized");
 
@@ -508,12 +545,12 @@ impl NodeService {
         // Get epoch length from consensus config
         let epoch_length = config.consensus.epoch_length;
 
-        // Get genesis timestamp from genesis block (for slot calculation)
-        // This ensures all nodes use the same genesis timestamp from the chain
-        let genesis_timestamp = storage
-            .get_block_by_height(0)?
-            .map(|block| block.header.timestamp)
-            .unwrap_or_else(|| {
+        // Get genesis timestamp from genesis block (for slot calculation).
+        // This ensures all nodes use the same genesis timestamp from the chain.
+        // On DB error (corrupt entry), fall back to system time with a warning.
+        let genesis_timestamp = match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block.header.timestamp,
+            Ok(None) => {
                 tracing::warn!(
                     "No genesis block found — using current system time as genesis timestamp. \
                      This node should sync the genesis block before participating in consensus."
@@ -522,7 +559,19 @@ impl NodeService {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or(std::time::Duration::ZERO)
                     .as_secs()
-            });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not read genesis block for timestamp ({}), using system time \
+                     — wipe data_dir if this persists",
+                    e
+                );
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs()
+            }
+        };
 
         // Load validator keypair if configured
         let validator_keypair = if config.node.is_validator {

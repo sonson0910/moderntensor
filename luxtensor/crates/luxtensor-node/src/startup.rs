@@ -696,17 +696,23 @@ impl NodeService {
                         }
                         last_sync_height = my_height;
 
-                        // 🔧 FIX: Timeout for solo-node mode
-                        // If 30+ seconds have passed with no peers and no sync progress,
-                        // resume block production (we're a solo node)
-                        if consecutive_no_progress >= 3 {
-                            // 3 * 10s = 30 seconds of no progress
-                            let peer_count = luxtensor_rpc::peer_count::get_peer_count();
-                            if peer_count == 0 {
-                                if is_syncing_for_periodic.load(std::sync::atomic::Ordering::SeqCst) {
-                                    info!("⏰ Solo mode: no peers for 30s, resuming block production");
-                                    is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
-                                }
+                        // 🔧 FIX: Timeout for syncing with no progress
+                        // Case 1: Solo mode — no peers after 1 check → start producing
+                        // Case 2: All-fresh network — peers connected but nobody
+                        //         sent us any blocks (my_height still 0) → bootstrap
+                        let peer_count = luxtensor_rpc::peer_count::get_peer_count();
+                        if is_syncing_for_periodic.load(std::sync::atomic::Ordering::SeqCst) {
+                            if consecutive_no_progress >= 1 && peer_count == 0 {
+                                info!("⏰ Solo mode: no peers, resuming block production");
+                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
+                            } else if consecutive_no_progress >= 1 && my_height == 0 && peer_count > 0 {
+                                // Peers are connected but none of them has blocks to offer.
+                                // This is a fresh network bootstrap scenario — start producing.
+                                info!(
+                                    "⏰ Fresh network: {} peer(s) connected but no blocks after {}s — bootstrapping",
+                                    peer_count, sync_interval_secs
+                                );
+                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
                             }
                         }
                     }

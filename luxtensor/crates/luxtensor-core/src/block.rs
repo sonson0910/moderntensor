@@ -23,8 +23,10 @@ pub struct BlockHeader {
     pub extra_data: Vec<u8>,
 
     /// Ed25519 VRF proof from block proposer (RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI).
-    /// `None` for genesis block and non-VRF nodes (backward-compatible).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `None` for genesis block and non-VRF nodes.
+    /// NOTE: Do NOT use #[serde(skip_serializing_if)] here — bincode is a binary
+    /// sequential format and does not support named-field skipping. Skipping causes
+    /// field misalignment and "unexpected end of file" deserialization errors.
     pub vrf_proof: Option<Vec<u8>>,
 }
 

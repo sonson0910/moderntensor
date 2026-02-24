@@ -9,6 +9,17 @@ use serde::{Deserialize, Serialize};
 /// accepting messages at deserialization layer that gossipsub already rejects.
 pub const MAX_MESSAGE_SIZE: u64 = 4 * 1024 * 1024;
 
+/// Serialize a NetworkMessage using fixint encoding.
+///
+/// IMPORTANT: Must use the same options as `deserialize_message()` to ensure
+/// encoding compatibility. Using mismatched options (e.g., varint vs fixint)
+/// causes "unexpected end of file" deserialization errors on the receiving side.
+pub fn serialize_message(msg: &NetworkMessage) -> Result<Vec<u8>, bincode::Error> {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .serialize(msg)
+}
+
 /// Deserialize a NetworkMessage with a size limit to prevent DoS attacks.
 /// Returns an error if the data exceeds MAX_MESSAGE_SIZE.
 ///

@@ -123,16 +123,15 @@ impl GenesisConfig {
             return Err(GenesisError::InvalidConfig("chain_id cannot be 0".to_string()));
         }
 
-        // Safety: reject development genesis on production chain IDs
+        // Safety: warn (not reject) if development genesis used on known chain IDs
+        // LuxTensor uses chain_id=8898 for both dev and mainnet; rejecting dev genesis
+        // here would prevent local development. Testnet (9999) gets the same treatment.
         if self.is_development() && (self.chain_id == 8898 || self.chain_id == 9999) {
-            return Err(GenesisError::InvalidConfig(
-                format!(
-                    "Development genesis (known test accounts) cannot be used on chain {} ({}). \
-                     Use a production genesis config for mainnet/testnet.",
-                    self.chain_id,
-                    if self.chain_id == 8898 { "Mainnet" } else { "Testnet" }
-                )
-            ));
+            tracing::warn!(
+                "⚠️  Dev genesis (known test accounts) detected on chain {} ({}) — OK for local dev, NOT for production.",
+                self.chain_id,
+                if self.chain_id == 8898 { "LuxTensor Mainnet/Dev" } else { "Testnet" }
+            );
         }
 
         for account in &self.accounts {

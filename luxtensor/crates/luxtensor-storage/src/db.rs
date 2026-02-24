@@ -273,6 +273,32 @@ impl BlockchainDB {
         }
     }
 
+    /// Get ONLY the 32-byte block hash at a given height, without deserializing the block.
+    ///
+    /// This is ~100x faster than `get_block_by_height` and immune to block serialization
+    /// bugs (corrupt bytes, struct version mismatch) because it reads only the
+    /// `height → hash` index entry (32 raw bytes), never touching CF_BLOCKS.
+    ///
+    /// Use this whenever you need the hash of the previous block (e.g., in block production)
+    /// and do NOT need the full block data.
+    pub fn get_hash_by_height(&self, height: u64) -> Result<Option<Hash>> {
+        let cf_height = self.db.cf_handle(CF_HEIGHT_TO_HASH).ok_or_else(|| {
+            StorageError::DatabaseError("CF_HEIGHT_TO_HASH not found".to_string())
+        })?;
+
+        match self.db.get_cf(cf_height, height.to_be_bytes())? {
+            Some(hash_bytes) => {
+                let hash: Hash = hash_bytes
+                    .try_into()
+                    .map_err(|_| StorageError::DatabaseError(
+                        format!("CF_HEIGHT_TO_HASH entry at height {} has wrong size (expected 32 bytes)", height)
+                    ))?;
+                Ok(Some(hash))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Get a block header by hash
     pub fn get_header(&self, hash: &Hash) -> Result<Option<BlockHeader>> {
         let cf_headers = self

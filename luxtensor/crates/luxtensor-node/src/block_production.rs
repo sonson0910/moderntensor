@@ -310,6 +310,12 @@ impl NodeService {
                         }
                         Err(e) => {
                             error!("Failed to produce block: {}", e);
+                            // 🔧 FIX GUARD STUCK: Reset guard to actual DB height so next
+                            // slot can retry. Without this, guard stays at new_height while
+                            // DB still has old height, causing permanent "guard >= new_height"
+                            // skip on all subsequent slots.
+                            let actual = storage.get_best_height().ok().flatten().unwrap_or(0);
+                            best_height_guard.store(actual, std::sync::atomic::Ordering::SeqCst);
                         }
                     }
                 }
@@ -580,31 +586,80 @@ impl NodeService {
         // 🔐 BFT fast finality — call on_block_proposed + auto-sign after block creation
         fast_finality: &Arc<RwLock<FastFinality>>,
     ) -> Result<Block> {
-        // Get current height
-        let height = storage.get_best_height()?.unwrap_or(0);
+        // Get current height — None means fresh DB (no blocks stored yet)
+        let best_height_opt = storage.get_best_height()?;
+        let height = best_height_opt.unwrap_or(0);
         let new_height = height + 1;
 
-        // 🔧 FIX #9: Atomic CAS to prevent block height race
-        if best_height_guard
-            .compare_exchange(
-                height,
-                new_height,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            )
-            .is_err()
-        {
+        // 🔧 FIX #9 (REVISED): Use simple guard check instead of CAS to avoid guard-stuck bug.
+        // CAS would get permanently stuck if produce_block fails after CAS succeeds but
+        // before storage commits (guard=new_height but DB still has old height).
+        // Instead: guard is treated as "the highest block another task has ALREADY committed".
+        // If current guard >= new_height, there's a concurrent production in-flight — skip.
+        let guard_val = best_height_guard.load(std::sync::atomic::Ordering::SeqCst);
+        if guard_val >= new_height {
+            // Another invocation already committed (or is committing) this height — skip.
+            // Resync guard with actual DB height to prevent drift.
+            let actual_height = storage.get_best_height().ok().flatten().unwrap_or(0);
+            best_height_guard.store(actual_height, std::sync::atomic::Ordering::SeqCst);
             return Err(anyhow::anyhow!(
-                "Block height race: expected height {} but another block was committed first",
-                height
+                "Block production skipped: guard={} >= new_height={}  (DB height={})",
+                guard_val, new_height, actual_height
             ));
         }
 
-        // Get previous block
-        let previous_block = storage
-            .get_block_by_height(height)
-            .context(format!("Failed to read block at height {} from storage", height))?
-            .ok_or_else(|| anyhow::anyhow!("Previous block not found at height {}", height))?;
+        // Mark that WE are producing this height — tentatively set guard.
+        // This is reset to `height` on any error below, and to `new_height`
+        // only after store_block succeeds.
+        best_height_guard.store(new_height, std::sync::atomic::Ordering::SeqCst);
+
+        // Get previous block hash:
+        // - When height == 0 (DB empty OR genesis is best): use Block::genesis().hash()
+        //   as the canonical genesis hash. Do NOT read from DB — genesis may not be
+        //   persisted yet or may have a corrupt entry (ghost/empty bytes).
+        // - When height > 0: use get_hash_by_height() which reads ONLY the 32-byte hash
+        //   from the height→hash index, bypassing CF_BLOCKS deserialization entirely.
+        //   This is immune to block serialization bugs (corrupt bytes, struct mismatch).
+        let previous_block_hash: [u8; 32] = if height == 0 {
+            // Genesis bootstrap: block #1 links to the canonical genesis block hash.
+            // We compute it from Block::genesis() to avoid any DB read that might fail.
+            let genesis_hash = luxtensor_core::Block::genesis().hash();
+            info!("🌱 Genesis bootstrap: producing block #1 with genesis hash {:?}", genesis_hash);
+            genesis_hash
+        } else {
+            // 🔧 FIX: Use get_hash_by_height() instead of get_block_by_height().
+            // We only need the 32-byte hash — reading the full block and deserializing
+            // it was the root cause of "unexpected end of file" errors when CF_BLOCKS
+            // contained corrupt entries or had a struct version mismatch.
+            // get_hash_by_height() reads only the CF_HEIGHT_TO_HASH index (32 raw bytes),
+            // completely bypassing block deserialization.
+            match storage.get_hash_by_height(height) {
+                Ok(Some(prev_hash)) => {
+                    debug!("✅ Got previous hash at height {} via index: {:?}", height, &prev_hash[..4]);
+                    prev_hash
+                }
+                Ok(None) => {
+                    // No hash entry for this height in the index — guard reset for retry
+                    best_height_guard.store(height, std::sync::atomic::Ordering::SeqCst);
+                    return Err(anyhow::anyhow!(
+                        "Previous block hash not found in index at height {} — guard reset for retry",
+                        height
+                    ));
+                }
+                Err(e) => {
+                    // Index read error — reset guard and retry next slot
+                    warn!(
+                        "Index read error at height {}: {} — guard reset for retry",
+                        height, e
+                    );
+                    best_height_guard.store(height, std::sync::atomic::Ordering::SeqCst);
+                    return Err(anyhow::anyhow!(
+                        "Index read error at height {}: {} — will retry",
+                        height, e
+                    ));
+                }
+            }
+        };
 
         // 🔧 FIX MC-2: Capture timestamp once and reuse for both preliminary and final
         // headers. Previously SystemTime::now() was called twice, which could yield
@@ -620,7 +675,7 @@ impl NodeService {
             version: 1,
             height: new_height,
             timestamp: block_timestamp,
-            previous_hash: previous_block.hash(),
+            previous_hash: previous_block_hash,
             state_root: [0u8; 32], // Will be updated after execution
             txs_root: [0u8; 32],
             receipts_root: [0u8; 32],
@@ -732,7 +787,7 @@ impl NodeService {
             version: 1,
             height: new_height,
             timestamp: block_timestamp, // 🔧 FIX MC-2: Reuse single timestamp
-            previous_hash: previous_block.hash(),
+            previous_hash: previous_block_hash,
             state_root,
             txs_root,
             receipts_root,
