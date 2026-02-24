@@ -69,6 +69,7 @@ pub fn create_test_block(
         gas_used: 0,
         gas_limit: 10_000_000,
         extra_data: vec![],
+        vrf_proof: None,
     };
 
     Block::new(header, transactions)

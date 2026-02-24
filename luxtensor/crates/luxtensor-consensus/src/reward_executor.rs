@@ -524,7 +524,7 @@ mod tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miners = vec![
-            MinerInfo { address: test_address(1), score: 0.8, has_gpu: false },
+            MinerInfo { address: test_address(1), score: 0.8 },
         ];
         let validators = vec![
             ValidatorInfo { address: test_address(10), stake: 1000 },
@@ -555,7 +555,7 @@ mod tests {
 
         let miner_addr = test_address(1);
         let miners = vec![
-            MinerInfo { address: miner_addr, score: 1.0, has_gpu: false },
+            MinerInfo { address: miner_addr, score: 1.0 },
         ];
 
         // Process an epoch
@@ -584,7 +584,7 @@ mod tests {
         let executor = RewardExecutor::new(dao_addr);
 
         let miners = vec![
-            MinerInfo { address: test_address(1), score: 1.0, has_gpu: false },
+            MinerInfo { address: test_address(1), score: 1.0 },
         ];
 
         executor.process_epoch(1, 100, &test_utility(), &miners, &[], &[], &[]);

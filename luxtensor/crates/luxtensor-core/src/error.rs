@@ -31,6 +31,10 @@ pub enum CoreError {
 
     #[error("Balance overflow")]
     BalanceOverflow,
+
+    /// FIX-4: HNSW deserialization failure (e.g. restore from RocksDB bytes).
+    #[error("HNSW deserialization error: {0}")]
+    HnswDeserialization(String),
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

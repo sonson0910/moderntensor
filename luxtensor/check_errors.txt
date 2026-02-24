@@ -1,0 +1,30 @@
+﻿cargo :     Checking luxtensor-consensus v0.1.0 
+(D:\venera\cardano\moderntensor\moderntensor\lux
+tensor\crates\luxtensor-consensus)
+At line:1 char:1
++ cargo check -p luxtensor-consensus 2>&1 | 
+Out-File -FilePath ".\check ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   
+     Checking lu...nsor-consensus):String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+error[E0425]: cannot find function `keccak256` 
+in this scope
+   --> 
+crates\luxtensor-consensus\src\pos.rs:279:9
+    |
+279 |         keccak256(&data)
+    |         ^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use luxtensor_crypto::keccak256;
+    |
+
+For more information about this error, try 
+`rustc --explain E0425`.
+error: could not compile `luxtensor-consensus` 
+(lib) due to 1 previous error

@@ -63,6 +63,7 @@ fn assemble_block(height: u64, prev_hash: [u8; 32], txs: Vec<Transaction>) -> Bl
         gas_used,
         gas_limit: gas_used.max(30_000_000), // ensure fits
         extra_data: vec![],
+        vrf_proof: None,
     };
     Block::new(header, txs)
 }

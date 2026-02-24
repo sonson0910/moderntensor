@@ -1,0 +1,12 @@
+﻿Sender: 0xA274b0e40Be2f6615D53D11283D76325c516A109
+Node1 send result: {"jsonrpc": "2.0", "result": "0x70a09ef9882e2b5d9795a10bd64bfb64e345e2816d5b5878be48d0cba828a674", "id": 1}
+Node1 has TX: True
+Node3 after 1s: found=False
+Node3 after 3s: found=False
+Node3 after 6s: found=False
+Node3 after 11s: found=False
+Node3 after 16s: found=False
+PROPAGATION FAILED after 16s
+Node3 pending count: 1
+Node3 pending hashes: ['0x70a09ef9882e2b5d9795a10bd64bfb64e345e2816d5b5878be48d0cba828a674']
+Looking for: 0x70a09ef9882e2b5d9795a10bd64bfb64e345e2816d5b5878be48d0cba828a674

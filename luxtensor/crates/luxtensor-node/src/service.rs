@@ -43,6 +43,7 @@ use luxtensor_consensus::{
     ConsensusConfig, NodeRegistry, ProofOfStake, RewardExecutor,
     TokenAllocation,
 };
+use luxtensor_consensus::weight_consensus::{VTrustScorer, VTrustSnapshot};
 use luxtensor_core::{Block, StateDB};
 use luxtensor_storage::CachedStateDB;
 use luxtensor_core::bridge::{BridgeConfig, InMemoryBridge};
@@ -195,6 +196,10 @@ pub struct NodeService {
     pub(crate) metrics: Arc<NodeMetrics>,
     /// WebSocket broadcast sender for real-time event notifications
     pub(crate) ws_broadcast: Option<tokio::sync::mpsc::Sender<BroadcastEvent>>,
+    /// VTrust scorer for validator trust scoring (persisted across restarts — L-NEW-1 fix)
+    pub(crate) vtrust_scorer: Arc<RwLock<VTrustScorer>>,
+    /// Path to VTrust snapshot file (bincode-serialized VTrustSnapshot)
+    pub(crate) vtrust_snapshot_path: std::path::PathBuf,
 }
 
 impl NodeService {
@@ -285,6 +290,31 @@ impl NodeService {
         info!("    - Min stake: {}", config.consensus.min_stake);
         info!("    - Max validators: {}", config.consensus.max_validators);
         info!("    - Epoch length: {} blocks", config.consensus.epoch_length);
+
+        // Initialize VTrust scorer — load persisted snapshot if available (L-NEW-1 fix)
+        let vtrust_snapshot_path = config.node.data_dir.join("vtrust_snapshot.bin");
+        let vtrust_scorer = {
+            let mut scorer = VTrustScorer::new();
+            match std::fs::read(&vtrust_snapshot_path) {
+                Ok(bytes) => match bincode::deserialize::<VTrustSnapshot>(&bytes) {
+                    Ok(snapshot) => {
+                        scorer.restore(snapshot);
+                        info!("  ✓ VTrust scorer restored from {:?}", vtrust_snapshot_path);
+                    }
+                    Err(e) => {
+                        warn!("  ⚠️ Failed to deserialize VTrust snapshot: {} (starting fresh)", e);
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    info!("  ✓ No VTrust snapshot found (fresh node)");
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to read VTrust snapshot file: {} (starting fresh)", e);
+                }
+            }
+            Arc::new(RwLock::new(scorer))
+        };
+        info!("  ✓ VTrust scorer initialized");
 
         // Initialize mempool
         info!("📝 Initializing transaction mempool...");
@@ -502,6 +532,19 @@ impl NodeService {
                         let mut secret = [0u8; 32];
                         secret.copy_from_slice(&key_bytes[..32]);
                         let result = KeyPair::from_secret(&secret);
+
+                        // ── 🎲 VRF key loading (production-vrf feature) ──────────────
+                        // Derive the VRF keypair from the same 32-byte secret so validators
+                        // don't need a separate key file.  Feature-gated so the standard
+                        // build stays unchanged.
+                        #[cfg(feature = "production-vrf")]
+                        {
+                            match consensus.read().set_vrf_key(&secret) {
+                                Ok(()) => info!("🎲 VRF key loaded (production-vrf)"),
+                                Err(e) => warn!("Failed to set VRF key: {}", e),
+                            }
+                        }
+
                         // SECURITY: Zeroize secret key bytes after use
                         secret.iter_mut().for_each(|b| *b = 0);
                         match result {
@@ -578,6 +621,8 @@ impl NodeService {
             merkle_cache,
             metrics: Arc::new(NodeMetrics::default()),
             ws_broadcast: None,
+            vtrust_scorer,
+            vtrust_snapshot_path,
         })
     }
 
@@ -620,6 +665,21 @@ impl NodeService {
 
         // Save shutdown checkpoint for recovery
         self.graceful_shutdown.begin_state_save();
+
+        // Persist VTrust scorer snapshot for next startup (L-NEW-1 fix)
+        {
+            let snapshot = self.vtrust_scorer.read().snapshot();
+            match bincode::serialize(&snapshot) {
+                Ok(bytes) => {
+                    if let Err(e) = std::fs::write(&self.vtrust_snapshot_path, &bytes) {
+                        warn!("⚠️ Failed to save VTrust snapshot: {}", e);
+                    } else {
+                        info!("💾 VTrust snapshot saved ({} validators)", snapshot.scores.len());
+                    }
+                }
+                Err(e) => warn!("⚠️ Failed to serialize VTrust snapshot: {}", e),
+            }
+        }
 
         // Save mempool transactions to disk (if configured)
         if self.graceful_shutdown.config().save_mempool {

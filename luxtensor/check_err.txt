@@ -1,0 +1,30 @@
+﻿cargo :     Checking luxtensor-consensus v0.1.0 
+(D:\venera\cardano\moderntensor\moderntensor\lux
+tensor\crates\luxtensor-consensus)
+At line:1 char:1
++ cargo check -p luxtensor-consensus 2>&1 | 
+Out-File ".\check_err.txt"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   
+     Checking lu...nsor-consensus):String) [],  
+   RemoteException
+    + FullyQualifiedErrorId : NativeCommandErro 
+   r
+ 
+error[E0609]: no field `has_gpu` on type 
+`&MinerInfo`
+   --> crates\luxtensor-consensus\src\reward_dis
+tribution.rs:396:34
+    |
+396 |                 let bonus = if m.has_gpu 
+{ gpu_bonus_rate } else { 1.0 };
+    |                                  ^^^^^^^ 
+unknown field
+    |
+    = note: available fields are: `address`, 
+`score`
+
+For more information about this error, try 
+`rustc --explain E0609`.
+error: could not compile `luxtensor-consensus` 
+(lib) due to 1 previous error

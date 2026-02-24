@@ -57,6 +57,11 @@ pub enum GovernanceError {
 
     #[error("invalid proposal: {0}")]
     InvalidProposal(String),
+
+    /// SECURITY (M-1): Returned when intermediate arithmetic overflows during
+    /// governance quorum/approval threshold calculations.
+    #[error("arithmetic overflow in governance calculation: {0}")]
+    ArithmeticOverflow(String),
 }
 
 pub type Result<T> = std::result::Result<T, GovernanceError>;
@@ -356,12 +361,17 @@ impl GovernanceModule {
         }
 
         let total_votes = proposal.votes_for.saturating_add(proposal.votes_against);
-        let quorum_required = proposal.total_eligible_power
+        // SECURITY (M-1): Use checked_mul to detect overflow, returning error
+        // instead of silently using u128::MAX which would make quorum unreachable.
+        let quorum_required = proposal
+            .total_eligible_power
             .checked_mul(self.config.quorum_bps as u128)
-            .unwrap_or(u128::MAX) / 10_000;
+            .map(|v| v / 10_000)
+            .ok_or(GovernanceError::ArithmeticOverflow("quorum calculation".to_string()))?;
         let approval_required = total_votes
             .checked_mul(self.config.approval_threshold_bps as u128)
-            .unwrap_or(u128::MAX) / 10_000;
+            .map(|v| v / 10_000)
+            .ok_or(GovernanceError::ArithmeticOverflow("approval threshold calculation".to_string()))?;
 
         if total_votes < quorum_required {
             proposal.status = ProposalStatus::Expired;

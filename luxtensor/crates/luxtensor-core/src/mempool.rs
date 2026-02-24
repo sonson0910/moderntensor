@@ -166,8 +166,16 @@ impl UnifiedMempool {
 
     /// Create mempool for development (no signature validation, relaxed limits)
     ///
-    /// WARNING: Only use for local development/testing!
+    /// # WARNING
+    /// **DO NOT USE IN PRODUCTION.** Signature validation is disabled and all
+    /// transactions are accepted without authentication.
+    ///
+    /// SECURITY (L-8): Runtime log emitted at WARN level to prevent silent misuse.
     pub fn new_dev_mode(max_size: usize, chain_id: u64) -> Self {
+        warn!(
+            "⚠️ DEV MODE MEMPOOL initialized — signature validation is DISABLED. \
+             Do NOT use in production!"
+        );
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
@@ -226,7 +234,12 @@ impl UnifiedMempool {
         }
 
         // DoS Protection 1: Check transaction size
-        let tx_size = bincode::serialized_size(&tx).unwrap_or(u64::MAX) as usize;
+        // SECURITY (H-1): Reject transaction if size cannot be determined instead
+        // of using u64::MAX which bypasses the size check on some architectures.
+        let tx_size = bincode::serialized_size(&tx).map_err(|e| {
+            warn!("Failed to compute transaction size: {}", e);
+            MempoolError::TransactionTooLarge { size: usize::MAX, max: self.max_tx_size }
+        })? as usize;
         if tx_size > self.max_tx_size {
             warn!(
                 "🛡️ Rejected transaction: size {} > max {}",
@@ -238,12 +251,10 @@ impl UnifiedMempool {
             });
         }
 
-        // 🔧 FIX: Faucet mint TXs (from Address::zero()) skip gas price
-        // and signature checks — they are special "mint" transactions.
-        let is_faucet_mint = tx.from == Address::zero();
-
-        // DoS Protection 2: Check minimum gas price (skip for faucet mints)
-        if !is_faucet_mint && tx.gas_price < self.min_gas_price {
+        // DoS Protection 2: Check minimum gas price
+        // SECURITY (H-2): No bypass for faucet mint or any special address.
+        // All transactions must pass gas price and signature checks.
+        if tx.gas_price < self.min_gas_price {
             debug!(
                 "🛡️ Rejected transaction: gas_price {} < min {}",
                 tx.gas_price, self.min_gas_price
@@ -254,9 +265,8 @@ impl UnifiedMempool {
             });
         }
 
-        // SECURITY: Validate signature before accepting into mempool
-        // (skip for faucet mints — they don't have real signatures)
-        if !is_faucet_mint && self.validate_signatures {
+        // SECURITY (H-2): Validate signature for ALL transactions, no exceptions.
+        if self.validate_signatures {
             if let Err(e) = tx.verify_signature() {
                 warn!("Rejected transaction with invalid signature: {:?}", e);
                 return Err(MempoolError::InvalidSignature);
@@ -356,8 +366,11 @@ impl UnifiedMempool {
 
     /// Get transactions for block production (up to limit).
     ///
-    /// Returns transactions sorted by (gas_price desc, sender asc, nonce asc)
-    /// for correct execution order.
+    /// Returns transactions sorted by (gas_price desc, sender asc, nonce asc).
+    ///
+    /// SECURITY (L-4): Uses fully deterministic ordering by including tx hash as
+    /// a final tie-breaker — ensures every node produces the same TX ordering
+    /// for identical gas_price/sender/nonce, which is required for consensus.
     pub fn get_transactions_for_block(&self, limit: usize) -> Vec<Transaction> {
         let txs = self.transactions.read();
         debug!(
@@ -367,13 +380,17 @@ impl UnifiedMempool {
         );
         let mut sorted: Vec<Transaction> = txs.values().map(|t| t.tx.clone()).collect();
 
-        // Primary sort: gas_price descending (priority)
-        // Secondary: group by sender and order by nonce within sender
+        // Stable, fully-deterministic sort:
+        //   1. gas_price DESC  (higher priority first)
+        //   2. sender ASC      (group TXs from same sender)
+        //   3. nonce ASC       (correct execution order within sender)
+        //   4. tx hash ASC     (canonical tie-breaker — same on every node)
         sorted.sort_by(|a, b| {
             b.gas_price
                 .cmp(&a.gas_price)
                 .then_with(|| a.from.cmp(&b.from))
                 .then_with(|| a.nonce.cmp(&b.nonce))
+                .then_with(|| a.hash().cmp(&b.hash())) // L-4: deterministic tie-break
         });
 
         sorted.truncate(limit);
@@ -460,6 +477,11 @@ impl UnifiedMempool {
     // ========================================================================
 
     /// Save mempool to file for graceful shutdown.
+    ///
+    /// SECURITY (L-2): Uses atomic write — data is written to a temp file first,
+    /// then renamed to the target path. This prevents a corrupt/truncated backup
+    /// file if the node crashes mid-write.
+    ///
     /// Returns number of transactions saved.
     pub fn save_to_file(&self, path: &str) -> std::io::Result<usize> {
         let txs = self.transactions.read();
@@ -474,7 +496,13 @@ impl UnifiedMempool {
         let data = bincode::serialize(&transactions)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        std::fs::write(path, data)?;
+        // SECURITY (L-2): Atomic write via temp file + rename.
+        // Prevents a partially-written backup file if the process is killed
+        // during the write, which would corrupt the mempool on next startup.
+        let tmp_path = format!("{}.tmp", path);
+        std::fs::write(&tmp_path, &data)?;
+        std::fs::rename(&tmp_path, path)?;
+
         info!("💾 Saved {} transactions to {}", count, path);
         Ok(count)
     }
@@ -482,8 +510,22 @@ impl UnifiedMempool {
     /// Load mempool from file after restart.
     /// Returns number of transactions loaded.
     pub fn load_from_file(&self, path: &str) -> std::io::Result<usize> {
+        // SECURITY (M-2): Check file size before deserializing to prevent DoS via
+        // a crafted oversized backup file that could exhaust memory on startup.
+        const MAX_BACKUP_SIZE: u64 = 64 * 1024 * 1024; // 64 MiB
         let data = match std::fs::read(path) {
-            Ok(d) => d,
+            Ok(d) => {
+                if d.len() as u64 > MAX_BACKUP_SIZE {
+                    warn!(
+                        "💾 Mempool backup at {} is too large ({} bytes > {} limit), ignoring",
+                        path, d.len(), MAX_BACKUP_SIZE
+                    );
+                    // Remove the potentially malicious backup file
+                    let _ = std::fs::remove_file(path);
+                    return Ok(0);
+                }
+                d
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 info!("💾 No mempool backup found at {}", path);
                 return Ok(0);

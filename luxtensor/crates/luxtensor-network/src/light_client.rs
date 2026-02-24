@@ -326,6 +326,7 @@ mod tests {
             gas_used: 0,
             gas_limit: 30_000_000,
             extra_data: Vec::new(),
+            vrf_proof: None,
         }
     }
 

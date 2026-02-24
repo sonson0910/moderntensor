@@ -270,6 +270,7 @@ async fn create_initial_blockchain(node: &TestNode, block_count: u64) {
             gas_used: (transactions.len() as u64) * 21000,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, transactions);
@@ -306,6 +307,7 @@ async fn create_additional_blocks(node: &TestNode, block_count: u64) {
             gas_used: (transactions.len() as u64) * 21000,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, transactions);
@@ -465,6 +467,7 @@ async fn create_invalid_block(node: &TestNode) -> Block {
         gas_used: 0,
         gas_limit: 10_000_000,
         extra_data: vec![],
+        vrf_proof: None,
     };
 
     Block::new(header, vec![])

@@ -93,6 +93,7 @@ async fn test_full_transaction_flow() {
         gas_used: 21000,
         gas_limit: 10_000_000,
         extra_data: vec![],
+        vrf_proof: None,
     };
 
     let block = Block::new(header, transactions);
@@ -144,6 +145,7 @@ async fn test_block_chain_continuity() {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, vec![]);

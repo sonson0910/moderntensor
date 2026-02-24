@@ -159,6 +159,7 @@ fn benchmark_storage_operations(c: &mut Criterion) {
                 gas_used: 0,
                 gas_limit: 10_000_000,
                 extra_data: vec![],
+                vrf_proof: None,
             };
             let block = Block::new(header, vec![]);
             black_box(storage.store_block(&block).unwrap());
@@ -249,6 +250,7 @@ fn benchmark_block_creation_with_transactions(c: &mut Criterion) {
                         gas_used: 0,
                         gas_limit: 10_000_000,
                         extra_data: vec![],
+                        vrf_proof: None,
                     };
 
                     let block = Block::new(header, transactions);

@@ -16,11 +16,16 @@ pub struct BlockHeader {
     pub receipts_root: Hash,
 
     pub validator: [u8; 32],
-    pub signature: Vec<u8>, // 64 bytes signature
+    pub signature: Vec<u8>, // 64 bytes ECDSA signature
 
     pub gas_used: u64,
     pub gas_limit: u64,
     pub extra_data: Vec<u8>,
+
+    /// Ed25519 VRF proof from block proposer (RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI).
+    /// `None` for genesis block and non-VRF nodes (backward-compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vrf_proof: Option<Vec<u8>>,
 }
 
 impl BlockHeader {
@@ -51,15 +56,17 @@ impl BlockHeader {
             gas_used,
             gas_limit,
             extra_data,
+            vrf_proof: None,
         }
     }
 
     /// Maximum extra_data size in bytes
     pub const MAX_EXTRA_DATA_SIZE: usize = 1024;
 
-    /// Calculate block header hash (excludes signature for signing stability)
+    /// Calculate block header hash.
+    /// Excludes `signature` AND `vrf_proof` for signing stability:
+    /// both fields are set after the hash is computed.
     pub fn hash(&self) -> Hash {
-        // Hash all fields EXCEPT signature to allow stable block hash before/after signing
         let mut data = Vec::new();
         data.extend_from_slice(&self.version.to_le_bytes());
         data.extend_from_slice(&self.height.to_le_bytes());
@@ -73,6 +80,7 @@ impl BlockHeader {
         data.extend_from_slice(&self.gas_limit.to_le_bytes());
         data.extend_from_slice(&(self.extra_data.len() as u32).to_le_bytes());
         data.extend_from_slice(&self.extra_data);
+        // NOTE: `signature` and `vrf_proof` are intentionally excluded.
         keccak256(&data)
     }
 
@@ -285,6 +293,7 @@ impl Block {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: b"LuxTensor Genesis Block".to_vec(),
+            vrf_proof: None,
         };
 
         Self::new(header, vec![])

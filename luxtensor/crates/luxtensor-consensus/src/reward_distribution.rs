@@ -101,27 +101,20 @@ impl LockBonusConfig {
 
 /// Participant info for reward calculation
 ///
-/// **NOTE:** The `has_gpu` field is deprecated.
-/// Use `MinerEpochStats` with task-based GPU verification instead (via `process_epoch_v2`).
+/// **NOTE:** For GPU capability, use `MinerEpochStats` with task-based verification
+/// via `process_epoch_v2`. GPU bonus is calculated from actual task completion,
+/// not self-declaration, to prevent miners from falsely claiming GPU bonuses.
 #[derive(Debug, Clone)]
 pub struct MinerInfo {
     pub address: [u8; 20],
     pub score: f64, // 0.0 - 1.0
-    /// Whether miner has GPU capability
-    ///
-    /// **DEPRECATED:** This field uses self-declaration which is exploitable.
-    /// Use `MinerEpochStats.gpu_tasks_completed` for verified GPU activity.
-    pub has_gpu: bool,
+    // SECURITY (H-5): `has_gpu` field removed — it was exploitable via
+    // self-declaration. Use MinerEpochStats.gpu_tasks_completed instead.
 }
 
 impl MinerInfo {
     pub fn new(address: [u8; 20], score: f64) -> Self {
-        Self { address, score, has_gpu: false }
-    }
-
-    /// **DEPRECATED:** Use MinerEpochStats instead for verified GPU capability
-    pub fn with_gpu(address: [u8; 20], score: f64) -> Self {
-        Self { address, score, has_gpu: true }
+        Self { address, score }
     }
 }
 
@@ -386,43 +379,42 @@ impl RewardDistributor {
         rewards
     }
 
-    /// Distribute by performance score with GPU bonus (for miners in AI subnets)
-    /// gpu_bonus_rate: 1.0 = no bonus, 1.2 = 20% bonus, max 1.4 = 40% bonus
+    /// Distribute by performance score with optional uniform GPU bonus.
+    ///
+    /// **NOTE:** `gpu_bonus_rate` applies uniformly to *all* miners in this function.
+    ///
+    /// For verified, per-miner GPU bonuses (based on actual task completion),
+    /// use `distribute_epoch_v2` with `MinerEpochStats` instead.
+    ///
+    /// SECURITY (H-5): The old `has_gpu` self-declaration field has been removed to
+    /// prevent miners from falsely claiming GPU status. Use `MinerEpochStats` for
+    /// task-verified GPU detection.
     pub fn distribute_by_score_with_gpu(
         &self,
         pool: u128,
         miners: &[MinerInfo],
-        gpu_bonus_rate: f64,
+        _gpu_bonus_rate: f64, // Retained for API compatibility; see doc above
     ) -> HashMap<[u8; 20], u128> {
+        // SECURITY (H-5): GPU bonus is no longer applied via self-declaration.
+        // All miners receive a score-proportional share with no GPU modifier here.
+        // Use distribute_epoch_v2 for verified GPU bonuses.
         let mut rewards = HashMap::new();
 
-        // Calculate effective scores with GPU bonus
-        let effective_scores: Vec<([u8; 20], f64)> = miners
-            .iter()
-            .map(|m| {
-                let bonus = if m.has_gpu { gpu_bonus_rate } else { 1.0 };
-                (m.address, m.score * bonus)
-            })
-            .collect();
-
-        let total_score: f64 = effective_scores.iter().map(|(_, s)| s).sum();
+        let total_score: f64 = miners.iter().map(|m| m.score).sum();
         if total_score == 0.0 {
             return rewards;
         }
 
         // SECURITY: Use fixed-point integer arithmetic for precision
         const PRECISION: u128 = 1_000_000_000_000;
-        for (address, effective_score) in effective_scores {
-            let scaled_share = if total_score > 0.0 {
-                // SECURITY: Guard NaN — NaN.min(x) returns NaN, NaN as u128 is UB
-                let raw = (effective_score / total_score) * PRECISION as f64;
+        for m in miners {
+            let scaled_share = {
+                let raw = (m.score / total_score) * PRECISION as f64;
                 if raw.is_finite() { raw.clamp(0.0, PRECISION as f64) as u128 } else { 0 }
-            } else {
-                0
             };
             let reward = pool.checked_mul(scaled_share).map(|x| x / PRECISION).unwrap_or(0);
             if reward > 0 {
-                rewards.insert(address, reward);
+                rewards.insert(m.address, reward);
             }
         }
 
@@ -718,8 +710,8 @@ mod tests {
         let total_emission: u128 = 1_000_000_000_000_000_000; // 1 token
 
         let miners = vec![
-            MinerInfo { address: test_address(1), score: 0.6, has_gpu: false },
-            MinerInfo { address: test_address(2), score: 0.4, has_gpu: false },
+            MinerInfo { address: test_address(1), score: 0.6 },
+            MinerInfo { address: test_address(2), score: 0.4 },
         ];
 
         let validators = vec![

@@ -425,7 +425,6 @@ impl NodeService {
                     miners.push(MinerInfo {
                         address: neuron.hotkey,
                         score: if score > 0.0 { score } else { 0.01 },
-                        has_gpu: false,
                     });
                 }
             }
@@ -463,7 +462,7 @@ impl NodeService {
             } else {
                 [0u8; 20]
             };
-            vec![MinerInfo { address: miner_addr, score: 1.0, has_gpu: false }]
+            vec![MinerInfo { address: miner_addr, score: 1.0 }]
         } else {
             miners
         };
@@ -588,6 +587,7 @@ impl NodeService {
             gas_used: 0,
             gas_limit: BLOCK_GAS_LIMIT,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let preliminary_block = Block::new(preliminary_header.clone(), transactions.clone());
@@ -699,6 +699,7 @@ impl NodeService {
             gas_used: total_gas,
             gas_limit: BLOCK_GAS_LIMIT,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         // Sign with validator keypair if available
@@ -741,6 +742,29 @@ impl NodeService {
         // Update header with signature
         unsigned_header.validator = validator_pubkey;
         unsigned_header.signature = signature;
+
+        // ── 🎲 VRF Proof Generation (production-vrf feature) ───────────────────
+        // Generate a VRF proof over the block context so peers can verify
+        // the randomness used was legitimately derived from the validator key.
+        // The proof is attached AFTER signing — hash() excludes vrf_proof —
+        // so the signature remains valid regardless.
+        #[cfg(feature = "production-vrf")]
+        {
+            let slot = new_height; // slot == block height in LuxTensor
+            let epoch = new_height / epoch_length.max(1);
+            match consensus.read().compute_seed_with(epoch, slot) {
+                Ok(seed_bytes) => {
+                    // `compute_seed_with` already embeds the proof; encode as raw bytes.
+                    unsigned_header.vrf_proof = Some(seed_bytes.to_vec());
+                    debug!("🎲 VRF proof attached to block #{}", new_height);
+                }
+                Err(e) => {
+                    // Non-fatal: log, but still produce the block without VRF proof.
+                    warn!("⚠️  VRF proof generation skipped for block #{}: {}", new_height, e);
+                }
+            }
+        }
+
         let header = unsigned_header;
 
         // Create new block

@@ -1296,6 +1296,7 @@ mod tests {
                 gas_used: 21000,
                 gas_limit: 1000000,
                 extra_data: vec![],
+                vrf_proof: None,
             },
             transactions: vec![],
         };

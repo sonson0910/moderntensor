@@ -59,6 +59,26 @@ pub enum ConsensusError {
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
+
+    // ── Production VRF errors (active when `production-vrf` feature is enabled) ──
+
+    /// VRF proof generation failed (e.g. bad key material).
+    #[error("VRF proof generation failed: {0}")]
+    VrfProofFailed(String),
+
+    /// A received or locally-generated VRF proof is cryptographically invalid.
+    /// Any peer that receives a block with an invalid VRF proof MUST reject it.
+    #[error("VRF proof is invalid — block must be rejected")]
+    VrfProofInvalid,
+
+    /// The node tried to produce a block but no VRF secret key has been configured.
+    /// Call `ProofOfStake::set_vrf_key()` during node startup.
+    #[error("VRF secret key not configured — call set_vrf_key() before using production-vrf")]
+    VrfKeyMissing,
+
+    /// The supplied key bytes are not a valid Ed25519 scalar.
+    #[error("Invalid VRF key bytes: {0}")]
+    VrfKeyInvalid(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConsensusError>;

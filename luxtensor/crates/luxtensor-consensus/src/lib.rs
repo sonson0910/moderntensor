@@ -29,6 +29,11 @@ pub mod weight_consensus;
 // NOTE: oracle.rs removed - LuxTensor uses luxtensor-oracle crate for AI inference
 // Price oracle functionality is not needed for AI blockchain
 
+/// Production VRF module — ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381).
+/// Compiled only when the `production-vrf` Cargo feature is enabled.
+#[cfg(feature = "production-vrf")]
+pub mod vrf_key;
+
 pub use burn_manager::{BurnConfig, BurnEvent, BurnManager, BurnStats, BurnType};
 pub use emission::{
     EmissionConfig, EmissionController, EmissionResult, EmissionStats, UtilityMetrics,

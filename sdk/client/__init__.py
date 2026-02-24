@@ -61,16 +61,34 @@ from .transaction_mixin import TransactionMixin
 from .utils_mixin import UtilsMixin
 from .weights_mixin import WeightsMixin
 
+# L1 Feature Gap Mixins
+from .training_mixin import TrainingMixin
+from .zkml_mixin import ZkmlMixin
+from .agent_mixin import AgentMixin
+from .bridge_mixin import BridgeMixin
+from .dispute_mixin import DisputeMixin
+from .multisig_mixin import MultisigMixin
+from .node_mixin import NodeMixin
+
 logger = logging.getLogger(__name__)
 
 
 class LuxtensorClient(
+    # L1 Feature Gap Mixins
+    NodeMixin,       # Node tier registration & queries
+    MultisigMixin,   # Multi-signature wallets
+    DisputeMixin,    # Dispute / fraud proof
+    BridgeMixin,     # Cross-chain bridge queries
+    AgentMixin,      # AI agent management
+    ZkmlMixin,       # Zero-knowledge ML
+    TrainingMixin,   # Federated learning
+    # Core Mixins
     ConsensusMixin,  # Client-side verification
     GovernanceMixin,  # DAO and governance
     BalanceMixin,  # Balance queries
     RewardMixin,  # Reward queries
     RegistrationMixin,  # Registration & axon
-    SubnetConfigMixin,  # Subnet parameters (NEW)
+    SubnetConfigMixin,  # Subnet parameters
     AIMixin,  # AI tasks and oracle
     WeightsMixin,  # Weight management
     UtilsMixin,  # Utility methods
@@ -164,7 +182,7 @@ __all__ = [
     "ChainInfo",
     "Account",
     "TransactionResult",
-    # Mixins
+    # Core Mixins
     "BlockchainMixin",
     "AccountMixin",
     "TransactionMixin",
@@ -173,4 +191,12 @@ __all__ = [
     "NeuronMixin",
     "ConsensusMixin",
     "UtilsMixin",
+    # L1 Feature Gap Mixins
+    "TrainingMixin",
+    "ZkmlMixin",
+    "AgentMixin",
+    "BridgeMixin",
+    "DisputeMixin",
+    "MultisigMixin",
+    "NodeMixin",
 ]

@@ -392,6 +392,97 @@ impl UnifiedStateDB {
     }
 }
 
+// =================== FIX-4: HNSW Persistence Bridge ===================
+//
+// Problem: UnifiedStateDB keeps the HNSW vector store purely in-memory.
+// On node restart all indexed vectors are lost, breaking the Semantic Layer.
+//
+// Solution: expose serialization helpers so the node service can cheaply
+// checkpoint the HNSW index into RocksDB-backed StateDB after each block
+// and restore it on startup.  This avoids a circular crate dependency
+// (luxtensor-core cannot depend on luxtensor-storage) by providing raw bytes
+// that the *caller* passes to StateDB::set_hnsw_index / get_hnsw_index.
+//
+// Usage (in node service, after each block):
+//
+//   let bytes = unified_state.read().to_hnsw_bytes();
+//   state_db.set_hnsw_index(UnifiedStateDB::HNSW_INDEX_NAME, bytes)?;
+//
+// Usage (on startup):
+//
+//   if let Some(bytes) = state_db.get_hnsw_index(UnifiedStateDB::HNSW_INDEX_NAME)? {
+//       unified_state.write().restore_hnsw_from_bytes(&bytes)?;
+//   }
+
+impl UnifiedStateDB {
+    /// Canonical RocksDB key used to store the HNSW index.
+    ///
+    /// Using a single stable name means the node always overwrites the same
+    /// key on each checkpoint, keeping storage usage bounded.
+    pub const HNSW_INDEX_NAME: &'static str = "unified_state_hnsw_v1";
+
+    /// Serialize the current HNSW vector index to raw bytes.
+    ///
+    /// The bytes can be stored via `StateDB::set_hnsw_index()` or any other
+    /// persistent backend.  The format is the same as `HnswVectorStore::to_bytes()`.
+    ///
+    /// Returns an empty `Vec` if the index is empty (skip writing to avoid
+    /// unnecessary I/O on nodes that have never indexed any vectors).
+    pub fn to_hnsw_bytes(&self) -> Vec<u8> {
+        if self.vector_store.is_empty() {
+            return Vec::new();
+        }
+        self.vector_store.to_bytes()
+    }
+
+    /// Restore the HNSW vector index from raw bytes previously produced by
+    /// `to_hnsw_bytes()`.
+    ///
+    /// If `bytes` is empty this is a no-op (preserving existing state), so
+    /// callers can safely pass the result of `StateDB::get_hnsw_index()` even
+    /// when it returns `None` (map to `&[]`).
+    ///
+    /// # Errors
+    /// Returns `CoreError::HnswDeserialization` if the bytes are malformed.
+    pub fn restore_hnsw_from_bytes(&mut self, bytes: &[u8]) -> crate::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        match crate::hnsw::HnswVectorStore::from_bytes(bytes) {
+            Ok(store) => {
+                self.vector_store = store;
+                self.dirty = true;
+                tracing::info!(
+                    "🧠 HNSW index restored: {} vectors",
+                    self.vector_store.len()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("❌ HNSW index restoration failed: {:?}", e);
+                Err(crate::CoreError::HnswDeserialization(format!("{e:?}")))
+            }
+        }
+    }
+
+    /// Returns `true` if the HNSW index has been modified since the last
+    /// call to `mark_hnsw_clean()`.
+    ///
+    /// Node services can use this to avoid writing identical bytes to RocksDB
+    /// on every block when the vector store has not changed.
+    pub fn is_hnsw_dirty(&self) -> bool {
+        self.dirty && !self.vector_store.is_empty()
+    }
+
+    /// Mark the HNSW index as clean (called after a successful checkpoint).
+    ///
+    /// Only clears the dirty flag; does not modify the vector data.
+    pub fn mark_hnsw_clean(&mut self) {
+        // We only clear the flag — the next mutation will re-set it.
+        self.dirty = false;
+    }
+}
+
 /// Thread-safe wrapper for UnifiedStateDB
 pub type SharedUnifiedState = Arc<RwLock<UnifiedStateDB>>;
 

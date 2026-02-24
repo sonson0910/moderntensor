@@ -224,8 +224,9 @@ class NeuronMixin:
             Total neuron count
         """
         try:
-            # Use neuron_count RPC (query_totalNeurons doesn't exist)
-            result = self._rpc()._call_rpc("query_neuronCount")
+            # Use neuron_count RPC without params to get total across all subnets
+            # (query_neuronCount requires subnet_id, neuron_count supports no-param for total)
+            result = self._rpc()._call_rpc("neuron_count", [])
             return int(result) if result else 0
         except Exception as e:
             logger.error(f"Error getting total neurons: {e}")

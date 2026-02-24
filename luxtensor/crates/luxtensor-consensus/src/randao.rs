@@ -267,6 +267,61 @@ impl RandaoMixer {
     pub fn get_current_reveals(&self) -> Vec<ValidatorReveal> {
         self.current_epoch_reveals.read().clone()
     }
+
+    // =================== FIX-6: Lookahead-protected seed ===================
+    //
+    // Problem: Using the *current* epoch RANDAO mix as a VRF seed exposes a
+    // last-look bias window: the final revealer in an epoch can choose whether
+    // to reveal (changing the seed) or withhold to keep the previous seed.
+    //
+    // Solution: Mix in the **already-finalized** RANDAO from `lookahead`
+    // epochs ago.  Because that epoch is sealed, no participant can retroactively
+    // influence it.  The cost is a small reduction in freshness, but the gain
+    // is a much harder grinding attack.
+    //
+    // Typical choice: lookahead = 1 (the previous finalized epoch is already
+    // baked into history; the attacker would need to wait a full epoch to see
+    // the effect of any manipulation, which is prohibitively expensive).
+
+    /// Return the RANDAO-based seed for the given epoch, using a lookback window.
+    ///
+    /// Rather than exposing the live `current_mix` (which the last revealer can
+    /// grind), this method returns `epoch_mixes[epoch - lookahead]`, i.e. the
+    /// **already-finalized** mix from a previous epoch.
+    ///
+    /// # Arguments
+    /// * `epoch` — the epoch for which a seed is needed (usually the *next* epoch)
+    /// * `lookahead` — how many epochs back to look (1 = previous finalized epoch;
+    ///   larger values are safer against grinding but reduce freshness)
+    ///
+    /// # Returns
+    /// * `Some(mix)` — the finalized historical mix for that epoch
+    /// * `None` — not enough history; caller should fall back to `current_mix()`
+    ///   or another safe default
+    ///
+    /// # Security
+    /// When `lookahead >= 1`, the returned seed is immutable: no participant
+    /// can change it by choosing whether to reveal or withhold in the current
+    /// epoch.  Attackers wanting to grind must manipulate reveals from at least
+    /// `lookahead` epochs in the past, a cost that grows exponentially with the
+    /// validator set size and epoch length.
+    pub fn get_lookback_seed(&self, epoch: u64, lookahead: u64) -> Option<Hash> {
+        if epoch < lookahead {
+            // Not enough history yet (early-chain bootstrap)
+            return None;
+        }
+        let lookback_epoch = epoch - lookahead;
+        self.epoch_mixes.read().get(&lookback_epoch).copied()
+    }
+
+    /// Convenience wrapper: return a lookback seed with a default lookahead of 1.
+    ///
+    /// This is the recommended call site for `compute_seed_with`: one epoch of
+    /// lookahead means the seed was finalised before the current proposer was
+    /// even known, eliminating last-look bias in the common case.
+    pub fn get_lookback_seed_default(&self, epoch: u64) -> Option<Hash> {
+        self.get_lookback_seed(epoch, 1)
+    }
 }
 
 /// RANDAO errors

@@ -137,6 +137,7 @@ mod block_tests {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, vec![]);
@@ -169,6 +170,7 @@ mod block_tests {
             gas_used: 42000,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, txs);
@@ -193,6 +195,7 @@ mod block_tests {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let header2 = BlockHeader {
@@ -208,6 +211,7 @@ mod block_tests {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block1 = Block::new(header1, vec![]);

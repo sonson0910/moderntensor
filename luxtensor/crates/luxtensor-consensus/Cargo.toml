@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Enable ONLY after wiring a real VRF implementation. Activating this without
+# implementing vrf_key.rs will cause a compile error (not a runtime panic).
+production-vrf = ["dep:vrf-rfc9381", "dep:curve25519-dalek", "dep:sha2_011", "dep:digest_011"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -14,6 +19,16 @@ parking_lot = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
 sha3 = "0.10"
+sha2 = "0.10"
+# RFC 9381 ECVRF: only compiled when `production-vrf` feature is enabled.
+vrf-rfc9381 = { version = "0.0.4", features = ["edwards25519"], optional = true }
+# Re-declare curve25519-dalek (transitive dep of vrf-rfc9381) so vrf_key.rs can
+# access ED25519_BASEPOINT_TABLE for public key derivation from raw secret bytes.
+curve25519-dalek = { version = "5.0.0-pre.1", features = ["legacy_compatibility"], optional = true }
+# sha2 0.11-rc.2 (used by vrf-rfc9381) — aliased to avoid conflict with sha2 0.10 used elsewhere.
+# In vrf_key.rs, use `use sha2_vrf as sha2;` to select this version.
+sha2_011 = { version = "0.11.0-rc.2", package = "sha2", optional = true }
+digest_011 = { version = "0.11.0-rc.2", package = "digest", optional = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }

@@ -22,6 +22,10 @@ pub struct StateDB {
     contract_code: RwLock<HashMap<Hash, Vec<u8>>>,
     /// Dirty contract codes awaiting commit
     dirty_codes: RwLock<HashSet<Hash>>,
+    /// SECURITY (H-3): Persisted Merkle trie — updated incrementally each commit
+    /// instead of being recreated from only dirty accounts, ensuring the state
+    /// root reflects *all* committed accounts, not just recently-modified ones.
+    trie: RwLock<MerkleTrie>,
 }
 
 impl StateDB {
@@ -33,6 +37,7 @@ impl StateDB {
             dirty: RwLock::new(HashSet::new()),
             contract_code: RwLock::new(HashMap::new()),
             dirty_codes: RwLock::new(HashSet::new()),
+            trie: RwLock::new(MerkleTrie::new()),
         }
     }
 
@@ -102,25 +107,48 @@ impl StateDB {
     }
 
     /// Increment account nonce
+    ///
+    /// SECURITY (L-1): Uses `checked_add` to prevent nonce wrap-around at `u64::MAX`.
+    /// A wrapping nonce could re-enable replay attacks on old transactions.
     pub fn increment_nonce(&self, address: &Address) -> Result<u64> {
         let mut account = self.get_account(address)?;
-        account.nonce += 1;
-        let new_nonce = account.nonce;
+        let new_nonce = account.nonce.checked_add(1).ok_or_else(|| {
+            StorageError::DatabaseError(format!(
+                "Nonce overflow for address 0x{}: nonce is already u64::MAX",
+                hex::encode(address.as_bytes())
+            ))
+        })?;
+        account.nonce = new_nonce;
         self.set_account(*address, account);
         Ok(new_nonce)
     }
 
     /// Transfer value between accounts
+    ///
+    /// SECURITY: Uses checked arithmetic to prevent integer overflow/underflow.
+    /// A wrap-around on `to_account.balance` could mint tokens from thin air.
     pub fn transfer(&self, from: &Address, to: &Address, value: u128) -> Result<()> {
         let mut from_account = self.get_account(from)?;
         let mut to_account = self.get_account(to)?;
 
-        if from_account.balance < value {
-            return Err(StorageError::DatabaseError("Insufficient balance".to_string()));
-        }
+        // SECURITY (C-2): underflow check — insufficient balance
+        let new_from_balance = from_account.balance.checked_sub(value).ok_or_else(|| {
+            StorageError::DatabaseError(format!(
+                "Insufficient balance: has {}, needs {}",
+                from_account.balance, value
+            ))
+        })?;
 
-        from_account.balance -= value;
-        to_account.balance += value;
+        // SECURITY (C-2): overflow check — recipient balance must not wrap around
+        let new_to_balance = to_account.balance.checked_add(value).ok_or_else(|| {
+            StorageError::DatabaseError(format!(
+                "Balance overflow: recipient balance {} + {} would overflow u128",
+                to_account.balance, value
+            ))
+        })?;
+
+        from_account.balance = new_from_balance;
+        to_account.balance = new_to_balance;
 
         self.set_account(*from, from_account);
         self.set_account(*to, to_account);
@@ -209,6 +237,18 @@ impl StateDB {
     /// The index name should be unique within the system (e.g., "embeddings_768")
     /// The data is the bincode-serialized HnswGraph.
     pub fn set_hnsw_index(&self, name: &str, data: Vec<u8>) -> Result<()> {
+        // SECURITY (M-4): Validate index name to prevent key prefix collisions
+        // from null bytes or special characters that could interfere with other key spaces.
+        if name.is_empty() || name.len() > 128 {
+            return Err(StorageError::DatabaseError(
+                "HNSW index name must be 1-128 characters".to_string(),
+            ));
+        }
+        if name.bytes().any(|b| b == 0 || b == b'/' || b == b'\\') {
+            return Err(StorageError::DatabaseError(
+                "HNSW index name must not contain null bytes or path separators".to_string(),
+            ));
+        }
         let mut key = HNSW_INDEX_PREFIX.to_vec();
         key.extend_from_slice(name.as_bytes());
 
@@ -245,6 +285,17 @@ impl StateDB {
 
     /// Delete an HNSW index by name
     pub fn delete_hnsw_index(&self, name: &str) -> Result<()> {
+        // SECURITY (M-4): Same name validation as set_hnsw_index
+        if name.is_empty() || name.len() > 128 {
+            return Err(StorageError::DatabaseError(
+                "HNSW index name must be 1-128 characters".to_string(),
+            ));
+        }
+        if name.bytes().any(|b| b == 0 || b == b'/' || b == b'\\') {
+            return Err(StorageError::DatabaseError(
+                "HNSW index name must not contain null bytes or path separators".to_string(),
+            ));
+        }
         let mut key = HNSW_INDEX_PREFIX.to_vec();
         key.extend_from_slice(name.as_bytes());
 
@@ -256,19 +307,18 @@ impl StateDB {
     }
 
     /// Commit all dirty accounts to database
+    ///
+    /// SECURITY (H-3): Uses a *persisted* `MerkleTrie` that survives across commits.
+    /// Only dirty (modified) accounts are updated in the trie each round —
+    /// clean accounts retain their entries from previous commits, giving a
+    /// correct incremental state root over the full account set.
     pub fn commit(&self) -> Result<Hash> {
         let dirty = self.dirty.read();
         let cache = self.cache.read();
 
         let mut batch = rocksdb::WriteBatch::default();
 
-        let mut trie = MerkleTrie::new();
-
-        // SECURITY FIX: Capture dirty addresses before clearing, for trie update below.
-        // We only insert dirty (modified) accounts into the trie — previously this
-        // iterated ALL cached accounts, but the cache is a partial view containing
-        // only recently-accessed accounts, not the full state. Building a trie from
-        // a partial cache produces an incorrect state root.
+        // Capture dirty addresses before releasing the read lock.
         let dirty_addresses: Vec<Address> = dirty.iter().cloned().collect();
 
         for address in dirty.iter() {
@@ -304,36 +354,34 @@ impl StateDB {
             }
         }
 
-        // SECURITY FIX: Only insert dirty (modified) accounts into the trie.
-        // Clean (unchanged) accounts retain their previous trie entries from
-        // the prior state root. For a fully correct incremental state root,
-        // the MerkleTrie should be persisted across commits rather than
-        // recreated each time.
-        if dirty_addresses.is_empty() {
-            tracing::debug!("No dirty accounts — state root unchanged");
-        } else {
-            tracing::warn!(
-                "⚠️ Building trie from {} dirty accounts (cache has {} total). \
-                 For production correctness, persist trie across commits for incremental updates.",
+        // SECURITY (H-3): Apply incremental trie updates.
+        // The trie is persisted as a field, so each commit only touches the
+        // accounts that actually changed, while all previously committed
+        // accounts remain in the trie from prior rounds.
+        if !dirty_addresses.is_empty() {
+            let mut trie = self.trie.write();
+            tracing::debug!(
+                "Updating trie with {} dirty accounts (incremental)",
                 dirty_addresses.len(),
-                cache.len()
             );
-        }
-        for address in dirty_addresses.iter() {
-            if let Some(account) = cache.get(address) {
-                let key = keccak256(address.as_bytes());
-                let value = bincode::serialize(account)
-                    .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
-                trie.insert(&key, &value)?;
+            for address in dirty_addresses.iter() {
+                if let Some(account) = cache.get(address) {
+                    let key = keccak256(address.as_bytes());
+                    let value = bincode::serialize(account)
+                        .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
+                    trie.insert(&key, &value)?;
+                }
             }
         }
 
-        let state_root = trie.root_hash();
-
+        let state_root = self.trie.read().root_hash();
         Ok(state_root)
     }
 
     /// Rollback all uncommitted changes
+    ///
+    /// SECURITY (M-3): Also clears dirty_codes to correctly revert any contract
+    /// code changes that occurred within the same transaction batch.
     pub fn rollback(&self) {
         let dirty = self.dirty.read();
         let mut cache = self.cache.write();
@@ -345,6 +393,10 @@ impl StateDB {
 
         drop(dirty);
         self.dirty.write().clear();
+
+        // SECURITY (M-3): Clear dirty contract codes — without this, rolled-back
+        // contract code changes would persist and be committed on the next call.
+        self.dirty_codes.write().clear();
     }
 
     /// Clear cache (useful for testing)

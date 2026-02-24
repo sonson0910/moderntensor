@@ -1,0 +1,5 @@
+﻿Sender: 0x92FF6937E44C2Da419b581BAFF858c93Db41F600
+Node1 send result: {"jsonrpc": "2.0", "result": "0x88dbe5524e37eb9d436d10e6a8e301a013e959e52504aeae5f936475c168bc88", "id": 1}
+Node1 has TX: True
+Node3 after 1s: found=True
+PROPAGATION SUCCESS!
