@@ -190,33 +190,6 @@ impl MerkleTree {
         proof
     }
 
-    /// Verify Merkle proof
-    pub fn verify_proof(leaf: &Hash, proof: &[Hash], root: &Hash) -> bool {
-        if proof.is_empty() {
-            return leaf == root;
-        }
-
-        let mut current_hash = *leaf;
-
-        // For each sibling in the proof, try both left and right positions
-        for sibling in proof {
-            // Try hashing with sibling on the left
-            let hash_left = Self::hash_pair(sibling, &current_hash);
-            // Try hashing with sibling on the right
-            let hash_right = Self::hash_pair(&current_hash, sibling);
-
-            // For simplicity, we'll use the lexicographically smaller hash
-            // DEPRECATED: Use verify_proof_with_positions for production
-            current_hash = if sibling < &current_hash {
-                hash_left
-            } else {
-                hash_right
-            };
-        }
-
-        &current_hash == root
-    }
-
     /// Verify Merkle proof with explicit positional encoding (recommended)
     ///
     /// This is the correct implementation that uses explicit position

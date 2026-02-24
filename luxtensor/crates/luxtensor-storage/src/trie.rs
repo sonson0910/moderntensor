@@ -2,6 +2,23 @@ use crate::{Result, StorageError};
 use luxtensor_crypto::{keccak256, Hash};
 use std::collections::HashMap;
 
+/// A single element in a raw-preimage Merkle proof.
+///
+/// Contains the raw bytes (preimage) of a node on the path from root to leaf.
+/// The hash of this node is `keccak256(&self.preimage)`, and must equal the
+/// hash referenced by its parent.
+///
+/// # Security
+/// Using raw preimages allows **full hash-chain verification** — each
+/// parent's hash is recomputed from raw bytes and compared against
+/// `proof[i-1]`'s reference, preventing forgeable proofs. This resolves
+/// LUX-TRIE-42.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawNodeProof {
+    /// Raw bytes whose keccak256 produces this node's hash.
+    pub preimage: Vec<u8>,
+}
+
 // ============================================================================
 // Merkle Patricia Trie — Production Implementation
 // ============================================================================
@@ -15,7 +32,7 @@ use std::collections::HashMap;
 // This replaces the previous fake HashMap-based "trie" that had:
 // - O(n) root recalculation per insert
 // - get_proof() returning vec![root] (trivially forgeable)
-// - verify_proof() checking only proof.contains(root)
+// - Simple proof verification without full hash-chain integrity
 
 /// Node types in the MPT
 #[derive(Clone, Debug)]
@@ -305,6 +322,75 @@ impl TrieNode {
         }
     }
 
+    /// Compute the raw encoding (preimage) of this node — used for full hash-chain proofs.
+    ///
+    /// The encoding mirrors the hash() function exactly:
+    /// - Empty      → b""
+    /// - Leaf       → hex_prefix(nibbles, true) ++ value
+    /// - Extension  → hex_prefix(nibbles, false) ++ child_hash
+    /// - Branch     → concat(child_hashes[0..16]) ++ optional_value
+    fn raw_encoding(&self) -> Vec<u8> {
+        match self {
+            TrieNode::Empty => b"".to_vec(),
+            TrieNode::Leaf { nibbles, value } => {
+                let encoded_path = hex_prefix_encode(nibbles, true);
+                let mut data = Vec::with_capacity(encoded_path.len() + value.len());
+                data.extend_from_slice(&encoded_path);
+                data.extend_from_slice(value);
+                data
+            }
+            TrieNode::Extension { nibbles, child } => {
+                let encoded_path = hex_prefix_encode(nibbles, false);
+                let child_hash = child.hash();
+                let mut data = Vec::with_capacity(encoded_path.len() + 32);
+                data.extend_from_slice(&encoded_path);
+                data.extend_from_slice(&child_hash);
+                data
+            }
+            TrieNode::Branch { children, value } => {
+                let mut data = Vec::with_capacity(16 * 32 + value.as_ref().map(|v| v.len()).unwrap_or(0));
+                for child in children.iter() {
+                    match child {
+                        Some(node) => data.extend_from_slice(&node.hash()),
+                        None => data.extend_from_slice(&keccak256(b"")),
+                    }
+                }
+                if let Some(val) = value {
+                    data.extend_from_slice(val);
+                }
+                data
+            }
+        }
+    }
+
+    /// Collect raw-preimage proof elements along the path to a key.
+    ///
+    /// Each element contains the raw bytes whose keccak256 = node hash.
+    /// This enables full hash-chain verification (LUX-TRIE-42).
+    fn collect_proof_raw(&self, nibbles: &[u8], proof: &mut Vec<RawNodeProof>) {
+        proof.push(RawNodeProof { preimage: self.raw_encoding() });
+        match self {
+            TrieNode::Empty => {}
+            TrieNode::Leaf { .. } => {
+                // Leaf node preimage already pushed above
+            }
+            TrieNode::Extension { nibbles: ext_nibbles, child } => {
+                if nibbles.starts_with(ext_nibbles) {
+                    child.collect_proof_raw(&nibbles[ext_nibbles.len()..], proof);
+                }
+            }
+            TrieNode::Branch { children, .. } => {
+                if nibbles.is_empty() {
+                    return;
+                }
+                let idx = nibbles[0] as usize;
+                if let Some(child) = &children[idx] {
+                    child.collect_proof_raw(&nibbles[1..], proof);
+                }
+            }
+        }
+    }
+
     /// Remove a key by nibble path, returning (new_node, was_removed).
     ///
     /// Node collapse rules (Ethereum MPT semantics):
@@ -489,65 +575,20 @@ impl MerkleTrie {
         Ok(proof)
     }
 
-    /// Verify a Merkle proof against an expected root hash.
-    ///
-    /// The proof is a sequence of hashes collected by `collect_proof`:
-    ///   `[root_hash, ..intermediate.., leaf_hash]`
-    ///
-    /// Verification checks:
-    /// 1. `proof[0]` equals the expected root
-    /// 2. The proof contains the leaf hash. In an MPT the leaf stores only
-    ///    the *remaining* nibbles after branching, so we check all possible
-    ///    suffix lengths of the key nibbles.
-    ///
-    /// # Note
-    /// This method uses `proof.contains()` — an O(p) linear scan per suffix.
-    /// For stricter cryptographic verification, use [`verify_proof_strict`].
-    pub fn verify_proof(root: &Hash, key: &[u8], value: &[u8], proof: &[Hash]) -> bool {
-        if proof.is_empty() {
-            return false;
-        }
-
-        // The first element must match the expected root
-        if proof[0] != *root {
-            return false;
-        }
-
-        // In an MPT, the leaf only stores the remaining nibble suffix after
-        // the path has been consumed by Extension and Branch nodes.
-        // Try every possible suffix length (including the full key).
-        let nibbles = bytes_to_nibbles(key);
-        for start in 0..=nibbles.len() {
-            let suffix = &nibbles[start..];
-            let encoded_path = hex_prefix_encode(suffix, true);
-            let candidate = {
-                let mut d = Vec::with_capacity(encoded_path.len() + value.len());
-                d.extend_from_slice(&encoded_path);
-                d.extend_from_slice(value);
-                luxtensor_crypto::keccak256(&d)
-            };
-            if proof.contains(&candidate) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Strict Merkle proof verification that checks the complete hash chain.
     ///
-    /// Unlike `verify_proof` which just checks if the leaf hash appears anywhere
-    /// in the proof, this method verifies:
+    /// Verifies:
     /// 1. `proof[0]` == `root`
     /// 2. `proof[last]` IS the expected leaf hash (computed from key suffix + value)
-    /// 3. Every adjacent pair in the proof is cryptographically linked:
-    ///    `proof[i]` must appear in the preimage of `proof[i-1]`.
     ///
     /// This prevents an attacker from constructing a proof that contains the leaf
-    /// hash but follows a different path through the trie.
+    /// hash but at a non-leaf position.
+    ///
+    /// For the **strongest guarantee** (full hash-chain), use [`verify_proof_with_preimages`]
+    /// with proofs produced by [`get_proof_with_preimages`].
     ///
     /// # Returns
-    /// `true` if the proof is a valid chain from `root` to a leaf encoding `value`.
+    /// `true` if root matches and proof ends with the correct leaf hash.
     pub fn verify_proof_strict(root: &Hash, key: &[u8], value: &[u8], proof: &[Hash]) -> bool {
         if proof.is_empty() {
             return false;
@@ -560,36 +601,89 @@ impl MerkleTrie {
 
         // Check 2: last element must be the leaf hash for some suffix of the key
         let nibbles = bytes_to_nibbles(key);
-        let leaf_in_proof = (0..=nibbles.len()).any(|start| {
+        (0..=nibbles.len()).any(|start| {
             let suffix = &nibbles[start..];
             let encoded_path = hex_prefix_encode(suffix, true);
             let mut d = Vec::with_capacity(encoded_path.len() + value.len());
             d.extend_from_slice(&encoded_path);
             d.extend_from_slice(value);
-            let leaf_hash = luxtensor_crypto::keccak256(&d);
-            // The leaf hash must be the *last* element in the proof
+            let leaf_hash = keccak256(&d);
             proof.last() == Some(&leaf_hash)
-        });
+        })
+    }
 
-        if !leaf_in_proof {
+    /// Generate a **raw-preimage** Merkle proof for a key.
+    ///
+    /// Unlike `get_proof` which returns only node *hashes*, this method returns
+    /// the raw encoding (preimage) of each node on the path from root to leaf.
+    /// This enables **full hash-chain verification** via [`verify_proof_with_preimages`]:
+    ///
+    /// ```text
+    /// keccak256(proof[i].preimage) == expected_hash_referenced_by_proof[i-1]
+    /// ```
+    ///
+    /// Use this API for all security-critical callers (block validators,
+    /// light clients, cross-chain bridges). This resolves LUX-TRIE-42.
+    pub fn get_proof_with_preimages(&self, key: &[u8]) -> Result<Vec<RawNodeProof>> {
+        let nibbles = bytes_to_nibbles(key);
+        if self.root.get(&nibbles).is_none() {
+            return Err(StorageError::InvalidProof);
+        }
+        let mut proof = Vec::new();
+        self.root.collect_proof_raw(&nibbles, &mut proof);
+        Ok(proof)
+    }
+
+    /// Verify a raw-preimage Merkle proof — full hash-chain verification.
+    ///
+    /// This is the **strongest verification available** for this trie (LUX-TRIE-42).
+    ///
+    /// # Algorithm
+    /// 1. Verify `keccak256(proof[0].preimage) == root`
+    /// 2. For each `i` in `1..proof.len()`: verify that `keccak256(proof[i].preimage)`
+    ///    appears as a substring (32-byte boundary) inside `proof[i-1].preimage`.
+    ///    This confirms that each node's hash is actually referenced by its parent.
+    /// 3. Verify the last node's raw encoding matches a valid leaf for `(key, value)`.
+    ///
+    /// # Returns
+    /// `true` if the full chain is cryptographically valid.
+    pub fn verify_proof_with_preimages(
+        root: &Hash,
+        key: &[u8],
+        value: &[u8],
+        proof: &[RawNodeProof],
+    ) -> bool {
+        if proof.is_empty() {
             return false;
         }
 
-        // Check 3: each proof[i] must be embedded in proof[i-1]'s preimage.
-        // Since we don't store raw node preimages in the proof (only hashes),
-        // we verify that each hash in the chain appears as a substring of the
-        // keccak input that produced the previous hash. As a pragmatic check
-        // we verify adjacency: proof[i] must appear in the set proof[i-1..i].
-        // For a path-hash chain, consecutive hashes must be linked — i.e.:
-        // keccak(preimage_containing(proof[i])) == proof[i-1].
-        // Without raw preimages we can only verify chain membership:
-        // all proof elements exist and last == leaf hash (checked above).
-        // Full preimage-linked verification requires passing raw node bytes,
-        // which is a future enhancement tracked in issue LUX-TRIE-42.
-        //
-        // Current guarantee: root matches + leaf matches + proof non-empty.
-        // This is strictly stronger than verify_proof (leaf must be LAST, not ANY).
-        true
+        // Step 1: keccak256(proof[0]) must equal root
+        if keccak256(&proof[0].preimage) != *root {
+            return false;
+        }
+
+        // Step 2: Full hash chain — each child's hash must appear in parent's preimage
+        for i in 1..proof.len() {
+            let child_hash = keccak256(&proof[i].preimage);
+            // The parent preimage must contain the child hash as a 32-byte aligned
+            // field. We search for it as a raw byte substring.
+            let parent = &proof[i - 1].preimage;
+            if !contains_hash_bytes(parent, &child_hash) {
+                return false;
+            }
+        }
+
+        // Step 3: Last element must encode a valid leaf for some suffix of the key
+        let last_preimage = &proof[proof.len() - 1].preimage;
+        let nibbles = bytes_to_nibbles(key);
+        (0..=nibbles.len()).any(|start| {
+            let suffix = &nibbles[start..];
+            let encoded_path = hex_prefix_encode(suffix, true);
+            let mut expected = Vec::with_capacity(encoded_path.len() + value.len());
+            expected.extend_from_slice(&encoded_path);
+            expected.extend_from_slice(value);
+            *last_preimage == expected
+        })
     }
 
     /// Delete a key from the trie — O(log n) recursive removal.
@@ -639,6 +733,16 @@ impl Default for MerkleTrie {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Check if `haystack` contains `needle` as a raw byte subsequence.
+/// Used by `verify_proof_with_preimages` to locate child hashes inside parent node encodings.
+#[inline]
+fn contains_hash_bytes(haystack: &[u8], needle: &[u8; 32]) -> bool {
+    if haystack.len() < 32 {
+        return false;
+    }
+    haystack.windows(32).any(|w| w == needle)
 }
 
 #[cfg(test)]
@@ -729,9 +833,12 @@ mod tests {
         trie.insert(b"key", b"value").unwrap();
 
         let root = trie.root_hash();
+        // Use verify_proof_strict (leaf must be LAST element — more secure)
         let proof = trie.get_proof(b"key").unwrap();
-
-        assert!(MerkleTrie::verify_proof(&root, b"key", b"value", &proof));
+        assert!(MerkleTrie::verify_proof_strict(&root, b"key", b"value", &proof));
+        // Use verify_proof_with_preimages (full hash-chain — strongest, LUX-TRIE-42)
+        let raw_proof = trie.get_proof_with_preimages(b"key").unwrap();
+        assert!(MerkleTrie::verify_proof_with_preimages(&root, b"key", b"value", &raw_proof));
     }
 
     #[test]
@@ -739,10 +846,13 @@ mod tests {
         let mut trie = MerkleTrie::new();
         trie.insert(b"key", b"value").unwrap();
 
-        let proof = trie.get_proof(b"key").unwrap();
         let wrong_root = [0xFFu8; 32];
-
-        assert!(!MerkleTrie::verify_proof(&wrong_root, b"key", b"value", &proof));
+        // verify_proof_strict
+        let proof = trie.get_proof(b"key").unwrap();
+        assert!(!MerkleTrie::verify_proof_strict(&wrong_root, b"key", b"value", &proof));
+        // verify_proof_with_preimages
+        let raw_proof = trie.get_proof_with_preimages(b"key").unwrap();
+        assert!(!MerkleTrie::verify_proof_with_preimages(&wrong_root, b"key", b"value", &raw_proof));
     }
 
     #[test]
@@ -981,8 +1091,12 @@ mod tests {
         for i in (0..total_keys).step_by((total_keys / verify_count) as usize) {
             let key = i.to_be_bytes();
             let value = format!("val_{:08}", i);
+            // Use strict verification (leaf must be LAST element)
             let proof = trie.get_proof(&key).unwrap();
-            assert!(MerkleTrie::verify_proof(&root, &key, value.as_bytes(), &proof));
+            assert!(MerkleTrie::verify_proof_strict(&root, &key, value.as_bytes(), &proof));
+            // Also verify with raw preimages (full hash-chain, LUX-TRIE-42)
+            let raw_proof = trie.get_proof_with_preimages(&key).unwrap();
+            assert!(MerkleTrie::verify_proof_with_preimages(&root, &key, value.as_bytes(), &raw_proof));
         }
         let verify_elapsed = start.elapsed();
         println!(
@@ -1042,9 +1156,14 @@ mod tests {
         // Verify proof for random key
         let key = format!("addr_{:08x}", 5000u32);
         let root = trie.root_hash();
+        let value_str = format!("{}", 5000u128 * 1_000_000_000);
+        // verify_proof_strict (leaf LAST)
         let proof = trie.get_proof(key.as_bytes()).unwrap();
         assert!(proof.len() >= 2);
-        assert!(MerkleTrie::verify_proof(&root, key.as_bytes(), format!("{}", 5000u128 * 1_000_000_000).as_bytes(), &proof));
+        assert!(MerkleTrie::verify_proof_strict(&root, key.as_bytes(), value_str.as_bytes(), &proof));
+        // verify_proof_with_preimages (full hash-chain, LUX-TRIE-42)
+        let raw_proof = trie.get_proof_with_preimages(key.as_bytes()).unwrap();
+        assert!(MerkleTrie::verify_proof_with_preimages(&root, key.as_bytes(), value_str.as_bytes(), &raw_proof));
     }
 
     #[test]

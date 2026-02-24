@@ -9,7 +9,7 @@ use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
 use serde_json::json;
 use tracing::info;
 
-use super::{Address, hex_to_address, address_to_hex, hash_to_hex};
+use super::{hex_to_address, address_to_hex, hash_to_hex};
 use super::rlp_decoder::decode_rlp_transaction;
 use super::faucet::{FaucetRpcConfig, FaucetRateLimiter};
 /// Register Ethereum-compatible RPC methods

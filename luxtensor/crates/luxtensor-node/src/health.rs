@@ -6,7 +6,7 @@
 //! - Detecting common issues (low peers, stalled sync, etc.)
 //! - Triggering automatic recovery actions
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};

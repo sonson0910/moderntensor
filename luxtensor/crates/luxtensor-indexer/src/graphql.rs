@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::storage::Storage;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

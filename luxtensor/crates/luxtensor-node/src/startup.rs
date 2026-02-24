@@ -15,7 +15,6 @@ use luxtensor_network::{
     SwarmP2PNode,
 };
 use luxtensor_rpc::RpcServer;
-use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -724,7 +723,7 @@ impl NodeService {
         // ============================================================
         // Shared unified_state is created at startup and injected into RPC server.
         // Block production uses the same instance via unified_state_for_blocks.
-        let mut unified_state_for_blocks: Option<
+        let unified_state_for_blocks: Option<
             Arc<parking_lot::RwLock<luxtensor_core::UnifiedStateDB>>,
         > = Some(shared_unified_state.clone());
 
