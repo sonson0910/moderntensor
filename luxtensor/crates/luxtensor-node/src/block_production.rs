@@ -388,6 +388,8 @@ impl NodeService {
         total_gas: u64,
         epoch_tx_count: u64,
         valid_tx_count: u64,
+        // M4: StateDB reference for persistent reward crediting
+        state_db: &Arc<RwLock<StateDB>>,
     ) {
         let epoch_num = new_height / epoch_length;
         info!(
@@ -497,6 +499,46 @@ impl NodeService {
             result.participants_rewarded,
             result.dao_allocation
         );
+
+        // ── M4: Flush epoch pending rewards → StateDB (persistent storage) ──
+        // Take a snapshot of all pending rewards from this epoch, then write
+        // each participant's reward amount as an *additive credit* to their
+        // StateDB balance.  Only drain the in-memory map after a successful
+        // write so we can retry safely if the DB write fails.
+        {
+            let snapshot = reward_executor.read().pending_rewards_snapshot();
+            if !snapshot.is_empty() {
+                let mut db = state_db.write();
+                for (addr_bytes, amount) in &snapshot {
+                    let addr = luxtensor_core::Address::from(*addr_bytes);
+                    match db.get_account(&addr) {
+                        Some(mut account) => {
+                            account.balance = account.balance.saturating_add(*amount);
+                            db.set_account(addr, account);
+                        }
+                        None => {
+                            // Participant not yet in StateDB — create account with reward balance
+                            let new_account = luxtensor_core::Account {
+                                balance: *amount,
+                                nonce: 0,
+                                storage_root: [0u8; 32],
+                                code_hash: [0u8; 32],
+                                code: None,
+                            };
+                            db.set_account(addr, new_account);
+                        }
+                    }
+                }
+                // set_account is infallible — always drain to avoid double-crediting
+                drop(db); // release write lock before re-acquiring read below
+                reward_executor.read().drain_pending_rewards();
+                info!(
+                    "✅ Epoch {} rewards flushed to StateDB: {} accounts credited",
+                    epoch_num,
+                    snapshot.len()
+                );
+            }
+        }
 
         // Finalize RANDAO mix for this epoch and feed it into PoS seed.
         match randao.write().finalize_epoch() {
@@ -797,6 +839,27 @@ impl NodeService {
                     reward,
                     hex::encode(producer_addr.as_bytes())
                 );
+                // M4: Persist block reward directly to StateDB so the balance
+                // is immediately visible to RPC queries (e.g. eth_getBalance).
+                {
+                    let mut db = state_db.write();
+                    match db.get_account(&producer_addr) {
+                        Some(mut account) => {
+                            account.balance = account.balance.saturating_add(reward);
+                            db.set_account(producer_addr, account);
+                        }
+                        None => {
+                            let new_account = luxtensor_core::Account {
+                                balance: reward,
+                                nonce: 0,
+                                storage_root: [0u8; 32],
+                                code_hash: [0u8; 32],
+                                code: None,
+                            };
+                            db.set_account(producer_addr, new_account);
+                        }
+                    }
+                }
             }
             Ok(_) => {}
             Err(e) => {
@@ -848,6 +911,7 @@ impl NodeService {
                 total_gas,
                 epoch_tx_count,
                 valid_transactions.len() as u64,
+                state_db,  // M4: pass StateDB for reward persistence
             );
         }
 

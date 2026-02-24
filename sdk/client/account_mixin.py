@@ -53,8 +53,9 @@ class AccountMixin:
         balance_hex = self._rpc()._call_rpc("eth_getBalance", [address, "latest"])
         nonce_hex = self._rpc()._call_rpc("eth_getTransactionCount", [address, "latest"])
 
-        balance = int(balance_hex, 16) if isinstance(balance_hex, str) else balance_hex
-        nonce = int(nonce_hex, 16) if isinstance(nonce_hex, str) else nonce_hex
+        parse = self._rpc()._parse_hex_int
+        balance = parse(balance_hex)
+        nonce = parse(nonce_hex)
 
         # Get stake if staking mixin is available
         stake = 0

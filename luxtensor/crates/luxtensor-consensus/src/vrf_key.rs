@@ -52,7 +52,11 @@ const SUITE: Ciphersuite = Ciphersuite::ECVRF_EDWARDS25519_SHA512_TAI;
 ///
 /// **Never serialise this to an untrusted sink.** Store encrypted at rest
 /// (e.g. keystore file protected by a passphrase).
-pub struct VrfSecretKey(EdVrfEdwards25519TaiSecretKey);
+///
+/// The second tuple field stores the raw 32-byte scalar so that
+/// `public_key()` can derive the corresponding public key on demand
+/// without requiring access to the original keypair.
+pub struct VrfSecretKey(EdVrfEdwards25519TaiSecretKey, [u8; 32]);
 
 /// VRF public key broadcast on-chain so peers can verify proofs.
 ///
@@ -99,19 +103,25 @@ impl VrfKeypair {
     ///
     /// Returns `Err` if `bytes` is not a valid Ed25519 scalar.
     pub fn from_secret_bytes(bytes: &[u8]) -> Result<Self, ConsensusError> {
+        let raw: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| ConsensusError::VrfKeyInvalid(
+                format!("secret key must be exactly 32 bytes, got {}", bytes.len())
+            ))?;
+
         let sk = EdVrfEdwards25519TaiSecretKey::from_slice(bytes)
             .map_err(|e| ConsensusError::VrfKeyInvalid(format!("bad secret key: {e}")))?;
 
         // Derive public key bytes from raw secret bytes using the Ed25519 key schedule.
         // This mirrors the internal `public_key()` logic of the vrf-rfc9381 secret key.
-        let pk_bytes = derive_public_key_bytes(bytes);
+        let pk_bytes = derive_public_key_bytes(&raw);
 
         // Validate by round-tripping through the crate's from_slice constructor.
         let _ = EdVrfEdwards25519TaiPublicKey::from_slice(&pk_bytes)
             .map_err(|e| ConsensusError::VrfKeyInvalid(format!("derived bad public key: {e}")))?;
 
         Ok(Self {
-            secret: VrfSecretKey(sk),
+            secret: VrfSecretKey(sk, raw),
             public: VrfPublicKey { inner: pk_bytes },
         })
     }
@@ -129,43 +139,20 @@ impl VrfKeypair {
 
 impl VrfSecretKey {
     /// Derive the corresponding public key (for sharing with peers).
+    ///
+    /// Uses the stored raw secret bytes (`self.1`) to recompute `Y = x*B` via
+    /// the standard Ed25519 key schedule (SHA-512 + clamp + scalar-mult).
     pub fn public_key(&self) -> VrfPublicKey {
-        // We can derive the secret scalar via prove + extracting gamma would be complex.
-        // Instead, derive public key bytes fresh from the underlying secret key bytes.
-        // Use prove on a canonical alpha to extract gamma (== x*B_cofactor approach gives wrong point).
-        // The simplest reliable method: rely on sk to derive pk via Prover::verifier(),
-        // then roundtrip through our prove path to get the compressed point.
-        //
-        // We use the Prover trait to call verifier(), but EdVrfEdwards25519TaiPublicKey
-        // has no exposed serialisation. We verify against itself to extract public data.
-        //
-        // FALLBACK: We compute Y = x*B manually using curve25519_dalek as the crate does internally.
-        // Since we don't want to depend on curve25519-dalek directly, use the proof gamma.
-        // Canonical approach: compute via a fixed-input VRF prove call.
-        let proof = self.0.prove(b"__pk_derive__").expect("prove with fixed sk always succeeds");
-        // The proof's encode_to_pi() is: gamma_compressed (32) || c (16) || s (32).
-        // gamma = x * H(encode_to_curve(alpha)) — not the generator.
-        // Still wrong. Use the Prover::verifier() approach and keep a reference.
-        //
-        // ACTUAL SOLUTION: compare the inner trait's verifier() and find a way to get bytes.
-        // The inner pk type has `from_slice` constructor but no to_bytes.
-        // WE DO have encode_to_pi() which gives us gamma_compressed as first 32 bytes of proof.
-        // But that gives H*x not G*x.
-        //
-        // CORRECT: store raw bytes in VrfSecretKey when created. Add a raw field.
-        // For now, use the internal derive path: sha512(sk_bytes)[0..32] clamp -> scalar -> G*x.
-        let _ = proof;
-        // Use the embedded raw bytes approach — VrfSecretKey needs to carry raw bytes.
-        // This function is called only from VrfKeypair which always builds via from_secret_bytes.
-        // Since VrfSecretKey was built via from_secret_bytes, we don't have access to raw bytes here.
-        // Compile-time limitation: we cannot easily get the raw bytes back.
-        //
-        // Fix: change VrfSecretKey to store raw bytes.
-        // But we can't change the type at this point without a full rewrite.
-        // PRAGMATIC: panic here since set_vrf_key() in pos.rs only calls into_secret_key(),
-        // and vrf_public_key() is called separately before set_vrf_key stores only secret.
-        // The actual public key retrieval happens via VrfKeypair::public_key() at setup time.
-        panic!("VrfSecretKey::public_key() requires raw bytes — use VrfKeypair to get public key")
+        let pk_bytes = derive_public_key_bytes(&self.1);
+        VrfPublicKey { inner: pk_bytes }
+    }
+
+    /// Expose the raw 32-byte secret scalar.
+    ///
+    /// Useful for keystore serialisation. **Handle with care** — never log or
+    /// transmit these bytes over an unencrypted channel.
+    pub fn to_raw_bytes(&self) -> &[u8; 32] {
+        &self.1
     }
 }
 

@@ -6,7 +6,7 @@
 //! - Detecting common issues (low peers, stalled sync, etc.)
 //! - Triggering automatic recovery actions
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -262,6 +262,7 @@ impl Default for HealthMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_health_monitor_creation() {

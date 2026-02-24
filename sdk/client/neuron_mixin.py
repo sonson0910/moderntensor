@@ -136,7 +136,7 @@ class NeuronMixin:
         self, subnet_id: int, neuron_uids: List[int]
     ) -> List[Optional[Dict[str, Any]]]:
         """
-        Batch get multiple neurons.
+        Batch get multiple neurons using a single HTTP call (JSON-RPC batch).
 
         Args:
             subnet_id: Subnet identifier
@@ -145,15 +145,14 @@ class NeuronMixin:
         Returns:
             List of neuron data (None for failed fetches)
         """
-        results = []
-        for uid in neuron_uids:
-            try:
-                neuron = self.get_neuron(subnet_id, uid)
-                results.append(neuron)
-            except Exception as e:
-                logger.warning(f"Error getting neuron {uid}: {e}")
-                results.append(None)
-        return results
+        if not neuron_uids:
+            return []
+
+        requests = [
+            {"method": "neuron_get", "params": [subnet_id, uid]}
+            for uid in neuron_uids
+        ]
+        return self._rpc()._call_rpc_batch(requests)
 
     def get_active_neurons(self, subnet_id: int) -> List[int]:
         """
@@ -250,23 +249,26 @@ class NeuronMixin:
             logger.error(f"Error getting consensus for neuron {neuron_uid}: {e}")
             return 0.0
 
-    def get_emission(self, subnet_id: int, neuron_uid: int) -> float:
+    def get_emission(self, subnet_id: int, _neuron_uid: int) -> float:
         """
-        Get emission rate for a neuron.
+        Get emission rate for a subnet.
+
+        NOTE: LuxTensor does not expose per-neuron emission via RPC. This method
+        returns the **subnet-level** emission rate. The ``_neuron_uid`` parameter
+        is accepted for API compatibility but is not used.
 
         Args:
             subnet_id: Subnet identifier
-            neuron_uid: Neuron UID
+            _neuron_uid: Neuron UID (unused — no per-neuron RPC available)
 
         Returns:
-            Emission rate
+            Subnet emission rate
         """
         try:
-            # Use query_subnetEmission (per-subnet emission)
             result = self._rpc()._call_rpc("query_subnetEmission", [subnet_id])
             return float(result) if result else 0.0
         except Exception as e:
-            logger.error(f"Error getting emission for neuron {neuron_uid}: {e}")
+            logger.error(f"Error getting emission for subnet {subnet_id}: {e}")
             return 0.0
 
     # Neuron Scoring Metrics

@@ -48,8 +48,12 @@ class TransactionMixin:
         """
         from .base import TransactionResult
 
-        tx_hash = self._rpc()._call_rpc("eth_sendRawTransaction", [signed_tx])
-        return TransactionResult(tx_hash=tx_hash, status="pending", block_number=None, error=None)
+        try:
+            tx_hash = self._rpc()._call_rpc("eth_sendRawTransaction", [signed_tx])
+            return TransactionResult(tx_hash=tx_hash, status="pending", block_number=None, error=None)
+        except Exception as e:
+            logger.error(f"Failed to submit transaction: {e}")
+            return TransactionResult(tx_hash="", status="failed", block_number=None, error=str(e))
 
     def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         """

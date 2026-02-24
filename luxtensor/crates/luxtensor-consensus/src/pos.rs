@@ -1,6 +1,7 @@
 use crate::error::ConsensusError;
 use crate::halving::HalvingSchedule;
 use crate::validator::ValidatorSet;
+use luxtensor_core::constants::consensus::MIN_STAKE;
 use luxtensor_core::types::{Address, Hash};
 use luxtensor_crypto::keccak256;
 use parking_lot::RwLock;
@@ -30,7 +31,7 @@ impl Default for ConsensusConfig {
     fn default() -> Self {
         Self {
             slot_duration: 12,                           // 12 seconds per block
-            min_stake: 32_000_000_000_000_000_000u128,   // 32 tokens minimum
+            min_stake: MIN_STAKE, // 1,000,000 MDT (= 10^24 base units) — matches constants::consensus::MIN_STAKE
             block_reward: 2_000_000_000_000_000_000u128, // 2 tokens per block (initial)
             epoch_length: 32,                            // 32 slots per epoch
             halving_schedule: HalvingSchedule::default(),

@@ -16,12 +16,13 @@ pub mod chain_id {
     pub const TESTNET: u64 = 9999;
     /// Devnet chain ID (local development)
     ///
-    /// SECURITY: Previously set to 1 (Ethereum Mainnet chain_id), which is
-    /// dangerous because dev-mode signing with hardcoded keys would be enabled
-    /// on any node configured with chain_id=1. Changed to 8898 to avoid
-    /// collision with any well-known chain.
-    /// NOTE: Intentionally same as MAINNET — devnet is functionally mainnet-compatible.
-    pub const DEVNET: u64 = 8898;
+    /// SECURITY: Must be DIFFERENT from MAINNET (8898) to prevent signature replay attacks.
+    /// A transaction signed with chain_id=8898 on devnet would be valid on mainnet
+    /// if DEVNET == MAINNET (EIP-155 replay protection relies on chain_id uniqueness).
+    ///
+    /// Previously set to 8898 (same as MAINNET) which was incorrect.
+    /// Changed to 8899 to ensure devnet and mainnet transactions cannot be replayed.
+    pub const DEVNET: u64 = 8899;
 }
 
 /// Official Treasury and System Addresses

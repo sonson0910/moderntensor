@@ -3,6 +3,7 @@
 
 use crate::error::ConsensusError;
 use crate::validator::{Validator, ValidatorSet};
+use luxtensor_core::constants::consensus::MIN_STAKE;
 use luxtensor_core::types::Address;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,7 +45,7 @@ impl Default for RotationConfig {
             activation_delay_epochs: 2,
             exit_delay_epochs: 2,
             max_validators: 100,
-            min_stake: 32_000_000_000_000_000_000u128, // 32 tokens
+            min_stake: MIN_STAKE, // 1,000,000 MDT (= 10^24 base units) — matches constants::consensus::MIN_STAKE
         }
     }
 }

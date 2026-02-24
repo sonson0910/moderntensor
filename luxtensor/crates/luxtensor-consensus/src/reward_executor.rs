@@ -413,6 +413,31 @@ impl RewardExecutor {
             .unwrap_or(0)
     }
 
+    /// Snapshot of all pending rewards: address → amount.
+    ///
+    /// Used by `block_production.rs` after `process_epoch` / `process_epoch_v2`
+    /// to flush earned rewards from `RewardExecutor`'s in-memory map into
+    /// the persistent `StateDB` balances.  The snapshot is a *copy*, so the
+    /// caller can iterate freely without holding the lock.
+    ///
+    /// After successfully persisting to `StateDB`, call `drain_pending_rewards`
+    /// to clear the in-memory copy and avoid double-crediting.
+    pub fn pending_rewards_snapshot(&self) -> Vec<([u8; 20], u128)> {
+        self.pending_rewards.read()
+            .iter()
+            .filter(|(_, p)| p.amount > 0)
+            .map(|(addr, p)| (*addr, p.amount))
+            .collect()
+    }
+
+    /// Drain (clear) all in-memory pending rewards after they have been
+    /// persisted to `StateDB`.  Should be called immediately after a
+    /// successful `StateDB` write to prevent double-crediting on the next
+    /// snapshot.
+    pub fn drain_pending_rewards(&self) {
+        self.pending_rewards.write().clear();
+    }
+
     /// Get account balance
     pub fn get_balance(&self, address: [u8; 20]) -> AccountBalance {
         self.balances.read()

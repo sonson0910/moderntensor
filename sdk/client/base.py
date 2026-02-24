@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
+from sdk.errors import parse_rpc_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,7 +106,7 @@ class BaseClient:
             result = response.json()
 
             if "error" in result:
-                raise Exception(f"RPC error: {result['error']}")
+                raise parse_rpc_error(result["error"])
 
             return result.get("result")
 

@@ -4,8 +4,9 @@ ModernTensor SDK
 Python SDK for interacting with Luxtensor blockchain and building AI/ML subnets.
 """
 
-# Luxtensor client (blockchain interaction)
-from .luxtensor_client import (
+# ── Primary client (new modular implementation) ──────────────────────────────
+# Import from sdk.client (mixin-based architecture)
+from .client import (
     LuxtensorClient,
     AsyncLuxtensorClient,
     connect,
@@ -13,6 +14,7 @@ from .luxtensor_client import (
     ChainInfo,
     Account,
     TransactionResult,
+    BaseClient,
 )
 
 # Transactions

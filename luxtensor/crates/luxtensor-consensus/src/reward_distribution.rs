@@ -761,6 +761,10 @@ mod tests {
         );
     }
 
+    /// SECURITY (H-5): `distribute_by_score_with_gpu` no longer applies GPU bonus via
+    /// self-declaration. This test verifies the post-H-5 behavior: all miners receive
+    /// a score-proportional share regardless of GPU status.
+    /// For task-verified GPU bonuses, see `test_distribute_by_epoch_stats`.
     #[test]
     fn test_gpu_bonus_distribution() {
         let dao_addr = test_address(100);
@@ -768,37 +772,37 @@ mod tests {
 
         let pool: u128 = 1_000_000; // 1M units
 
-        // Two miners with same score, one has GPU
+        // Two miners with equal score (GPU status no longer affects distribute_by_score_with_gpu)
         let miners = vec![
-            MinerInfo::new(test_address(1), 0.5),      // CPU only
-            MinerInfo::with_gpu(test_address(2), 0.5), // Has GPU
+            MinerInfo::new(test_address(1), 0.5),
+            MinerInfo::new(test_address(2), 0.5),
         ];
 
-        // Without GPU bonus (rate = 1.0)
-        let rewards_no_bonus = distributor.distribute_by_score_with_gpu(pool, &miners, 1.0);
-        let cpu_reward = *rewards_no_bonus.get(&test_address(1)).unwrap();
-        let gpu_reward = *rewards_no_bonus.get(&test_address(2)).unwrap();
-        assert_eq!(cpu_reward, gpu_reward, "Without bonus, rewards should be equal");
-
-        // With 20% GPU bonus (rate = 1.2)
-        let rewards_with_bonus = distributor.distribute_by_score_with_gpu(pool, &miners, 1.2);
-        let cpu_reward = *rewards_with_bonus.get(&test_address(1)).unwrap();
-        let gpu_reward = *rewards_with_bonus.get(&test_address(2)).unwrap();
+        // Even with gpu_bonus_rate = 1.2, rewards should be equal (H-5: bonus ignored here)
+        let rewards = distributor.distribute_by_score_with_gpu(pool, &miners, 1.2);
+        let r1 = *rewards.get(&test_address(1)).unwrap();
+        let r2 = *rewards.get(&test_address(2)).unwrap();
+        // Allow rounding dust of ±1
         assert!(
-            gpu_reward > cpu_reward,
-            "GPU miner should get more: {} vs {}",
-            gpu_reward,
-            cpu_reward
+            r1.abs_diff(r2) <= 1,
+            "Equal-score miners must share equally after H-5 fix: {} vs {}",
+            r1,
+            r2
         );
+        assert_eq!(r1 + r2, pool, "Total rewards must equal pool (excluding dust)");
 
-        // GPU should get ~54.5% (0.5*1.2 / (0.5 + 0.5*1.2) = 0.6/1.1)
-        // CPU should get ~45.5% (0.5 / 1.1)
-        let gpu_share = gpu_reward as f64 / pool as f64;
-        assert!(
-            gpu_share > 0.54 && gpu_share < 0.56,
-            "GPU share should be ~54.5%, got {}",
-            gpu_share
-        );
+        // Different scores → pro-rata split
+        let miners_diff = vec![
+            MinerInfo::new(test_address(3), 0.3),
+            MinerInfo::new(test_address(4), 0.7),
+        ];
+        let rewards_diff = distributor.distribute_by_score_with_gpu(pool, &miners_diff, 1.2);
+        let r3 = *rewards_diff.get(&test_address(3)).unwrap();
+        let r4 = *rewards_diff.get(&test_address(4)).unwrap();
+        assert!(r4 > r3, "Higher score must yield higher reward: {} vs {}", r4, r3);
+        // r4 / r3 ≈ 7/3 ≈ 2.33
+        let ratio = r4 as f64 / r3 as f64;
+        assert!(ratio > 2.2 && ratio < 2.5, "Score ratio ~7/3 expected, got {:.3}", ratio);
     }
 
     #[test]
