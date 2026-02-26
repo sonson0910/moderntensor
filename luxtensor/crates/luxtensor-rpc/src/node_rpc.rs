@@ -139,7 +139,7 @@ pub fn register_node_methods(
                 "address": p.address,
                 "tier": format!("{:?}", tier),
                 "tier_name": tier.name(),
-                "emission_share": tier.emission_share(),
+                "emission_share_bps": tier.emission_share_bps(),
                 "can_produce_blocks": tier.can_produce_blocks(),
                 "receives_infrastructure_rewards": tier.receives_infrastructure_rewards(),
                 "receives_validator_rewards": tier.receives_validator_rewards()
@@ -170,7 +170,7 @@ pub fn register_node_methods(
                 "stake_decimal": info.stake.to_string(),
                 "registered_at": info.registered_at,
                 "last_active": info.last_active,
-                "uptime_score": info.uptime_score,
+                "uptime_score_bps": info.uptime_score_bps,
                 "blocks_produced": info.blocks_produced,
                 "tx_relayed": info.tx_relayed
             })),
@@ -254,7 +254,7 @@ pub fn register_node_methods(
                 "tier": format!("{:?}", info.tier),
                 "stake": format!("0x{:x}", info.stake),
                 "stake_decimal": info.stake.to_string(),
-                "uptime_score": info.uptime_score,
+                "uptime_score_bps": info.uptime_score_bps,
                 "blocks_produced": info.blocks_produced
             })
         }).collect::<Vec<_>>()))
@@ -308,32 +308,46 @@ pub fn register_node_methods(
                     "tier": "LightNode",
                     "min_stake": "0",
                     "min_stake_mdt": 0,
-                    "emission_share": 0.0,
+                    "emission_share_bps": 0,
                     "can_produce_blocks": false
                 },
                 {
                     "tier": "FullNode",
                     "min_stake": format!("0x{:x}", FULL_NODE_STAKE),
                     "min_stake_mdt": 10,
-                    "emission_share": 0.02,
+                    "emission_share_bps": 200,
                     "can_produce_blocks": false
                 },
                 {
                     "tier": "Validator",
                     "min_stake": format!("0x{:x}", VALIDATOR_STAKE),
                     "min_stake_mdt": 100,
-                    "emission_share": 0.28,
+                    "emission_share_bps": 2800,
                     "can_produce_blocks": true
                 },
                 {
                     "tier": "SuperValidator",
                     "min_stake": format!("0x{:x}", SUPER_VALIDATOR_STAKE),
                     "min_stake_mdt": 1000,
-                    "emission_share": 0.28,
+                    "emission_share_bps": 2800,
                     "can_produce_blocks": true
                 }
             ]
         }))
+        }
+    });
+
+    // =========================================================================
+    // system_nodeRoles — roles this node performs in the network
+    // Params: []
+    // Returns: { roles: ["Authority" | "Full" | "LightClient"], description }
+    // =========================================================================
+    io.add_method("system_nodeRoles", move |_params: Params| {
+        async move {
+            Ok(json!({
+                "roles": ["Authority"],
+                "description": "This node participates in block production as a validator"
+            }))
         }
     });
 }

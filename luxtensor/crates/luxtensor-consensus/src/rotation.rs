@@ -293,62 +293,38 @@ impl ValidatorRotation {
     }
 
     /// Slash a validator for misbehavior
+    ///
+    /// Delegates to [`ValidatorSet::slash_stake`] for the atomic stake reduction,
+    /// then applies rotation-level policy: if the remaining stake falls below
+    /// `min_stake`, the validator is scheduled for exit after `exit_delay_epochs`.
     pub fn slash_validator(
         &mut self,
         address: &Address,
         slash_amount: u128,
     ) -> Result<(), ConsensusError> {
-        // Get validator
-        let validator = self
+        // Delegate to ValidatorSet for atomic stake reduction + zero-stake deactivation
+        let actual_slashed = self
             .current_validators
-            .get_validator(address)
-            .ok_or(ConsensusError::ValidatorNotFound(format!("{:?}", address)))?;
-
-        let new_stake = validator
-            .stake
-            .checked_sub(slash_amount)
-            .ok_or(ConsensusError::InvalidOperation(
-                "Slash amount exceeds stake".to_string(),
-            ))?;
+            .slash_stake(address, slash_amount)
+            .map_err(|e| ConsensusError::ValidatorNotFound(format!("{:?}: {}", address, e)))?;
 
         warn!(
-            "Slashing validator {} by {}, new stake: {}",
+            "Slashed validator {} by {} (requested {})",
             hex::encode(address),
+            actual_slashed,
             slash_amount,
-            new_stake
         );
 
-        // Update stake
-        let mut updated_validator = validator.clone();
-        updated_validator.stake = new_stake;
-
-        if let Err(e) = self.current_validators.remove_validator(address) {
-            warn!(
-                "Failed to remove validator {} during slash: {}",
-                hex::encode(address), e
-            );
-            return Err(ConsensusError::InvalidOperation(
-                format!("Failed to remove validator for stake update: {}", e)
-            ));
-        }
-        if let Err(e) = self.current_validators.add_validator(updated_validator) {
-            warn!(
-                "Failed to re-add validator {} after slash: {}",
-                hex::encode(address), e
-            );
-            return Err(ConsensusError::InvalidOperation(
-                format!("Failed to re-add validator after slash: {}", e)
-            ));
-        }
-
-        // If stake falls below minimum, schedule for exit
-        if new_stake < self.config.min_stake {
-            warn!(
-                "Validator {} stake below minimum, scheduling exit",
-                hex::encode(address)
-            );
-            let exit_epoch = self.current_epoch + self.config.exit_delay_epochs;
-            self.exiting_validators.insert(*address, exit_epoch);
+        // Rotation-level policy: if remaining stake is below min, schedule exit
+        if let Some(validator) = self.current_validators.get_validator(address) {
+            if validator.stake < self.config.min_stake {
+                warn!(
+                    "Validator {} stake below minimum after slash, scheduling exit",
+                    hex::encode(address)
+                );
+                let exit_epoch = self.current_epoch + self.config.exit_delay_epochs;
+                self.exiting_validators.insert(*address, exit_epoch);
+            }
         }
 
         Ok(())

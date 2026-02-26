@@ -1070,3 +1070,183 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Helper: build configs with fuzzed parameters, clamped to valid ranges
+    fn arb_projection_config() -> impl Strategy<Value = ProjectionConfig> {
+        (1u32..50u32, 1u64..1000u64, 1u128..50_000_000_000u128).prop_map(
+            |(years, txs, gas_fee)| ProjectionConfig {
+                years,
+                avg_txs_per_block: txs,
+                avg_gas_fee_wei: gas_fee,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn arb_burn_config() -> impl Strategy<Value = BurnConfig> {
+        (0u32..=10_000u32, 0u32..=10_000u32, 0u32..=10_000u32, 0u32..=10_000u32).prop_map(
+            |(tx, subnet, slash, unmet)| BurnConfig {
+                tx_fee_burn_rate_bps: tx,
+                subnet_burn_rate_bps: subnet,
+                slashing_burn_rate_bps: slash,
+                unmet_quota_burn_rate_bps: unmet,
+            },
+        )
+    }
+
+    proptest! {
+        /// INV-1: Circulating supply must never exceed max_supply regardless of config
+        #[test]
+        fn supply_never_exceeds_max(
+            proj in arb_projection_config(),
+            burn in arb_burn_config(),
+        ) {
+            let emission = EmissionConfig::default();
+            let halving = HalvingSchedule::default();
+
+            let snapshots = project_supply(&emission, &burn, &halving, &proj);
+            let max = emission.max_supply;
+
+            for snap in &snapshots {
+                prop_assert!(
+                    snap.circulating_supply <= max,
+                    "Year {}: circulating {} > max {}",
+                    snap.year, snap.circulating_supply, max,
+                );
+            }
+        }
+
+        /// INV-2: Cumulative emission must never exceed emission pool
+        #[test]
+        fn emission_never_exceeds_pool(
+            proj in arb_projection_config(),
+            burn in arb_burn_config(),
+        ) {
+            let emission = EmissionConfig::default();
+            let halving = HalvingSchedule::default();
+
+            let snapshots = project_supply(&emission, &burn, &halving, &proj);
+
+            for snap in &snapshots {
+                prop_assert!(
+                    snap.cumulative_emission <= EMISSION_POOL,
+                    "Year {}: cum_emission {} > pool {}",
+                    snap.year, snap.cumulative_emission, EMISSION_POOL,
+                );
+            }
+        }
+
+        /// INV-3: Cumulative burn never exceeds cumulative emission + preminted supply.
+        /// Under extreme burn configs, supply CAN legitimately reach zero.
+        /// The real invariant is: cumulative_burn ≤ PREMINTED_SUPPLY + cumulative_emission.
+        #[test]
+        fn burn_never_exceeds_available(
+            proj in arb_projection_config(),
+            burn in arb_burn_config(),
+        ) {
+            let emission = EmissionConfig::default();
+            let halving = HalvingSchedule::default();
+
+            let snapshots = project_supply(&emission, &burn, &halving, &proj);
+
+            for snap in &snapshots {
+                prop_assert!(
+                    snap.cumulative_burn <= PREMINTED_SUPPLY.saturating_add(snap.cumulative_emission),
+                    "Year {}: burn {} > preminted + emission {}",
+                    snap.year,
+                    snap.cumulative_burn,
+                    PREMINTED_SUPPLY.saturating_add(snap.cumulative_emission),
+                );
+            }
+        }
+
+        /// INV-4: Higher burn rates should produce lower (or equal) supply
+        /// at the same year, for fixed emission parameters
+        #[test]
+        fn higher_burn_yields_lower_supply(
+            low_rate in 0u32..5_000u32,
+            high_offset in 1u32..5_001u32,
+        ) {
+            let high_rate = (low_rate + high_offset).min(10_000);
+            if low_rate >= high_rate {
+                return Ok(());
+            }
+
+            let emission = EmissionConfig::default();
+            let halving = HalvingSchedule::default();
+            let proj = ProjectionConfig { years: 10, ..Default::default() };
+
+            let burn_low = BurnConfig {
+                tx_fee_burn_rate_bps: low_rate,
+                subnet_burn_rate_bps: low_rate,
+                slashing_burn_rate_bps: low_rate,
+                unmet_quota_burn_rate_bps: low_rate,
+            };
+            let burn_high = BurnConfig {
+                tx_fee_burn_rate_bps: high_rate,
+                subnet_burn_rate_bps: high_rate,
+                slashing_burn_rate_bps: high_rate,
+                unmet_quota_burn_rate_bps: high_rate,
+            };
+
+            let snaps_low = project_supply(&emission, &burn_low, &halving, &proj);
+            let snaps_high = project_supply(&emission, &burn_high, &halving, &proj);
+
+            if let (Some(last_low), Some(last_high)) = (snaps_low.last(), snaps_high.last()) {
+                prop_assert!(
+                    last_high.circulating_supply <= last_low.circulating_supply,
+                    "Higher burn ({}) should yield ≤ supply than lower burn ({}): {} vs {}",
+                    high_rate, low_rate,
+                    last_high.circulating_supply, last_low.circulating_supply,
+                );
+            }
+        }
+
+        /// INV-5: validate_parameters always catches distribution shares ≠ 10_000
+        #[test]
+        fn validate_catches_bad_distribution(
+            a in 0u32..10_001u32,
+            b in 0u32..10_001u32,
+            c in 0u32..10_001u32,
+        ) {
+            let total = a.saturating_add(b).saturating_add(c);
+            // Skip if sum happens to be exactly 10_000 (unlikely but possible)
+            if total == 10_000 {
+                return Ok(());
+            }
+
+            let dist = DistributionConfig {
+                miner_share_bps: a,
+                validator_share_bps: b,
+                infrastructure_share_bps: c,
+                delegator_share_bps: 0,
+                subnet_owner_share_bps: 0,
+                dao_share_bps: 0,
+                community_ecosystem_share_bps: 0,
+            };
+
+            let (emission, burn, halving, _, fee) = (
+                EmissionConfig::default(),
+                BurnConfig::default(),
+                HalvingSchedule::default(),
+                DistributionConfig::default(),
+                Eip1559Config::default(),
+            );
+
+            let issues = validate_parameters(&emission, &dist, &burn, &halving, &fee);
+            let has_sum_issue = issues.iter().any(|i| {
+                i.severity == Severity::Critical && i.description.contains("sum to")
+            });
+            prop_assert!(
+                has_sum_issue,
+                "Should detect bad distribution sum: {} + {} + {} = {}",
+                a, b, c, total,
+            );
+        }
+    }
+}

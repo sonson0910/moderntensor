@@ -59,6 +59,12 @@ pub struct NodeConfig {
     /// Development mode: enables pre-funded test accounts (NEVER use in production)
     #[serde(default)]
     pub dev_mode: bool,
+
+    /// Optional path to Oracle ZK proof ELF binary for production.
+    /// If set, `RequestProcessor.initialize()` is called with these bytes.
+    /// If `None`, oracle runs in dev-mode (mock proofs).
+    #[serde(default)]
+    pub oracle_elf_path: Option<PathBuf>,
 }
 
 /// Default DAO treasury address (ModernTensor Foundation)
@@ -100,6 +106,7 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub validators: Vec<String>,
 }
+
 
 /// Default block gas limit: 30 million
 fn default_gas_limit() -> u64 {
@@ -250,6 +257,7 @@ impl Default for Config {
                 validator_id: None,
                 dao_address: default_dao_address(),
                 dev_mode: false, // Production mode by default
+                oracle_elf_path: None, // Dev-mode oracle (no ZK proofs)
             },
             consensus: ConsensusConfig {
                 block_time: 12,

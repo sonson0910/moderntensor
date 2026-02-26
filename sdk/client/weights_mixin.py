@@ -1,11 +1,12 @@
 """
 Weights Mixin for LuxtensorClient
 
-Provides weight-related query methods.
+Wraps lux_* and weight_* RPC methods for querying and committing
+neuron weight data stored in MetagraphDB.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 if TYPE_CHECKING:
     from .protocols import RPCProvider
@@ -15,163 +16,273 @@ logger = logging.getLogger(__name__)
 
 class WeightsMixin:
     """
-    Mixin providing weight-related query methods.
+    Mixin providing weight query and commit methods.
 
-    Requires:
-        RPCProvider protocol (provided by BaseClient)
+    Query methods use `lux_*` namespace (reading from MetagraphDB).
+    Write methods use `weight_*` namespace.
 
     Methods:
-        - get_weights_version() - Get weights version for subnet
-        - get_weight_commits() - Get weight commit hashes
-        - get_weights_rate_limit() - Get rate limit for setting weights
-        - get_max_weight_limit() - Get maximum weight limit
-        - get_min_allowed_weights() - Get minimum allowed weights
+        - get_weights()                  — Weights set by a neuron (lux_getWeights)
+        - get_all_weights()              — Full weight matrix for a subnet (lux_getAllWeights)
+        - get_weight_version()           — Weight version for subnet
+        - get_weight_commit()            — Last weight commit block
+        - get_weight_rate_limit()        — Blocks between allowed weight sets
+        - get_max_weight_limit()         — Max weight value
+        - get_min_allowed_weights()      — Minimum number of weights a neuron must set
+        - commit_weights()               — Commit weight vector on-chain
+        - commit_weights_merkle()        — Commit Merkle root of weights
     """
 
     if TYPE_CHECKING:
 
         def _rpc(self) -> "RPCProvider":
-            """Helper to cast self to RPCProvider protocol for type checking."""
             return cast("RPCProvider", self)
 
     else:
 
-        def _rpc(self) -> "WeightsMixin":
-            """At runtime, return self (duck typing)."""
+        def _rpc(self):
             return self
 
-    def get_weights_version(self, subnet_id: int) -> int:
+    # ------------------------------------------------------------------
+    # Query Methods
+    # ------------------------------------------------------------------
+
+    def get_weights(
+        self, subnet_uid: int, from_uid: int
+    ) -> List[Dict[str, Any]]:
         """
-        Get weights version for a subnet.
+        Get weights that a specific neuron has set in a subnet.
 
         Args:
-            subnet_id: Subnet identifier
+            subnet_uid: Subnet identifier
+            from_uid: Source neuron UID (the neuron that set the weights)
 
         Returns:
-            Weights version number
+            List of WeightData dicts with from_uid, to_uid, weight, block_set
         """
         try:
-            result = self._rpc()._call_rpc("query_weightsVersion", [subnet_id])
-            return int(result) if result else 0
-        except Exception as e:
-            logger.error(f"Error getting weights version for subnet {subnet_id}: {e}")
-            return 0
-
-    def get_weight_commits(self, subnet_id: int) -> List[str]:
-        """
-        Get weight commit hashes for a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            List of commit hashes
-        """
-        try:
-            result = self._rpc()._call_rpc("query_weightCommits", [subnet_id])
+            result = self._rpc()._call_rpc("lux_getWeights", [subnet_uid, from_uid])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.error(f"Error getting weight commits for subnet {subnet_id}: {e}")
+            logger.warning(
+                f"Failed to get weights for neuron {from_uid} in subnet {subnet_uid}: {e}"
+            )
             return []
 
-    def get_weights_rate_limit(self, subnet_id: int) -> int:
+    def get_all_weights(self, subnet_uid: int) -> List[Dict[str, Any]]:
         """
-        Get rate limit for setting weights.
+        Get the complete weight matrix for a subnet.
 
         Args:
-            subnet_id: Subnet identifier
+            subnet_uid: Subnet identifier
 
         Returns:
-            Rate limit in blocks
+            List of all WeightData entries across all neurons in the subnet
         """
         try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("weights_set_rate_limit", hp.get("weightsSetRateLimit", 0))
-                return int(val) if val else 0
-            return 0
+            result = self._rpc()._call_rpc("lux_getAllWeights", [subnet_uid])
+            return result if isinstance(result, list) else []
         except Exception as e:
-            logger.error(f"Error getting weights rate limit for subnet {subnet_id}: {e}")
-            return 0
+            logger.warning(f"Failed to get all weights for subnet {subnet_uid}: {e}")
+            return []
 
-    def get_max_weight_limit(self, subnet_id: int) -> float:
+    def get_weight_matrix(self, subnet_uid: int) -> List[Tuple[int, int, float]]:
         """
-        Get maximum weight limit for a single weight.
+        Get the weight matrix as a list of (from_uid, to_uid, weight) tuples.
 
         Args:
-            subnet_id: Subnet identifier
+            subnet_uid: Subnet identifier
 
         Returns:
-            Maximum weight as float (0.0 to 1.0)
+            List of (from_uid, to_uid, weight) tuples
         """
         try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("max_weight_limit", hp.get("maxWeightLimit", 0))
-                return float(val) / 65535.0 if val else 0.0
-            return 0.0
+            weights = self.get_all_weights(subnet_uid)
+            return [
+                (
+                    int(w.get("from_uid", 0)),
+                    int(w.get("to_uid", 0)),
+                    float(w.get("weight", 0.0)),
+                )
+                for w in weights
+            ]
         except Exception as e:
-            logger.error(f"Error getting max weight limit for subnet {subnet_id}: {e}")
-            return 0.0
+            logger.warning(f"Failed to get weight matrix for subnet {subnet_uid}: {e}")
+            return []
 
-    def get_min_allowed_weights(self, subnet_id: int) -> int:
+    def get_weight_version(self, subnet_uid: int) -> int:
         """
-        Get minimum number of weights that must be set.
+        Get the weight version key for a subnet.
+        Used to prevent replay of stale weight commits.
 
         Args:
-            subnet_id: Subnet identifier
+            subnet_uid: Subnet identifier
 
         Returns:
-            Minimum allowed weights count
+            Weight version integer or 0
         """
         try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("min_allowed_weights", hp.get("minAllowedWeights", 0))
-                return int(val) if val else 0
+            result = self._rpc()._call_rpc("weight_getVersion", [subnet_uid])
+            if isinstance(result, dict):
+                return int(result.get("version", 0))
+            return int(result) if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get weight version for subnet {subnet_uid}: {e}")
+            return 0
+
+    def get_weight_commit(self, subnet_uid: int, uid: int) -> int:
+        """
+        Get the last block at which a neuron committed weights.
+
+        Args:
+            subnet_uid: Subnet identifier
+            uid: Neuron UID
+
+        Returns:
+            Block number of last commit or 0
+        """
+        try:
+            weights = self._rpc()._call_rpc("lux_getWeights", [subnet_uid, uid])
+            if weights and isinstance(weights, list) and len(weights) > 0:
+                # Return the highest block_set value
+                blocks = [w.get("block_set", 0) for w in weights]
+                return max(blocks) if blocks else 0
             return 0
         except Exception as e:
-            logger.error(f"Error getting min allowed weights for subnet {subnet_id}: {e}")
+            logger.warning(
+                f"Failed to get weight commit for neuron {uid} in subnet {subnet_uid}: {e}"
+            )
             return 0
+
+    def get_weight_rate_limit(self, subnet_uid: int) -> int:
+        """
+        Get the rate limit (blocks) between allowed weight commits for this subnet.
+
+        Args:
+            subnet_uid: Subnet identifier
+
+        Returns:
+            Number of blocks between allowed weight sets
+        """
+        try:
+            result = self._rpc()._call_rpc("weight_getRateLimit", [subnet_uid])
+            if isinstance(result, dict):
+                return int(result.get("rate_limit", 0))
+            return int(result) if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get weight rate limit for subnet {subnet_uid}: {e}")
+            return 0
+
+    def get_max_weight_limit(self, subnet_uid: int) -> float:
+        """
+        Get maximum weight value allowed (normalized to [0.0, 1.0]).
+
+        Args:
+            subnet_uid: Subnet identifier
+
+        Returns:
+            Max weight limit (float), or 1.0 if not configured
+        """
+        try:
+            result = self._rpc()._call_rpc("weight_getMaxLimit", [subnet_uid])
+            if isinstance(result, dict):
+                return float(result.get("max_weight", 1.0))
+            return float(result) if result else 1.0
+        except Exception as e:
+            logger.warning(f"Failed to get max weight limit for subnet {subnet_uid}: {e}")
+            return 1.0
+
+    def get_min_allowed_weights(self, subnet_uid: int) -> int:
+        """
+        Get minimum number of weight assignments required per commit.
+
+        Args:
+            subnet_uid: Subnet identifier
+
+        Returns:
+            Minimum weight count or 0
+        """
+        try:
+            result = self._rpc()._call_rpc("weight_getMinAllowed", [subnet_uid])
+            if isinstance(result, dict):
+                return int(result.get("min_weights", 0))
+            return int(result) if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get min allowed weights for subnet {subnet_uid}: {e}")
+            return 0
+
+    # ------------------------------------------------------------------
+    # Write Methods
+    # ------------------------------------------------------------------
+
+    def commit_weights(
+        self,
+        subnet_uid: int,
+        from_uid: int,
+        weights: Dict[int, float],
+        signature: str,
+    ) -> Dict[str, Any]:
+        """
+        Commit a weight vector for a neuron on-chain.
+
+        Args:
+            subnet_uid: Subnet identifier
+            from_uid: Source neuron UID (the neuron setting weights)
+            weights: Dict of {to_uid: weight_value} (weights should sum to 1.0)
+            signature: Secp256k1 signature over the weight commit payload
+
+        Returns:
+            Result dict with success status
+        """
+        try:
+            # Normalize weights to u16 range [0, 65535]
+            weights_norm = {str(uid): float(w) for uid, w in weights.items()}
+            params = {
+                "subnet_id": subnet_uid,
+                "from_uid": from_uid,
+                "weights": weights_norm,
+                "signature": signature,
+            }
+            result = self._rpc()._call_rpc("weight_setWeights", [params])
+            return result if result else {"success": False, "error": "No result"}
+        except Exception as e:
+            logger.error(f"Failed to commit weights for neuron {from_uid}: {e}")
+            return {"success": False, "error": str(e)}
 
     def commit_weights_merkle(
         self,
-        subnet_id: int,
-        weights: List[tuple[int, int]],
-        epoch: int,
-        validator_address: str,
+        subnet_uid: int,
+        from_uid: int,
+        merkle_root: str,
+        version_key: int,
+        signature: str,
     ) -> Dict[str, Any]:
         """
-        Commit weights via Merkle root (gas-optimized).
+        Commit a Merkle root of weights (two-phase commit scheme).
 
-        This method uses Merkle batching to submit weights with fixed 21K gas
-        regardless of miner count. Recommended for subnets with 100+ miners.
+        In Phase 1, only the Merkle root is committed on-chain.
+        In Phase 2 (reveal), the actual weights can be verified against the root.
 
         Args:
-            subnet_id: Subnet identifier
-            weights: List of (miner_uid, weight) tuples
-            epoch: Current epoch number
-            validator_address: Validator's address (0x prefixed)
+            subnet_uid: Subnet identifier
+            from_uid: Source neuron UID
+            merkle_root: Hex-encoded Merkle root of the weight vector
+            version_key: Weight version to prevent replay
+            signature: Secp256k1 signature over commit payload
 
         Returns:
-            Dict with merkleRoot, gasUsed, minerCount, etc.
-
-        Example:
-            >>> weights = [(1, 100), (2, 200), (3, 300)]
-            >>> result = client.commit_weights_merkle(1, weights, 100, "0x123...")
-            >>> print(result["gasUsed"])  # Always 21000
+            Result dict with success, tx_hash
         """
         try:
-            weights_array = [[uid, weight] for uid, weight in weights]
-            result = self._rpc()._call_rpc(
-                "weight_setWeights",
-                [subnet_id, weights_array, epoch, validator_address],
-            )
-            return result if result else {}
+            params = {
+                "subnet_id": subnet_uid,
+                "from_uid": from_uid,
+                "merkle_root": merkle_root,
+                "version_key": version_key,
+                "signature": signature,
+            }
+            result = self._rpc()._call_rpc("weight_commitMerkle", [params])
+            return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Error committing Merkle weights for subnet {subnet_id}: {e}")
+            logger.error(f"Failed to commit Merkle weights for neuron {from_uid}: {e}")
             return {"success": False, "error": str(e)}
-

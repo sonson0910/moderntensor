@@ -75,12 +75,21 @@ pub enum NetworkMessage {
     Pong,
 
     /// AI task dispatch to miners
+    ///
+    /// SECURITY: `validator_signature` authenticates the task dispatcher to prevent
+    /// forged tasks with arbitrary rewards. The signature covers
+    /// `(task_id || model_hash || input_hash || reward || deadline)`.
+    /// Receivers MUST verify the signature before processing (H3 fix).
     AITaskDispatch {
         task_id: [u8; 32],
         model_hash: String,
         input_hash: [u8; 32],
         reward: u128,
         deadline: u64,
+        /// ECDSA signature over the task fields, proving authority
+        validator_signature: Vec<u8>,
+        /// 20-byte address of the signing validator
+        validator_address: [u8; 20],
     },
 }
 

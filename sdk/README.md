@@ -91,11 +91,66 @@ async def main():
 asyncio.run(main())
 ```
 
+## Metagraph API (`lux_*` RPC Methods)
+
+The SDK exposes the **MetagraphDB-backed `lux_*` namespace** — the canonical source of truth for subnet, neuron, and weight state. Data is written via a **dual-write strategy**: legacy handlers persist to both the in-memory cache (`DashMap`) and the new persistent `MetagraphDB` (RocksDB).
+
+### Subnet queries
+
+```python
+# List all subnets
+subnets = client.lux_list_subnets()           # → list[dict]
+
+# Get a specific subnet
+subnet = client.lux_get_subnet_info(subnet_id=1)  # → dict | None
+
+# Get emission schedule
+emissions = client.lux_get_emissions(subnet_id=1) # → dict
+```
+
+### Neuron queries
+
+```python
+# All neurons in a subnet
+neurons = client.lux_get_neurons(subnet_id=1)     # → list[dict]
+
+# Single neuron
+neuron = client.lux_get_neuron(subnet_id=1, uid=0) # → dict | None
+
+# Count
+count = client.lux_get_neuron_count(subnet_id=1)  # → int
+```
+
+### Weight queries
+
+```python
+# Weights set by a specific neuron
+weights = client.lux_get_weights(subnet_id=1, uid=0)   # → list[dict]
+
+# All weights in a subnet
+all_w = client.lux_get_all_weights(subnet_id=1)        # → list[dict]
+```
+
+### Async versions
+
+```python
+import asyncio
+from sdk import async_connect
+
+async def main():
+    client = await async_connect("http://localhost:8545")
+    neurons = await client.lux_get_neurons(subnet_id=1)
+    print(neurons)
+
+asyncio.run(main())
+```
+
 ## Features
 
 | Area | Highlights |
 |------|-----------|
 | **Blockchain Client** | Sync & async RPC client, batch calls, account/block/tx queries |
+| **MetagraphDB (`lux_*`)** | Persistent subnet/neuron/weight state via RocksDB dual-write |
 | **Consensus** | Slashing, circuit breaker, liveness monitoring, fork choice (GHOST), fast finality |
 | **AI/ML Framework** | Subnet protocol, zkML integration (ezkl), advanced scoring, node tiers |
 | **CLI (`mtcli`)** | Wallet management, transactions, staking, subnet operations |
@@ -104,15 +159,33 @@ asyncio.run(main())
 | **Tokenomics** | Reward calculation, emission schedules, staking mechanics |
 | **Monitoring** | Prometheus metrics, OpenTelemetry tracing |
 
+## RPC Namespaces
+
+| Namespace | Purpose |
+|-----------|---------|
+| `eth_*` | Ethereum-compatible: block, account, tx |
+| `staking_*` | Validator staking, registration, rewards |
+| `subnet_*` | Legacy subnet operations (write to DashMap + MetagraphDB) |
+| `neuron_*` | Legacy neuron operations (write to DashMap + MetagraphDB) |
+| `weight_*` | Legacy weight operations (write to DashMap + MetagraphDB) |
+| `lux_*` | **New** — reads from MetagraphDB (source of truth) |
+| `metagraph_*` | Full metagraph state, consensus views |
+| `system_*` | Node health, roles, stats |
+
 ## Project Structure
 
 ```
 sdk/
 ├── __init__.py                # Public API exports
-├── luxtensor_client.py        # Sync RPC client
+├── luxtensor_client.py        # Sync RPC client (lux_* + legacy)
 ├── async_luxtensor_client.py  # Async RPC client
 ├── transactions.py            # Transaction creation & signing
 ├── websocket_client.py        # Real-time event subscriptions
+├── client/
+│   ├── subnet_mixin.py        # lux_getSubnetInfo, lux_listSubnets…
+│   ├── neuron_mixin.py        # lux_getNeurons, lux_getNeuron…
+│   ├── weights_mixin.py       # lux_getWeights, lux_getAllWeights…
+│   └── metagraph_mixin.py     # metagraph_getState, metagraph_getWeights…
 ├── cli/                       # mtcli command-line tool
 ├── ai_ml/                     # AI/ML framework & zkML
 ├── axon/                      # Miner/validator server
@@ -142,8 +215,12 @@ sdk/
 | `submit_transaction(tx)` | Submit signed transaction |
 | `get_transaction(hash)` | Transaction by hash |
 | `get_validators()` | Active validator set |
-| `get_subnet_info(id)` | Subnet metadata |
-| `get_neurons(subnet_id)` | Neurons in a subnet |
+| `get_subnet_info(id)` | Subnet metadata (legacy cache) |
+| `lux_get_subnet_info(id)` | Subnet metadata (MetagraphDB) |
+| `get_neurons(subnet_id)` | Neurons in a subnet (legacy) |
+| `lux_get_neurons(subnet_id)` | Neurons in a subnet (MetagraphDB) |
+| `lux_get_weights(subnet_id, uid)` | Weights from MetagraphDB |
+| `lux_get_all_weights(subnet_id)` | All weights from MetagraphDB |
 | `get_stake(addr)` | Staked amount |
 | `is_connected()` | Connection status |
 
@@ -154,6 +231,21 @@ All sync methods are available as coroutines, plus:
 | Method | Description |
 |--------|-------------|
 | `batch_call(calls)` | Execute multiple RPC calls concurrently |
+
+## Integration Tests
+
+Run the full integration test suite against a live node:
+
+```bash
+# Start node first
+cargo run --bin luxtensor-node
+
+# Run tests (another terminal)
+python tests/integration_test_sdk.py
+python tests/integration_test_sdk.py --rpc http://your-node:8545
+```
+
+Tests cover: node health, `lux_*` subnet/neuron/weight queries, dual-write validation, error handling.
 
 ## Documentation
 

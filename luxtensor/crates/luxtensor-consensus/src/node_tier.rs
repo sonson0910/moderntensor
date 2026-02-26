@@ -5,45 +5,91 @@
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
-/// Calculate effective stake using logarithmic curve for whale protection
-/// This ensures diminishing returns for very large stakes:
-/// - 1,000 LUX → 1,000 effective (100%)
-/// - 10,000 LUX → ~8,500 effective (85%)
-/// - 100,000 LUX → ~50,000 effective (50%)
-/// - 1,000,000 LUX → ~100,000 effective (10%)
+/// Calculate effective stake using a deterministic **integer-only** piecewise
+/// linear approximation of the logarithmic whale-protection curve.
+///
+/// The curve approximates `stake * ln(norm+1) / (norm+1)` where
+/// `norm = stake / 10^18`, but computed entirely with u128 arithmetic to
+/// prevent cross-platform floating-point divergence.
+///
+/// # Effectiveness table
+///
+/// | Human-readable stake | Effectiveness (approx) |
+/// |----------------------|------------------------|
+/// | ≤ 1 MDT              | 100%                   |
+/// | 10 MDT               | ~85%                   |
+/// | 100 MDT              | ~50%                   |
+/// | 1,000 MDT            | ~20%                   |
+/// | 10,000+ MDT          | 10% floor              |
+///
+/// # Determinism guarantee
+///
+/// All operations are u128 multiply/divide — no f64, no ln(), no NaN.
 pub fn logarithmic_stake(stake: u128) -> u128 {
     if stake == 0 {
         return 0;
     }
 
-    // Use f64 for calculation - stake in base units (18 decimals)
-    let stake_f = stake as f64;
+    const ONE_TOKEN: u128 = 1_000_000_000_000_000_000; // 10^18
 
-    // Normalize to "human readable" units for log calculation
-    // Stake is in 18 decimals, so divide by 10^18 for logarithm
-    let normalized = stake_f / 1e18;
-
-    if normalized <= 1.0 {
-        // Small stakes: no reduction
+    // For stakes ≤ 1 token (in 18 decimals), no reduction
+    if stake <= ONE_TOKEN {
         return stake;
     }
 
-    // Formula: stake * ln(normalized + 1) / (normalized + 1)
-    // This naturally reduces effectiveness for larger stakes
-    let log_factor = (normalized + 1.0).ln() / (normalized + 1.0);
+    // Piecewise linear breakpoints: (threshold_tokens, effectiveness_bps)
+    // effectiveness_bps: 10_000 = 100%, 1_000 = 10%
+    //
+    // These approximate ln(x+1)/(x+1) at key points.
+    // Between breakpoints we linearly interpolate using integer math.
+    const BPS_FULL: u128 = 10_000;
 
-    // Apply factor, ensuring minimum of 10% effectiveness for very large stakes
-    let effective_factor = log_factor.max(0.10);
+    // Breakpoints: (token_count, eff_bps)
+    // Must be sorted ascending by token_count.
+    const BREAKPOINTS: [(u128, u128); 7] = [
+        (1,      10_000),  // 1 MDT    → 100%
+        (10,      8_500),  // 10 MDT   → 85%
+        (50,      6_000),  // 50 MDT   → 60%
+        (100,     5_000),  // 100 MDT  → 50%
+        (500,     2_500),  // 500 MDT  → 25%
+        (1_000,   2_000),  // 1000 MDT → 20%
+        (10_000,  1_000),  // 10000 MDT→ 10% (floor)
+    ];
 
-    // SECURITY: Clamp f64 before casting to u128 to avoid NaN/negative
-    let raw = stake_f * effective_factor;
-    if raw.is_nan() || raw < 0.0 {
-        0u128
-    } else if raw > u128::MAX as f64 {
-        u128::MAX
+    // Normalize stake to whole tokens (integer division — truncate)
+    let tokens = stake / ONE_TOKEN;
+
+    // Find the two bracketing breakpoints
+    let eff_bps: u128 = if tokens >= BREAKPOINTS[BREAKPOINTS.len() - 1].0 {
+        // Above maximum breakpoint → floor (10%)
+        BREAKPOINTS[BREAKPOINTS.len() - 1].1
     } else {
-        raw as u128
-    }
+        // Binary-search style linear scan (small array, O(1) in practice)
+        let mut eff = BREAKPOINTS[0].1; // default
+        for i in 0..BREAKPOINTS.len() - 1 {
+            let (t0, e0) = BREAKPOINTS[i];
+            let (t1, e1) = BREAKPOINTS[i + 1];
+            if tokens >= t0 && tokens < t1 {
+                // Linear interpolation between breakpoints:
+                // eff = e0 + (e1 - e0) * (tokens - t0) / (t1 - t0)
+                // Note: e1 < e0 (decreasing), so we handle subtraction carefully
+                let range_tokens = t1 - t0;
+                let offset_tokens = tokens - t0;
+                if e0 >= e1 {
+                    let delta = e0 - e1;
+                    eff = e0 - (delta * offset_tokens / range_tokens);
+                } else {
+                    let delta = e1 - e0;
+                    eff = e0 + (delta * offset_tokens / range_tokens);
+                }
+                break;
+            }
+        }
+        eff
+    };
+
+    // Apply: effective_stake = stake * eff_bps / BPS_FULL
+    stake * eff_bps / BPS_FULL
 }
 
 /// Minimum stake requirements for each tier (in base units)
@@ -89,13 +135,13 @@ impl NodeTier {
         }
     }
 
-    /// Get reward share for this tier
-    pub fn emission_share(&self) -> f64 {
+    /// Get reward share for this tier in BPS (10_000 = 100%).
+    pub fn emission_share_bps(&self) -> u32 {
         match self {
-            NodeTier::LightNode => 0.0,       // No emission, only tx fees
-            NodeTier::FullNode => 0.02,       // 2% infrastructure
-            NodeTier::Validator => 0.28,      // 28% validation
-            NodeTier::SuperValidator => 0.28, // Same as validator + priority fees
+            NodeTier::LightNode => 0,        // No emission, only tx fees
+            NodeTier::FullNode => 200,       // 2% infrastructure
+            NodeTier::Validator => 2_800,    // 28% validation
+            NodeTier::SuperValidator => 2_800, // Same as validator + priority fees
         }
     }
 
@@ -139,13 +185,13 @@ pub enum GpuCapability {
 }
 
 impl GpuCapability {
-    /// Get GPU bonus multiplier (capped at 40%)
-    pub fn bonus_multiplier(&self) -> f64 {
+    /// Get GPU bonus multiplier in BPS (10_000 = 1.0x, 12_000 = 1.2x).
+    pub fn bonus_multiplier_bps(&self) -> u128 {
         match self {
-            GpuCapability::None => 1.0,          // No bonus
-            GpuCapability::Basic => 1.20,        // +20%
-            GpuCapability::Advanced => 1.30,     // +30%
-            GpuCapability::Professional => 1.40, // +40% (capped)
+            GpuCapability::None => 10_000,          // 1.0x — no bonus
+            GpuCapability::Basic => 12_000,          // 1.2x — +20%
+            GpuCapability::Advanced => 13_000,       // 1.3x — +30%
+            GpuCapability::Professional => 14_000,   // 1.4x — +40% (capped)
         }
     }
 
@@ -163,7 +209,7 @@ pub struct NodeInfo {
     pub stake: u128,
     pub registered_at: u64, // block height
     pub last_active: u64,   // block height
-    pub uptime_score: f64,  // 0.0 - 1.0
+    pub uptime_score_bps: u32,  // 0 - 10_000 BPS (0% - 100%)
     pub blocks_produced: u64,
     pub tx_relayed: u64,
     /// GPU capability for AI tasks
@@ -180,7 +226,7 @@ impl NodeInfo {
             stake,
             registered_at: block_height,
             last_active: block_height,
-            uptime_score: 1.0,
+            uptime_score_bps: 10_000, // 100% initial uptime
             blocks_produced: 0,
             tx_relayed: 0,
             gpu: GpuCapability::None,
@@ -205,18 +251,11 @@ impl NodeInfo {
         logarithmic_stake(self.stake)
     }
 
-    /// Calculate effective stake with GPU bonus
+    /// Calculate effective stake with GPU bonus (deterministic integer math).
     pub fn effective_stake_with_gpu(&self) -> u128 {
         let base = self.effective_stake();
-        // SECURITY: Clamp f64 before casting to u128
-        let raw = base as f64 * self.gpu.bonus_multiplier();
-        if raw.is_nan() || raw < 0.0 {
-            0u128
-        } else if raw > u128::MAX as f64 {
-            u128::MAX
-        } else {
-            raw as u128
-        }
+        // GPU bonus in BPS: base * multiplier_bps / 10_000
+        base * self.gpu.bonus_multiplier_bps() / 10_000
     }
 
     /// Set GPU capability
@@ -246,10 +285,13 @@ impl NodeInfo {
         self.tx_relayed += count;
     }
 
-    /// Update uptime score
-    pub fn update_uptime(&mut self, score: f64) {
-        // Exponential moving average
-        self.uptime_score = self.uptime_score * 0.95 + score * 0.05;
+    /// Update uptime score using integer EMA.
+    ///
+    /// `score_bps` is the new observation in BPS (0..10_000).
+    /// EMA: new = old * 950 / 1000 + score * 50 / 1000
+    pub fn update_uptime(&mut self, score_bps: u32) {
+        self.uptime_score_bps =
+            (self.uptime_score_bps as u64 * 950 / 1000 + score_bps as u64 * 50 / 1000) as u32;
     }
 }
 

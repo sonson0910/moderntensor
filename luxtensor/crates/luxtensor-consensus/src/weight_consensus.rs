@@ -541,6 +541,39 @@ impl VTrustScorer {
             entry.1 = entry.1.saturating_add(total);
         }
     }
+
+    // ── Convenience serialization (RocksDB one-liner) ──────────────────
+
+    /// Serialize current VTrust state to bytes (JSON).
+    ///
+    /// ```rust,ignore
+    /// let bytes = scorer.to_bytes();
+    /// storage.put(b"vtrust", &bytes);
+    /// ```
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let snap = self.snapshot();
+        serde_json::to_vec(&snap).unwrap_or_default()
+    }
+
+    /// Restore VTrust state from bytes (JSON).
+    ///
+    /// Returns `true` on success, `false` if deserialization failed
+    /// (in which case the scorer is left unchanged).
+    ///
+    /// ```rust,ignore
+    /// if let Some(bytes) = storage.get(b"vtrust") {
+    ///     scorer.from_bytes(&bytes);
+    /// }
+    /// ```
+    pub fn from_bytes(&mut self, data: &[u8]) -> bool {
+        match serde_json::from_slice::<VTrustSnapshot>(data) {
+            Ok(snap) => {
+                self.restore(snap);
+                true
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 // ==================== Random Committee Selection (Fix 6) ====================
@@ -621,25 +654,25 @@ impl WeightConsensusManager {
         weights: Vec<(u64, u16)>,
         current_block: u64,
         validator_count: usize,
-    ) -> Result<Hash, ConsensusError> {
+    ) -> Result<Hash, WeightConsensusError> {
         // SECURITY: Use write lock for cooldown check + update atomically.
         // 🔧 FIX: Previously used read lock for check, then separate write lock for update,
         // allowing concurrent calls to bypass the cooldown via TOCTOU race.
         let mut last_proposal = self.last_proposal.write();
         if let Some(last_block) = last_proposal.get(&proposer).copied() {
             if current_block < last_block + self.config.proposal_cooldown {
-                return Err(ConsensusError::ProposalCooldown);
+                return Err(WeightConsensusError::ProposalCooldown);
             }
         }
 
         // Check minimum validators
         if validator_count < self.config.min_validators {
-            return Err(ConsensusError::InsufficientValidators);
+            return Err(WeightConsensusError::InsufficientValidators);
         }
 
         // Check weights not empty
         if weights.is_empty() {
-            return Err(ConsensusError::EmptyWeights);
+            return Err(WeightConsensusError::EmptyWeights);
         }
 
         // Create proposal
@@ -677,10 +710,10 @@ impl WeightConsensusManager {
         approve: bool,
         current_block: u64,
         voter_stake: u128,
-    ) -> Result<ConsensusResult, ConsensusError> {
+    ) -> Result<ConsensusResult, WeightConsensusError> {
         // SECURITY: Reject zero-stake voters (not a real validator)
         if voter_stake == 0 {
-            return Err(ConsensusError::InsufficientValidators);
+            return Err(WeightConsensusError::InsufficientValidators);
         }
 
         let mut proposals = self.proposals.write();
@@ -723,12 +756,12 @@ impl WeightConsensusManager {
     fn find_proposal_mut<'a>(
         proposals: &'a mut HashMap<u64, Vec<WeightProposal>>,
         proposal_id: Hash,
-    ) -> Result<&'a mut WeightProposal, ConsensusError> {
+    ) -> Result<&'a mut WeightProposal, WeightConsensusError> {
         proposals
             .values_mut()
             .flat_map(|v| v.iter_mut())
             .find(|p| p.id == proposal_id)
-            .ok_or(ConsensusError::ProposalNotFound)
+            .ok_or(WeightConsensusError::ProposalNotFound)
     }
 
     /// Validate that a voter is eligible to vote on a proposal
@@ -736,40 +769,40 @@ impl WeightConsensusManager {
         proposal: &mut WeightProposal,
         voter: &Address,
         current_block: u64,
-    ) -> Result<(), ConsensusError> {
+    ) -> Result<(), WeightConsensusError> {
         // Check expiration
         if proposal.is_expired(current_block) {
             proposal.status = ProposalStatus::Expired;
-            return Err(ConsensusError::ProposalExpired);
+            return Err(WeightConsensusError::ProposalExpired);
         }
 
         // Check pending status
         if proposal.status != ProposalStatus::Pending {
-            return Err(ConsensusError::ProposalNotPending);
+            return Err(WeightConsensusError::ProposalNotPending);
         }
 
         // Check duplicate vote
         if proposal.has_voted(voter) {
-            return Err(ConsensusError::AlreadyVoted);
+            return Err(WeightConsensusError::AlreadyVoted);
         }
 
         // Check self-voting
         if proposal.proposer == *voter {
-            return Err(ConsensusError::CannotVoteOwnProposal);
+            return Err(WeightConsensusError::CannotVoteOwnProposal);
         }
 
         Ok(())
     }
 
     /// Check if proposal has reached consensus
-    pub fn check_consensus(&self, proposal_id: Hash) -> Result<ConsensusResult, ConsensusError> {
+    pub fn check_consensus(&self, proposal_id: Hash) -> Result<ConsensusResult, WeightConsensusError> {
         let proposals = self.proposals.read();
 
         let proposal = proposals
             .values()
             .flat_map(|v| v.iter())
             .find(|p| p.id == proposal_id)
-            .ok_or(ConsensusError::ProposalNotFound)?;
+            .ok_or(WeightConsensusError::ProposalNotFound)?;
 
         Ok(self.check_consensus_internal(proposal))
     }
@@ -803,7 +836,7 @@ impl WeightConsensusManager {
         &self,
         proposal_id: Hash,
         _current_block: u64,
-    ) -> Result<Vec<(u64, u16)>, ConsensusError> {
+    ) -> Result<Vec<(u64, u16)>, WeightConsensusError> {
         let mut proposals = self.proposals.write();
 
         // Find proposal
@@ -811,11 +844,11 @@ impl WeightConsensusManager {
             .values_mut()
             .flat_map(|v| v.iter_mut())
             .find(|p| p.id == proposal_id)
-            .ok_or(ConsensusError::ProposalNotFound)?;
+            .ok_or(WeightConsensusError::ProposalNotFound)?;
 
         // Check status
         if proposal.status != ProposalStatus::Approved {
-            return Err(ConsensusError::NotApproved);
+            return Err(WeightConsensusError::NotApproved);
         }
 
         // Mark as applied
@@ -967,9 +1000,9 @@ impl WeightConsensusManager {
     }
 }
 
-/// Errors for consensus operations
+/// Errors for weight consensus operations
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConsensusError {
+pub enum WeightConsensusError {
     ProposalNotFound,
     ProposalExpired,
     ProposalNotPending,
@@ -981,7 +1014,7 @@ pub enum ConsensusError {
     NotApproved,
 }
 
-impl std::fmt::Display for ConsensusError {
+impl std::fmt::Display for WeightConsensusError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ProposalNotFound => write!(f, "Proposal not found"),
@@ -997,7 +1030,7 @@ impl std::fmt::Display for ConsensusError {
     }
 }
 
-impl std::error::Error for ConsensusError {}
+impl std::error::Error for WeightConsensusError {}
 
 #[cfg(test)]
 mod tests {
@@ -1050,7 +1083,7 @@ mod tests {
         // Second proposal too soon
         assert_eq!(
             manager.propose_weights(1, proposer, weights.clone(), 10, 5),
-            Err(ConsensusError::ProposalCooldown)
+            Err(WeightConsensusError::ProposalCooldown)
         );
 
         // After cooldown
@@ -1069,7 +1102,7 @@ mod tests {
         // Proposer tries to vote
         assert_eq!(
             manager.vote(proposal_id, proposer, true, 5, 1000),
-            Err(ConsensusError::CannotVoteOwnProposal)
+            Err(WeightConsensusError::CannotVoteOwnProposal)
         );
     }
 
@@ -1093,7 +1126,7 @@ mod tests {
 
         // Vote after expiry (block 100 > 50)
         let result = manager.vote(proposal_id, voter1, true, 100, 1000);
-        assert_eq!(result, Err(ConsensusError::ProposalExpired));
+        assert_eq!(result, Err(WeightConsensusError::ProposalExpired));
     }
 
     // ==================== Voting Pattern Tracker Tests ====================
@@ -1426,3 +1459,4 @@ mod tests {
         assert_eq!(score, 0.0, "Unknown validator after penalty should have score 0");
     }
 }
+

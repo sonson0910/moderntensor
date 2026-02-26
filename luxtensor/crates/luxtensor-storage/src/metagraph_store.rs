@@ -624,6 +624,168 @@ impl MetagraphDB {
     pub fn get_active_validator_count(&self) -> Result<usize> {
         Ok(self.get_active_validators()?.len())
     }
+
+    /// Sync MetagraphDB entries from BlockchainDB raw storage.
+    ///
+    /// BlockchainDB stores neurons serialized as NeuronInfo (luxtensor-rpc type),
+    /// validators as ValidatorData (luxtensor-rpc type), and subnets as SubnetInfo.
+    /// This method deserializes those raw bytes using a compatible local struct and
+    /// writes any **missing** entries into MetagraphDB without overwriting existing
+    /// Yuma-computed values (trust / rank / incentive / dividends).
+    ///
+    /// Called by the P2P block handler after each received block so that
+    /// non-block-producer nodes stay in sync with Yuma state.
+    pub fn sync_from_blockchain(&self, blockchain_db: &crate::BlockchainDB) -> usize {
+        // Local mirror of luxtensor_rpc::types::NeuronInfo (bincode-compatible)
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct LegacyNeuronInfo {
+            uid: u64,
+            subnet_id: u64,
+            hotkey: String,
+            coldkey: String,
+            #[serde(default)]
+            address: String,
+            stake: u128,
+            trust: f64,
+            consensus: f64,
+            rank: u64,
+            incentive: f64,
+            dividends: f64,
+            emission: u128,
+            last_update: u64,
+            active: bool,
+            endpoint: Option<String>,
+        }
+
+        // Local mirror of luxtensor_rpc::types::SubnetInfo (bincode-compatible)
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct LegacySubnetInfo {
+            subnet_id: u64,
+            name: String,
+            owner: String,
+            min_stake: u128,
+            #[serde(default)]
+            participant_count: usize,
+            #[serde(default)]
+            total_stake: u128,
+            #[serde(default)]
+            created_at: u64,
+        }
+
+        // Local mirror of luxtensor_rpc::types::ValidatorInfo (bincode-compatible)
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct LegacyValidatorInfo {
+            address: String,
+            name: String,
+            stake: u128,
+            #[serde(default)]
+            active: bool,
+            #[serde(default)]
+            registered_at: u64,
+        }
+
+        let mut synced = 0usize;
+
+        // ── Neurons ──────────────────────────────────────────────────────────
+        if let Ok(raw_neurons) = blockchain_db.get_all_neurons() {
+            for ((subnet_id, uid), data) in raw_neurons {
+                // Only write if not already in MetagraphDB (preserve Yuma values)
+                if self.get_neuron(subnet_id, uid).ok().flatten().is_some() {
+                    continue;
+                }
+                if let Ok(ni) = bincode::deserialize::<LegacyNeuronInfo>(&data) {
+                    let hotkey_hex = ni.hotkey.trim_start_matches("0x");
+                    let coldkey_hex = ni.coldkey.trim_start_matches("0x");
+                    let mut hotkey = [0u8; 20];
+                    let mut coldkey = [0u8; 20];
+                    if hex::decode_to_slice(hotkey_hex, &mut hotkey).is_ok()
+                        && hex::decode_to_slice(coldkey_hex, &mut coldkey).is_ok()
+                    {
+                        let nd = NeuronData {
+                            uid,
+                            subnet_id,
+                            hotkey,
+                            coldkey,
+                            stake: ni.stake,
+                            trust: 0,
+                            rank: 0,
+                            incentive: 0,
+                            dividends: 0,
+                            emission: 0,
+                            last_update: ni.last_update,
+                            active: ni.active,
+                            endpoint: ni.endpoint.unwrap_or_default(),
+                        };
+                        if self.store_neuron(&nd).is_ok() {
+                            synced += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Subnets ──────────────────────────────────────────────────────────
+        if let Ok(raw_subnets) = blockchain_db.get_all_subnets() {
+            for (id, data) in raw_subnets {
+                if self.get_subnet(id).ok().flatten().is_some() {
+                    continue;
+                }
+                if let Ok(si) = bincode::deserialize::<LegacySubnetInfo>(&data) {
+                    let owner_hex = si.owner.trim_start_matches("0x");
+                    let mut owner = [0u8; 20];
+                    let _ = hex::decode_to_slice(owner_hex, &mut owner);
+                    let sd = SubnetData {
+                        id,
+                        name: si.name,
+                        owner,
+                        emission_rate: 0,
+                        created_at: si.created_at,
+                        tempo: 100,
+                        max_neurons: 256,
+                        min_stake: si.min_stake,
+                        active: true,
+                    };
+                    if self.store_subnet(&sd).is_ok() {
+                        synced += 1;
+                    }
+                }
+            }
+        }
+
+        // ── Validators ───────────────────────────────────────────────────────
+        if let Ok(raw_validators) = blockchain_db.get_all_validators() {
+            for (addr_bytes, data) in raw_validators {
+                if addr_bytes.len() < 20 {
+                    continue;
+                }
+                let mut addr = [0u8; 20];
+                addr.copy_from_slice(&addr_bytes[..20]);
+                if self.get_validator(&addr).ok().flatten().is_some() {
+                    continue;
+                }
+                if let Ok(vi) = bincode::deserialize::<LegacyValidatorInfo>(&data) {
+                    let vd = ValidatorData {
+                        address: addr,
+                        public_key: vec![],
+                        stake: vi.stake,
+                        is_active: vi.active,
+                        name: vi.name,
+                        registered_at: vi.registered_at,
+                        last_block_produced: 0,
+                        blocks_produced: 0,
+                    };
+                    if self.register_validator(&vd).is_ok() {
+                        synced += 1;
+                    }
+                }
+            }
+        }
+
+        synced
+    }
 }
 
 #[cfg(test)]

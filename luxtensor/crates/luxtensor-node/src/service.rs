@@ -46,7 +46,8 @@ use luxtensor_consensus::{
 use luxtensor_consensus::weight_consensus::{VTrustScorer, VTrustSnapshot};
 use luxtensor_core::{Block, StateDB};
 use luxtensor_storage::CachedStateDB;
-use luxtensor_core::bridge::{BridgeConfig, InMemoryBridge};
+use luxtensor_core::bridge::{BridgeConfig, PersistentBridge};
+use luxtensor_storage::bridge_store::RocksDBBridgeStore;
 use luxtensor_core::multisig::MultisigManager;
 use luxtensor_crypto::KeyPair;
 use luxtensor_network::eclipse_protection::{EclipseConfig, EclipseProtection};
@@ -68,65 +69,10 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-/// Get current Unix timestamp (seconds since epoch)
-/// Panics only if system time is before Unix epoch (practically impossible)
-#[inline]
-pub(crate) fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::ZERO)
-        .as_secs()
-}
-
-/// Parse a hex address string (with or without 0x prefix) into [u8; 20]
-pub(crate) fn parse_address_from_hex(addr_str: &str) -> Result<[u8; 20]> {
-    let addr_str = addr_str.strip_prefix("0x").unwrap_or(addr_str);
-    if addr_str.len() != 40 {
-        return Err(anyhow::anyhow!("Invalid address length"));
-    }
-    let bytes =
-        hex::decode(addr_str).context(format!("Failed to decode hex address: {}", addr_str))?;
-    let mut addr = [0u8; 20];
-    addr.copy_from_slice(&bytes);
-    Ok(addr)
-}
-
-/// Detect external IP address using local network interfaces
-/// Returns the first non-loopback IPv4 address found
-pub(crate) fn detect_external_ip() -> Option<String> {
-    // Try to get local IP by connecting to a public address (doesn't actually send data)
-    use std::net::UdpSocket;
-
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        // Connect to Google's DNS to determine local IP that would be used for external traffic
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                let ip = addr.ip().to_string();
-                // Don't return loopback or link-local addresses
-                if !ip.starts_with("127.") && !ip.starts_with("169.254.") {
-                    return Some(ip);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Convert PeerId to synthetic IP for subnet diversity tracking
-/// This is a hash-based approach since libp2p PeerIds don't directly contain IPs
-pub(crate) fn peer_id_to_synthetic_ip(peer_id: &str) -> std::net::IpAddr {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    peer_id.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    // Create a synthetic IPv4 from the hash for subnet diversity calculation
-    let bytes = hash.to_be_bytes();
-    std::net::IpAddr::V4(std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]))
-}
+// Utility functions have been extracted to `service_utils.rs` for modularity.
+pub(crate) use crate::service_utils::{
+    current_timestamp, parse_address_from_hex, detect_external_ip, peer_id_to_synthetic_ip,
+};
 
 /// Node service that orchestrates all components
 #[allow(dead_code)] // Some fields are held for Arc ownership/lifecycle management and not read directly
@@ -187,7 +133,7 @@ pub struct NodeService {
     /// Dispute manager for optimistic AI fraud proofs
     pub(crate) dispute_manager: Arc<DisputeManager>,
     /// Cross-chain bridge for asset transfers
-    pub(crate) bridge: Arc<InMemoryBridge>,
+    pub(crate) bridge: Arc<PersistentBridge>,
     /// Multisig wallet manager for multi-signature transactions
     pub(crate) multisig_manager: Arc<MultisigManager>,
     /// Merkle root caching layer wrapping state_db for efficient block production
@@ -198,8 +144,36 @@ pub struct NodeService {
     pub(crate) ws_broadcast: Option<tokio::sync::mpsc::Sender<BroadcastEvent>>,
     /// VTrust scorer for validator trust scoring (persisted across restarts — L-NEW-1 fix)
     pub(crate) vtrust_scorer: Arc<RwLock<VTrustScorer>>,
-    /// Path to VTrust snapshot file (bincode-serialized VTrustSnapshot)
+    /// Path to VTrust snapshot file (JSON-serialized VTrustSnapshot)
     pub(crate) vtrust_snapshot_path: std::path::PathBuf,
+    /// Emission controller for block reward calculation with halving + utility adjustment
+    pub(crate) emission_controller: Arc<RwLock<luxtensor_consensus::EmissionController>>,
+    /// Halving schedule for Bitcoin-like reward reduction
+    pub(crate) halving_schedule: Arc<luxtensor_consensus::HalvingSchedule>,
+    /// Burn manager for token burning (tx fees, slashing, subnet registration)
+    pub(crate) burn_manager: Arc<luxtensor_consensus::BurnManager>,
+    /// EIP-1559 fee market for dynamic gas pricing
+    pub(crate) fee_market: Arc<RwLock<luxtensor_consensus::FeeMarket>>,
+    /// On-chain governance module for protocol parameter changes and upgrades
+    pub(crate) governance: Arc<RwLock<luxtensor_consensus::GovernanceModule>>,
+    /// Commit-reveal manager for tamper-proof validator weight submissions
+    pub(crate) commit_reveal: Arc<luxtensor_consensus::CommitRevealManager>,
+    /// Validator rotation manager for automatic epoch-based validator set updates
+    pub(crate) validator_rotation: Arc<RwLock<luxtensor_consensus::ValidatorRotation>>,
+    /// AI layer circuit breaker for cascading failure protection
+    pub(crate) ai_circuit_breaker: Arc<luxtensor_consensus::AILayerCircuitBreaker>,
+    /// Scoring manager for miner/validator performance tracking
+    pub(crate) scoring_manager: Arc<RwLock<luxtensor_consensus::ScoringManager>>,
+    /// World Semantic Index — cross-contract shared HNSW vector registry
+    pub(crate) semantic_registry: Arc<RwLock<luxtensor_core::semantic_registry::SemanticRegistry>>,
+    /// AI Precompile state (request tracking, training jobs) for EVM AI opcodes
+    pub(crate) ai_precompile_state: Arc<luxtensor_contracts::AIPrecompileState>,
+    /// Proof of Training verifier for federated learning gradient verification
+    pub(crate) pot_verifier: Arc<RwLock<luxtensor_zkvm::pot_verifier::PoTVerifier>>,
+    /// Oracle request processor for AI inference + ZK proof generation
+    pub(crate) request_processor: Arc<luxtensor_oracle::RequestProcessor>,
+    /// VRF keypair (secp256k1 EC-VRF) for attaching verifiable randomness proofs to blocks
+    pub(crate) vrf_keypair: Option<Arc<luxtensor_crypto::vrf::VrfKeypair>>,
 }
 
 impl NodeService {
@@ -265,10 +239,8 @@ impl NodeService {
         let merkle_cache = Arc::new(CachedStateDB::with_defaults(storage_state_db));
         info!("  ✓ Merkle cache initialized (height_cache=256, account_hashes=4096)");
 
-        // Initialize transaction executor
-        info!("⚡ Initializing transaction executor...");
-        let executor = Arc::new(TransactionExecutor::new(config.node.chain_id));
-        info!("  ✓ Transaction executor initialized (chain_id: {})", config.node.chain_id);
+        // Transaction executor is initialized after MetagraphDB (see below)
+        // so we can attach the metagraph precompile handler.
 
         // Initialize consensus
         info!("⚖️  Initializing consensus...");
@@ -292,11 +264,11 @@ impl NodeService {
         info!("    - Epoch length: {} blocks", config.consensus.epoch_length);
 
         // Initialize VTrust scorer — load persisted snapshot if available (L-NEW-1 fix)
-        let vtrust_snapshot_path = config.node.data_dir.join("vtrust_snapshot.bin");
+        let vtrust_snapshot_path = config.node.data_dir.join("vtrust_snapshot.json");
         let vtrust_scorer = {
             let mut scorer = VTrustScorer::new();
             match std::fs::read(&vtrust_snapshot_path) {
-                Ok(bytes) => match bincode::deserialize::<VTrustSnapshot>(&bytes) {
+                Ok(bytes) => match serde_json::from_slice::<VTrustSnapshot>(&bytes) {
                     Ok(snapshot) => {
                         scorer.restore(snapshot);
                         info!("  ✓ VTrust scorer restored from {:?}", vtrust_snapshot_path);
@@ -492,6 +464,23 @@ impl NodeService {
         );
         info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
 
+        // Initialize transaction executor with MetagraphDB attached.
+        // The executor intercepts tx.to == PRECOMPILE_METAGRAPH and writes
+        // to MetagraphDB instead of calling the EVM. This propagates neuron/
+        // validator/subnet ops to ALL nodes via standard block gossip.
+        // Initialize AI Precompile State (before executor, so it can be attached)
+        let ai_precompile_state = Arc::new(luxtensor_contracts::AIPrecompileState::new());
+        info!("  ✓ AI precompile state initialized (AI_REQUEST, VERIFY_PROOF, VECTOR_STORE, etc.)");
+
+        info!("⚡ Initializing transaction executor...");
+        let executor = Arc::new(
+            TransactionExecutor::new(config.node.chain_id)
+                .with_metagraph(metagraph_db.clone())
+                .with_ai_precompiles(ai_precompile_state.clone())
+        );
+        info!("  ✓ Transaction executor initialized (chain_id: {}, metagraph + AI precompiles: attached)",
+            config.node.chain_id);
+
         // Initialize AI Task Dispatcher for DePIN workload distribution
         let task_dispatcher =
             Arc::new(TaskDispatcher::new(metagraph_db.clone(), DispatcherConfig::default()));
@@ -522,8 +511,13 @@ impl NodeService {
         let dispute_manager = Arc::new(DisputeManager::default_config());
         info!("  ✓ Dispute Manager initialized (optimistic AI fraud proofs)");
 
-        // Initialize Cross-Chain Bridge (in-memory for now, swap for persistent later)
-        let bridge = Arc::new(InMemoryBridge::new(BridgeConfig::default()));
+        // Initialize Cross-Chain Bridge (RocksDB-backed persistent store)
+        let bridge_store = Arc::new(RocksDBBridgeStore::new(storage.inner_db()));
+        let bridge = Arc::new(
+            PersistentBridge::new(bridge_store, BridgeConfig::default())
+                .map_err(|e| luxtensor_core::CoreError::InvalidState(format!("Bridge init: {}", e)))?
+        );
+        info!("  ✓ Persistent bridge initialized (RocksDB-backed, write-through cache)");
         info!("  ✓ Cross-Chain Bridge initialized (lock-and-mint / burn-and-release)");
 
         // Initialize Multisig Wallet Manager
@@ -538,6 +532,88 @@ impl NodeService {
             violations_before_ban: 10,
         }));
         info!("  ✓ Network rate limiter initialized");
+
+        // Initialize Emission Controller (tokenomics: halving + utility-adjusted rewards)
+        let emission_controller = Arc::new(RwLock::new(
+            luxtensor_consensus::EmissionController::new(luxtensor_consensus::EmissionConfig::default()),
+        ));
+        info!("  ✓ Emission controller initialized");
+
+        // Initialize Halving Schedule (Bitcoin-like block reward halving)
+        let halving_schedule = Arc::new(luxtensor_consensus::HalvingSchedule::default());
+        info!("  ✓ Halving schedule initialized (interval: {} blocks)", luxtensor_consensus::HALVING_INTERVAL);
+
+        // Initialize Burn Manager (tx fee burn, subnet registration burn, slashing)
+        let burn_manager = Arc::new(
+            luxtensor_consensus::BurnManager::new(luxtensor_consensus::BurnConfig::default()),
+        );
+        info!("  ✓ Burn manager initialized");
+
+        // Initialize EIP-1559 Fee Market (dynamic gas pricing)
+        let fee_market = Arc::new(RwLock::new(luxtensor_consensus::FeeMarket::new()));
+        info!("  ✓ EIP-1559 fee market initialized (base_fee: {} gwei)",
+            luxtensor_consensus::FeeMarket::new().current_base_fee() / 1_000_000_000);
+
+        // Initialize Governance Module (on-chain voting for protocol changes)
+        let governance = Arc::new(RwLock::new(
+            luxtensor_consensus::GovernanceModule::new(luxtensor_consensus::GovernanceConfig::default()),
+        ));
+        info!("  ✓ Governance module initialized (on-chain proposals + voting)");
+
+        // Initialize Commit-Reveal Manager (tamper-proof weight submissions)
+        let commit_reveal = Arc::new(
+            luxtensor_consensus::CommitRevealManager::new(luxtensor_consensus::CommitRevealConfig::default()),
+        );
+        info!("  ✓ Commit-reveal manager initialized (anti-manipulation weight protocol)");
+
+        // Initialize Validator Rotation (epoch-based validator set management)
+        let validator_rotation = Arc::new(RwLock::new(
+            luxtensor_consensus::ValidatorRotation::new(luxtensor_consensus::RotationConfig::default()),
+        ));
+        info!("  ✓ Validator rotation initialized (automatic epoch transitions)");
+
+        // Initialize AI Layer Circuit Breaker (cascading failure protection)
+        let ai_circuit_breaker = Arc::new(luxtensor_consensus::AILayerCircuitBreaker::new());
+        info!("  ✓ AI layer circuit breaker initialized (weight_consensus + commit_reveal + emission)");
+
+        // Initialize Scoring Manager (miner/validator performance tracking)
+        let scoring_manager = Arc::new(RwLock::new(luxtensor_consensus::ScoringManager::new()));
+        info!("  ✓ Scoring manager initialized (miner + validator metrics)");
+
+        // Initialize World Semantic Index (cross-contract HNSW vector registry)
+        let semantic_registry = Arc::new(RwLock::new(
+            luxtensor_core::semantic_registry::SemanticRegistry::default(),
+        ));
+        info!("  ✓ Semantic registry initialized (world vector index, 7 domains)");
+
+        // (ai_precompile_state already initialized above, before executor)
+
+        // Initialize Proof of Training Verifier (gradient verification for federated learning)
+        let pot_verifier = Arc::new(RwLock::new(
+            luxtensor_zkvm::pot_verifier::PoTVerifier::new(),
+        ));
+        info!("  ✓ PoT verifier initialized (structural validation, ZK delegation when configured)");
+
+        // Initialize Oracle Request Processor (dev-mode: mock prover)
+        let request_processor = Arc::new(luxtensor_oracle::RequestProcessor::new());
+
+        // If oracle_elf_path is configured, load ELF binary and initialize for production ZK proofs
+        if let Some(ref elf_path) = config.node.oracle_elf_path {
+            match std::fs::read(elf_path) {
+                Ok(elf_bytes) => {
+                    info!("  📦 Loading Oracle ELF binary from {:?} ({} bytes)", elf_path, elf_bytes.len());
+                    match request_processor.initialize(Some(elf_bytes)).await {
+                        Ok(()) => info!("  ✓ Oracle request processor initialized (production ZK proofs)"),
+                        Err(e) => warn!("  ⚠️ Oracle ELF init failed: {} (falling back to dev-mode)", e),
+                    }
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to read Oracle ELF binary at {:?}: {} (running in dev-mode)", elf_path, e);
+                }
+            }
+        } else {
+            info!("  ✓ Oracle request processor initialized (dev-mode, set oracle_elf_path in config for production)");
+        }
 
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(16);
@@ -573,8 +649,8 @@ impl NodeService {
             }
         };
 
-        // Load validator keypair if configured
-        let validator_keypair = if config.node.is_validator {
+        // Load validator keypair + VRF keypair if configured
+        let (validator_keypair, vrf_keypair) = if config.node.is_validator {
             if let Some(key_path) = &config.node.validator_key_path {
                 match std::fs::read(key_path) {
                     Ok(key_bytes) if key_bytes.len() >= 32 => {
@@ -582,10 +658,23 @@ impl NodeService {
                         secret.copy_from_slice(&key_bytes[..32]);
                         let result = KeyPair::from_secret(&secret);
 
-                        // ── 🎲 VRF key loading (production-vrf feature) ──────────────
+                        // ── 🎲 VRF keypair derivation (secp256k1 EC-VRF) ─────────────
                         // Derive the VRF keypair from the same 32-byte secret so validators
-                        // don't need a separate key file.  Feature-gated so the standard
-                        // build stays unchanged.
+                        // don't need a separate key file. The VRF proof is attached to
+                        // every block header for verifiable randomness (C2 security fix).
+                        // MUST be done BEFORE zeroization of the secret.
+                        let vrf_kp = match luxtensor_crypto::vrf::VrfKeypair::from_seed(&secret) {
+                            Ok(kp) => {
+                                info!("🎲 VRF keypair derived (secp256k1 EC-VRF)");
+                                Some(Arc::new(kp))
+                            }
+                            Err(e) => {
+                                warn!("⚠️ Failed to derive VRF keypair: {}", e);
+                                None
+                            }
+                        };
+
+                        // Also set production-vrf key on consensus if feature is enabled.
                         #[cfg(feature = "production-vrf")]
                         {
                             match consensus.read().set_vrf_key(&secret) {
@@ -603,29 +692,29 @@ impl NodeService {
                                     "🔑 Loaded validator key, address: 0x{}",
                                     hex::encode(&address)
                                 );
-                                Some(keypair)
+                                (Some(keypair), vrf_kp)
                             }
                             Err(e) => {
                                 warn!("Failed to parse validator key: {}", e);
-                                None
+                                (None, None)
                             }
                         }
                     }
                     Ok(_) => {
                         warn!("Validator key file too short, need at least 32 bytes");
-                        None
+                        (None, None)
                     }
                     Err(e) => {
                         warn!("Could not read validator key file: {}", e);
-                        None
+                        (None, None)
                     }
                 }
             } else {
                 warn!("Validator mode enabled but no key path configured, blocks will be unsigned");
-                None
+                (None, None)
             }
         } else {
-            None
+            (None, None)
         };
 
         Ok(Self {
@@ -660,8 +749,9 @@ impl NodeService {
             best_height_guard: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
                 initial_best_height,
             )),
-            // Start as syncing=true; block production pauses until sync completes or timeout
-            is_syncing: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            // 🔧 FIX: If node already has blocks in storage, it was a restart — no sync needed.
+            // Only set syncing=true for brand-new nodes (height == 0).
+            is_syncing: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(initial_best_height == 0)),
             agent_registry,
             agent_trigger_engine,
             dispute_manager,
@@ -672,6 +762,20 @@ impl NodeService {
             ws_broadcast: None,
             vtrust_scorer,
             vtrust_snapshot_path,
+            emission_controller,
+            halving_schedule,
+            burn_manager,
+            fee_market,
+            governance,
+            commit_reveal,
+            validator_rotation,
+            ai_circuit_breaker,
+            scoring_manager,
+            semantic_registry,
+            ai_precompile_state,
+            pot_verifier,
+            request_processor,
+            vrf_keypair,
         })
     }
 
@@ -718,7 +822,7 @@ impl NodeService {
         // Persist VTrust scorer snapshot for next startup (L-NEW-1 fix)
         {
             let snapshot = self.vtrust_scorer.read().snapshot();
-            match bincode::serialize(&snapshot) {
+            match serde_json::to_vec(&snapshot) {
                 Ok(bytes) => {
                     if let Err(e) = std::fs::write(&self.vtrust_snapshot_path, &bytes) {
                         warn!("⚠️ Failed to save VTrust snapshot: {}", e);
@@ -815,34 +919,6 @@ impl NodeService {
         info!("");
     }
 
-    /// Get node statistics
-    pub async fn get_stats(&self) -> Result<NodeStats> {
-        let height = self.storage.get_best_height()?.unwrap_or(0);
-        let validator_count = {
-            let consensus = self.consensus.read();
-            consensus.validator_count()
-        };
-        let mempool_size = self.mempool.len();
-
-        Ok(NodeStats {
-            height,
-            validator_count,
-            is_validator: self.config.node.is_validator,
-            chain_id: self.config.node.chain_id,
-            mempool_size,
-        })
-    }
-
-}
-
-/// Node statistics
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct NodeStats {
-    pub height: u64,
-    pub validator_count: usize,
-    pub is_validator: bool,
-    pub chain_id: u64,
-    pub mempool_size: usize,
 }
 
 #[cfg(test)]
@@ -861,25 +937,4 @@ mod tests {
         let service = NodeService::new(config).await;
         assert!(service.is_ok());
     }
-
-    #[tokio::test]
-    async fn test_node_stats() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut config = Config::default();
-        config.node.data_dir = temp_dir.path().to_path_buf();
-        config.storage.db_path = temp_dir.path().join("db");
-        config.rpc.enabled = false;
-
-        let service = NodeService::new(config).await.unwrap();
-        let stats = service.get_stats().await.unwrap();
-
-        assert_eq!(stats.height, 0); // Genesis block
-        assert_eq!(stats.chain_id, 8898); // LuxTensor devnet chain_id
-    }
 }
-
-// NOTE: is_dev_chain() and sign_transaction_with_dev_key() have been removed.
-// They were only used by the old drain+convert bridge between rpc::Mempool
-// and node::Mempool. With UnifiedMempool, RPC transactions already have
-// proper signatures and no conversion is needed.
-

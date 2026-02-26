@@ -641,6 +641,110 @@ mod tests {
         assert_eq!(pos.current_epoch(), 2);
     }
 
+    // ── R-5 Security Test: Epoch Transition + Validator Rotation ──────
+
+    #[test]
+    #[cfg(not(feature = "production-vrf"))]
+    fn test_epoch_transition_with_validator_rotation() {
+        // Scenario: Simulate a full epoch transition with concurrent
+        // validator add/remove to ensure no seed corruption or panic.
+
+        let mut config = ConsensusConfig::default();
+        config.epoch_length = 4; // short epoch for testing
+        let pos = ProofOfStake::new(config.clone());
+
+        // ── Epoch 0: 3 validators ──
+        let v1 = create_test_address(1);
+        let v2 = create_test_address(2);
+        let v3 = create_test_address(3);
+        pos.add_validator(v1, config.min_stake, [1u8; 32]).unwrap();
+        pos.add_validator(v2, config.min_stake * 2, [2u8; 32]).unwrap();
+        pos.add_validator(v3, config.min_stake * 3, [3u8; 32]).unwrap();
+
+        // Set initial block hash
+        pos.update_last_block_hash([0xAA; 32]);
+
+        // Select all slots in epoch 0
+        let mut epoch0_selections = Vec::new();
+        for slot in 0..config.epoch_length {
+            let selected = pos.select_validator(slot).unwrap();
+            epoch0_selections.push(selected);
+        }
+
+        // ── Epoch boundary: finalize RANDAO + advance epoch ──
+        let epoch0_randao = [0xBB; 32];
+        pos.update_randao_mix(epoch0_randao);
+        pos.advance_epoch();
+        assert_eq!(pos.current_epoch(), 1);
+
+        // Verify seed changes after RANDAO update
+        let seed_before = pos.compute_seed(0);
+        pos.update_last_block_hash([0xCC; 32]);
+        let seed_after = pos.compute_seed(0);
+        assert_ne!(seed_before, seed_after, "Seed must change after block hash update");
+
+        // ── Epoch 1: Remove v1, add v4 (mid-epoch rotation) ──
+        pos.remove_validator(&v1).unwrap();
+        let v4 = create_test_address(4);
+        pos.add_validator(v4, config.min_stake * 4, [4u8; 32]).unwrap();
+        assert_eq!(pos.validator_count(), 3); // v2, v3, v4
+
+        // Select all slots in epoch 1 — must not panic despite rotation
+        let mut epoch1_selections = Vec::new();
+        for slot in config.epoch_length..config.epoch_length * 2 {
+            let selected = pos.select_validator(slot).unwrap();
+            epoch1_selections.push(selected);
+            // v1 should never be selected (removed)
+            assert_ne!(selected, v1, "Removed validator must not be selected");
+        }
+
+        // ── Epoch boundary 2: Test prev_epoch_randao lookback ──
+        let epoch1_randao = [0xDD; 32];
+        pos.update_prev_epoch_randao(epoch0_randao);
+        pos.update_randao_mix(epoch1_randao);
+        pos.advance_epoch();
+        assert_eq!(pos.current_epoch(), 2);
+
+        // Verify lookback seed differs from current-only seed
+        let seed_with_lookback = pos.compute_seed(config.epoch_length * 2);
+        assert_ne!(
+            seed_with_lookback,
+            [0u8; 32],
+            "Seed with RANDAO lookback should be non-zero"
+        );
+
+        // ── Edge case: All validators removed except one ──
+        pos.remove_validator(&v2).unwrap();
+        pos.remove_validator(&v4).unwrap();
+        assert_eq!(pos.validator_count(), 1); // only v3
+
+        // Single validator must always be selected
+        for slot in 0..8 {
+            let selected = pos.select_validator(slot).unwrap();
+            assert_eq!(selected, v3, "Single validator must always be selected");
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "production-vrf"))]
+    fn test_concurrent_epoch_seed_determinism() {
+        // Verify that multiple reads of the same slot produce identical
+        // seeds — important for multi-threaded block production.
+        let config = ConsensusConfig::default();
+        let pos = ProofOfStake::new(config.clone());
+
+        let v1 = create_test_address(1);
+        pos.add_validator(v1, config.min_stake, [1u8; 32]).unwrap();
+        pos.update_last_block_hash([0xFF; 32]);
+        pos.update_randao_mix([0xEE; 32]);
+
+        // Read seed multiple times — must be identical
+        let seeds: Vec<_> = (0..100).map(|_| pos.compute_seed(42)).collect();
+        for seed in &seeds[1..] {
+            assert_eq!(seed, &seeds[0], "Seed must be deterministic across reads");
+        }
+    }
+
     // ── VRF integration tests (compiled only with `production-vrf` feature) ──
 
     #[cfg(feature = "production-vrf")]

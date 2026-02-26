@@ -1,7 +1,8 @@
 """
 Subnet Mixin for LuxtensorClient
 
-Provides subnet query methods.
+Wraps lux_* RPC methods for querying subnet data from MetagraphDB.
+All reads go through MetagraphDB (RocksDB-backed persistent storage).
 """
 
 import logging
@@ -17,101 +18,70 @@ class SubnetMixin:
     """
     Mixin providing subnet query and management methods.
 
+    All query methods use the new `lux_*` RPC namespace backed by MetagraphDB.
+
     Query Methods:
-        - get_all_subnets() - List all subnets
-        - get_subnet_info() - Get subnet details
-        - get_subnet_hyperparameters() - Get subnet config
-        - subnet_exists() - Check subnet existence
-        - get_subnet_count() - Total subnet count
-        - get_subnet_tempo() - Get epoch length
-        - get_subnet_emission() - Get emission rate
-        - get_subnet_emissions() - Get all emission distribution
-        - get_subnet_owner() - Get subnet owner address
-        - get_subnet_registration_allowed() - Check registration status
-        - get_subnet_network_metadata() - Get network metadata
-        - get_subnetwork_n() - Get subnetwork count
-        - get_total_subnets() - Total subnet count
-        - get_max_subnets() - Maximum allowed subnets
+        - get_all_subnets()              — List all subnets (lux_listSubnets)
+        - get_subnet_info()              — Get subnet details (lux_getSubnetInfo)
+        - get_subnet_count()             — Total subnet count (lux_getSubnetCount)
+        - get_subnet_emissions()         — Emission info (lux_getEmissions)
+        - get_subnet_tempo()             — Tempo field from subnet data
+        - get_subnet_emission()          — Emission rate field from subnet data
+        - get_subnet_owner()             — Owner address from subnet data
+        - get_subnetwork_n()             — Neuron count for subnet
+        - get_total_subnets()            — Alias for get_subnet_count()
+        - get_max_subnets()              — Max neurons allowed in subnet
+        - subnet_exists()                — Check subnet existence
+        - get_metagraph()                — Full metagraph snapshot (lux_getMetagraph)
 
     Transaction Methods:
-        - register_subnet() - Register new subnet
-        - set_subnet_weights() - Set subnet weights (root validators)
+        - register_subnet()              — Register new subnet (subnet_create)
+        - set_subnet_weights()           — Set subnet weights for root validators
     """
 
     if TYPE_CHECKING:
 
         def _rpc(self) -> "RPCProvider":
-            """Helper to cast self to RPCProvider protocol for type checking."""
             return cast("RPCProvider", self)
 
     else:
 
         def _rpc(self):
-            """At runtime, return self (duck typing)."""
             return self
+
+    # ------------------------------------------------------------------
+    # Primary Query Methods
+    # ------------------------------------------------------------------
 
     def get_all_subnets(self) -> List[Dict[str, Any]]:
         """
-        Get list of all subnets.
+        Get list of all subnets from MetagraphDB.
 
         Returns:
-            List of subnet info
+            List of subnet dicts from `lux_listSubnets`
         """
         try:
-            result = self._rpc()._call_rpc("subnet_getAll", [])
-            return result if result else []
+            result = self._rpc()._call_rpc("lux_listSubnets", [])
+            return result if isinstance(result, list) else []
         except Exception as e:
             logger.warning(f"Failed to get subnets: {e}")
             return []
 
     def get_subnet_info(self, subnet_uid: int) -> Optional[Dict[str, Any]]:
         """
-        Get subnet information.
+        Get subnet information from MetagraphDB.
 
         Args:
             subnet_uid: Subnet unique identifier
 
         Returns:
-            Subnet info or None
+            Subnet info dict or None
         """
         try:
-            return self._rpc()._call_rpc("subnet_getInfo", [subnet_uid])
+            return self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_uid])
         except Exception as e:
             logger.warning(f"Failed to get subnet {subnet_uid}: {e}")
             return None
-
-    def get_subnet_hyperparameters(self, subnet_uid: int) -> Dict[str, Any]:
-        """
-        Get subnet hyperparameters.
-
-        Args:
-            subnet_uid: Subnet unique identifier
-
-        Returns:
-            Hyperparameters dict
-        """
-        try:
-            result = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_uid])
-            return result if result else {}
-        except Exception as e:
-            logger.warning(f"Failed to get hyperparameters for subnet {subnet_uid}: {e}")
-            return {}
-
-    def subnet_exists(self, subnet_uid: int) -> bool:
-        """
-        Check if subnet exists.
-
-        Args:
-            subnet_uid: Subnet unique identifier
-
-        Returns:
-            True if exists
-        """
-        try:
-            result = self._rpc()._call_rpc("subnet_exists", [subnet_uid])
-            return bool(result)
-        except Exception:
-            return False
 
     def get_subnet_count(self) -> int:
         """
@@ -121,180 +91,206 @@ class SubnetMixin:
             Subnet count
         """
         try:
-            result = self._rpc()._call_rpc("subnet_getCount", [])
+            result = self._rpc()._call_rpc("lux_getSubnetCount", [])
+            if isinstance(result, dict):
+                return int(result.get("count", 0))
             return int(result) if result else 0
         except Exception as e:
             logger.warning(f"Failed to get subnet count: {e}")
             return 0
 
-    # Extended Query Methods
-
-    def get_subnet_tempo(self, subnet_id: int) -> int:
+    def subnet_exists(self, subnet_uid: int) -> bool:
         """
-        Get tempo (epoch length) for a subnet.
+        Check if subnet exists in MetagraphDB.
+
+        Args:
+            subnet_uid: Subnet unique identifier
+
+        Returns:
+            True if subnet data is found
+        """
+        try:
+            result = self._rpc()._call_rpc("lux_getSubnet", [subnet_uid])
+            return result is not None
+        except Exception:
+            return False
+
+    def get_metagraph(self, subnet_id: int) -> Dict[str, Any]:
+        """
+        Get full metagraph snapshot for a subnet.
+        Includes subnet info, all neurons, and weight matrix.
 
         Args:
             subnet_id: Subnet identifier
 
         Returns:
-            Tempo in blocks
+            Dict with subnet, neurons, weight_matrix, neuron_count, weight_count
         """
         try:
-            result = self._rpc()._call_rpc("query_subnetTempo", [subnet_id])
-            return int(result) if result else 0
+            result = self._rpc()._call_rpc("lux_getMetagraph", [subnet_id])
+            return result if isinstance(result, dict) else {}
+        except Exception as e:
+            logger.error(f"Failed to get metagraph for subnet {subnet_id}: {e}")
+            return {}
+
+    # ------------------------------------------------------------------
+    # Derived convenience methods (read from subnet data fields)
+    # ------------------------------------------------------------------
+
+    def get_subnet_tempo(self, subnet_id: int) -> int:
+        """Get tempo (epoch length in blocks) for a subnet."""
+        try:
+            result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
+            if result:
+                return int(result.get("tempo", 0))
+            return 0
         except Exception as e:
             logger.error(f"Error getting tempo for subnet {subnet_id}: {e}")
             return 0
 
     def get_subnet_emission(self, subnet_id: int) -> int:
-        """
-        Get emission rate for a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Emission rate
-        """
+        """Get emission rate for a subnet."""
         try:
-            result = self._rpc()._call_rpc("query_subnetEmission", [subnet_id])
-            return int(result) if result else 0
+            result = self._rpc()._call_rpc("lux_getEmissions", [subnet_id])
+            if result:
+                raw = result.get("emission_rate_decimal", "0")
+                return int(raw) if raw else 0
+            return 0
         except Exception as e:
             logger.error(f"Error getting emission for subnet {subnet_id}: {e}")
             return 0
 
     def get_subnet_emissions(self, total_emission: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Get emission distribution for all subnets.
+        Get emission info for all subnets.
 
         Args:
-            total_emission: Total emission amount (default: 1000 MDT in LTS)
+            total_emission: Ignored (kept for API compat with Bittensor SDK)
 
         Returns:
-            List of EmissionShare dictionaries
+            List of EmissionShare dicts with id, name, emission_rate fields
         """
         try:
-            params = []
-            if total_emission is not None:
-                params.append(f"0x{total_emission:x}")
-            result = self._rpc()._call_rpc("subnet_getEmissions", params)
-            return result if result else []
+            subnets = self._rpc()._call_rpc("lux_listSubnets", [])
+            if not subnets:
+                return []
+            return [
+                {
+                    "subnet_id": s.get("id"),
+                    "name": s.get("name"),
+                    "emission_rate": s.get("emission_rate"),
+                    "emission_rate_decimal": s.get("emission_rate_decimal"),
+                    "active": s.get("active"),
+                }
+                for s in subnets
+            ]
         except Exception as e:
             logger.error(f"Failed to get subnet emissions: {e}")
             return []
 
     def get_subnet_owner(self, subnet_id: int) -> str:
-        """
-        Get owner address of a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Owner address
-        """
+        """Get owner address of a subnet."""
         try:
-            result = self._rpc()._call_rpc("query_subnetOwner", [subnet_id])
-            return result if result else ""
+            result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
+            return result.get("owner", "") if result else ""
         except Exception as e:
             logger.error(f"Error getting owner for subnet {subnet_id}: {e}")
             return ""
 
     def get_subnet_registration_allowed(self, subnet_id: int) -> bool:
-        """
-        Check if registration is allowed in a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            True if registration allowed, False otherwise
-        """
+        """Check if registration is allowed (subnet active + not at max capacity)."""
         try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("registration_allowed", hp.get("registrationAllowed"))
-                return bool(val) if val is not None else True
-            return True
+            info = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
+            if info:
+                return bool(info.get("active", True))
+            return False
         except Exception as e:
-            logger.error(f"Error checking registration allowed for subnet {subnet_id}: {e}")
+            logger.error(f"Error checking registration for subnet {subnet_id}: {e}")
             return False
 
     def get_subnet_network_metadata(self, subnet_id: int) -> Dict[str, Any]:
-        """
-        Get network metadata for a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Network metadata including URLs, descriptions, etc.
-        """
+        """Get network metadata for a subnet (full subnet data)."""
         try:
-            # Derive from subnet_getInfo
-            result = self._rpc()._call_rpc("subnet_getInfo", [subnet_id])
-            return result if result else {}
+            result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
+            return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.error(f"Error getting network metadata for subnet {subnet_id}: {e}")
+            logger.error(f"Error getting metadata for subnet {subnet_id}: {e}")
             return {}
 
     def get_subnetwork_n(self, subnet_id: int) -> int:
-        """
-        Get number of subnetworks in a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Number of subnetworks
-        """
+        """Get number of neurons in a subnet."""
         try:
-            # Derive from subnet_getInfo → participant_count
-            info = self._rpc()._call_rpc("subnet_getInfo", [subnet_id])
-            if info:
-                return int(info.get("participant_count", info.get("participantCount", 0)))
-            return 0
+            result = self._rpc()._call_rpc("lux_getNeuronCount", [subnet_id])
+            if isinstance(result, dict):
+                return int(result.get("count", 0))
+            return int(result) if result else 0
         except Exception as e:
             logger.error(f"Error getting subnetwork N for subnet {subnet_id}: {e}")
             return 0
 
     def get_total_subnets(self) -> int:
-        """
-        Get total number of subnets.
-
-        Returns:
-            Number of subnets
-        """
-        try:
-            result = self._rpc()._call_rpc("subnet_getCount", [])
-            return int(result) if result else 0
-        except Exception as e:
-            logger.error(f"Error getting total subnets: {e}")
-            return 0
+        """Get total number of subnets (alias for get_subnet_count)."""
+        return self.get_subnet_count()
 
     def get_max_subnets(self) -> int:
-        """
-        Get maximum number of subnets allowed.
-
-        Returns:
-            Maximum subnets
-        """
+        """Get max neurons allowed in subnet (from subnet data max_neurons field)."""
         try:
-            # Derive from subnet_getConfig for root subnet
-            config = self._rpc()._call_rpc("subnet_getConfig", [0])
-            if config:
-                return int(config.get("max_subnets", config.get("maxSubnets", 0)))
+            # max_neurons is per-subnet limit, not a global limit
+            # Return sum across all subnets or max_neurons of root subnet
+            root = self._rpc()._call_rpc("lux_getSubnetInfo", [0])
+            if root:
+                return int(root.get("max_neurons", 0))
             return 0
         except Exception as e:
             logger.error(f"Error getting max subnets: {e}")
             return 0
 
+    def get_subnet_hyperparameters(self, subnet_uid: int) -> Dict[str, Any]:
+        """
+        Get subnet hyperparameters (derived from subnet info).
+
+        Args:
+            subnet_uid: Subnet unique identifier
+
+        Returns:
+            Hyperparameters dict
+        """
+        try:
+            result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_uid])
+            if not result:
+                return {}
+            # Map SubnetData fields to hyperparameter names
+            return {
+                "tempo": result.get("tempo", 0),
+                "max_neurons": result.get("max_neurons", 0),
+                "min_stake": result.get("min_stake_decimal", "0"),
+                "emission_rate": result.get("emission_rate_decimal", "0"),
+                "active": result.get("active", False),
+                "registration_allowed": result.get("active", False),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get hyperparameters for subnet {subnet_uid}: {e}")
+            return {}
+
+    def get_activity_cutoff(self, subnet_id: int) -> int:
+        """Get activity cutoff — not stored in MetagraphDB, returns 0."""
+        return 0
+
+    def get_difficulty(self, subnet_id: int) -> int:
+        """Get registration difficulty — not stored in MetagraphDB, returns 0."""
+        return 0
+
+    def get_burn_cost(self, subnet_id: int) -> int:
+        """Get burn cost — not stored in MetagraphDB, returns 0."""
+        return 0
+
+    # ------------------------------------------------------------------
     # Transaction Methods
+    # ------------------------------------------------------------------
 
     def register_subnet(self, name: str, owner: str) -> Dict[str, Any]:
         """
-        Register a new subnet (Subnet 0 operation).
+        Register a new subnet.
 
         Args:
             name: Human-readable subnet name
@@ -304,7 +300,7 @@ class SubnetMixin:
             Registration result with netuid if successful
         """
         try:
-            result = self._rpc()._call_rpc("subnet_register", [name, owner])
+            result = self._rpc()._call_rpc("subnet_create", [name, owner])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to register subnet: {e}")
@@ -322,75 +318,9 @@ class SubnetMixin:
             Result with success status
         """
         try:
-            # Convert int keys to strings for JSON
             weights_json = {str(k): v for k, v in weights.items()}
             result = self._rpc()._call_rpc("weight_setWeights", [validator, weights_json])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
             logger.error(f"Failed to set subnet weights: {e}")
             return {"success": False, "error": str(e)}
-
-    # Network Metrics
-
-    def get_activity_cutoff(self, subnet_id: int) -> int:
-        """
-        Get activity cutoff for a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Activity cutoff in blocks
-        """
-        try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("activity_cutoff", hp.get("activityCutoff", 0))
-                return int(val) if val else 0
-            return 0
-        except Exception as e:
-            logger.error(f"Error getting activity cutoff for subnet {subnet_id}: {e}")
-            return 0
-
-    def get_difficulty(self, subnet_id: int) -> int:
-        """
-        Get registration difficulty for a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Difficulty value
-        """
-        try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("difficulty", 0)
-                return int(val) if val else 0
-            return 0
-        except Exception as e:
-            logger.error(f"Error getting difficulty for subnet {subnet_id}: {e}")
-            return 0
-
-    def get_burn_cost(self, subnet_id: int) -> int:
-        """
-        Get burn cost for registration in a subnet.
-
-        Args:
-            subnet_id: Subnet identifier
-
-        Returns:
-            Burn cost in tokens
-        """
-        try:
-            # Derive from subnet_getHyperparameters
-            hp = self._rpc()._call_rpc("subnet_getHyperparameters", [subnet_id])
-            if hp:
-                val = hp.get("burn_cost", hp.get("burnCost", 0))
-                return int(val) if val else 0
-            return 0
-        except Exception as e:
-            logger.error(f"Error getting burn cost for subnet {subnet_id}: {e}")
-            return 0

@@ -77,7 +77,7 @@ mod tests {
     ) -> HnswGraph<D> {
         let mut graph = HnswGraph::new();
         for v in vectors {
-            graph.insert(v.clone(), rng);
+            graph.insert(v.clone(), rng).unwrap();
         }
         graph
     }
@@ -327,7 +327,7 @@ mod tests {
         let mut rng = create_test_rng();
 
         for _ in 0..100 {
-            graph.insert(v.clone(), &mut rng);
+            graph.insert(v.clone(), &mut rng).unwrap();
         }
 
         assert_eq!(graph.len(), 100);
@@ -355,7 +355,7 @@ mod tests {
 
         for _ in 0..50 {
             let v = FixedPointVector::<4>::zero();
-            graph.insert(v, &mut rng);
+            graph.insert(v, &mut rng).unwrap();
         }
 
         assert_eq!(graph.len(), 50);
@@ -382,7 +382,7 @@ mod tests {
             I64F32::from_num(1000),
             I64F32::from_num(1000),
         ]);
-        graph.insert(v_large.clone(), &mut rng);
+        graph.insert(v_large.clone(), &mut rng).unwrap();
 
         // Large negative values
         let v_neg = FixedPointVector::<3>::new([
@@ -390,7 +390,7 @@ mod tests {
             I64F32::from_num(-1000),
             I64F32::from_num(-1000),
         ]);
-        graph.insert(v_neg, &mut rng);
+        graph.insert(v_neg, &mut rng).unwrap();
 
         // Near-max values: I64F32 max is ~2^31 ≈ 2.1 billion
         // Use moderately large values to stress saturating arithmetic
@@ -399,14 +399,14 @@ mod tests {
             I64F32::from_num(100_000),
             I64F32::from_num(100_000),
         ]);
-        graph.insert(v_max, &mut rng);
+        graph.insert(v_max, &mut rng).unwrap();
 
         let v_min = FixedPointVector::<3>::new([
             I64F32::from_num(-100_000),
             I64F32::from_num(-100_000),
             I64F32::from_num(-100_000),
         ]);
-        graph.insert(v_min, &mut rng);
+        graph.insert(v_min, &mut rng).unwrap();
 
         assert_eq!(graph.len(), 4);
 
@@ -428,7 +428,7 @@ mod tests {
             .collect();
 
         for v in &vectors {
-            graph.insert(v.clone(), &mut rng);
+            graph.insert(v.clone(), &mut rng).unwrap();
         }
 
         assert_eq!(graph.len(), 50);
@@ -449,8 +449,8 @@ mod tests {
         let mut rng = create_test_rng();
 
         let v = FixedPointVector::<3>::from_f32_slice(&[1.0, 2.0, 3.0]).unwrap();
-        let id1 = graph.insert(v.clone(), &mut rng);
-        let id2 = graph.insert(v.clone(), &mut rng);
+        let id1 = graph.insert(v.clone(), &mut rng).unwrap();
+        let id2 = graph.insert(v.clone(), &mut rng).unwrap();
 
         assert_ne!(id1, id2, "Duplicate inserts should get different IDs");
         assert_eq!(graph.len(), 2);

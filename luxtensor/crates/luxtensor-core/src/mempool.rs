@@ -201,6 +201,22 @@ impl UnifiedMempool {
         self.validate_and_insert(tx)
     }
 
+    /// Add a **system/inherent** transaction to the mempool — signature validation skipped.
+    ///
+    /// Used for MetagraphTx submitted by the RPC server itself (not the client).
+    /// The signature has already been verified at the RPC layer (timestamp + ECDSA).
+    /// chain_id, size, and sender-limit checks still apply.
+    ///
+    /// Analogous to Substrate "inherent extrinsics" (e.g. set_timestamp, register_validator).
+    pub fn add_system_transaction(&self, tx: Transaction) -> Result<(), MempoolError> {
+        self.validate_and_insert_system(tx)
+    }
+
+    /// Get the chain_id this mempool was configured with.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Add a transaction with associated RPC pending metadata.
     ///
     /// Used by RPC handlers (`eth_sendRawTransaction`, `eth_sendTransaction`)
@@ -319,6 +335,54 @@ impl UnifiedMempool {
             tx,
             added_at: Instant::now(),
         });
+        Ok(())
+    }
+
+    /// System transaction insertion — skips signature validation.
+    /// All other checks (chain_id, size, sender limit, mempool full, dedup) still apply.
+    fn validate_and_insert_system(&self, tx: Transaction) -> Result<(), MempoolError> {
+        // chain_id must still match
+        if tx.chain_id != self.chain_id {
+            warn!("🛡️ Rejected system tx: chain_id {} != expected {}", tx.chain_id, self.chain_id);
+            return Err(MempoolError::WrongChainId { expected: self.chain_id, got: tx.chain_id });
+        }
+
+        let tx_size = bincode::serialized_size(&tx).map_err(|e| {
+            warn!("Failed to compute system tx size: {}", e);
+            MempoolError::TransactionTooLarge { size: usize::MAX, max: self.max_tx_size }
+        })? as usize;
+        if tx_size > self.max_tx_size {
+            return Err(MempoolError::TransactionTooLarge { size: tx_size, max: self.max_tx_size });
+        }
+
+        // No gas_price check for system txs (gas_price=1 is acceptable)
+        // No signature check — server-originated tx
+
+        let sender = tx.from;
+        {
+            let sender_counts = self.sender_tx_count.read();
+            if let Some(&count) = sender_counts.get(&sender) {
+                if count >= self.max_per_sender {
+                    return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
+                }
+            }
+        }
+
+        self.cleanup_expired();
+        let mut txs = self.transactions.write();
+        if txs.len() >= self.max_size {
+            return Err(MempoolError::Full);
+        }
+        let hash = tx.hash();
+        if txs.contains_key(&hash) {
+            // Idempotent: same payload = same hash = already queued, not an error
+            return Ok(());
+        }
+        {
+            let mut sender_counts = self.sender_tx_count.write();
+            *sender_counts.entry(sender).or_insert(0) += 1;
+        }
+        txs.insert(hash, TimedTransaction { tx, added_at: Instant::now() });
         Ok(())
     }
 

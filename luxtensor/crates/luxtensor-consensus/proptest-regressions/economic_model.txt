@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fe11cb1209fa5d244eaa372ffe0c61ab6c177452c294e2a603f073d1c4f69805 # shrinks to proj = ProjectionConfig { years: 28, avg_txs_per_block: 462, avg_gas_fee_wei: 35581389662, avg_block_utilization: 0.5, annual_subnet_registrations: 100, avg_subnet_reg_fee: 1000000000000000000000, annual_slashing_events: 10, avg_slash_amount: 500000000000000000000 }, burn = BurnConfig { tx_fee_burn_rate_bps: 5129, subnet_burn_rate_bps: 9038, unmet_quota_burn_rate_bps: 0, slashing_burn_rate_bps: 8131 }

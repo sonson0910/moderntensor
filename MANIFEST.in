@@ -3,7 +3,7 @@ include README.md
 include CHANGELOG.md
 include sdk/README.md
 include pyproject.toml
-recursive-include sdk *.py *.pyi
+recursive-include sdk *.py *.pyi py.typed
 recursive-exclude tests *
 recursive-exclude luxtensor *
 recursive-exclude examples *

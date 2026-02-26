@@ -8,10 +8,10 @@ pub mod mempool;
 pub mod multisig;
 pub mod receipt;
 pub mod rlp;
-pub mod semantic;
 pub mod semantic_registry;
 pub mod state;
 pub mod subnet;
+pub mod metagraph_tx;
 pub mod transaction;
 pub mod types;
 pub mod unified_state;
@@ -26,6 +26,7 @@ pub use subnet::{
     EmissionShare, ProtocolGuardrails, RootConfig, RootValidatorInfo, SubnetConfig, SubnetInfo,
     SubnetRegistrationResult, SubnetType, SubnetWeights,
 };
+pub use metagraph_tx::MetagraphTxPayload;
 pub use transaction::Transaction;
 pub use types::{Address, Hash};
 pub use unified_state::{ContractInfo, StorageSlot, UnifiedStateDB};

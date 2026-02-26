@@ -21,6 +21,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Gas costs for AI precompiles
+///
+/// Static constants providing default gas costs. For dynamic pricing
+/// (e.g., governance-driven updates), use [`GasSchedule`] instead.
 pub mod gas_costs {
     /// Base cost for AI_REQUEST
     pub const AI_REQUEST_BASE: u64 = 21_000;
@@ -91,6 +94,86 @@ pub mod gas_costs {
     pub const GLOBAL_SEARCH_PER_DOMAIN: u64 = 5_000;
 }
 
+/// Dynamic gas schedule for AI precompiles.
+///
+/// Wraps all gas cost parameters into a single configurable struct.
+/// Use `GasSchedule::default()` for the static constants, or construct
+/// a custom schedule for governance-driven price updates.
+///
+/// # Example
+/// ```
+/// use luxtensor_contracts::ai_precompiles::GasSchedule;
+/// let mut schedule = GasSchedule::default();
+/// // Governance: double vector store costs to discourage spam
+/// schedule.vector_store_base *= 2;
+/// schedule.vector_store_per_dim *= 2;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GasSchedule {
+    // AI Core
+    pub ai_request_base: u64,
+    pub ai_request_per_byte: u64,
+    pub verify_proof_base: u64,
+    pub verify_proof_per_byte: u64,
+    pub get_result: u64,
+    pub compute_payment: u64,
+    // Training
+    pub train_request_base: u64,
+    pub train_request_per_byte: u64,
+    // Semantic Layer
+    pub vector_store_base: u64,
+    pub vector_store_per_dim: u64,
+    pub vector_store_graph_update: u64,
+    pub vector_query_base: u64,
+    pub vector_query_per_dim: u64,
+    pub vector_query_per_layer: u64,
+    // AI Primitives
+    pub classify_base: u64,
+    pub classify_per_label: u64,
+    pub anomaly_score_base: u64,
+    pub similarity_gate_base: u64,
+    pub semantic_relate_base: u64,
+    pub cluster_assign_base: u64,
+    // World Semantic Index
+    pub register_vector_base: u64,
+    pub register_vector_per_dim: u64,
+    pub register_vector_per_tag: u64,
+    pub global_search_base: u64,
+    pub global_search_per_domain: u64,
+}
+
+impl Default for GasSchedule {
+    fn default() -> Self {
+        Self {
+            ai_request_base: gas_costs::AI_REQUEST_BASE,
+            ai_request_per_byte: gas_costs::AI_REQUEST_PER_BYTE,
+            verify_proof_base: gas_costs::VERIFY_PROOF_BASE,
+            verify_proof_per_byte: gas_costs::VERIFY_PROOF_PER_BYTE,
+            get_result: gas_costs::GET_RESULT,
+            compute_payment: gas_costs::COMPUTE_PAYMENT,
+            train_request_base: gas_costs::TRAIN_REQUEST_BASE,
+            train_request_per_byte: gas_costs::TRAIN_REQUEST_PER_BYTE,
+            vector_store_base: gas_costs::VECTOR_STORE_BASE,
+            vector_store_per_dim: gas_costs::VECTOR_STORE_PER_DIM,
+            vector_store_graph_update: gas_costs::VECTOR_STORE_GRAPH_UPDATE,
+            vector_query_base: gas_costs::VECTOR_QUERY_BASE,
+            vector_query_per_dim: gas_costs::VECTOR_QUERY_PER_DIM,
+            vector_query_per_layer: gas_costs::VECTOR_QUERY_PER_LAYER,
+            classify_base: gas_costs::CLASSIFY_BASE,
+            classify_per_label: gas_costs::CLASSIFY_PER_LABEL,
+            anomaly_score_base: gas_costs::ANOMALY_SCORE_BASE,
+            similarity_gate_base: gas_costs::SIMILARITY_GATE_BASE,
+            semantic_relate_base: gas_costs::SEMANTIC_RELATE_BASE,
+            cluster_assign_base: gas_costs::CLUSTER_ASSIGN_BASE,
+            register_vector_base: gas_costs::REGISTER_VECTOR_BASE,
+            register_vector_per_dim: gas_costs::REGISTER_VECTOR_PER_DIM,
+            register_vector_per_tag: gas_costs::REGISTER_VECTOR_PER_TAG,
+            global_search_base: gas_costs::GLOBAL_SEARCH_BASE,
+            global_search_per_domain: gas_costs::GLOBAL_SEARCH_PER_DOMAIN,
+        }
+    }
+}
+
 /// Maximum allowed vector dimension to prevent DoS via memory exhaustion.
 /// Covers common embedding sizes (768, 1024, 1536) with headroom.
 const MAX_VECTOR_DIM: usize = 4096;
@@ -103,6 +186,12 @@ const MAX_STORED_REQUESTS: usize = 100_000;
 
 /// Maximum number of stored training jobs.
 const MAX_STORED_TRAINING_JOBS: usize = 10_000;
+
+/// SECURITY (R-4): Maximum input size for AI precompiles (128 KB).
+/// Prevents DoS via multi-MB calldata that forces O(n) per-byte gas
+/// calculation, even if the transaction ultimately reverts from OutOfGas.
+/// Standard Ethereum precompiles have similar caps (e.g., MODEXP).
+const MAX_PRECOMPILE_INPUT_SIZE: usize = 131_072;
 
 /// Safely multiply two gas values, returning OutOfGas on overflow.
 #[inline]
@@ -316,6 +405,11 @@ pub fn ai_request_precompile(
     state: &AIPrecompileState,
     caller: [u8; 20],
 ) -> PrecompileResult {
+    // SECURITY (R-4): Reject oversized input before any processing
+    if input.len() > MAX_PRECOMPILE_INPUT_SIZE {
+        return Err(PrecompileError::other("Input exceeds maximum size (128 KB)").into());
+    }
+
     // Calculate gas (checked arithmetic to prevent overflow)
     let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::AI_REQUEST_PER_BYTE)?;
     let gas_cost = checked_gas_add(gas_costs::AI_REQUEST_BASE, per_byte_gas)?;
@@ -380,6 +474,11 @@ pub fn ai_request_precompile(
 /// Input format: abi.encode(proof_type, proof_data, public_inputs)
 /// Output format: bool is_valid (32 bytes, right-padded)
 pub fn verify_proof_precompile(input: &Bytes, gas_limit: u64) -> PrecompileResult {
+    // SECURITY (R-4): Reject oversized input before any processing
+    if input.len() > MAX_PRECOMPILE_INPUT_SIZE {
+        return Err(PrecompileError::other("Input exceeds maximum size (128 KB)").into());
+    }
+
     let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::VERIFY_PROOF_PER_BYTE)?;
     let gas_cost = checked_gas_add(gas_costs::VERIFY_PROOF_BASE, per_byte_gas)?;
 
@@ -533,6 +632,11 @@ pub fn train_request_precompile(
     state: &AIPrecompileState,
     caller: [u8; 20],
 ) -> PrecompileResult {
+    // SECURITY (R-4): Reject oversized input before any processing
+    if input.len() > MAX_PRECOMPILE_INPUT_SIZE {
+        return Err(PrecompileError::other("Input exceeds maximum size (128 KB)").into());
+    }
+
     // Calculate gas (checked arithmetic to prevent overflow)
     let per_byte_gas = checked_gas_mul(input.len() as u64, gas_costs::TRAIN_REQUEST_PER_BYTE)?;
     let gas_cost = checked_gas_add(gas_costs::TRAIN_REQUEST_BASE, per_byte_gas)?;
@@ -620,6 +724,11 @@ pub fn vector_store_precompile(
     gas_limit: u64,
     state: &AIPrecompileState,
 ) -> PrecompileResult {
+    // SECURITY (R-4): Reject oversized input before any processing
+    if input.len() > MAX_PRECOMPILE_INPUT_SIZE {
+        return Err(PrecompileError::other("Input exceeds maximum size (128 KB)").into());
+    }
+
     // 1. Basic parsing
     if input.len() < 32 {
         return Err(PrecompileError::other("Invalid input: missing vector ID").into());
@@ -716,6 +825,11 @@ pub fn vector_query_precompile(
     gas_limit: u64,
     state: &AIPrecompileState,
 ) -> PrecompileResult {
+    // SECURITY (R-4): Reject oversized input before any processing
+    if input.len() > MAX_PRECOMPILE_INPUT_SIZE {
+        return Err(PrecompileError::other("Input exceeds maximum size (128 KB)").into());
+    }
+
     // Maximum k to prevent DoS
     const MAX_K: usize = 100;
 

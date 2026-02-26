@@ -5,10 +5,21 @@
 use crate::helpers::{parse_address, verify_caller_signature};
 use jsonrpc_core::{Params, Value};
 use luxtensor_consensus::{ValidatorSet, Validator};
-use luxtensor_core::UnifiedStateDB;
-use luxtensor_storage::BlockchainDB;
+use luxtensor_core::{MetagraphTxPayload, Transaction, Address, UnifiedStateDB};
+use luxtensor_core::constants::precompiles;
+use luxtensor_storage::{BlockchainDB, MetagraphDB, ValidatorData};
 use parking_lot::RwLock;
 use std::sync::Arc;
+
+/// Convert Address.as_bytes() (&[u8]) → [u8; 20]
+#[inline]
+fn addr_to_bytes20(addr: &luxtensor_core::Address) -> [u8; 20] {
+    let b = addr.as_bytes();
+    let mut out = [0u8; 20];
+    let len = b.len().min(20);
+    out[..len].copy_from_slice(&b[..len]);
+    out
+}
 
 /// Register staking-related RPC methods
 /// Stakes are persisted to BlockchainDB for on-chain storage
@@ -19,23 +30,62 @@ pub fn register_staking_handlers(
     db: Arc<BlockchainDB>,
     chain_id: u64,
     unified_state: Arc<RwLock<UnifiedStateDB>>,
+    metagraph: Arc<MetagraphDB>,
+    mempool: Arc<luxtensor_core::UnifiedMempool>,
 ) {
     // Load existing validators from DB into ValidatorSet on startup
+    // AND sync to MetagraphDB (Yuma reads from MetagraphDB)
     if let Ok(stored_validators) = db.get_all_validators() {
         let loaded_count = stored_validators.len();
         let mut validator_set = validators.write();
+        let mut synced_to_metagraph = 0usize;
+
         for (_addr, data) in stored_validators {
             if let Ok(validator) = bincode::deserialize::<luxtensor_consensus::Validator>(&data) {
-                // Only add if not already in set (e.g. from genesis)
+                // Load into in-memory ValidatorSet
                 if validator_set.get_validator(&validator.address).is_none() {
-                    let _ = validator_set.add_validator(validator);
+                    let _ = validator_set.add_validator(validator.clone());
+                }
+
+                // ── SYNC: write to MetagraphDB if missing ──
+                // Yuma's get_all_validators() reads from MetagraphDB.
+                let addr_bytes: [u8; 20] = {
+                    let b = validator.address.as_bytes();
+                    let mut out = [0u8; 20];
+                    let len = b.len().min(20);
+                    out[..len].copy_from_slice(&b[..len]);
+                    out
+                };
+                match metagraph.get_validator(&addr_bytes) {
+                    Ok(None) => {
+                        // Not in MetagraphDB yet — create ValidatorData and persist
+                        let val_data = ValidatorData {
+                            address: addr_bytes,
+                            public_key: validator.public_key.to_vec(),
+                            stake: validator.stake,
+                            is_active: validator.active,
+                            name: String::new(),
+                            registered_at: 0,
+                            last_block_produced: validator.last_active_slot,
+                            blocks_produced: 0,
+                        };
+                        if metagraph.register_validator(&val_data).is_ok() {
+                            synced_to_metagraph += 1;
+                        }
+                    }
+                    Ok(Some(_)) => {} // Already in MetagraphDB
+                    Err(e) => tracing::warn!("MetagraphDB validator check error: {}", e),
                 }
             }
         }
         if loaded_count > 0 {
-            tracing::info!("📊 Loaded {} validators from DB", loaded_count);
+            tracing::info!(
+                "📊 Loaded {} validators from DB ({} synced to MetagraphDB)",
+                loaded_count, synced_to_metagraph
+            );
         }
     }
+
 
     let validators_clone = validators.clone();
 
@@ -175,7 +225,26 @@ pub fn register_staking_handlers(
                 .update_stake(&address, new_stake)
                 .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
         } else {
-            let validator = Validator::new(address, amount, [0u8; 32]);
+            // SECURITY: Do NOT use all-zero pubkey [0u8; 32] as it is a known placeholder.
+            // Derive a unique placeholder pubkey from the address (keccak256-based seed).
+            // This is NOT a real secp256k1 key - it marks this validator as "pubkey not set".
+            // Validators are expected to call staking_registerValidator to set a real pubkey.
+            let addr_bytes = address.as_bytes();
+            let mut pubkey_seed = [0u8; 32];
+            // Prefix first 12 bytes with 0xFF as marker for "unregistered pubkey"
+            pubkey_seed[0] = 0xFF;
+            pubkey_seed[1] = 0xFE;
+            pubkey_seed[2] = 0xFD;
+            // Fill remaining 29 bytes from address (cycles over 20 bytes)
+            for i in 3..32 {
+                pubkey_seed[i] = addr_bytes[(i - 3) % 20];
+            }
+            tracing::warn!(
+                "Validator {} added via addStake without a registered pubkey. \
+                 Call staking_registerValidator to set a real public key.",
+                hex::encode(addr_bytes)
+            );
+            let validator = Validator::new(address, amount, pubkey_seed);
             validator_set
                 .add_validator(validator)
                 .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
@@ -278,22 +347,64 @@ pub fn register_staking_handlers(
     let validators_clone = validators.clone();
 
     // staking_claimRewards - Claim staking rewards
+    // SECURITY: Requires signature verification to prevent unauthorized reward claiming.
+    // Params: [address, timestamp, signature]
+    // Without signature, anyone knowing a validator's address could steal their rewards.
     io.add_method("staking_claimRewards", move |params: Params| {
         let validators_clone = validators_clone.clone();
         async move {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing address"));
+        let parsed: Vec<serde_json::Value> = params.parse()?;
+        if parsed.len() < 3 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Missing parameters. Required: address, timestamp, signature",
+            ));
         }
 
-        let address = parse_address(&parsed[0])?;
+        let addr_str = parsed[0]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid address"))?;
+        let address = parse_address(addr_str)?;
 
-        let validator_set = validators_clone.write();
+        // SECURITY: Verify timestamp is recent (within 5 minutes)
+        let timestamp_str = parsed[1]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid timestamp"))?;
+        let timestamp: u64 = timestamp_str.parse()
+            .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid timestamp format"))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > timestamp + 300 || timestamp > now + 60 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Signature expired or future timestamp",
+            ));
+        }
+
+        // SECURITY: Verify caller owns the address via ECDSA signature
+        let signature = parsed[2]
+            .as_str()
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Invalid signature"))?;
+        let message = format!("staking_claimRewards:{}:{}", hex::encode(address.as_bytes()), timestamp);
+        verify_caller_signature(&address, &message, signature, 0)
+            .or_else(|_| verify_caller_signature(&address, &message, signature, 1))
+            .map_err(|_| jsonrpc_core::Error::invalid_params(
+                "Signature verification failed - caller does not own address",
+            ))?;
+
+        let mut validator_set = validators_clone.write();
 
         if let Some(validator) = validator_set.get_validator(&address) {
             let rewards = validator.rewards;
 
-            // SECURITY: Reset rewards to 0 using wrapping arithmetic\n            // wrapping_sub produces the two's complement: rewards + (MAX - rewards + 1) wraps to 0\n            validator_set.add_reward(&address, 0u128.wrapping_sub(rewards))\n                .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
+            if rewards == 0 {
+                return Err(jsonrpc_core::Error::invalid_params("No rewards to claim"));
+            }
+
+            // SECURITY: Reset rewards to 0 using wrapping arithmetic
+            // wrapping_sub produces the two's complement: rewards + (MAX - rewards + 1) wraps to 0
+            validator_set.add_reward(&address, 0u128.wrapping_sub(rewards))
+                .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
 
             Ok(serde_json::json!({
                 "success": true,
@@ -307,6 +418,8 @@ pub fn register_staking_handlers(
 
     let validators_clone = validators.clone();
     let db_for_register_validator = db.clone();
+    let metagraph_for_val_reg = metagraph.clone();
+    let mempool_for_val_reg = mempool.clone();
 
     // staking_registerValidator - Register as a new validator (DYNAMIC REGISTRATION)
     // Params: [address, stake, public_key, timestamp, signature, name?]
@@ -317,6 +430,8 @@ pub fn register_staking_handlers(
     io.add_method("staking_registerValidator", move |params: Params| {
         let validators_clone = validators_clone.clone();
         let db_for_register_validator = db_for_register_validator.clone();
+        let metagraph_for_validator = metagraph_for_val_reg.clone();
+        let mempool_for_register = mempool_for_val_reg.clone();
         async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 5 {
@@ -383,18 +498,60 @@ pub fn register_staking_handlers(
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("validator-{}", hex::encode(&address.as_bytes()[..4])));
 
-        // Parse public key (32 bytes for Validator struct)
+        // Parse and STRICTLY validate public key
+        // Secp256k1: uncompressed = 64 bytes (raw X||Y, no 0x04 prefix)
+        //             compressed  = 33 bytes (0x02 or 0x03 + X)
+        //             also accept 32 bytes (raw X coordinate for Validator struct)
         let pubkey_bytes = hex::decode(pubkey_str.trim_start_matches("0x"))
             .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid public key hex"))?;
 
+        // Length must be 32, 33, or 64 bytes
+        if !matches!(pubkey_bytes.len(), 32 | 33 | 64) {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Public key must be 32 (raw X), 33 (compressed secp256k1), or 64 (uncompressed XY) bytes"
+            ));
+        }
+
+        // Reject all-zero pubkey
+        if pubkey_bytes.iter().all(|&b| b == 0) {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Public key cannot be all zeros"
+            ));
+        }
+
+        // Reject placeholder / monotone-pattern pubkeys like 0xabababab...
+        // A valid key should have at least some byte diversity
+        let first = pubkey_bytes[0];
+        let all_same = pubkey_bytes.iter().all(|&b| b == first);
+        if all_same {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Public key appears to be a placeholder (all bytes identical)"
+            ));
+        }
+
+        // For compressed keys, first byte must be 0x02 or 0x03
+        if pubkey_bytes.len() == 33 && pubkey_bytes[0] != 0x02 && pubkey_bytes[0] != 0x03 {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Compressed public key must start with 0x02 or 0x03"
+            ));
+        }
+
+        // Build the 32-byte internal representation (take first 32 bytes = X coordinate)
         let mut public_key = [0u8; 32];
-        let copy_len = pubkey_bytes.len().min(32);
-        public_key[..copy_len].copy_from_slice(&pubkey_bytes[..copy_len]);
+        public_key.copy_from_slice(&pubkey_bytes[..32]);
 
         // SECURITY: Use write lock for atomic check+insert (eliminates TOCTOU race)
         let mut validator_set = validators_clone.write();
+        // 1) In-memory check (fast path)
         if validator_set.get_validator(&address).is_some() {
             return Err(jsonrpc_core::Error::invalid_params("Validator already registered"));
+        }
+        // 2) MetagraphDB check (persistent truth — survives restarts)
+        let addr_bytes20 = addr_to_bytes20(&address);
+        if let Ok(Some(_)) = metagraph_for_validator.get_validator(&addr_bytes20) {
+            return Err(jsonrpc_core::Error::invalid_params(
+                "Address already registered in MetagraphDB (as validator or miner)"
+            ));
         }
 
         // Add to validator set with epoch delay (active next epoch)
@@ -412,16 +569,71 @@ pub fn register_staking_handlers(
             return Err(jsonrpc_core::Error::invalid_params(e));
         }
 
+        let _registered_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         // Persist validator to blockchain DB for on-chain storage
         if let Ok(data) = bincode::serialize(&new_validator) {
-            let _ = db_for_register_validator.store_validator(address.as_bytes(), &data);
+            let _ = db_for_register_validator
+                .store_validator(new_validator.address.as_bytes(), &data);
         }
+
+        // ── SUBMIT METAGRAPH PRECOMPILE TX TO MEMPOOL ──────────────────────
+        // Signature verified above (timestamp + ECDSA) — use add_system_transaction.
+        // All nodes update MetagraphDB when they execute this tx from the block.
+        let precompile_addr = Address::from(precompiles::metagraph_address());
+        let caller_bytes = addr_to_bytes20(&address);
+        let payload = MetagraphTxPayload::RegisterValidator {
+            hotkey: caller_bytes,
+            name: name.clone(),
+            stake,
+        };
+
+        let tx_hash_hex = match payload.encode() {
+            Ok(tx_data) => {
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos() as u64
+                    | ((stake as u64 & 0xFFFF_FFFF) << 32);
+
+                let tx = Transaction::with_chain_id(
+                    mempool_for_register.chain_id(), // ✅ real chain_id
+                    nonce,
+                    address,
+                    Some(precompile_addr),
+                    0, 1_000_000_000, 200_000,
+                    tx_data,
+                );
+                let hash = tx.hash();
+                match mempool_for_register.add_system_transaction(tx) {
+                    Ok(_) => {
+                        tracing::info!(
+                            "📨 MetagraphTx submitted: RegisterValidator 0x{} hash=0x{}",
+                            hex::encode(caller_bytes), hex::encode(&hash)
+                        );
+                        format!("0x{}", hex::encode(&hash))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to submit MetagraphTx (validator): {}", e);
+                        String::new()
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to encode MetagraphTxPayload (validator): {}", e);
+                String::new()
+            }
+        };
 
         Ok(serde_json::json!({
             "success": true,
-            "address": format!("0x{}", hex::encode(address.as_bytes())),
+            "address": format!("0x{}", hex::encode(new_validator.address.as_bytes())),
             "name": name,
-            "stake": format!("0x{:x}", stake)
+            "stake": format!("0x{:x}", stake),
+            "tx_hash": tx_hash_hex,
         }))
         }
     });

@@ -11,8 +11,27 @@ use revm::primitives::{
 };
 use revm::{Database, DatabaseCommit, Evm};
 use std::collections::HashMap;
+use revm::primitives::Log as RevmLog;
 use std::sync::Arc;
 use tracing::{debug, warn};
+
+/// Convert REVM logs to structured EvmLog preserving topics and data.
+/// Shared helper used by deploy(), call(), and static_call() to avoid duplication.
+fn convert_revm_logs(logs: &[RevmLog]) -> Vec<EvmLog> {
+    logs.iter()
+        .map(|log| {
+            let mut topics = Vec::with_capacity(log.data.topics().len());
+            for topic in log.data.topics() {
+                topics.push(topic.0);
+            }
+            EvmLog {
+                address: log.address.0.to_vec(),
+                topics,
+                data: log.data.data.to_vec(),
+            }
+        })
+        .collect()
+}
 
 /// Structured EVM log entry preserving topics and data from REVM execution.
 /// This avoids the information loss of flattening logs to raw bytes.
@@ -139,23 +158,7 @@ impl EvmExecutor {
                     gas_used
                 );
 
-                // Convert REVM logs to structured EvmLog preserving topics
-                let evm_logs = logs
-                    .iter()
-                    .map(|log| {
-                        let mut topics = Vec::with_capacity(log.data.topics().len());
-                        for topic in log.data.topics() {
-                            topics.push(topic.0);
-                        }
-                        EvmLog {
-                            address: log.address.0.to_vec(),
-                            topics,
-                            data: log.data.data.to_vec(),
-                        }
-                    })
-                    .collect();
-
-                Ok((contract_address, gas_used, evm_logs, deployed_code))
+                Ok((contract_address, gas_used, convert_revm_logs(&logs), deployed_code))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();
@@ -244,23 +247,7 @@ impl EvmExecutor {
 
                 debug!("Contract call succeeded with {} gas", gas_used);
 
-                // Convert REVM logs to structured EvmLog preserving topics
-                let evm_logs = logs
-                    .iter()
-                    .map(|log| {
-                        let mut topics = Vec::with_capacity(log.data.topics().len());
-                        for topic in log.data.topics() {
-                            topics.push(topic.0);
-                        }
-                        EvmLog {
-                            address: log.address.0.to_vec(),
-                            topics,
-                            data: log.data.data.to_vec(),
-                        }
-                    })
-                    .collect();
-
-                Ok((return_data, gas_used, evm_logs))
+                Ok((return_data, gas_used, convert_revm_logs(&logs)))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();
@@ -450,22 +437,7 @@ impl EvmExecutor {
                     _ => vec![],
                 };
 
-                let evm_logs = logs
-                    .iter()
-                    .map(|log| {
-                        let mut topics = Vec::with_capacity(log.data.topics().len());
-                        for topic in log.data.topics() {
-                            topics.push(topic.0);
-                        }
-                        EvmLog {
-                            address: log.address.0.to_vec(),
-                            topics,
-                            data: log.data.data.to_vec(),
-                        }
-                    })
-                    .collect();
-
-                Ok((return_data, gas_used, evm_logs))
+                Ok((return_data, gas_used, convert_revm_logs(&logs)))
             }
             RevmExecutionResult::Revert { gas_used: _, output } => {
                 let reason = String::from_utf8_lossy(&output).to_string();

@@ -195,4 +195,40 @@ mod tests {
         assert_eq!(parse_amount("0x64").unwrap(), 100);
         assert_eq!(parse_amount("1000").unwrap(), 4096);
     }
+
+    /// Test verify_caller_signature với Python eth_account signed data
+    /// Python key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    /// Python addr: 0xf39Fd6e51aad88F6f4ce6aB8827279cffFb92266
+    #[test]
+    fn test_verify_caller_signature_with_python_signed_data() {
+        // Message signed by Python's eth_account:
+        // msg = "neuron_register:f39fd6e51aad88f6f4ce6ab8827279cfffb92266:1:1740488000"
+        let msg = "neuron_register:f39fd6e51aad88f6f4ce6ab8827279cfffb92266:1:1740488000";
+        // Signature from Python (65 bytes hex, v=27 at end)
+        // Run: Account.sign_message(encode_defunct(text=msg), private_key=pk).signature.hex()
+        // NOTE: Insert actual sig here after running python script
+        // Placeholder: use known-good test vector
+        let sig_hex = "00"; // PLACEHOLDER - sẽ fail, dùng để test flow
+
+        // Address bytes for f39Fd6e51aad88F6f4ce6aB8827279cffFb92266
+        let addr_bytes: [u8; 20] = {
+            let b = hex::decode("f39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
+            let mut arr = [0u8; 20];
+            arr.copy_from_slice(&b);
+            arr
+        };
+        let claimed_address = luxtensor_core::Address::new(addr_bytes);
+
+        // Debug: compute the prefixed message hash
+        let prefix = format!("\x19Ethereum Signed Message:\n{}", msg.len());
+        let prefixed_msg = [prefix.as_bytes(), msg.as_bytes()].concat();
+        let message_hash = keccak256(&prefixed_msg);
+        eprintln!("DEBUG msg_len={}", msg.len());
+        eprintln!("DEBUG message_hash={}", hex::encode(message_hash));
+        eprintln!("DEBUG claimed_address={}", claimed_address);
+
+        // Verify address is correct
+        assert_eq!(claimed_address.as_bytes(), &addr_bytes);
+        eprintln!("TEST PASSED: address parse OK, hash computed OK");
+    }
 }

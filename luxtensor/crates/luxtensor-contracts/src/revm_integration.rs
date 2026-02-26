@@ -185,28 +185,37 @@ pub mod erc721_selectors {
 }
 
 /// Gas cost constants (EIP-compliant)
+///
+/// Values sourced from:
+/// - EIP-2 (Homestead): CREATE cost
+/// - EIP-2028 (Istanbul): calldata gas reduction
+/// - EIP-2929 (Berlin): cold/warm access pricing
+/// - EIP-3860 (Shanghai): initcode metering
 pub mod gas_costs {
-    /// Base transaction cost
+    /// Base transaction cost (EIP-2)
     pub const TX_BASE: u64 = 21_000;
-    /// Cost per zero byte of data
+    /// Cost per zero byte of data (EIP-2028)
     pub const TX_DATA_ZERO: u64 = 4;
-    /// Cost per non-zero byte of data
+    /// Cost per non-zero byte of data (EIP-2028)
     pub const TX_DATA_NONZERO: u64 = 16;
-    /// Cost for contract creation
+    /// Cost for contract creation (EIP-2)
     pub const TX_CREATE: u64 = 32_000;
-    /// Cost per byte of deployed code
+    /// Cost per byte of deployed code (EIP-170)
     pub const CODE_DEPOSIT_BYTE: u64 = 200;
-    /// SSTORE cost (cold)
+    /// EIP-3860: cost per 32-byte word of initcode (Shanghai)
+    /// Prevents DoS via large initcode without proportional gas cost.
+    pub const INITCODE_WORD_COST: u64 = 2;
+    /// SSTORE cost (cold) (EIP-2929)
     pub const SSTORE_SET: u64 = 20_000;
-    /// SSTORE cost (warm)
+    /// SSTORE cost (warm) (EIP-2929)
     pub const SSTORE_RESET: u64 = 2_900;
-    /// SLOAD cost (cold)
+    /// SLOAD cost (cold) (EIP-2929)
     pub const SLOAD_COLD: u64 = 2_100;
-    /// SLOAD cost (warm)
+    /// SLOAD cost (warm) (EIP-2929)
     pub const SLOAD_WARM: u64 = 100;
-    /// Call cost (cold address)
+    /// Call cost (cold address) (EIP-2929)
     pub const CALL_COLD: u64 = 2_600;
-    /// Call cost (warm address)
+    /// Call cost (warm address) (EIP-2929)
     pub const CALL_WARM: u64 = 100;
     /// Memory expansion cost base
     pub const MEMORY_GAS: u64 = 3;
@@ -231,20 +240,32 @@ pub fn estimate_calldata_gas(data: &[u8]) -> u64 {
     gas
 }
 
-/// Estimate total gas for a transaction
+/// Estimate total gas for a transaction.
+///
+/// Includes:
+/// - Base transaction cost (21,000)
+/// - Calldata gas (4/byte zero, 16/byte non-zero) per EIP-2028
+/// - Contract creation overhead (32,000 + initcode metering) per EIP-3860
+/// - Optional estimated execution gas
 pub fn estimate_transaction_gas(
     data: &[u8],
     is_contract_creation: bool,
-    _estimated_execution: u64,
+    estimated_execution: u64,
 ) -> u64 {
     let mut gas = gas_costs::TX_BASE;
     gas += estimate_calldata_gas(data);
 
     if is_contract_creation {
         gas += gas_costs::TX_CREATE;
-        // Add code deposit cost estimation
+        // EIP-3860: initcode cost = INITCODE_WORD_COST * ceil(len / 32)
+        let initcode_words = (data.len() as u64 + 31) / 32;
+        gas += initcode_words * gas_costs::INITCODE_WORD_COST;
+        // Code deposit cost estimation
         gas += (data.len() as u64) * gas_costs::CODE_DEPOSIT_BYTE;
     }
+
+    // Include estimated execution gas (e.g., from EVM trace)
+    gas += estimated_execution;
 
     gas
 }

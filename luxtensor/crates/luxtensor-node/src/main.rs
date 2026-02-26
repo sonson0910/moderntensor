@@ -5,6 +5,8 @@
 mod config;
 mod service;
 mod block_production;
+mod epoch_processing;
+mod service_utils;
 mod startup;
 mod mempool;
 mod executor;

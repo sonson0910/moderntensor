@@ -40,6 +40,29 @@ pub mod addresses {
     pub const BURN_ADDRESS: &str = "0x000000000000000000000000000000000000dEaD";
 }
 
+/// Precompile Contract Addresses
+/// These special addresses are intercepted by the executor BEFORE the EVM.
+/// Transactions sent to these addresses execute native Rust logic (MetagraphDB ops)
+/// instead of EVM bytecode — same as Ethereum precompiles (0x01-0x09).
+pub mod precompiles {
+    /// Metagraph precompile — handles neuron/validator/subnet/weights operations.
+    /// Address chosen to be easily recognizable: ends with ASCII "META" (4d455441).
+    pub const METAGRAPH: &str = "0x000000000000000000000000000000004d455441";
+
+    /// Parse precompile address bytes from hex string (returns 20-byte array)
+    pub fn metagraph_address() -> [u8; 20] {
+        let hex = METAGRAPH.trim_start_matches("0x");
+        let mut bytes = [0u8; 20];
+        // Last 4 bytes = "META" = 0x4d455441
+        bytes[16] = 0x4d;
+        bytes[17] = 0x45;
+        bytes[18] = 0x54;
+        bytes[19] = 0x41;
+        let _ = hex; // suppress unused warning — bytes explicitly set above
+        bytes
+    }
+}
+
 /// Block and Consensus Parameters
 pub mod consensus {
     /// Target block time in seconds (matching economic_model.rs BLOCK_TIME_SECONDS)

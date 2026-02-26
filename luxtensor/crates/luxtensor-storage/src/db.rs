@@ -26,6 +26,9 @@ const CF_EVM_STORAGE: &str = "evm_storage";
 const CF_FORK_CHOICE: &str = "fork_choice";
 // Metadata column family for schema versioning
 const CF_METADATA: &str = "metadata";
+// Bridge column families (persistent bridge messages + nonces)
+const CF_BRIDGE_MESSAGES: &str = "bridge_messages";
+const CF_BRIDGE_NONCES: &str = "bridge_nonces";
 
 /// Key used to store schema version in the metadata column family
 const SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -73,6 +76,9 @@ impl BlockchainDB {
             ColumnFamilyDescriptor::new(CF_FORK_CHOICE, Options::default()),
             // Schema versioning metadata
             ColumnFamilyDescriptor::new(CF_METADATA, Options::default()),
+            // Cross-chain bridge persistence
+            ColumnFamilyDescriptor::new(CF_BRIDGE_MESSAGES, Options::default()),
+            ColumnFamilyDescriptor::new(CF_BRIDGE_NONCES, Options::default()),
         ];
 
         let db = DB::open_cf_descriptors(&opts, path, cfs)?;

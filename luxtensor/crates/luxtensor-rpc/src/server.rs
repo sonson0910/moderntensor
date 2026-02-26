@@ -1,11 +1,14 @@
+use crate::blockchain_rpc::{self, BlockchainRpcContext};
 use crate::logs::LogStore;
 use crate::rate_limiter::RateLimiter;
+use crate::system_rpc::{self, SystemRpcContext};
 use crate::{
     eth_rpc::{register_aa_methods, register_eth_methods, register_log_methods, FaucetRpcConfig},
+    rpc_cache::RpcStateCache,
     types::*,
     NoOpBroadcaster, Result, RpcError, TransactionBroadcaster,
 };
-use jsonrpc_core::{IoHandler, Params, Value};
+use jsonrpc_core::IoHandler;
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_consensus::{
     AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, ValidatorSet,
@@ -14,17 +17,19 @@ use luxtensor_core::{Hash, Transaction, UnifiedStateDB};
 use luxtensor_storage::{BlockchainDB, CachedStateDB, MetagraphDB};
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use serde_json::json;
+
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use crate::ai_rpc::{register_ai_methods as register_ai_methods_new, AiRpcContext};
 use crate::handlers::{
-    register_checkpoint_handlers, register_neuron_handlers, register_staking_handlers,
-    register_subnet_handlers, register_weight_handlers,
+    register_admin_epoch_handler, register_checkpoint_handlers, register_metagraph_methods,
+    register_neuron_handlers, register_staking_handlers, register_subnet_handlers,
+    register_weight_handlers, register_debug_metagraph_handler,
 };
-use crate::helpers::{parse_address, parse_block_number_with_latest};
+#[cfg(test)]
+use crate::helpers::parse_address;
 #[cfg(test)]
 use crate::helpers::parse_block_number;
 use crate::query_rpc::{register_query_methods as register_query_methods_new, QueryRpcContext};
@@ -34,8 +39,10 @@ use crate::dispute_rpc::{register_dispute_methods as register_dispute_methods_ne
 use crate::bridge_rpc::{register_bridge_methods, BridgeRpcContext};
 use crate::multisig_rpc::{register_multisig_methods, MultisigRpcContext};
 use crate::miner_dispatch_rpc::{MinerDispatchContext, register_miner_dispatch_methods};
+use crate::rewards_rpc::register_reward_methods;
+use luxtensor_consensus::RewardExecutor;
 use luxtensor_contracts::AgentRegistry;
-use luxtensor_core::bridge::InMemoryBridge;
+use luxtensor_core::bridge::PersistentBridge;
 use luxtensor_core::multisig::MultisigManager;
 use luxtensor_oracle::DisputeManager;
 use std::path::PathBuf;
@@ -94,7 +101,7 @@ pub struct RpcServer {
     /// Optimistic AI — dispute manager for fraud-proof resolution
     dispute_manager: Option<Arc<DisputeManager>>,
     /// Cross-chain bridge for asset transfers
-    bridge: Option<Arc<InMemoryBridge>>,
+    bridge: Option<Arc<PersistentBridge>>,
     /// Multisig wallet manager for multi-signature transactions
     multisig_manager: Option<Arc<MultisigManager>>,
     /// Merkle root cache for state root caching stats (optional)
@@ -107,6 +114,8 @@ pub struct RpcServer {
     metrics_prometheus_fn: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Callback returning health status as JSON (from HealthMonitor::get_health)
     health_fn: Option<Arc<dyn Fn() -> serde_json::Value + Send + Sync>>,
+    /// Reward executor for rewards_* RPC methods (optional, shared with block production)
+    reward_executor: Option<Arc<parking_lot::RwLock<RewardExecutor>>>,
 }
 
 impl RpcServer {
@@ -177,6 +186,7 @@ impl RpcServer {
             metrics_json_fn: None,
             metrics_prometheus_fn: None,
             health_fn: None,
+            reward_executor: None,
         }
     }
 
@@ -208,7 +218,7 @@ impl RpcServer {
     }
 
     /// Set the cross-chain bridge instance (optional, enables bridge_* RPC methods)
-    pub fn set_bridge(&mut self, bridge: Arc<InMemoryBridge>) {
+    pub fn set_bridge(&mut self, bridge: Arc<PersistentBridge>) {
         self.bridge = Some(bridge);
     }
 
@@ -243,6 +253,19 @@ impl RpcServer {
         health_fn: Arc<dyn Fn() -> serde_json::Value + Send + Sync>,
     ) {
         self.health_fn = Some(health_fn);
+    }
+
+    /// Set RewardExecutor — enables rewards_getPending, rewards_claim, rewards_getStats etc.
+    /// Should be the SAME Arc shared with block_production so state is consistent.
+    pub fn set_reward_executor(&mut self, executor: Arc<parking_lot::RwLock<RewardExecutor>>) {
+        self.reward_executor = Some(executor);
+    }
+
+    /// Inject shared MetagraphDB from NodeService so staking_registerValidator,
+    /// neuron_register etc. write into the SAME DB that Yuma consensus reads from.
+    /// MUST be called before start() to fix the split-DB bug.
+    pub fn set_metagraph(&mut self, metagraph: Arc<MetagraphDB>) {
+        self.metagraph = metagraph;
     }
 
 
@@ -305,6 +328,7 @@ impl RpcServer {
             metrics_json_fn: None,
             metrics_prometheus_fn: None,
             health_fn: None,
+            reward_executor: None,
         }
     }
 
@@ -345,6 +369,8 @@ impl RpcServer {
                             (neuron.subnet_id, neuron.uid),
                             NeuronInfo {
                                 uid: neuron.uid,
+                                hotkey: format!("0x{}", hex::encode(neuron.hotkey)),
+                                coldkey: format!("0x{}", hex::encode(neuron.coldkey)),
                                 address: format!("0x{}", hex::encode(neuron.hotkey)),
                                 subnet_id: neuron.subnet_id,
                                 stake: neuron.stake,
@@ -356,6 +382,8 @@ impl RpcServer {
                                 rank: neuron.rank as u64,
                                 incentive: neuron.incentive as f64 / 65535.0,
                                 dividends: neuron.dividends as f64 / 65535.0,
+                                emission: neuron.emission,
+                                last_update: neuron.last_update,
                                 active: neuron.active,
                                 endpoint: Some(neuron.endpoint),
                             },
@@ -378,38 +406,107 @@ impl RpcServer {
     /// * `addr` - Address to bind (e.g. "127.0.0.1:8545")
     /// * `threads` - Number of worker threads for the HTTP server
     /// * `cors_origins` - CORS allowed origins (e.g. ["http://localhost:*"])
+    ///
+    /// # Architecture
+    /// Registration is split into 4 phases for maintainability:
+    /// 1. Core methods — blockchain, system, staking, subnet, neuron, weight, AI, query
+    /// 2. ETH-compatible methods — eth_*, net_*, web3_*, logs, AA, transactions
+    /// 3. Optional modules — agent, dispute, bridge, multisig (if configured)
+    /// 4. HTTP server — rate limiter middleware, CORS, bind address
     pub fn start(self, addr: &str, threads: usize, cors_origins: &[String]) -> Result<Server> {
         let mut io = IoHandler::new();
 
-        // Register blockchain query methods
-        self.register_blockchain_methods(&mut io);
+        // Phase 1: Core RPC methods (blockchain, system, handlers, AI, query)
+        self.register_core_methods(&mut io);
 
-        // Register account methods
-        self.register_account_methods(&mut io);
+        // Phase 2: Ethereum-compatible methods (eth_*, logs, AA, tx)
+        self.register_eth_methods_all(&mut io);
 
-        // Register modular handlers (with DB persistence)
+        // Phase 3: Optional feature modules (agent, dispute, bridge, multisig)
+        self.register_optional_modules(&mut io);
+
+        // Phase 4: Build and start HTTP server with rate limiting + CORS
+        self.build_http_server(io, addr, threads, cors_origins)
+    }
+
+    /// Phase 1: Register core blockchain, system, and domain-specific RPC methods.
+    ///
+    /// Includes: blockchain queries, system/monitoring, staking, subnet, neuron,
+    /// weight, rewards, metagraph, admin, miner dispatch, checkpoint, AI, and query methods.
+    fn register_core_methods(&self, io: &mut IoHandler) {
+        // ── Blockchain & Account query methods (extracted to blockchain_rpc) ──
+        let blockchain_ctx = BlockchainRpcContext {
+            db: self.db.clone(),
+            unified_state: self.unified_state.clone(),
+            cached_block_number: self.cached_block_number.clone(),
+            pending_txs: self.pending_txs.clone(),
+            mempool: self.mempool.clone(),
+        };
+        blockchain_rpc::register_blockchain_query_methods(&blockchain_ctx, io);
+        blockchain_rpc::register_account_query_methods(
+            self.unified_state.clone(),
+            self.db.clone(),
+            io,
+        );
+
+        // ── System, monitoring, debug, and sync methods (extracted to system_rpc) ──
+        let system_ctx = SystemRpcContext {
+            db: self.db.clone(),
+            unified_state: self.unified_state.clone(),
+            mempool: self.mempool.clone(),
+            validators: self.validators.clone(),
+            chain_id: self.chain_id(),
+            ai_circuit_breaker: self.ai_circuit_breaker.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            merkle_cache: self.merkle_cache.clone(),
+            metrics_json_fn: self.metrics_json_fn.clone(),
+            metrics_prometheus_fn: self.metrics_prometheus_fn.clone(),
+            health_fn: self.health_fn.clone(),
+        };
+        system_rpc::register_system_methods(&system_ctx, io);
+        system_rpc::register_monitoring_methods(&system_ctx, io);
+
+        // ── Modular handlers (with DB persistence) ──
         register_staking_handlers(
-            &mut io,
+            io,
             self.validators.clone(),
             self.db.clone(),
             self.chain_id(),
             self.unified_state.clone(),
+            self.metagraph.clone(),
+            self.mempool.clone(),
         );
-        register_subnet_handlers(&mut io, self.subnets.clone(), self.db.clone());
+        register_subnet_handlers(io, self.subnets.clone(), self.db.clone(), self.metagraph.clone(), self.mempool.clone());
         register_neuron_handlers(
-            &mut io,
+            io,
             self.neurons.clone(),
             self.subnets.clone(),
             self.db.clone(),
+            self.metagraph.clone(),
+            self.mempool.clone(),
         );
-        register_weight_handlers(&mut io, self.weights.clone(), self.db.clone());
+        register_weight_handlers(io, self.weights.clone(), self.db.clone(), self.metagraph.clone());
+
+        // Register rewards_* RPC methods if RewardExecutor is provided
+        if let Some(reward_exec) = self.reward_executor.clone() {
+            register_reward_methods(io, reward_exec);
+        }
+
+        // Register lux_* metagraph methods backed by MetagraphDB (RocksDB)
+        register_metagraph_methods(io, self.metagraph.clone());
+
+        // Register admin_runEpoch — triggers YumaConsensus manually (for testing/debug)
+        register_admin_epoch_handler(io, self.metagraph.clone());
+
+        // Register admin_debugMetagraph — dumps MetagraphDB state for debugging
+        register_debug_metagraph_handler(io, self.metagraph.clone());
 
         // Register miner dispatch methods (lux_registerMiner, lux_listMiners, etc.)
-        let miner_ctx = Arc::new(MinerDispatchContext::new());
-        register_miner_dispatch_methods(miner_ctx, &mut io);
+        let miner_ctx = Arc::new(MinerDispatchContext::new(self.metagraph.clone()));
+        register_miner_dispatch_methods(miner_ctx, io);
 
         // Register checkpoint handlers for fast sync
-        register_checkpoint_handlers(&mut io, self.db.clone(), self.data_dir.clone());
+        register_checkpoint_handlers(io, self.db.clone(), self.data_dir.clone());
 
         // Register AI-specific methods (refactored to ai_rpc module)
         let ai_ctx = AiRpcContext::new(
@@ -418,7 +515,7 @@ impl RpcServer {
             self.neurons.clone(),
             self.subnets.clone(),
         );
-        register_ai_methods_new(&ai_ctx, &mut io);
+        register_ai_methods_new(&ai_ctx, io);
 
         // Register SDK query methods (query_*) - refactored to query_rpc module
         let query_ctx = QueryRpcContext::new(
@@ -427,337 +524,100 @@ impl RpcServer {
             self.validators.clone(),
             self.commit_reveal.clone(),
         );
-        register_query_methods_new(&query_ctx, &mut io);
+        register_query_methods_new(&query_ctx, io);
 
-        // Register AI layer circuit breaker status endpoint
-        let ai_cb = self.ai_circuit_breaker.clone();
-        io.add_method("system_getAICircuitBreakerStatus", move |_params: Params| {
-            let ai_cb = ai_cb.clone();
-            async move {
-                let status = ai_cb.summary();
-                Ok(serde_json::json!({
-                    "healthy": status.healthy,
-                    "weight_consensus": {
-                        "state": format!("{:?}", status.weight_consensus_state),
-                        "operational": status.weight_consensus_state == luxtensor_consensus::CircuitState::Closed
-                    },
-                    "commit_reveal": {
-                        "state": format!("{:?}", status.commit_reveal_state),
-                        "operational": status.commit_reveal_state == luxtensor_consensus::CircuitState::Closed
-                    },
-                    "emission": {
-                        "state": format!("{:?}", status.emission_state),
-                        "operational": status.emission_state == luxtensor_consensus::CircuitState::Closed
-                    }
-                }))
-            }
-        });
+        // Register rpc_listMethods — API introspection endpoint
+        crate::api_registry::register_list_methods(io);
+    }
 
-        // Register rate limiter status endpoint for monitoring
-        let _rl = self.rate_limiter.clone();
-        io.add_method("system_getRateLimitStatus", move |_params: Params| {
-            async move {
-                Ok(serde_json::json!({
-                    "enabled": true,
-                    "config": {
-                        "max_requests_per_minute": 100,
-                        "window_seconds": 60
-                    },
-                    "message": "Rate limiting active for DoS protection"
-                }))
-            }
-        });
+    /// Phase 2: Register Ethereum-compatible RPC methods.
+    ///
+    /// Includes: eth_* (sendRawTransaction, call, getBalance, etc.), net_version,
+    /// web3_clientVersion, faucet, log queries, ERC-4337 Account Abstraction,
+    /// and transaction broadcasting methods.
+    fn register_eth_methods_all(&self, io: &mut IoHandler) {
+        // Create RpcStateCache for zero-lock hot-path RPC queries
+        let initial_block = self.unified_state.read().block_number();
+        let initial_base_fee = {
+            use luxtensor_consensus::FeeMarket;
+            FeeMarket::new().current_base_fee()
+        };
+        let rpc_cache = Arc::new(RpcStateCache::new(
+            self.chain_id(),
+            initial_block,
+            initial_base_fee as u64,
+        ));
 
-        // system_health - Return node health status (for monitoring and load balancers)
-        let db_for_health = self.db.clone();
-        let unified_for_health = self.unified_state.clone();
-        let health_fn_for_rpc = self.health_fn.clone();
-        io.add_method("system_health", move |_params: Params| {
-            let health_fn_for_rpc = health_fn_for_rpc.clone();
-            let db_for_health = db_for_health.clone();
-            let unified_for_health = unified_for_health.clone();
-            async move {
-                // Enhanced: Use HealthMonitor callback if available
-                if let Some(ref health_fn) = health_fn_for_rpc {
-                    return Ok(health_fn());
-                }
-
-                // Fallback: basic health from block scanning
-                let block_height = {
-                    let mut ceiling: u64 = 1;
-                    loop {
-                        match db_for_health.get_block_by_height(ceiling) {
-                            Ok(Some(_)) => {
-                                ceiling *= 2;
-                                if ceiling > 1_000_000 {
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(_) => break,
-                        }
-                    }
-                    let mut low = ceiling / 2;
-                    let mut high = ceiling;
-                    while low < high {
-                        let mid = (low + high + 1) / 2;
-                        match db_for_health.get_block_by_height(mid) {
-                            Ok(Some(_)) => low = mid,
-                            Ok(None) => high = mid - 1,
-                            Err(_) => break,
-                        }
-                    }
-                    low
-                };
-
-                let chain_id = unified_for_health.read().chain_id();
-
-                Ok(serde_json::json!({
-                    "is_syncing": false,
-                    "block": block_height,
-                    "healthy": true,
-                    "chain_id": chain_id,
-                    "version": "0.1.0",
-                    "node_name": "luxtensor-node"
-                }))
-            }
-        });
-
-        // system_nodeStats - Return node statistics (height, chain_id, mempool, validators)
-        let db_for_stats = self.db.clone();
-        let mempool_for_stats = self.mempool.clone();
-        let validators_for_stats = self.validators.clone();
-        let chain_id_for_stats = self.chain_id();
-        io.add_method("system_nodeStats", move |_params: Params| {
-            let db_for_stats = db_for_stats.clone();
-            let mempool_for_stats = mempool_for_stats.clone();
-            let validators_for_stats = validators_for_stats.clone();
-            async move {
-                // Get block height via binary search (same pattern as system_health)
-                let block_height = {
-                    let mut ceiling: u64 = 1;
-                    loop {
-                        match db_for_stats.get_block_by_height(ceiling) {
-                            Ok(Some(_)) => {
-                                ceiling *= 2;
-                                if ceiling > 1_000_000 {
-                                    break;
-                                }
-                            }
-                            Ok(None) => break,
-                            Err(_) => break,
-                        }
-                    }
-                    let mut low = ceiling / 2;
-                    let mut high = ceiling;
-                    while low < high {
-                        let mid = (low + high + 1) / 2;
-                        match db_for_stats.get_block_by_height(mid) {
-                            Ok(Some(_)) => low = mid,
-                            Ok(None) => high = mid - 1,
-                            Err(_) => break,
-                        }
-                    }
-                    low
-                };
-
-                let mempool_size = mempool_for_stats.get_pending_transactions().len();
-                let validator_count = validators_for_stats.read().len();
-
-                Ok(serde_json::json!({
-                    "height": block_height,
-                    "chain_id": chain_id_for_stats,
-                    "mempool_size": mempool_size,
-                    "validator_count": validator_count,
-                    "version": env!("CARGO_PKG_VERSION")
-                }))
-            }
-        });
-
-        // system_cacheStats - Return Merkle cache statistics for monitoring
-        if let Some(ref cache) = self.merkle_cache {
-            let cache_for_stats = cache.clone();
-            io.add_method("system_cacheStats", move |_params: Params| {
-                let cache_for_stats = cache_for_stats.clone();
-                async move {
-                    let stats = cache_for_stats.stats();
-                    Ok(serde_json::json!({
-                        "full_computations": stats.full_computations,
-                        "incremental_computations": stats.incremental_computations,
-                        "root_cache_hits": stats.root_cache_hits,
-                        "root_cache_misses": stats.root_cache_misses,
-                        "hash_cache_hits": stats.hash_cache_hits,
-                        "hit_ratio": stats.hit_ratio(),
-                        "incremental_ratio": stats.incremental_ratio()
-                    }))
-                }
-            });
-        }
-
-        // system_metrics - Return node metrics as JSON (for dashboards)
-        if let Some(ref metrics_fn) = self.metrics_json_fn {
-            let fn_clone = metrics_fn.clone();
-            io.add_method("system_metrics", move |_params: Params| {
-                let fn_clone = fn_clone.clone();
-                async move {
-                    Ok(fn_clone())
-                }
-            });
-        }
-
-        // system_prometheusMetrics - Return Prometheus-compatible metrics text
-        if let Some(ref prom_fn) = self.metrics_prometheus_fn {
-            let fn_clone = prom_fn.clone();
-            io.add_method("system_prometheusMetrics", move |_params: Params| {
-                let fn_clone = fn_clone.clone();
-                async move {
-                    Ok(serde_json::Value::String(fn_clone()))
-                }
-            });
-        }
-
-        // debug_forkChoiceState - Return block scores and attestation stakes for debugging
-        let db_for_debug = self.db.clone();
-        io.add_method("debug_forkChoiceState", move |_params: Params| {
-            let db_for_debug = db_for_debug.clone();
-            async move {
-                let block_scores = match db_for_debug.load_all_block_scores() {
-                    Ok(scores) => scores.iter().map(|(hash, score)| {
-                        serde_json::json!({
-                            "hash": format!("0x{}", hex::encode(hash)),
-                            "score": score
-                        })
-                    }).collect::<Vec<_>>(),
-                    Err(e) => return Err(jsonrpc_core::Error {
-                        code: jsonrpc_core::ErrorCode::InternalError,
-                        message: format!("Failed to load block scores: {}", e),
-                        data: None,
-                    }),
-                };
-
-                let attestation_stakes = match db_for_debug.load_all_attestation_stakes() {
-                    Ok(stakes) => stakes.iter().map(|(hash, stake)| {
-                        serde_json::json!({
-                            "hash": format!("0x{}", hex::encode(hash)),
-                            "stake": stake.to_string()
-                        })
-                    }).collect::<Vec<_>>(),
-                    Err(e) => return Err(jsonrpc_core::Error {
-                        code: jsonrpc_core::ErrorCode::InternalError,
-                        message: format!("Failed to load attestation stakes: {}", e),
-                        data: None,
-                    }),
-                };
-
-                Ok(serde_json::json!({
-                    "blockScores": block_scores,
-                    "attestationStakes": attestation_stakes,
-                    "totalScoredBlocks": block_scores.len(),
-                    "totalAttestedBlocks": attestation_stakes.len()
-                }))
-            }
-        });
-
-        // sync_getSyncStatus - Return current sync status for state sync protocol
-        let db_for_sync = self.db.clone();
-        let unified_for_sync = self.unified_state.clone(); // C1 Phase 2B: Use unified_state
-        io.add_method("sync_getSyncStatus", move |_params: Params| {
-            let db_for_sync = db_for_sync.clone();
-            let unified_for_sync = unified_for_sync.clone();
-            async move {
-                let current_block = unified_for_sync.read().block_number();
-                let highest_block = {
-                    // Simple linear scan from current to find highest
-                    let mut highest = current_block;
-                    for h in (current_block + 1)..(current_block + 100) {
-                        if db_for_sync.get_block_by_height(h).ok().flatten().is_some() {
-                            highest = h;
-                        } else {
-                            break;
-                        }
-                    }
-                    highest
-                };
-                let is_syncing = highest_block > current_block;
-
-                Ok(json!({
-                    "syncing": is_syncing,
-                    "currentBlock": format!("0x{:x}", current_block),
-                    "highestBlock": format!("0x{:x}", highest_block),
-                    "startingBlock": "0x0",
-                    "progress": if highest_block > 0 {
-                        (current_block as f64 / highest_block as f64 * 100.0).min(100.0)
-                    } else {
-                        100.0
-                    }
-                }))
-            }
-        });
-
-        // Register Ethereum-compatible methods (eth_*)
-        // Uses mempool for pending txs, unified_state for state reads, db for confirmed tx lookup
-        // evm_executor for eth_call storage reads (shared EVM state from block execution)
         register_eth_methods(
-            &mut io,
+            io,
             self.mempool.clone(),
             self.unified_state.clone(),
             self.db.clone(),
             self.broadcaster.clone(),
             self.evm_executor.clone(),
             FaucetRpcConfig::default(),
+            rpc_cache.clone(),
         );
 
         // Register log query methods (eth_getLogs, eth_newFilter, etc.)
-        let log_store = Arc::new(RwLock::new(LogStore::new(10_000))); // Keep logs for last 10K blocks
-        register_log_methods(&mut io, log_store, self.unified_state.clone());
+        let log_store = Arc::new(RwLock::new(LogStore::new(10_000)));
+        register_log_methods(io, log_store, self.unified_state.clone(), rpc_cache.clone());
 
-        // Register ERC-4337 Account Abstraction methods (eth_sendUserOperation, etc.)
+        // Register ERC-4337 Account Abstraction methods
         let entry_point =
             Arc::new(RwLock::new(luxtensor_contracts::EntryPoint::new(self.chain_id())));
-        register_aa_methods(&mut io, entry_point);
+        register_aa_methods(io, entry_point);
 
-        // Register transaction methods with P2P broadcasting (eth_sendTransaction, eth_getTransactionReceipt)
-        // These override the base eth_rpc implementations with broadcast support
-        // [C1 FIX] Uses unified_state for consistent nonce reads
+        // Register transaction methods with P2P broadcasting
         let tx_ctx = TxRpcContext::new(
             self.mempool.clone(),
             self.pending_txs.clone(),
-            self.unified_state.clone(), // UNIFIED: consistent with eth_* handlers
+            self.unified_state.clone(),
             self.broadcaster.clone(),
             self.db.clone(),
         );
-        register_tx_methods(&tx_ctx, &mut io);
+        register_tx_methods(&tx_ctx, io);
+    }
 
-        // Register Agent RPC methods (agent_*) — Agentic EVM
+    /// Phase 3: Register optional feature modules (only if configured).
+    ///
+    /// These modules are conditionally enabled via `set_*` methods on RpcServer
+    /// before calling `start()`. Includes: agent registry, dispute resolution,
+    /// cross-chain bridge, and multisig wallet management.
+    fn register_optional_modules(&self, io: &mut IoHandler) {
         if let Some(ref registry) = self.agent_registry {
             let agent_ctx = AgentRpcContext::new(registry.clone());
-            register_agent_methods_new(&agent_ctx, &mut io);
+            register_agent_methods_new(&agent_ctx, io);
         }
-
-        // Register Dispute RPC methods (dispute_*) — Optimistic AI
         if let Some(ref dm) = self.dispute_manager {
             let dispute_ctx = DisputeRpcContext::new(dm.clone());
-            register_dispute_methods_new(&dispute_ctx, &mut io);
+            register_dispute_methods_new(&dispute_ctx, io);
         }
-
-        // Register Bridge RPC methods (bridge_*) — Cross-Chain Asset Transfers
         if let Some(ref bridge) = self.bridge {
             let bridge_ctx = BridgeRpcContext::new(bridge.clone());
-            register_bridge_methods(&bridge_ctx, &mut io);
+            register_bridge_methods(&bridge_ctx, io);
         }
-
-        // Register Multisig RPC methods (multisig_*) — Multi-Signature Wallets
         if let Some(ref mm) = self.multisig_manager {
             let multisig_ctx = MultisigRpcContext::new(mm.clone());
-            register_multisig_methods(&multisig_ctx, &mut io);
+            register_multisig_methods(&multisig_ctx, io);
         }
+    }
 
-        // Start HTTP server with optimized settings
+    /// Phase 4: Build and start the HTTP server with rate limiting and CORS.
+    ///
+    /// Configures request middleware for IP-based rate limiting (X-Forwarded-For
+    /// and X-Real-IP aware), CORS origins, thread pool, and max request body size.
+    fn build_http_server(
+        &self,
+        io: IoHandler,
+        addr: &str,
+        threads: usize,
+        cors_origins: &[String],
+    ) -> Result<Server> {
         let thread_count = if threads > 0 { threads } else { 4 };
         let mut builder =
-            ServerBuilder::new(io).threads(thread_count).max_request_body_size(2 * 1024 * 1024); // 2 MB max request (reduced from 16 MB)
+            ServerBuilder::new(io).threads(thread_count).max_request_body_size(2 * 1024 * 1024);
 
-        // Apply CORS origins from config
         if !cors_origins.is_empty() {
             builder = builder.cors(jsonrpc_http_server::DomainsValidation::AllowOnly(
                 cors_origins
@@ -768,11 +628,9 @@ impl RpcServer {
         }
 
         // SECURITY: Apply rate limiter middleware for DoS protection.
-        // The RateLimiter was previously created but never called — this fixes that.
         let rate_limiter_mw = self.rate_limiter.clone();
         builder = builder.request_middleware(
             move |request: jsonrpc_http_server::hyper::Request<jsonrpc_http_server::hyper::Body>| {
-                // Extract client IP from standard reverse-proxy headers, fallback to 0.0.0.0
                 let ip = request
                     .headers()
                     .get("x-forwarded-for")
@@ -821,308 +679,9 @@ impl RpcServer {
         Ok(server)
     }
 
-    /// Register blockchain query methods
-    fn register_blockchain_methods(&self, io: &mut IoHandler) {
-        // eth_blockNumber - Get current block height (OPTIMIZED: atomic with proper ordering)
-        let cached_block_num = self.cached_block_number.clone();
-        let unified_for_block_num = self.unified_state.clone();
-        let db_for_block_num = self.db.clone();
-        io.add_method("eth_blockNumber", move |_params: Params| {
-            let unified_for_block_num = unified_for_block_num.clone();
-            let cached_block_num = cached_block_num.clone();
-            let db_for_block_num = db_for_block_num.clone();
-            async move {
-                // Get block number from UnifiedStateDB first (source of truth)
-                let unified_block = unified_for_block_num.read().block_number();
-                if unified_block > 0 {
-                    // Update cache atomically with Release ordering for visibility
-                    cached_block_num.store(unified_block, Ordering::Release);
-                    return Ok(Value::String(format!("0x{:x}", unified_block)));
-                }
-
-                // Fallback: Check atomic cache (with Acquire for proper visibility)
-                let cached = cached_block_num.load(Ordering::Acquire);
-                if cached > 0 {
-                    return Ok(Value::String(format!("0x{:x}", cached)));
-                }
-
-                // SLOW PATH: Initialize from DB (only at startup)
-                // Check genesis first — if DB is unavailable or empty, height is 0
-                match db_for_block_num.get_block_by_height(0) {
-                    Ok(None) => return Ok(Value::String("0x0".to_string())),
-                    // DB error during startup → return 0x0 gracefully (node is bootstrapping)
-                    Err(_) => return Ok(Value::String("0x0".to_string())),
-                    Ok(Some(_)) => {}
-                }
-
-                // Jump search to find ceiling
-                let mut ceiling: u64 = 1;
-                loop {
-                    match db_for_block_num.get_block_by_height(ceiling) {
-                        Ok(Some(_)) => {
-                            ceiling *= 2;
-                            if ceiling > 1_000_000 {
-                                break;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(_) => return Err(jsonrpc_core::Error::internal_error()),
-                    }
-                }
-
-                // Binary search for exact height
-                let mut low = ceiling / 2;
-                let mut high = ceiling;
-                while low < high {
-                    let mid = (low + high + 1) / 2;
-                    match db_for_block_num.get_block_by_height(mid) {
-                        Ok(Some(_)) => low = mid,
-                        Ok(None) => high = mid - 1,
-                        Err(_) => return Err(jsonrpc_core::Error::internal_error()),
-                    }
-                }
-
-                // Cache the result
-                cached_block_num.store(low, Ordering::Relaxed);
-                Ok(Value::String(format!("0x{:x}", low)))
-            }
-        });
-
-        // eth_getBlockByNumber - Get block by number
-        let db_for_get_block = self.db.clone();
-        let cached_for_get_block = self.cached_block_number.clone();
-        let unified_for_get_block = self.unified_state.clone();
-        io.add_method("eth_getBlockByNumber", move |params: Params| {
-            let db_for_get_block = db_for_get_block.clone();
-            let unified_for_get_block = unified_for_get_block.clone();
-            let cached_for_get_block = cached_for_get_block.clone();
-            async move {
-                let parsed: Vec<serde_json::Value> = params.parse()?;
-                if parsed.is_empty() {
-                    return Err(jsonrpc_core::Error::invalid_params("Missing block number"));
-                }
-
-                // Resolve "latest"/"pending" to the actual chain tip height
-                let latest = {
-                    let ub = unified_for_get_block.read().block_number();
-                    if ub > 0 {
-                        ub
-                    } else {
-                        cached_for_get_block.load(Ordering::Acquire)
-                    }
-                };
-                let height = parse_block_number_with_latest(&parsed[0], latest)?;
-                let _include_txs = parsed.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
-
-                match db_for_get_block.get_block_by_height(height) {
-                    Ok(Some(block)) => {
-                        let rpc_block = RpcBlock::from(block);
-                        serde_json::to_value(rpc_block)
-                            .map_err(|_| jsonrpc_core::Error::internal_error())
-                    }
-                    Ok(None) => Ok(Value::Null),
-                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
-                }
-            }
-        });
-
-        let db = self.db.clone();
-
-        // eth_getBlockByHash - Get block by hash
-        io.add_method("eth_getBlockByHash", move |params: Params| {
-            let db = db.clone();
-            async move {
-                let parsed: Vec<String> = params.parse()?;
-                if parsed.is_empty() {
-                    return Err(jsonrpc_core::Error::invalid_params("Missing block hash"));
-                }
-
-                let hash_str = parsed[0].trim_start_matches("0x");
-                let hash_bytes = hex::decode(hash_str)
-                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-                if hash_bytes.len() != 32 {
-                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-                }
-
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&hash_bytes);
-
-                match db.get_block(&hash) {
-                    Ok(Some(block)) => {
-                        let rpc_block = RpcBlock::from(block);
-                        serde_json::to_value(rpc_block)
-                            .map_err(|_| jsonrpc_core::Error::internal_error())
-                    }
-                    Ok(None) => Ok(Value::Null),
-                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
-                }
-            }
-        });
-
-        let db = self.db.clone();
-        let pending_txs_query = self.pending_txs.clone();
-        let mempool_for_tx_query = self.mempool.clone();
-
-        // eth_getTransactionByHash - Get transaction by hash
-        // 3-tier lookup: pending_txs (hot cache) → mempool → confirmed DB
-        io.add_method("eth_getTransactionByHash", move |params: Params| {
-            let db = db.clone();
-            let pending_txs_query = pending_txs_query.clone();
-            let mempool_for_tx_query = mempool_for_tx_query.clone();
-            async move {
-                let parsed: Vec<String> = params.parse()?;
-                if parsed.is_empty() {
-                    return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-                }
-
-                let hash_str = parsed[0].trim_start_matches("0x");
-                let hash_bytes = hex::decode(hash_str)
-                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-                if hash_bytes.len() != 32 {
-                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-                }
-
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&hash_bytes);
-
-                // 1. Check pending_txs hot cache first
-                if let Some(tx) = pending_txs_query.get(&hash) {
-                    let rpc_tx = RpcTransaction::from(tx.value().clone());
-                    return serde_json::to_value(rpc_tx)
-                        .map_err(|_| jsonrpc_core::Error::internal_error());
-                }
-
-                // 2. Check mempool pending transactions
-                if let Some(tx) = mempool_for_tx_query.get_transaction(&hash) {
-                    let rpc_tx = RpcTransaction::from(tx);
-                    return serde_json::to_value(rpc_tx)
-                        .map_err(|_| jsonrpc_core::Error::internal_error());
-                }
-
-                // 3. Fallback to confirmed transactions in database
-                match db.get_transaction(&hash) {
-                    Ok(Some(tx)) => {
-                        let rpc_tx = RpcTransaction::from(tx);
-                        serde_json::to_value(rpc_tx).map_err(|_| jsonrpc_core::Error::internal_error())
-                    }
-                    Ok(None) => Ok(Value::Null),
-                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
-                }
-            }
-        });
-
-        // eth_pendingTransactions - Get all pending transactions from mempool
-        let pending_txs_for_list = self.pending_txs.clone();
-        io.add_method("eth_pendingTransactions", move |_params: Params| {
-            let pending_txs_for_list = pending_txs_for_list.clone();
-            async move {
-                let rpc_txs: Vec<RpcTransaction> = pending_txs_for_list
-                    .iter()
-                    .map(|entry| RpcTransaction::from(entry.value().clone()))
-                    .collect();
-                serde_json::to_value(rpc_txs).map_err(|_| jsonrpc_core::Error::internal_error())
-            }
-        });
-    }
-
-    /// Register account methods
-    fn register_account_methods(&self, io: &mut IoHandler) {
-        let unified_state = self.unified_state.clone();
-
-        // eth_getBalance - Get account balance
-        io.add_method("eth_getBalance", move |params: Params| {
-            let unified_state = unified_state.clone();
-            async move {
-                let parsed: Vec<String> = params.parse()?;
-                if parsed.is_empty() {
-                    return Err(jsonrpc_core::Error::invalid_params("Missing address"));
-                }
-
-                let address = parse_address(&parsed[0])?;
-
-                let balance = unified_state.read().get_balance(&address);
-                Ok(Value::String(format!("0x{:x}", balance)))
-            }
-        });
-
-        // NOTE: eth_getTransactionCount and eth_sendRawTransaction are registered
-        // in eth_rpc::register_eth_methods() with proper RLP decoding.
-        // Do NOT duplicate them here — the eth_rpc versions are canonical.
-
-        // tx_getReceipt - Get transaction receipt
-        let db = self.db.clone();
-
-        io.add_method("tx_getReceipt", move |params: Params| {
-            let db = db.clone();
-            async move {
-                let parsed: Vec<String> = params.parse()?;
-                if parsed.is_empty() {
-                    return Err(jsonrpc_core::Error::invalid_params("Missing transaction hash"));
-                }
-
-                let hash_str = parsed[0].trim_start_matches("0x");
-                let hash_bytes = hex::decode(hash_str)
-                    .map_err(|_| jsonrpc_core::Error::invalid_params("Invalid hash format"))?;
-
-                if hash_bytes.len() != 32 {
-                    return Err(jsonrpc_core::Error::invalid_params("Hash must be 32 bytes"));
-                }
-
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&hash_bytes);
-
-                // Query transaction from database
-                match db.get_transaction(&hash) {
-                    Ok(Some(tx)) => {
-                        // Try to get the real receipt from DB (bincode-serialized)
-                        let (status, gas_used, logs_json, contract_addr, block_height) = match db.get_receipt(&hash) {
-                            Ok(Some(receipt_bytes)) => {
-                                match bincode::deserialize::<luxtensor_core::receipt::Receipt>(&receipt_bytes) {
-                                    Ok(r) => {
-                                        let status_hex = match r.status {
-                                            luxtensor_core::receipt::ExecutionStatus::Success => "0x1",
-                                            luxtensor_core::receipt::ExecutionStatus::Failed => "0x0",
-                                        };
-                                        let logs: Vec<serde_json::Value> = r.logs.iter().map(|log| {
-                                            serde_json::json!({
-                                                "address": format!("0x{}", hex::encode(log.address.as_bytes())),
-                                                "topics": log.topics.iter().map(|t| format!("0x{}", hex::encode(t))).collect::<Vec<_>>(),
-                                                "data": format!("0x{}", hex::encode(&log.data)),
-                                            })
-                                        }).collect();
-                                        let ca = r.contract_address.map(|a| format!("0x{}", hex::encode(a.as_bytes())));
-                                        (status_hex.to_string(), r.gas_used, serde_json::json!(logs), ca, r.block_height)
-                                    }
-                                    Err(_) => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
-                                }
-                            }
-                            _ => ("0x1".to_string(), 21000u64, serde_json::json!([]), None, 0u64),
-                        };
-
-                        let receipt = serde_json::json!({
-                            "transactionHash": format!("0x{}", hex::encode(hash)),
-                            "status": status,
-                            "blockNumber": format!("0x{:x}", block_height),
-                            "gasUsed": format!("0x{:x}", gas_used),
-                            "cumulativeGasUsed": format!("0x{:x}", gas_used),
-                            "from": format!("0x{}", hex::encode(tx.from.as_bytes())),
-                            "to": tx.to.map(|addr| format!("0x{}", hex::encode(addr.as_bytes()))),
-                            "logs": logs_json,
-                            "contractAddress": contract_addr,
-                        });
-                        Ok(receipt)
-                    }
-                    Ok(None) => Ok(Value::Null),
-                    Err(_) => Err(jsonrpc_core::Error::internal_error()),
-                }
-            }
-        });
-
-        // NOTE: dev_faucet is registered in eth_rpc.rs register_eth_methods()
-        // which updates EvmState.balances - the source queried by eth_getBalance
-    }
+    // NOTE: register_blockchain_methods and register_account_methods have been
+    // extracted to blockchain_rpc.rs for better separation of concerns.
+    // They are now called from start() via blockchain_rpc::register_*.
 }
 
 // ─── M-3 FIX: Builder Pattern ────────────────────────────────────────
@@ -1231,6 +790,7 @@ impl RpcServerBuilder {
             metrics_json_fn: None,
             metrics_prometheus_fn: None,
             health_fn: None,
+            reward_executor: None,
         }
     }
 }

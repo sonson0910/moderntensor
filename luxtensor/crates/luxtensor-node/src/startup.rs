@@ -4,7 +4,7 @@
 //! P2P swarm, RPC server, WebSocket server, block production loop,
 //! AI Task Dispatcher and the periodic sync task.
 
-use crate::service::{detect_external_ip, peer_id_to_synthetic_ip, NodeService, MAX_BLOCK_CLOCK_DRIFT_SECS};
+use crate::service::{detect_external_ip, NodeService, MAX_BLOCK_CLOCK_DRIFT_SECS};
 use crate::task_dispatcher::DispatchService;
 
 use anyhow::Result;
@@ -164,6 +164,14 @@ impl NodeService {
                                                                               // 🔧 FIX #6: Clone state_db and executor for P2P block state execution
                 let state_db_for_p2p = self.state_db.clone();
                 let executor_for_p2p = self.executor.clone();
+                // 🔐 SECURITY: Clone consensus for validator-set membership check on incoming blocks
+                let consensus_for_p2p = self.consensus.clone();
+                // 🎲 VRF: epoch_length needed for VRF alpha construction
+                let epoch_length_for_p2p = self.epoch_length;
+                // 🔧 FIX #META: Clone metagraph_db so P2P handler can sync neurons/validators/subnets
+                // after receiving blocks. Without this, only the block-producing node's MetagraphDB
+                // reflects registrations — non-producers' Yuma computation returns zeroes.
+                let _metagraph_db_for_p2p = self.metagraph_db.clone();
                 // 🔧 FIX #9: Atomic height guard to prevent block height race between
                 // P2P handler and block production (both reading/writing at the same height)
                 let best_height_guard = self.best_height_guard.clone();
@@ -314,6 +322,72 @@ impl NodeService {
                                     }
                                 }
 
+                                // 3b. 🔐 SECURITY: Validate proposer is a registered active validator
+                                // Reject blocks from unknown or deactivated validators to prevent
+                                // unauthorized block production (C3 fix)
+                                if block.header.validator != [0u8; 32] {
+                                    let validator_addr_bytes = &block.header.validator[12..32];
+                                    let mut addr_20 = [0u8; 20];
+                                    addr_20.copy_from_slice(validator_addr_bytes);
+                                    let proposer_addr = luxtensor_core::Address::from(addr_20);
+
+                                    let is_active_validator = {
+                                        let pos = consensus_for_p2p.read();
+                                        let vs = pos.validator_set();
+                                        let vs_lock = vs.read();
+                                        vs_lock.active_validators()
+                                            .iter()
+                                            .any(|v| v.address == proposer_addr)
+                                    };
+
+                                    if !is_active_validator {
+                                        warn!("🚫 Block #{} rejected: proposer {:?} is not an active validator",
+                                            height, &addr_20[..4]);
+                                        continue;
+                                    }
+
+                                    // 3c. 🎲 VRF proof verification (C2 security fix)
+                                    // If block carries a VRF proof, verify it against the proposer's
+                                    // public key. Reject blocks with invalid/forged VRF proofs.
+                                    if let Some(ref vrf_bytes) = block.header.vrf_proof {
+                                        if vrf_bytes.len() == 97 {
+                                            let vrf_valid = {
+                                                let pos = consensus_for_p2p.read();
+                                                let vs = pos.validator_set();
+                                                let vs_lock = vs.read();
+                                                if let Some(validator) = vs_lock.get_validator(&proposer_addr) {
+                                                    let mut proof_arr = [0u8; 97];
+                                                    proof_arr.copy_from_slice(vrf_bytes);
+                                                    match luxtensor_crypto::vrf::VrfProof::from_bytes(&proof_arr) {
+                                                        Ok(proof) => {
+                                                            let epoch = height / epoch_length_for_p2p.max(1);
+                                                            let mut alpha = Vec::with_capacity(48);
+                                                            alpha.extend_from_slice(&epoch.to_le_bytes());
+                                                            alpha.extend_from_slice(&height.to_le_bytes());
+                                                            alpha.extend_from_slice(&block.header.previous_hash);
+                                                            luxtensor_crypto::vrf::vrf_verify(
+                                                                &validator.public_key, &alpha, &proof
+                                                            ).is_ok()
+                                                        }
+                                                        Err(_) => false,
+                                                    }
+                                                } else {
+                                                    false // Already rejected by C3 check above
+                                                }
+                                            };
+                                            if !vrf_valid {
+                                                warn!("🚫 Block #{} rejected: invalid VRF proof", height);
+                                                continue;
+                                            }
+                                            debug!("✅ VRF proof verified for block #{}", height);
+                                        } else {
+                                            warn!("🚫 Block #{} rejected: VRF proof has wrong size ({} bytes, expected 97)",
+                                                height, vrf_bytes.len());
+                                            continue;
+                                        }
+                                    }
+                                }
+
                                 // 4. Validate txs_root (Merkle root of transactions)
                                 let tx_hashes: Vec<[u8; 32]> =
                                     block.transactions.iter().map(|tx| tx.hash()).collect();
@@ -385,6 +459,14 @@ impl NodeService {
                                         }
                                         mempool_for_p2p.remove_transactions(&tx_hashes);
                                     }
+
+                                    // ✅ MetagraphDB is now updated via Metagraph Precompile transactions.
+                                    // When neuron_register/subnet_create/staking_registerValidator is called,
+                                    // the RPC handler writes a MetagraphTx (to=PRECOMPILE_METAGRAPH) into
+                                    // the mempool. The block producer includes this tx in the next block.
+                                    // ALL nodes (including P2P receivers here) execute the tx via executor,
+                                    // which calls execute_metagraph_precompile() → MetagraphDB.
+                                    // No O(N) scan needed. Replaced sync_from_blockchain() call.
 
                                     // 🔧 FIX #6: Execute transactions against StateDB for P2P-received blocks
                                     // Previously only the block producer executed txs, causing state divergence
@@ -516,27 +598,23 @@ impl NodeService {
                                 }
                             }
                             SwarmP2PEvent::PeerConnected(peer_id) => {
-                                // 🛡️ Register peer with Eclipse Protection
+                                // 🛡️ Eclipse Protection: track peer for subnet diversity analysis.
+                                // libp2p PeerConnected events don't carry real IPs, so we use a
+                                // deterministic synthetic IP derived from PeerId hash. This enables:
+                                // - Subnet diversity tracking (detect /16 and /24 concentration)
+                                // - Peer rotation (evict low-score or stale peers)
+                                // - Behavior scoring via update_peer_score()
                                 let peer_id_str = peer_id.to_string();
-                                let synthetic_ip = peer_id_to_synthetic_ip(&peer_id_str);
-                                let is_outbound = false; // Default to inbound
-
-                                if eclipse_protection_for_p2p
-                                    .should_allow_connection(&synthetic_ip, is_outbound)
-                                {
-                                    eclipse_protection_for_p2p.add_peer(
-                                        peer_id_str.clone(),
-                                        synthetic_ip,
-                                        is_outbound,
-                                    );
-                                    info!(
-                                        "👋 Peer connected: {} (diversity: {}%)",
-                                        peer_id,
-                                        eclipse_protection_for_p2p.calculate_diversity_score()
-                                    );
-                                } else {
-                                    warn!("🛡️ Peer blocked by eclipse protection: {}", peer_id);
-                                }
+                                let synthetic_ip = crate::service::peer_id_to_synthetic_ip(&peer_id_str);
+                                eclipse_protection_for_p2p.add_peer(
+                                    peer_id_str.clone(),
+                                    synthetic_ip,
+                                    false, // inbound — we don't know directionality from this event
+                                );
+                                info!(
+                                    "👋 Peer connected: {} (eclipse: tracked as {})",
+                                    peer_id, synthetic_ip
+                                );
 
                                 // Update global peer count for RPC
                                 luxtensor_rpc::peer_count::increment_peer_count();
@@ -700,6 +778,8 @@ impl NodeService {
                         // Case 1: Solo mode — no peers after 1 check → start producing
                         // Case 2: All-fresh network — peers connected but nobody
                         //         sent us any blocks (my_height still 0) → bootstrap
+                        // Case 3: Node rejoining with existing data — no new blocks
+                        //         received after 2 checks → already up-to-date, resume
                         let peer_count = luxtensor_rpc::peer_count::get_peer_count();
                         if is_syncing_for_periodic.load(std::sync::atomic::Ordering::SeqCst) {
                             if consecutive_no_progress >= 1 && peer_count == 0 {
@@ -711,6 +791,17 @@ impl NodeService {
                                 info!(
                                     "⏰ Fresh network: {} peer(s) connected but no blocks after {}s — bootstrapping",
                                     peer_count, sync_interval_secs
+                                );
+                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
+                            } else if consecutive_no_progress >= 1 && my_height > 0 {
+                                // 🔧 FIX: Node has existing data (my_height > 0) and has received
+                                // no new blocks after 1 check (10 seconds). This means we are already
+                                // at or near the tip — resume production immediately.
+                                // Previously this required consecutive_no_progress >= 2 AND peer_count > 0,
+                                // which caused a 20-40s pause loop on every restart even when fully synced.
+                                info!(
+                                    "⏰ Already synced: height={}, {} peer(s), no new blocks after {}s — resuming",
+                                    my_height, peer_count, sync_interval_secs
                                 );
                                 is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
                             }
@@ -809,6 +900,17 @@ impl NodeService {
             // block production, and RPC all share the same state instance.
             rpc_server.set_unified_state(shared_unified_state.clone());
 
+            // Wire shared RewardExecutor into RPC so rewards_getPending, rewards_getStats,
+            // rewards_claim etc. query the same state that block production updates.
+            rpc_server.set_reward_executor(self.reward_executor.clone());
+
+            // 🔧 FIX: Inject the SAME MetagraphDB instance that NodeService / Yuma uses
+            // into the RPC server. Without this, staking_registerValidator and neuron_register
+            // write into a temp/<PID> DB while Yuma reads from data_dir/metagraph → all
+            // validators appear missing and metrics stay at 0.
+            rpc_server.set_metagraph(self.metagraph_db.clone());
+
+
             let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
             let rpc_threads = self.config.rpc.threads;
             let rpc_cors_origins = self.config.rpc.cors_origins.clone();
@@ -899,6 +1001,15 @@ impl NodeService {
             let fast_finality_clone = self.fast_finality.clone();
             let metrics_for_loop = self.metrics.clone();
             let ws_broadcast_for_block = self.ws_broadcast.clone();
+            let halving_schedule_clone = self.halving_schedule.clone();
+            let burn_manager_clone = self.burn_manager.clone();
+            let fee_market_clone = self.fee_market.clone();
+            let governance_clone = self.governance.clone();
+            let validator_rotation_clone = self.validator_rotation.clone();
+            let commit_reveal_clone = self.commit_reveal.clone();
+            let scoring_manager_clone = self.scoring_manager.clone();
+            let vrf_keypair_for_block = self.vrf_keypair.clone();
+            let ai_circuit_breaker_clone = self.ai_circuit_breaker.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -930,6 +1041,15 @@ impl NodeService {
                     fast_finality_clone, // BFT fast finality hook
                     metrics_for_loop,    // NodeMetrics recording
                     ws_broadcast_for_block, // WebSocket event broadcast
+                    halving_schedule_clone,  // 📊 Phase 3: Halving schedule
+                    burn_manager_clone,      // 📊 Phase 3: Fee burning
+                    fee_market_clone,        // 📊 Phase 3: EIP-1559 dynamic pricing
+                    governance_clone,        // 🏛️ Phase 4+: Governance epoch hooks
+                    validator_rotation_clone, // 🔄 Phase 4+: Validator rotation
+                    commit_reveal_clone,     // 🔐 Phase 4+: Commit-reveal finalization
+                    scoring_manager_clone,   // 📊 Phase 5+: Performance scoring
+                    vrf_keypair_for_block,   // 🎲 VRF keypair for block proofs (C2 fix)
+                    ai_circuit_breaker_clone, // 🛡️ AI layer circuit breaker
                 )
                 .await
             });

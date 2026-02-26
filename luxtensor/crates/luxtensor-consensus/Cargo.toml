@@ -13,6 +13,7 @@ production-vrf = ["dep:vrf-rfc9381", "dep:curve25519-dalek", "dep:sha2_011", "de
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
 parking_lot = { workspace = true }
@@ -32,6 +33,7 @@ digest_011 = { version = "0.11.0-rc.2", package = "digest", optional = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
+luxtensor-storage = { path = "../luxtensor-storage" }
 
 [dev-dependencies]
 proptest = { workspace = true }

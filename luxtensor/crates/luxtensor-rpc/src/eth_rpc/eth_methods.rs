@@ -4,6 +4,7 @@
 //! These functions register Ethereum-compatible JSON-RPC handlers.
 
 use std::sync::Arc;
+use crate::rpc_cache::RpcStateCache;
 use parking_lot::{Mutex, RwLock};
 use jsonrpc_core::{IoHandler, Params, Error as RpcError, ErrorCode};
 use serde_json::json;
@@ -28,13 +29,14 @@ pub fn register_eth_methods(
     broadcaster: Arc<dyn crate::TransactionBroadcaster>,
     evm_executor: Option<luxtensor_contracts::EvmExecutor>,
     faucet_config: FaucetRpcConfig,
+    cache: Arc<RpcStateCache>,
 ) {
-    // eth_chainId - Route to UnifiedStateDB
-    let state = unified_state.clone();
+    // eth_chainId - Zero-lock via RpcStateCache (immutable value)
+    let cache_for_chainid = cache.clone();
     io.add_method("eth_chainId", move |_params: Params| {
-        let state = state.clone();
+        let cache = cache_for_chainid.clone();
         async move {
-            let chain_id = state.read().chain_id();
+            let chain_id = cache.chain_id();
             Ok(json!(format!("0x{:x}", chain_id)))
         }
     });
@@ -90,20 +92,22 @@ pub fn register_eth_methods(
         }
     });
 
-    // eth_gasPrice - Returns current base fee from EIP-1559 FeeMarket
-    // Uses dynamic pricing: 0.5 gwei initial, adjusts based on block fullness
-    io.add_method("eth_gasPrice", move |_params: Params| { async move {
-        // Use FeeMarket for dynamic gas pricing
-        use luxtensor_consensus::FeeMarket;
-        let market = FeeMarket::new();
-        let base_fee = market.current_base_fee();
-        Ok(json!(format!("0x{:x}", base_fee)))
-    }});
+    // eth_gasPrice - Zero-lock via RpcStateCache (atomic read, updated per block)
+    let cache_for_gas = cache.clone();
+    io.add_method("eth_gasPrice", move |_params: Params| {
+        let cache = cache_for_gas.clone();
+        async move {
+            let base_fee = cache.base_fee();
+            Ok(json!(format!("0x{:x}", base_fee)))
+        }
+    });
 
     // eth_estimateGas — real EVM dry-run simulation (non-committing)
     let state_for_estimate = unified_state.clone();
+    let evm_for_estimate = evm_executor.clone();
     io.add_method("eth_estimateGas", move |params: Params| {
         let state_for_estimate = state_for_estimate.clone();
+        let evm_for_estimate = evm_for_estimate.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
 
@@ -134,7 +138,7 @@ pub fn register_eth_methods(
             let s = data_hex.strip_prefix("0x").unwrap_or(data_hex);
             hex::decode(s).unwrap_or_default()
         };
-        let value: u128 = {
+        let _value: u128 = {
             let s = value_str.strip_prefix("0x").unwrap_or(value_str);
             u128::from_str_radix(s, 16).unwrap_or(0)
         };
@@ -160,33 +164,36 @@ pub fn register_eth_methods(
                 drop(state_guard);
 
                 if let Some(contract_code) = code {
-                    // Create executor seeded with state from UnifiedStateDB
-                    let executor = luxtensor_contracts::EvmExecutor::default();
-                    // Fund the caller and deploy code so the EVM sees the correct state
-                    {
-                        let state_r = state_for_estimate.read();
-                        let caller_balance =
-                            state_r.get_balance(&luxtensor_core::Address::from(from_addr));
-                        executor.fund_account(
-                            &luxtensor_core::Address::from(from_addr),
-                            caller_balance,
-                        );
-                        executor.deploy_code(
-                            &luxtensor_core::Address::from(to_addr),
-                            contract_code.clone(),
-                        );
-                    }
+                    // Use shared EvmExecutor (has real contract storage) when available
+                    let executor = match evm_for_estimate {
+                        Some(ref shared) => shared.clone(),
+                        None => {
+                            // Fallback: create temporary executor seeded from UnifiedStateDB
+                            let tmp = luxtensor_contracts::EvmExecutor::default();
+                            let state_r = state_for_estimate.read();
+                            let caller_balance =
+                                state_r.get_balance(&luxtensor_core::Address::from(from_addr));
+                            tmp.fund_account(
+                                &luxtensor_core::Address::from(from_addr),
+                                caller_balance,
+                            );
+                            tmp.deploy_code(
+                                &luxtensor_core::Address::from(to_addr),
+                                contract_code.clone(),
+                            );
+                            tmp
+                        }
+                    };
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
 
-                    match executor.call(
+                    match executor.static_call(
                         luxtensor_core::Address::from(from_addr),
                         luxtensor_contracts::ContractAddress::from(to_addr),
                         contract_code.to_vec(),
                         data.clone(),
-                        value,
                         30_000_000, // High gas limit for estimation
                         block_number,
                         timestamp,
@@ -223,10 +230,12 @@ pub fn register_eth_methods(
     let mp_for_receipt = mempool.clone();
     let state_for_receipt = unified_state.clone();
     let db_for_receipt = db.clone();
+    let cache_for_receipt = cache.clone();
     io.add_method("eth_getTransactionReceipt", move |params: Params| {
         let mp_for_receipt = mp_for_receipt.clone();
-        let state_for_receipt = state_for_receipt.clone();
+        let _state_for_receipt = state_for_receipt.clone();
         let db_for_receipt = db_for_receipt.clone();
+        let cache_for_receipt = cache_for_receipt.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let hash_str = p.get(0)
@@ -248,7 +257,7 @@ pub fn register_eth_methods(
         let len = std::cmp::min(hash_bytes.len(), 32);
         hash[..len].copy_from_slice(&hash_bytes[..len]);
 
-        let block_number = state_for_receipt.read().block_number();
+        let block_number = cache_for_receipt.block_number();
 
         // Check UnifiedMempool for pending/recently-confirmed transactions
         if let Some(core_tx) = mp_for_receipt.get_transaction(&hash) {
@@ -452,12 +461,12 @@ pub fn register_eth_methods(
     // steal funds sent to those addresses.
     io.add_method("eth_accounts", move |_params: Params| { async move { Ok(json!([])) }});
 
-    // net_version - Route to UnifiedStateDB
-    let state = unified_state.clone();
+    // net_version - Zero-lock via RpcStateCache (immutable value)
+    let cache_for_netver = cache.clone();
     io.add_method("net_version", move |_params: Params| {
-        let state = state.clone();
+        let cache = cache_for_netver.clone();
         async move {
-            let chain_id = state.read().chain_id();
+            let chain_id = cache.chain_id();
             Ok(json!(chain_id.to_string()))
         }
     });
@@ -468,10 +477,12 @@ pub fn register_eth_methods(
     let mp_for_sendraw = mempool.clone();
     let unified_for_sendraw = unified_state.clone();
     let broadcaster_for_sendraw = broadcaster.clone();
+    let cache_for_sendraw = cache.clone();
     io.add_method("eth_sendRawTransaction", move |params: Params| {
         let mp_for_sendraw = mp_for_sendraw.clone();
         let unified_for_sendraw = unified_for_sendraw.clone();
         let broadcaster_for_sendraw = broadcaster_for_sendraw.clone();
+        let cache_for_sendraw = cache_for_sendraw.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let raw_tx = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
@@ -528,7 +539,7 @@ pub fn register_eth_methods(
         );
 
         // === REPLAY PROTECTION: Validate chain ID ===
-        let expected_chain_id = unified_for_sendraw.read().chain_id();
+        let expected_chain_id = cache_for_sendraw.chain_id();
         if decoded.chain_id != 0 && decoded.chain_id != expected_chain_id {
             return Err(RpcError {
                 code: ErrorCode::ServerError(-32000),
@@ -707,12 +718,14 @@ pub fn register_eth_methods(
     let faucet_cfg = faucet_config;
     let faucet_mempool = mempool.clone();
     let faucet_broadcaster = broadcaster.clone();
+    let cache_for_faucet = cache.clone();
     io.add_method("dev_faucet", move |params: Params| {
-        let dev_state = dev_state.clone();
+        let _dev_state = dev_state.clone();
         let faucet_limiter = faucet_limiter.clone();
         let faucet_cfg = faucet_cfg.clone();
         let faucet_mempool = faucet_mempool.clone();
         let faucet_broadcaster = faucet_broadcaster.clone();
+        let cache_for_faucet = cache_for_faucet.clone();
         async move {
         // Guard: check if faucet is enabled
         if !faucet_cfg.enabled {
@@ -725,7 +738,7 @@ pub fn register_eth_methods(
 
         // Guard: only allow faucet on dev/test chain IDs
         // Chain ID 8898 = LuxTensor devnet, 9999 = LuxTensor testnet, 1337 = local dev, 31337 = Hardhat
-        let chain_id = dev_state.read().chain_id();
+        let chain_id = cache_for_faucet.chain_id();
         let allowed_chains: [u64; 4] = [8898, 9999, 1337, 31337];
         if !allowed_chains.contains(&chain_id) {
             return Err(RpcError {
@@ -1141,18 +1154,19 @@ pub fn register_eth_methods(
 
 
 /// Register eth_getLogs and filter-related RPC methods
-/// Uses UnifiedStateDB for block_number reads
+/// Uses RpcStateCache for block_number reads (zero-lock atomic)
 pub fn register_log_methods(
     io: &mut IoHandler,
     log_store: Arc<RwLock<crate::logs::LogStore>>,
     unified_state: Arc<RwLock<luxtensor_core::UnifiedStateDB>>,
+    cache: Arc<RpcStateCache>,
 ) {
     // eth_getLogs - Query historical logs
     let store = log_store.clone();
-    let state = unified_state.clone();
+    let cache_for_logs = cache.clone();
     io.add_method("eth_getLogs", move |params: Params| {
         let store = store.clone();
-        let state = state.clone();
+        let cache_for_logs = cache_for_logs.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_obj = p.get(0).ok_or_else(|| RpcError {
@@ -1162,7 +1176,7 @@ pub fn register_log_methods(
         })?;
 
         let filter = parse_log_filter(filter_obj)?;
-        let current_block = state.read().block_number();
+        let current_block = cache_for_logs.block_number();
         let logs = store.read().get_logs(&filter, current_block);
 
         let rpc_logs: Vec<serde_json::Value> = logs.iter().map(|log| log.to_rpc_log()).collect();
@@ -1172,10 +1186,10 @@ pub fn register_log_methods(
 
     // eth_newFilter - Create a new filter
     let store = log_store.clone();
-    let state = unified_state.clone();
+    let cache_for_newfilter = cache.clone();
     io.add_method("eth_newFilter", move |params: Params| {
         let store = store.clone();
-        let state = state.clone();
+        let cache_for_newfilter = cache_for_newfilter.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_obj = p.get(0).ok_or_else(|| RpcError {
@@ -1185,7 +1199,7 @@ pub fn register_log_methods(
         })?;
 
         let filter = parse_log_filter(filter_obj)?;
-        let current_block = state.read().block_number();
+        let current_block = cache_for_newfilter.block_number();
         let filter_id = store.read().new_filter(filter, current_block);
 
         Ok(json!(filter_id))
@@ -1193,10 +1207,10 @@ pub fn register_log_methods(
 
     // eth_getFilterChanges - Get logs since last poll
     let store = log_store.clone();
-    let state = unified_state.clone();
+    let cache_for_filterchanges = cache.clone();
     io.add_method("eth_getFilterChanges", move |params: Params| {
         let store = store.clone();
-        let state = state.clone();
+        let cache_for_filterchanges = cache_for_filterchanges.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_id = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
@@ -1205,7 +1219,7 @@ pub fn register_log_methods(
             data: None,
         })?;
 
-        let current_block = state.read().block_number();
+        let current_block = cache_for_filterchanges.block_number();
         match store.read().get_filter_changes(filter_id, current_block) {
             Some(logs) => {
                 let rpc_logs: Vec<serde_json::Value> =
@@ -1222,10 +1236,10 @@ pub fn register_log_methods(
 
     // eth_getFilterLogs - Get all logs for a filter
     let store = log_store.clone();
-    let state = unified_state.clone();
+    let cache_for_filterlogs = cache.clone();
     io.add_method("eth_getFilterLogs", move |params: Params| {
         let store = store.clone();
-        let state = state.clone();
+        let cache_for_filterlogs = cache_for_filterlogs.clone();
         async move {
         let p: Vec<serde_json::Value> = params.parse()?;
         let filter_id = p.get(0).and_then(|v| v.as_str()).ok_or_else(|| RpcError {
@@ -1234,7 +1248,7 @@ pub fn register_log_methods(
             data: None,
         })?;
 
-        let current_block = state.read().block_number();
+        let current_block = cache_for_filterlogs.block_number();
         let store_read = store.read();
 
         // For eth_getFilterLogs, we return all logs matching the original filter

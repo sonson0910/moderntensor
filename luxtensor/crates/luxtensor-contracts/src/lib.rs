@@ -30,10 +30,12 @@ pub use account_abstraction::{
 };
 pub use ai_precompiles::{
     AIPrecompileState, AIRequestEntry, RequestStatus,
-    TrainingJob, TrainingStatus, gas_costs,
+    TrainingJob, TrainingStatus, gas_costs, GasSchedule,
 };
 pub use revm_integration::precompiles;
 pub use revm_integration::{execute_ai_precompile, is_luxtensor_precompile};
+/// Re-export revm Bytes type used by AI precompile functions
+pub use revm::primitives::Bytes as RevmBytes;
 pub use agent_registry::{AgentRegistry, AgentAccount, AgentTriggerConfig, AgentRegistryConfig, AgentRegistryError};
 pub use agent_trigger::{AgentTriggerEngine, TriggerResult, BlockTriggerOutcome};
 

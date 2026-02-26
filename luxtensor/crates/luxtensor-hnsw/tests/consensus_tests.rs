@@ -115,7 +115,7 @@ fn test_search_consistency() {
         for j in 0..32 {
             values[j] = ((i * 32 + j) as f32 / 3200.0) - 0.5;
         }
-        graph.insert(FixedPointVector::from_f32_slice(&values).unwrap(), &mut rng);
+        graph.insert(FixedPointVector::from_f32_slice(&values).unwrap(), &mut rng).unwrap();
     }
 
     // Create query vector
@@ -157,7 +157,7 @@ fn test_serialization_determinism() {
         for j in 0..16 {
             values[j] = (i as f32 + j as f32) / 100.0;
         }
-        graph.insert(FixedPointVector::from_f32_slice(&values).unwrap(), &mut rng);
+        graph.insert(FixedPointVector::from_f32_slice(&values).unwrap(), &mut rng).unwrap();
     }
 
     // Serialize

@@ -75,7 +75,7 @@ fn bench_insert_64dim() {
         let mut graph: HnswGraph<64> = HnswGraph::new();
         let mut rng = DeterministicRng::new(tx_hash, block_hash);
         for v in &vectors {
-            graph.insert(v.clone(), &mut rng);
+            graph.insert(v.clone(), &mut rng).unwrap();
         }
     });
 
@@ -98,7 +98,7 @@ fn bench_insert_256dim() {
         let mut graph: HnswGraph<256> = HnswGraph::new();
         let mut rng = DeterministicRng::new(tx_hash, block_hash);
         for v in &vectors {
-            graph.insert(v.clone(), &mut rng);
+            graph.insert(v.clone(), &mut rng).unwrap();
         }
     });
 
@@ -119,7 +119,7 @@ fn bench_insert_768dim() {
         let mut graph: HnswGraph<768> = HnswGraph::new();
         let mut rng = DeterministicRng::new(tx_hash, block_hash);
         for v in &vectors {
-            graph.insert(v.clone(), &mut rng);
+            graph.insert(v.clone(), &mut rng).unwrap();
         }
     });
 
@@ -140,7 +140,7 @@ fn bench_search_64dim() {
     let mut graph: HnswGraph<64> = HnswGraph::new();
     let mut rng = DeterministicRng::new(tx_hash, block_hash);
     for v in &vectors {
-        graph.insert(v.clone(), &mut rng);
+        graph.insert(v.clone(), &mut rng).unwrap();
     }
 
     // Prepare query
@@ -165,7 +165,7 @@ fn bench_search_768dim() {
     let mut graph: HnswGraph<768> = HnswGraph::new();
     let mut rng = DeterministicRng::new(tx_hash, block_hash);
     for v in &vectors {
-        graph.insert(v.clone(), &mut rng);
+        graph.insert(v.clone(), &mut rng).unwrap();
     }
 
     // Prepare query
@@ -190,7 +190,7 @@ fn bench_serialization() {
     let mut graph: HnswGraph<128> = HnswGraph::new();
     let mut rng = DeterministicRng::new(tx_hash, block_hash);
     for v in &vectors {
-        graph.insert(v.clone(), &mut rng);
+        graph.insert(v.clone(), &mut rng).unwrap();
     }
 
     // Benchmark serialize
@@ -249,7 +249,7 @@ fn bench_full_pipeline() {
     let mut graph: HnswGraph<768> = HnswGraph::new();
     let mut rng = DeterministicRng::new(tx_hash, block_hash);
     for v in &vectors {
-        graph.insert(v.clone(), &mut rng);
+        graph.insert(v.clone(), &mut rng).unwrap();
     }
     let build_time = start.elapsed();
     println!("   ✅ Build time: {:?}", build_time);

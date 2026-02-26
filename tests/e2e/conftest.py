@@ -69,7 +69,7 @@ def luxtensor_client(node_url):
     Automatically skips the ENTIRE test session if the node is unreachable.
     This prevents noisy failures when running tests without a live node.
     """
-    from sdk.luxtensor_client import LuxtensorClient
+    from sdk.client import LuxtensorClient
 
     client = LuxtensorClient(url=node_url, network="testnet", timeout=10)
 

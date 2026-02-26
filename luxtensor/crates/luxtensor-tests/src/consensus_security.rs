@@ -212,7 +212,14 @@ mod validator_set_tests {
     use super::*;
 
     fn create_test_consensus() -> ProofOfStake {
-        let config = ConsensusConfig::default();
+        // For unit tests, use a low min_stake (1 LUX = 10^18) so that
+        // the test stakes (100 tokens = 100 * 10^18) pass validation.
+        // ConsensusConfig::default() uses the production MIN_STAKE (10^24) which
+        // would require 1,000,000 MDT per validator - too large for unit tests.
+        let config = ConsensusConfig {
+            min_stake: 1_000_000_000_000_000_000u128, // 1 LUX (18 decimals)
+            ..ConsensusConfig::default()
+        };
         ProofOfStake::new(config)
     }
 

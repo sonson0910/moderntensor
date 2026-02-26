@@ -223,7 +223,7 @@ fn register_proof_submission_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
         if let Some(proof) = proofs_map.get(&task_id) {
             Ok(serde_json::json!({
                 "task_id": format!("0x{}", hex::encode(proof.task_id)),
-                "image_id": format!("0x{}", hex::encode(proof.image_id.as_bytes())),
+                "image_id": format!("0x{}", hex::encode(&proof.image_id.0)),
                 "receipt_hash": format!("0x{}", hex::encode(proof.receipt_hash)),
                 "is_verified": proof.is_verified,
                 "submitter": format!("0x{}", hex::encode(proof.submitter)),
@@ -266,7 +266,7 @@ fn register_proof_verification_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHan
 
         Ok(serde_json::json!({
             "is_valid": result.is_valid,
-            "image_id": format!("0x{}", hex::encode(result.image_id.as_bytes())),
+            "image_id": format!("0x{}", hex::encode(&result.image_id.0)),
             "journal_hash": format!("0x{}", hex::encode(result.journal_hash)),
             "verification_time_us": result.verification_time_us,
             "error": result.error,
@@ -415,7 +415,7 @@ fn register_model_management_methods(ctx: &Arc<ZkmlRpcContext>, io: &mut IoHandl
             .values()
             .map(|info| {
                 serde_json::json!({
-                    "image_id": format!("0x{}", hex::encode(info.image_id.as_bytes())),
+                    "image_id": format!("0x{}", hex::encode(&info.image_id.0)),
                     "model_hash": format!("0x{}", hex::encode(info.model_hash)),
                     "name": info.name,
                     "registered_at": info.registered_at,

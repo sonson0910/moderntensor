@@ -48,12 +48,18 @@ pub enum SwarmCommand {
     /// Disconnect a peer (e.g. blocked by eclipse protection)
     DisconnectPeer { peer_id: String },
     /// Broadcast AI task to miners for dispatch
+    ///
+    /// SECURITY: Requires validator signature to prevent forged dispatches (H3 fix)
     BroadcastTaskDispatch {
         task_id: [u8; 32],
         model_hash: String,
         input_hash: [u8; 32],
         reward: u128,
         deadline: u64,
+        /// ECDSA signature proving authority
+        validator_signature: Vec<u8>,
+        /// Address of the signing validator
+        validator_address: [u8; 20],
     },
 }
 
@@ -423,9 +429,10 @@ impl SwarmP2PNode {
                                     }
                                 };
 
-                                // Use blocks_topic for sync (more reliable than sync_topic)
+                                // FIX: Use sync_topic for sync responses (previously used blocks_topic
+                                // which polluted block gossip and confused receivers)
                                 match self.swarm.behaviour_mut().gossipsub.publish(
-                                    self.blocks_topic.clone(),
+                                    self.sync_topic.clone(),
                                     data
                                 ) {
                                     Ok(_) => debug!("📡 Sync blocks broadcast successful"),
@@ -451,15 +458,18 @@ impl SwarmP2PNode {
                                 }
                             }
                         }
-                        SwarmCommand::BroadcastTaskDispatch { task_id, model_hash, input_hash, reward, deadline } => {
+                        SwarmCommand::BroadcastTaskDispatch { task_id, model_hash, input_hash, reward, deadline, validator_signature, validator_address } => {
                             // Broadcast AI task to miners via the sync topic
-                            info!("📡 Broadcasting AI task 0x{} to miners", hex::encode(&task_id[..8]));
+                            info!("📡 Broadcasting authenticated AI task 0x{} from validator {:?}",
+                                hex::encode(&task_id[..8]), &validator_address[..4]);
                             let message = NetworkMessage::AITaskDispatch {
                                 task_id,
                                 model_hash,
                                 input_hash,
                                 reward,
                                 deadline,
+                                validator_signature,
+                                validator_address,
                             };
                             let data = match serialize_message(&message) {
                                 Ok(d) => d,

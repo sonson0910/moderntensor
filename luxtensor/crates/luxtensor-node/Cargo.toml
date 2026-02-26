@@ -34,6 +34,7 @@ luxtensor-storage = { path = "../luxtensor-storage" }
 luxtensor-rpc = { path = "../luxtensor-rpc" }
 luxtensor-contracts = { path = "../luxtensor-contracts" }
 luxtensor-oracle = { path = "../luxtensor-oracle" }
+luxtensor-zkvm = { path = "../luxtensor-zkvm" }
 rayon = { workspace = true }
 
 # jemalloc for high-performance concurrent allocation (Linux/macOS only)

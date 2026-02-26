@@ -5,10 +5,14 @@
 //! - Performance tracking for validators (uptime, block production, attestations)
 //! - Score calculation and updates
 //! - Integration with reward distribution
+//! - Yuma consensus score merging (`merge_yuma_output`)
 //!
 //! **IMPORTANT**: All state transitions use `current_height` (block height) instead
 //! of wall-clock time, ensuring deterministic and consensus-safe scoring across
 //! all nodes.
+//!
+//! **DETERMINISTIC**: All score calculations use integer arithmetic (BPS scale).
+//! No f64 operations are used in consensus-critical paths.
 
 use std::collections::HashMap;
 
@@ -35,6 +39,8 @@ pub struct MinerMetrics {
     pub gpu_tasks_completed: u32,
     /// GPU tasks assigned this epoch
     pub gpu_tasks_assigned: u32,
+    /// Yuma incentive score from latest epoch (0-65_535 fixed-point)
+    pub yuma_incentive: u32,
 }
 
 /// Validator performance metrics
@@ -78,18 +84,23 @@ pub enum ScoringEvent {
 /// Scoring configuration
 #[derive(Debug, Clone)]
 pub struct ScoringConfig {
-    /// Decay factor for old performance (0-1)
-    pub decay_factor: f64,
-    /// Weight for task completion rate
-    pub task_completion_weight: f64,
-    /// Weight for execution time
-    pub execution_time_weight: f64,
-    /// Weight for quality score
-    pub quality_weight: f64,
-    /// Weight for block production
-    pub block_production_weight: f64,
-    /// Weight for uptime
-    pub uptime_weight: f64,
+    /// Decay factor per-mille (0-1000; 950 = 0.95 = 5% decay).
+    /// Using integer to ensure deterministic cross-platform behavior.
+    pub decay_factor_permille: u32,
+    /// Weight for task completion rate (BPS, 0-10_000)
+    pub task_completion_weight_bps: u32,
+    /// Weight for execution time (BPS, 0-10_000)
+    pub execution_time_weight_bps: u32,
+    /// Weight for quality score (BPS, 0-10_000)
+    pub quality_weight_bps: u32,
+    /// Weight for Yuma incentive in merged score (BPS, 0-10_000)
+    pub yuma_weight_bps: u32,
+    /// Weight for operational metrics in merged score (BPS, 0-10_000)
+    pub operational_weight_bps: u32,
+    /// Weight for block production (BPS, 0-10_000)
+    pub block_production_weight_bps: u32,
+    /// Weight for uptime (BPS, 0-10_000)
+    pub uptime_weight_bps: u32,
     /// Minimum score (never goes below this)
     pub min_score: u32,
     /// Maximum score
@@ -101,15 +112,17 @@ pub struct ScoringConfig {
 impl Default for ScoringConfig {
     fn default() -> Self {
         Self {
-            decay_factor: 0.95,
-            task_completion_weight: 0.4,
-            execution_time_weight: 0.2,
-            quality_weight: 0.4,
-            block_production_weight: 0.5,
-            uptime_weight: 0.5,
-            min_score: 1000,              // 1% minimum
-            max_score: 100_000,           // 100% maximum
-            decay_interval_blocks: 14400, // ~1 day at 6s block time
+            decay_factor_permille: 950,             // 0.95 = 5% decay
+            task_completion_weight_bps: 4000,        // 40%
+            execution_time_weight_bps: 2000,         // 20%
+            quality_weight_bps: 4000,                // 40%
+            yuma_weight_bps: 6000,                   // 60% from Yuma
+            operational_weight_bps: 4000,             // 40% from operational
+            block_production_weight_bps: 5000,        // 50%
+            uptime_weight_bps: 5000,                  // 50%
+            min_score: 1000,                          // 1% minimum
+            max_score: 100_000,                       // 100% maximum
+            decay_interval_blocks: 14400,             // ~1 day at 6s block time
         }
     }
 }
@@ -293,43 +306,78 @@ impl ScoringManager {
         self.recalculate_validator_score(validator);
     }
 
-    /// Recalculate miner score
-    fn recalculate_miner_score(&mut self, miner: [u8; 20]) {
-        if let Some(metrics) = self.miner_metrics.get_mut(&miner) {
-            let total_tasks = metrics.tasks_completed + metrics.tasks_failed;
-            if total_tasks == 0 {
-                metrics.score = self.config.min_score;
-                return;
-            }
-
-            // Completion rate: 0-1
-            let completion_rate = metrics.tasks_completed as f64 / total_tasks as f64;
-
-            // Execution time score: faster = better (inverse, capped at 10s = 1.0)
-            let time_score = if metrics.avg_execution_time > 0 {
-                (10_000.0 / metrics.avg_execution_time as f64).min(1.0)
-            } else {
-                0.5
-            };
-
-            // Quality score: 0-1
-            let quality_score = metrics.avg_quality_score as f64 / 100.0;
-
-            // Weighted score
-            let raw_score = (completion_rate * self.config.task_completion_weight
-                + time_score * self.config.execution_time_weight
-                + quality_score * self.config.quality_weight)
-                * self.config.max_score as f64;
-
-            metrics.score = if raw_score.is_nan() || raw_score < 0.0 {
-                self.config.min_score
-            } else {
-                (raw_score as u32).clamp(self.config.min_score, self.config.max_score)
-            };
+    /// Merge Yuma consensus output into miner metrics.
+    ///
+    /// Each `(address, incentive)` pair updates the miner's `yuma_incentive` field
+    /// and triggers a score recalculation with EMA smoothing.
+    ///
+    /// **DETERMINISTIC**: All arithmetic is integer-only.
+    pub fn merge_yuma_output(&mut self, yuma_scores: &[([u8; 20], u32)]) {
+        for (addr, incentive) in yuma_scores {
+            let metrics = self.miner_metrics.entry(*addr)
+                .or_insert_with(MinerMetrics::default);
+            // EMA: new = (old * 950 + current * 50) / 1000 (integer only)
+            metrics.yuma_incentive = ((metrics.yuma_incentive as u64 * 950
+                + *incentive as u64 * 50) / 1000) as u32;
+        }
+        // Recalculate all affected miners
+        let affected: Vec<[u8; 20]> = yuma_scores.iter().map(|(a, _)| *a).collect();
+        for addr in affected {
+            self.recalculate_miner_score(addr);
         }
     }
 
-    /// Recalculate validator score
+    /// Recalculate miner score using integer BPS arithmetic.
+    ///
+    /// **DETERMINISTIC**: No f64. All weights are BPS (0-10_000).
+    /// Merged score = yuma_incentive * yuma_weight + operational_score * operational_weight.
+    fn recalculate_miner_score(&mut self, miner: [u8; 20]) {
+        if let Some(metrics) = self.miner_metrics.get_mut(&miner) {
+            let total_tasks = metrics.tasks_completed + metrics.tasks_failed;
+
+            // ── Operational score (from tasks) ──
+            let operational_score_bps: u64 = if total_tasks == 0 {
+                0
+            } else {
+                // Completion rate: 0-10_000 BPS
+                let completion_bps = (metrics.tasks_completed as u64 * 10_000) / total_tasks as u64;
+
+                // Execution time score: faster = better (10s cap → 10_000 BPS)
+                let time_bps = if metrics.avg_execution_time > 0 {
+                    (10_000u64 * 10_000 / metrics.avg_execution_time).min(10_000)
+                } else {
+                    5000 // 50% default
+                };
+
+                // Quality score: 0-100 → 0-10_000 BPS
+                let quality_bps = metrics.avg_quality_score as u64 * 100; // 100*100=10_000 max
+
+                // Weighted sum: Σ(score_bps * weight_bps) / 10_000
+                (completion_bps * self.config.task_completion_weight_bps as u64
+                    + time_bps * self.config.execution_time_weight_bps as u64
+                    + quality_bps * self.config.quality_weight_bps as u64)
+                    / 10_000
+            };
+
+            // ── Yuma incentive (from consensus) ──
+            // yuma_incentive is in fixed-point 0-65_535 → normalize to 0-10_000 BPS
+            let yuma_bps = (metrics.yuma_incentive as u64 * 10_000) / 65_535u64.max(1);
+
+            // ── Merged score ──
+            // merged = (yuma * yuma_weight + operational * operational_weight) / 10_000
+            let merged_bps = (yuma_bps * self.config.yuma_weight_bps as u64
+                + operational_score_bps * self.config.operational_weight_bps as u64)
+                / 10_000;
+
+            // Scale to [0, max_score]
+            let raw_score = (merged_bps * self.config.max_score as u64 / 10_000) as u32;
+            metrics.score = raw_score.clamp(self.config.min_score, self.config.max_score);
+        }
+    }
+
+    /// Recalculate validator score using integer BPS arithmetic.
+    ///
+    /// **DETERMINISTIC**: No f64. All weights are BPS (0-10_000).
     fn recalculate_validator_score(&mut self, validator: [u8; 20]) {
         if let Some(metrics) = self.validator_metrics.get_mut(&validator) {
             let total_blocks = metrics.blocks_produced + metrics.blocks_missed;
@@ -338,51 +386,42 @@ impl ScoringManager {
                 return;
             }
 
-            // Block production rate
-            let production_rate = metrics.blocks_produced as f64 / total_blocks as f64;
+            // Block production rate: 0-10_000 BPS
+            let production_bps = (metrics.blocks_produced as u64 * 10_000) / total_blocks as u64;
 
-            // Uptime factor
-            let uptime_score = metrics.uptime as f64 / 100.0;
+            // Uptime factor: 0-100 → 0-10_000 BPS
+            let uptime_bps = metrics.uptime as u64 * 100;
 
             // Weighted score
-            let raw_score = (production_rate * self.config.block_production_weight
-                + uptime_score * self.config.uptime_weight)
-                * self.config.max_score as f64;
+            let merged_bps = (production_bps * self.config.block_production_weight_bps as u64
+                + uptime_bps * self.config.uptime_weight_bps as u64)
+                / 10_000;
 
-            metrics.score = if raw_score.is_nan() || raw_score < 0.0 {
-                self.config.min_score
-            } else {
-                (raw_score as u32).clamp(self.config.min_score, self.config.max_score)
-            };
+            let raw_score = (merged_bps * self.config.max_score as u64 / 10_000) as u32;
+            metrics.score = raw_score.clamp(self.config.min_score, self.config.max_score);
         }
     }
 
     /// Apply decay to all scores based on block height (call periodically).
     ///
-    /// Decay is applied when `current_height - last_decay_height >= decay_interval_blocks`,
-    /// ensuring deterministic and identical behavior across all nodes.
+    /// Decay uses integer per-mille arithmetic: `new_score = score * 950 / 1000`
+    /// (5% decay).  This ensures deterministic and identical behavior across
+    /// all nodes — no f64.
     pub fn apply_decay(&mut self, current_height: u64) {
         if current_height.saturating_sub(self.last_decay_height) < self.config.decay_interval_blocks
         {
             return;
         }
 
+        let factor = self.config.decay_factor_permille as u64;
         for metrics in self.miner_metrics.values_mut() {
-            let decayed = metrics.score as f64 * self.config.decay_factor;
-            metrics.score = if decayed.is_nan() || decayed < 0.0 {
-                self.config.min_score
-            } else {
-                (decayed as u32).max(self.config.min_score)
-            };
+            let decayed = (metrics.score as u64 * factor / 1000) as u32;
+            metrics.score = decayed.max(self.config.min_score);
         }
 
         for metrics in self.validator_metrics.values_mut() {
-            let decayed = metrics.score as f64 * self.config.decay_factor;
-            metrics.score = if decayed.is_nan() || decayed < 0.0 {
-                self.config.min_score
-            } else {
-                (decayed as u32).max(self.config.min_score)
-            };
+            let decayed = (metrics.score as u64 * factor / 1000) as u32;
+            metrics.score = decayed.max(self.config.min_score);
         }
 
         self.last_decay_height = current_height;
@@ -549,7 +588,7 @@ mod tests {
     fn test_decay_height_based() {
         let config = ScoringConfig {
             decay_interval_blocks: 10,
-            decay_factor: 0.5,
+            decay_factor_permille: 500,  // 0.5 = 50% decay
             ..ScoringConfig::default()
         };
         let mut manager = ScoringManager::with_config(config);

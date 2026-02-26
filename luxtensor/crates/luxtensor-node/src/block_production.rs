@@ -17,7 +17,7 @@ use luxtensor_consensus::randao::RandaoMixer;
 use luxtensor_consensus::slashing::SlashingManager;
 use luxtensor_consensus::{
     DelegatorInfo, MinerInfo, ProofOfStake, RewardExecutor, SubnetInfo, UtilityMetrics,
-    ValidatorInfo,
+    ValidatorInfo, YumaConsensus,
 };
 use luxtensor_contracts::AgentTriggerEngine;
 use luxtensor_core::{Block, StateDB};
@@ -115,6 +115,19 @@ impl NodeService {
         metrics_for_blocks: Arc<NodeMetrics>,
         // WebSocket broadcast sender for emitting real-time events
         ws_broadcast: Option<tokio::sync::mpsc::Sender<BroadcastEvent>>,
+        // 📊 Tokenomics pipeline: halving, fee burning, dynamic gas pricing
+        halving_schedule: Arc<luxtensor_consensus::HalvingSchedule>,
+        burn_manager: Arc<luxtensor_consensus::BurnManager>,
+        fee_market: Arc<RwLock<luxtensor_consensus::FeeMarket>>,
+        // 🏛️ Governance + Rotation + CommitReveal + Scoring (deep-wired epoch hooks)
+        governance: Arc<RwLock<luxtensor_consensus::GovernanceModule>>,
+        validator_rotation: Arc<RwLock<luxtensor_consensus::ValidatorRotation>>,
+        commit_reveal: Arc<luxtensor_consensus::CommitRevealManager>,
+        scoring_manager: Arc<RwLock<luxtensor_consensus::ScoringManager>>,
+        // 🎲 VRF keypair (secp256k1 EC-VRF) for block proof generation (C2 fix)
+        vrf_keypair: Option<Arc<luxtensor_crypto::vrf::VrfKeypair>>,
+        // 🛡️ AI layer circuit breaker — protects against cascade failures in epoch operations
+        ai_circuit_breaker: Arc<luxtensor_consensus::AILayerCircuitBreaker>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -176,6 +189,14 @@ impl NodeService {
                     // 🔧 FIX: When no validators configured, use hash-based slot selection
                     // instead of `true` (which caused ALL nodes to produce every slot,
                     // creating fork storms with previous_hash mismatch warnings).
+                    // 🔧 FIX FORK STORM: Use slot_counter for round-robin, NOT slot (unix/block_time).
+                    // slot = (now - genesis) / block_time; if genesis and now are both multiples
+                    // of block_time, then slot % block_time == 0 always → same validator every turn.
+                    // slot_counter increments by 1 each interval tick (every block_time seconds),
+                    // so slot_counter % N gives fair round-robin across N validators.
+                    // next_height from best_height_guard can't be used: nodes have different heights.
+                    let rr_index = slot_counter; // already incremented above: slot_counter = slot + 1
+
                     let is_our_turn = if let Some(our_addr) = our_validator_address {
                         let our_addr_typed = luxtensor_core::Address::from(our_addr);
                         match consensus.read().select_validator(slot) {
@@ -191,20 +212,16 @@ impl NodeService {
                             Err(_) => {
                                 // Validator set empty — fall back to round-robin for bootstrap
                                 if !validators.is_empty() {
-                                    is_leader_for_slot(&validator_id, slot, &validators)
+                                    is_leader_for_slot(&validator_id, rr_index, &validators)
                                 } else {
-                                    // 🔧 FIX: Use hash-based self-selection instead of always-true.
-                                    // In multi-node setup, this ensures different nodes claim
-                                    // different slots, preventing fork storms.
-                                    // Solo nodes (no peers) always produce for backwards compat.
                                     is_solo_leader_for_slot(&validator_id, slot)
                                 }
                             }
                         }
                     } else {
-                        // No keypair — use legacy round-robin
+                        // No keypair — use slot_counter round-robin (independent of timestamp)
                         if !validators.is_empty() {
-                            is_leader_for_slot(&validator_id, slot, &validators)
+                            is_leader_for_slot(&validator_id, rr_index, &validators)
                         } else {
                             is_solo_leader_for_slot(&validator_id, slot)
                         }
@@ -233,6 +250,15 @@ impl NodeService {
                         &slashing_manager, // For dispute slashing
                         &merkle_cache,   // Merkle root caching
                         &fast_finality,  // BFT fast finality hook
+                        &halving_schedule,  // Halving schedule
+                        &burn_manager,      // Fee burning
+                        &fee_market,        // EIP-1559 dynamic pricing
+                        &governance,        // 🏛️ Governance proposal processing
+                        &validator_rotation, // 🔄 Validator rotation at epoch
+                        &commit_reveal,     // 🔐 Commit-reveal finalization
+                        &scoring_manager,   // 📊 Performance scoring
+                        vrf_keypair.as_deref(), // 🎲 VRF keypair for proof generation
+                        &ai_circuit_breaker, // 🛡️ AI layer circuit breaker
                     ).await {
                         Ok(block) => {
                             // Record NodeMetrics for this block
@@ -329,234 +355,8 @@ impl NodeService {
         Ok(())
     }
 
-    /// ── ⚖️ Optimistic AI: process disputes and apply slashing ──
-    ///
-    /// Extracted from `produce_block` for readability and testability.
-    /// Run after the block is stored so all state is committed.
-    pub(crate) async fn process_disputes(
-        dispute_manager: &Arc<DisputeManager>,
-        slashing_manager: &Arc<RwLock<SlashingManager>>,
-        new_height: u64,
-        block_timestamp: u64,
-    ) {
-        let slash_percent = slashing_manager.read().config().fraudulent_ai_slash_percent;
-        let dispute_outcome = dispute_manager.process_block(new_height, slash_percent).await;
-        if dispute_outcome.finalized_count > 0 || dispute_outcome.disputes_verified > 0 {
-            info!(
-                "⚖️ Block #{}: {} results finalized, {} disputes verified, {} rejected",
-                new_height,
-                dispute_outcome.finalized_count,
-                dispute_outcome.disputes_verified,
-                dispute_outcome.rejected_disputes,
-            );
-        }
-        // Apply slashing for miners proven fraudulent via SlashingManager
-        for (miner_addr, _slash_amount) in &dispute_outcome.slashed_miners {
-            let miner_address = luxtensor_core::Address::from(*miner_addr);
-            let evidence = luxtensor_consensus::slashing::SlashingEvidence {
-                validator: miner_address,
-                reason: luxtensor_consensus::slashing::SlashReason::FraudulentAI,
-                height: new_height,
-                evidence_hash: None,
-                timestamp: block_timestamp,
-            };
-            match slashing_manager.write().slash(evidence, new_height) {
-                Ok(event) => {
-                    info!(
-                        "⚖️ Slashed miner 0x{} for {} wei (fraudulent AI result, jailed: {})",
-                        hex::encode(miner_addr),
-                        event.amount_slashed,
-                        event.jailed,
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "⚠️ Failed to slash miner 0x{} for FraudulentAI: {}",
-                        hex::encode(miner_addr),
-                        e,
-                    );
-                }
-            }
-        }
-    }
-
-    /// ── 🎯 Epoch boundary: compute metrics, distribute rewards, finalize RANDAO ──
-    ///
-    /// Extracted from `produce_block` for readability and testability (~130 lines).
-    pub(crate) fn process_epoch_rewards(
-        consensus: &Arc<RwLock<ProofOfStake>>,
-        reward_executor: &Arc<RwLock<RewardExecutor>>,
-        metagraph_db: &Arc<MetagraphDB>,
-        randao: &Arc<RwLock<RandaoMixer>>,
-        header: &luxtensor_core::BlockHeader,
-        new_height: u64,
-        epoch_length: u64,
-        total_gas: u64,
-        epoch_tx_count: u64,
-        valid_tx_count: u64,
-        // M4: StateDB reference for persistent reward crediting
-        state_db: &Arc<RwLock<StateDB>>,
-    ) {
-        let epoch_num = new_height / epoch_length;
-        info!(
-            "🎯 Epoch {} completed at block #{}, processing rewards...",
-            epoch_num, new_height
-        );
-
-        // Create utility metrics for this epoch
-        let actual_utilization = ((total_gas as f64 / BLOCK_GAS_LIMIT as f64) * 100.0) as u32;
-
-        // Query metagraph for active validators and neurons
-        let metagraph_validators = metagraph_db.get_all_validators().unwrap_or_default();
-        let metagraph_subnets = metagraph_db.get_all_subnets().unwrap_or_default();
-        let metagraph_delegations = metagraph_db.get_all_delegations().unwrap_or_default();
-
-        let active_validator_count =
-            metagraph_validators.iter().filter(|v| v.is_active).count();
-
-        let utility = UtilityMetrics {
-            active_validators: active_validator_count.max(1) as u64,
-            active_subnets: metagraph_subnets.len().max(1) as u64,
-            // 🔧 FIX MC-6: Use accumulated epoch TX count (prior blocks + this block)
-            epoch_transactions: epoch_tx_count + valid_tx_count,
-            epoch_ai_tasks: 0, // Tracked via MetagraphDB AI task store
-            block_utilization: actual_utilization.min(100) as u8,
-        };
-
-        // Build miner list from neurons in all subnets
-        let mut miners: Vec<MinerInfo> = Vec::new();
-        for subnet in &metagraph_subnets {
-            let neurons = metagraph_db.get_neurons_by_subnet(subnet.id).unwrap_or_default();
-            for neuron in &neurons {
-                if neuron.active {
-                    let score = neuron.incentive as f64 / 65535.0;
-                    miners.push(MinerInfo {
-                        address: neuron.hotkey,
-                        score: if score > 0.0 { score } else { 0.01 },
-                    });
-                }
-            }
-        }
-
-        // Build validator list from metagraph
-        let validators: Vec<ValidatorInfo> = metagraph_validators
-            .iter()
-            .filter(|v| v.is_active && v.stake > 0)
-            .map(|v| ValidatorInfo { address: v.address, stake: v.stake })
-            .collect();
-
-        // Build delegator list from metagraph
-        let delegators: Vec<DelegatorInfo> = metagraph_delegations
-            .iter()
-            .map(|d| DelegatorInfo {
-                address: d.delegator,
-                stake: d.amount,
-                lock_days: d.lock_days,
-            })
-            .collect();
-
-        // Build subnet list for emission
-        let subnets: Vec<SubnetInfo> = metagraph_subnets
-            .iter()
-            .map(|s| SubnetInfo { owner: s.owner, emission_weight: s.emission_rate })
-            .collect();
-
-        // Fallback: if metagraph is empty (bootstrapping), use block producer
-        let miners = if miners.is_empty() {
-            let miner_addr = if header.validator != [0u8; 32] {
-                let mut addr = [0u8; 20];
-                addr.copy_from_slice(&header.validator[12..32]);
-                addr
-            } else {
-                [0u8; 20]
-            };
-            vec![MinerInfo { address: miner_addr, score: 1.0 }]
-        } else {
-            miners
-        };
-        let validators = if validators.is_empty() {
-            let miner_addr = if header.validator != [0u8; 32] {
-                let mut addr = [0u8; 20];
-                addr.copy_from_slice(&header.validator[12..32]);
-                addr
-            } else {
-                [0u8; 20]
-            };
-            vec![ValidatorInfo { address: miner_addr, stake: 1000 }]
-        } else {
-            validators
-        };
-
-        // Process epoch rewards
-        let result = reward_executor.write().process_epoch(
-            epoch_num,
-            new_height,
-            &utility,
-            &miners,
-            &validators,
-            &delegators,
-            &subnets,
-        );
-
-        info!(
-            "💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
-            epoch_num,
-            result.total_emission,
-            result.participants_rewarded,
-            result.dao_allocation
-        );
-
-        // ── M4: Flush epoch pending rewards → StateDB (persistent storage) ──
-        // Take a snapshot of all pending rewards from this epoch, then write
-        // each participant's reward amount as an *additive credit* to their
-        // StateDB balance.  Only drain the in-memory map after a successful
-        // write so we can retry safely if the DB write fails.
-        {
-            let snapshot = reward_executor.read().pending_rewards_snapshot();
-            if !snapshot.is_empty() {
-                let mut db = state_db.write();
-                for (addr_bytes, amount) in &snapshot {
-                    let addr = luxtensor_core::Address::from(*addr_bytes);
-                    match db.get_account(&addr) {
-                        Some(mut account) => {
-                            account.balance = account.balance.saturating_add(*amount);
-                            db.set_account(addr, account);
-                        }
-                        None => {
-                            // Participant not yet in StateDB — create account with reward balance
-                            let new_account = luxtensor_core::Account {
-                                balance: *amount,
-                                nonce: 0,
-                                storage_root: [0u8; 32],
-                                code_hash: [0u8; 32],
-                                code: None,
-                            };
-                            db.set_account(addr, new_account);
-                        }
-                    }
-                }
-                // set_account is infallible — always drain to avoid double-crediting
-                drop(db); // release write lock before re-acquiring read below
-                reward_executor.read().drain_pending_rewards();
-                info!(
-                    "✅ Epoch {} rewards flushed to StateDB: {} accounts credited",
-                    epoch_num,
-                    snapshot.len()
-                );
-            }
-        }
-
-        // Finalize RANDAO mix for this epoch and feed it into PoS seed.
-        match randao.write().finalize_epoch() {
-            Ok(mix) => {
-                consensus.read().update_randao_mix(mix);
-                info!("🎲 Epoch {} RANDAO mix finalized: {:?}", epoch_num, &mix[..8]);
-            }
-            Err(e) => {
-                debug!("⚠️  RANDAO finalize skipped for epoch {}: {}", epoch_num, e);
-            }
-        }
-    }
+    // ── ⚖️ process_disputes and 🎯 process_epoch_rewards have been
+    // extracted to epoch_processing.rs for better modularity. ──
 
     /// Produce a single block
     pub(crate) async fn produce_block(
@@ -585,6 +385,19 @@ impl NodeService {
         merkle_cache: &Arc<CachedStateDB>,
         // 🔐 BFT fast finality — call on_block_proposed + auto-sign after block creation
         fast_finality: &Arc<RwLock<FastFinality>>,
+        // 📊 Tokenomics: halving schedule, fee burning, dynamic gas pricing
+        halving_schedule: &Arc<luxtensor_consensus::HalvingSchedule>,
+        burn_manager: &Arc<luxtensor_consensus::BurnManager>,
+        fee_market: &Arc<RwLock<luxtensor_consensus::FeeMarket>>,
+        // 🏛️ Governance + Rotation + CommitReveal + Scoring (deep-wired epoch hooks)
+        governance: &Arc<RwLock<luxtensor_consensus::GovernanceModule>>,
+        validator_rotation: &Arc<RwLock<luxtensor_consensus::ValidatorRotation>>,
+        commit_reveal: &Arc<luxtensor_consensus::CommitRevealManager>,
+        scoring_manager: &Arc<RwLock<luxtensor_consensus::ScoringManager>>,
+        // 🎲 VRF keypair (secp256k1 EC-VRF) for block proof generation (C2 fix)
+        vrf_keypair: Option<&luxtensor_crypto::vrf::VrfKeypair>,
+        // 🛡️ AI layer circuit breaker
+        ai_circuit_breaker: &Arc<luxtensor_consensus::AILayerCircuitBreaker>,
     ) -> Result<Block> {
         // Get current height — None means fresh DB (no blocks stored yet)
         let best_height_opt = storage.get_best_height()?;
@@ -740,6 +553,21 @@ impl NodeService {
             }
         }
 
+        // ── 🔥 Burn tx fees via BurnManager (Phase 3 tokenomics) ──
+        // For each successfully executed TX, burn the configured portion of fees.
+        // Burns reduce total supply and protect against spam.
+        let mut total_fees_burned: u128 = 0;
+        for tx in &valid_transactions {
+            let tx_fee = (tx.gas_price as u128).saturating_mul(tx.gas_limit as u128);
+            if tx_fee > 0 {
+                let (burned, _remaining) = burn_manager.burn_tx_fee(tx_fee, new_height);
+                total_fees_burned += burned;
+            }
+        }
+        if total_fees_burned > 0 {
+            info!("🔥 Block #{}: burned {} wei in tx fees", new_height, total_fees_burned);
+        }
+
         // Calculate transaction root
         let tx_hashes: Vec<[u8; 32]> = valid_transactions.iter().map(|tx| tx.hash()).collect();
         let txs_root =
@@ -840,24 +668,25 @@ impl NodeService {
         unsigned_header.validator = validator_pubkey;
         unsigned_header.signature = signature;
 
-        // ── 🎲 VRF Proof Generation (production-vrf feature) ───────────────────
-        // Generate a VRF proof over the block context so peers can verify
-        // the randomness used was legitimately derived from the validator key.
+        // ── 🎲 VRF Proof Generation (secp256k1 EC-VRF — C2 security fix) ────────
+        // Generate a VRF proof over (epoch || height || prev_hash) so peers can
+        // verify the randomness was legitimately derived from the validator's key.
         // The proof is attached AFTER signing — hash() excludes vrf_proof —
         // so the signature remains valid regardless.
-        #[cfg(feature = "production-vrf")]
-        {
-            let slot = new_height; // slot == block height in LuxTensor
+        if let Some(vrf_kp) = vrf_keypair {
             let epoch = new_height / epoch_length.max(1);
-            match consensus.read().compute_seed_with(epoch, slot) {
-                Ok(seed_bytes) => {
-                    // `compute_seed_with` already embeds the proof; encode as raw bytes.
-                    unsigned_header.vrf_proof = Some(seed_bytes.to_vec());
+            let mut alpha = Vec::with_capacity(48);
+            alpha.extend_from_slice(&epoch.to_le_bytes());
+            alpha.extend_from_slice(&new_height.to_le_bytes());
+            alpha.extend_from_slice(&previous_block_hash);
+            match vrf_kp.prove(&alpha) {
+                Ok((_output, proof)) => {
+                    unsigned_header.vrf_proof = Some(proof.to_bytes().to_vec());
                     debug!("🎲 VRF proof attached to block #{}", new_height);
                 }
                 Err(e) => {
                     // Non-fatal: log, but still produce the block without VRF proof.
-                    warn!("⚠️  VRF proof generation skipped for block #{}: {}", new_height, e);
+                    warn!("⚠️  VRF proof generation failed for block #{}: {}", new_height, e);
                 }
             }
         }
@@ -878,7 +707,9 @@ impl NodeService {
         // Update consensus with the new block hash for VRF entropy
         consensus.read().update_last_block_hash(block.hash());
 
-        // Distribute block reward using halving schedule
+        // ── 💰 Block reward: HalvingSchedule + EmissionController (Phase 3) ──
+        // Uses the Bitcoin-like halving schedule to compute dynamic block rewards.
+        // Falls back to consensus.distribute_reward_with_height() if halving yields 0.
         let producer_addr = if header.validator != [0u8; 32] {
             let mut addr = [0u8; 20];
             addr.copy_from_slice(&header.validator[12..32]);
@@ -886,41 +717,51 @@ impl NodeService {
         } else {
             luxtensor_core::Address::zero()
         };
-        match consensus.read().distribute_reward_with_height(&producer_addr, new_height) {
-            Ok(reward) if reward > 0 => {
-                info!(
-                    "💰 Block #{} reward: {} wei to 0x{}",
-                    new_height,
-                    reward,
-                    hex::encode(producer_addr.as_bytes())
-                );
-                // M4: Persist block reward directly to StateDB so the balance
-                // is immediately visible to RPC queries (e.g. eth_getBalance).
-                {
-                    let mut db = state_db.write();
-                    match db.get_account(&producer_addr) {
-                        Some(mut account) => {
-                            account.balance = account.balance.saturating_add(reward);
-                            db.set_account(producer_addr, account);
-                        }
-                        None => {
-                            let new_account = luxtensor_core::Account {
-                                balance: reward,
-                                nonce: 0,
-                                storage_root: [0u8; 32],
-                                code_hash: [0u8; 32],
-                                code: None,
-                            };
-                            db.set_account(producer_addr, new_account);
-                        }
+
+        // Compute halving-adjusted reward
+        let halving_reward = halving_schedule.calculate_reward(new_height);
+        let final_reward = if halving_reward > 0 {
+            halving_reward
+        } else {
+            // Fallback to PoS reward if halving schedule is exhausted
+            match consensus.read().distribute_reward_with_height(&producer_addr, new_height) {
+                Ok(r) => r,
+                Err(_) => 0,
+            }
+        };
+
+        if final_reward > 0 && producer_addr != luxtensor_core::Address::zero() {
+            info!(
+                "💰 Block #{} reward: {} wei (era {}) to 0x{}",
+                new_height,
+                final_reward,
+                halving_schedule.get_halving_era(new_height),
+                hex::encode(producer_addr.as_bytes())
+            );
+            // Persist block reward to StateDB (visible to RPC immediately)
+            {
+                let mut db = state_db.write();
+                match db.get_account(&producer_addr) {
+                    Some(mut account) => {
+                        account.balance = account.balance.saturating_add(final_reward);
+                        db.set_account(producer_addr, account);
+                    }
+                    None => {
+                        let new_account = luxtensor_core::Account {
+                            balance: final_reward,
+                            nonce: 0,
+                            storage_root: [0u8; 32],
+                            code_hash: [0u8; 32],
+                            code: None,
+                        };
+                        db.set_account(producer_addr, new_account);
                     }
                 }
             }
-            Ok(_) => {}
-            Err(e) => {
-                debug!("Block reward distribution skipped: {}", e);
-            }
         }
+
+        // ── 📊 Update EIP-1559 FeeMarket base fee after block production ──
+        fee_market.write().on_block_produced(total_gas);
 
         // 🔧 FIX: Store receipts for eth_getTransactionReceipt
         for receipt in &valid_receipts {
@@ -953,6 +794,13 @@ impl NodeService {
             block.hash()
         );
 
+        // ── 📊 Record block production in ScoringManager ──
+        if let Some(kp) = validator_keypair {
+            let addr: [u8; 20] = kp.address().into();
+            scoring_manager.write().record_block_produced(addr, new_height);
+            debug!("📊 ScoringManager: recorded block #{} by 0x{}", new_height, hex::encode(addr));
+        }
+
         // Check if this is an epoch boundary and process rewards
         if new_height % epoch_length == 0 && epoch_length > 0 {
             Self::process_epoch_rewards(
@@ -967,6 +815,11 @@ impl NodeService {
                 epoch_tx_count,
                 valid_transactions.len() as u64,
                 state_db,  // M4: pass StateDB for reward persistence
+                governance,           // 🏛️ Governance epoch hooks
+                validator_rotation,   // 🔄 Validator rotation
+                commit_reveal,        // 🔐 Commit-reveal finalization
+                scoring_manager,      // 📊 Performance scoring
+                ai_circuit_breaker,   // 🛡️ AI layer circuit breaker
             );
         }
 

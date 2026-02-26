@@ -17,6 +17,7 @@ sha3 = "0.10"
 tracing = { workspace = true }
 
 luxtensor-crypto = { path = "../luxtensor-crypto" }
+luxtensor-hnsw = { path = "../luxtensor-hnsw" }
 
 [dev-dependencies]
 proptest = { workspace = true }

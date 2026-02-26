@@ -6,7 +6,7 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, HnswError>;
 
 /// Errors that can occur during HNSW operations.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum HnswError {
     /// Vector dimension mismatch
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
@@ -35,6 +35,18 @@ pub enum HnswError {
     /// Invalid parameter
     #[error("Invalid parameter: {0}")]
     InvalidParameter(String),
+
+    /// Index capacity exceeded
+    #[error("Index capacity exceeded")]
+    CapacityExceeded,
+
+    /// Duplicate vector ID
+    #[error("Duplicate ID: {0}")]
+    DuplicateId(u64),
+
+    /// Invalid or corrupted data
+    #[error("Invalid data")]
+    InvalidData,
 }
 
 impl From<bincode::Error> for HnswError {

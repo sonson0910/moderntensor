@@ -60,6 +60,7 @@ from .subnet_mixin import SubnetMixin
 from .transaction_mixin import TransactionMixin
 from .utils_mixin import UtilsMixin
 from .weights_mixin import WeightsMixin
+from .metagraph_mixin import MetagraphMixin
 
 # L1 Feature Gap Mixins
 from .training_mixin import TrainingMixin
@@ -91,6 +92,7 @@ class LuxtensorClient(
     SubnetConfigMixin,  # Subnet parameters
     AIMixin,  # AI tasks and oracle
     WeightsMixin,  # Weight management
+    MetagraphMixin,  # Metagraph state access
     UtilsMixin,  # Utility methods
     SubnetMixin,  # Subnet management
     NeuronMixin,  # Neuron and weight queries
@@ -199,4 +201,5 @@ __all__ = [
     "DisputeMixin",
     "MultisigMixin",
     "NodeMixin",
+    "MetagraphMixin",
 ]

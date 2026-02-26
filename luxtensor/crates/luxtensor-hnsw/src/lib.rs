@@ -45,6 +45,7 @@ pub mod deterministic_rng;
 pub mod error;
 pub mod fixed_point;
 pub mod graph;
+pub mod vector_store;
 
 #[cfg(feature = "simd")]
 pub mod simd;
@@ -55,7 +56,8 @@ mod stress_tests;
 pub use deterministic_rng::DeterministicRng;
 pub use error::{HnswError, Result};
 pub use fixed_point::FixedPointVector;
-pub use graph::HnswGraph;
+pub use graph::{HnswGraph, HnswNode, MAX_CAPACITY};
+pub use vector_store::HnswVectorStore;
 
 /// Maximum number of connections per node at layer 0
 pub const M0: usize = 32;

@@ -143,23 +143,33 @@ pub struct SubnetInfo {
 }
 
 /// Neuron (miner/validator) information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NeuronInfo {
     pub uid: u64,
-    pub address: String,
     pub subnet_id: u64,
+    /// Hotkey address (hex-encoded)
+    pub hotkey: String,
+    /// Coldkey address (hex-encoded)
+    pub coldkey: String,
+    /// Legacy alias — same as `hotkey`, kept for backward compatibility
+    #[serde(default)]
+    pub address: String,
     pub stake: u128,
     pub trust: f64,
     pub consensus: f64,
     pub rank: u64,
     pub incentive: f64,
     pub dividends: f64,
+    /// Emission (MDT units)
+    pub emission: u128,
+    /// Block height of last update
+    pub last_update: u64,
     pub active: bool,
     pub endpoint: Option<String>,
 }
 
 /// Weight information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeightInfo {
     pub neuron_uid: u64,
     pub weight: u32,

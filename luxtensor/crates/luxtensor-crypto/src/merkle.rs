@@ -95,6 +95,16 @@ impl MerkleTree {
     }
 
     /// Generate Merkle proof for a leaf at given index
+    ///
+    /// # Deprecated
+    /// This method returns proof elements without positional encoding, making it
+    /// vulnerable to second-preimage attacks via proof reordering. Use
+    /// [`get_proof_with_positions`](Self::get_proof_with_positions) instead,
+    /// which includes explicit left/right position information for each sibling.
+    #[deprecated(
+        since = "0.4.1",
+        note = "Use `get_proof_with_positions()` which includes positional encoding for secure verification"
+    )]
     pub fn get_proof(&self, index: usize) -> Vec<Hash> {
         if self._leaves.is_empty() || index >= self._leaves.len() {
             return vec![];
@@ -244,5 +254,50 @@ mod tests {
         let leaves = vec![];
         let tree = MerkleTree::new(leaves);
         assert_eq!(tree.root(), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_merkle_tree_odd_leaves_proof_roundtrip() {
+        // SECURITY: Non-power-of-2 leaf count (3, 5, 7) exercises the
+        // duplicate-last-leaf padding path, which is a common source of
+        // second-preimage bugs in Merkle implementations.
+        for leaf_count in [3, 5, 7] {
+            let leaves: Vec<Hash> = (0..leaf_count)
+                .map(|i| {
+                    let mut h = [0u8; 32];
+                    h[0] = i as u8;
+                    h
+                })
+                .collect();
+            let tree = MerkleTree::new(leaves.clone());
+            let root = tree.root();
+            assert_ne!(root, [0u8; 32], "root should not be zero for {} leaves", leaf_count);
+
+            // Verify proof for every leaf index
+            for idx in 0..leaf_count {
+                let proof = tree.get_proof_with_positions(idx);
+                assert!(
+                    MerkleTree::verify_proof_with_positions(&leaves[idx], &proof, &root),
+                    "proof failed for leaf {} in {}-leaf tree",
+                    idx,
+                    leaf_count,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_merkle_proof_wrong_leaf_fails() {
+        // Ensure a proof for leaf A does NOT verify for leaf B
+        let leaves = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        let tree = MerkleTree::new(leaves);
+        let root = tree.root();
+        let proof_for_0 = tree.get_proof_with_positions(0);
+
+        let wrong_leaf = [99u8; 32];
+        assert!(
+            !MerkleTree::verify_proof_with_positions(&wrong_leaf, &proof_for_0, &root),
+            "proof should not verify for the wrong leaf",
+        );
     }
 }

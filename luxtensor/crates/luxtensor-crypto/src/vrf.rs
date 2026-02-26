@@ -136,7 +136,14 @@ fn hash_to_curve(pk_bytes: &[u8], alpha: &[u8]) -> Result<ProjectivePoint, VrfEr
     Err(VrfError::HashToCurveFailed)
 }
 
-/// Compute Fiat-Shamir challenge: c = keccak256(pk || gamma || k*G || k*H) truncated to 16 bytes
+/// Compute Fiat-Shamir challenge: c = keccak256(pk || gamma || k*G || k*H)
+///
+/// Uses the full 32-byte (256-bit) keccak256 output for maximum collision
+/// resistance, matching the security level of the rest of the crypto stack.
+///
+/// Previous versions truncated to 16 bytes per RFC 9381 §5.4.3, which provides
+/// 128-bit security — sufficient for most applications but suboptimal for a
+/// blockchain consensus system where the full hash width is free.
 fn compute_challenge(
     pk_compressed: &[u8; 33],
     h_point: &ProjectivePoint,
@@ -158,10 +165,8 @@ fn compute_challenge(
 
     let hash = keccak256(&input);
 
-    // Truncate to 16 bytes (128 bits) per RFC 9381 for challenge
-    let mut c_bytes = [0u8; 32];
-    c_bytes[16..32].copy_from_slice(&hash[0..16]);
-    <Scalar as Reduce<k256::U256>>::reduce_bytes(&c_bytes.into())
+    // Use full 32-byte keccak256 output (256-bit security)
+    <Scalar as Reduce<k256::U256>>::reduce_bytes(&hash.into())
 }
 
 impl VrfKeypair {
@@ -579,5 +584,73 @@ mod tests {
         assert!(vrf_output_below_threshold(&output, 101));
         assert!(!vrf_output_below_threshold(&output, 100));
         assert!(!vrf_output_below_threshold(&output, 50));
+    }
+
+    // ── R-1 Security Tests: Fuzzing VrfProof::from_bytes ──────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Fuzz from_bytes with all possible prefix bytes.
+            /// Only 0x02 and 0x03 should produce Ok; everything else must be Err.
+            #[test]
+            fn fuzz_from_bytes_prefix(
+                prefix in 0u8..=255u8,
+                payload in proptest::collection::vec(any::<u8>(), 96)
+            ) {
+                let mut bytes = [0u8; 97];
+                bytes[0] = prefix;
+                bytes[1..97].copy_from_slice(&payload);
+
+                let result = VrfProof::from_bytes(&bytes);
+                if prefix == 0x02 || prefix == 0x03 {
+                    prop_assert!(result.is_ok(), "valid prefix {:#04x} should be accepted", prefix);
+                    let proof = result.unwrap();
+                    prop_assert_eq!(proof.gamma_compressed[0], prefix);
+                } else {
+                    prop_assert!(result.is_err(), "invalid prefix {:#04x} should be rejected", prefix);
+                }
+            }
+
+            /// Fuzz from_bytes with random 97-byte arrays.
+            /// Must never panic; result is Ok only if prefix is 0x02 or 0x03.
+            #[test]
+            fn fuzz_from_bytes_random(
+                raw in proptest::collection::vec(any::<u8>(), 97)
+            ) {
+                let mut data = [0u8; 97];
+                data.copy_from_slice(&raw);
+                let result = VrfProof::from_bytes(&data);
+                // Must not panic, and consistency check:
+                match result {
+                    Ok(proof) => {
+                        prop_assert!(data[0] == 0x02 || data[0] == 0x03);
+                        prop_assert!(proof.gamma[..] == data[1..33]);
+                        prop_assert!(proof.c[..] == data[33..65]);
+                        prop_assert!(proof.s[..] == data[65..97]);
+                    }
+                    Err(_) => {
+                        prop_assert!(data[0] != 0x02 && data[0] != 0x03);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_from_bytes_valid_97_bytes() {
+            // Edge: exactly 97 bytes with valid prefix
+            let bytes = [0x02; 97];
+            let result = VrfProof::from_bytes(&bytes);
+            assert!(result.is_ok());
+
+            // Also test 0x03 prefix
+            let mut bytes03 = [0xFF; 97];
+            bytes03[0] = 0x03;
+            let result03 = VrfProof::from_bytes(&bytes03);
+            assert!(result03.is_ok());
+            assert_eq!(result03.unwrap().gamma_compressed[0], 0x03);
+        }
     }
 }

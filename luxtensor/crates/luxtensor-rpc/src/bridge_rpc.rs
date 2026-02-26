@@ -4,16 +4,16 @@
 //! and list bridge messages with optional status filtering.
 
 use jsonrpc_core::{IoHandler, Params};
-use luxtensor_core::bridge::{Bridge, BridgeMessageStatus, InMemoryBridge};
+use luxtensor_core::bridge::{Bridge, BridgeMessageStatus, PersistentBridge};
 use std::sync::Arc;
 
 /// Shared context for Bridge RPC handlers.
 pub struct BridgeRpcContext {
-    pub bridge: Arc<InMemoryBridge>,
+    pub bridge: Arc<PersistentBridge>,
 }
 
 impl BridgeRpcContext {
-    pub fn new(bridge: Arc<InMemoryBridge>) -> Self {
+    pub fn new(bridge: Arc<PersistentBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -110,7 +110,7 @@ fn register_bridge_list_messages(ctx: &BridgeRpcContext, io: &mut IoHandler) {
                 _ => None,
             };
 
-            let messages = bridge.list_messages(status_filter);
+            let messages = bridge.list_messages(status_filter).unwrap_or_default();
             let result: Vec<serde_json::Value> = messages
                 .iter()
                 .map(|msg| {
@@ -143,7 +143,7 @@ fn register_bridge_get_stats(ctx: &BridgeRpcContext, io: &mut IoHandler) {
     io.add_method("bridge_getStats", move |_params: Params| {
         let bridge = bridge.clone();
         async move {
-            let all = bridge.list_messages(None);
+            let all = bridge.list_messages(None).unwrap_or_default();
             let pending = all.iter().filter(|m| m.status == BridgeMessageStatus::Pending).count();
             let confirmed = all.iter().filter(|m| m.status == BridgeMessageStatus::Confirmed).count();
             let executed = all.iter().filter(|m| m.status == BridgeMessageStatus::Executed).count();
@@ -184,7 +184,9 @@ mod tests {
 
     #[test]
     fn test_bridge_rpc_context_creation() {
-        let bridge = Arc::new(InMemoryBridge::new(BridgeConfig::default()));
+        use luxtensor_core::bridge::InMemoryBridgeStore;
+        let store = Arc::new(InMemoryBridgeStore::new());
+        let bridge = Arc::new(PersistentBridge::new(store, BridgeConfig::default()).unwrap());
         let ctx = BridgeRpcContext::new(bridge.clone());
         assert!(Arc::strong_count(&ctx.bridge) >= 1);
     }

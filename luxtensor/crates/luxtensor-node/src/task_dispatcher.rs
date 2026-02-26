@@ -581,6 +581,11 @@ impl DispatchService {
                         input_hash: task.input_hash,
                         reward: task.reward,
                         deadline,
+                        // TODO: Sign with validator keypair when available
+                        // For now, empty signature will cause receivers to reject
+                        // unless the node is configured as a validator with signing key
+                        validator_signature: vec![],
+                        validator_address: [0u8; 20],
                     }) {
                         warn!(
                             "Failed to broadcast task 0x{}: {}",
