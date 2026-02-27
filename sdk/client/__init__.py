@@ -143,9 +143,9 @@ class LuxtensorClient(
 
         self.blocks = BlockClient(url, timeout, self._get_request_id)
         self.stakes = StakeClient(url, timeout, self._get_request_id)
-        self.neurons_client = NeuronClient(url, timeout, self._get_request_id)
-        self.subnets_client = SubnetClient(url, timeout, self._get_request_id)
-        self.transactions_client = TransactionClient(url, timeout, self._get_request_id)
+        self.neurons = NeuronClient(url, timeout, self._get_request_id)
+        self.subnets = SubnetClient(url, timeout, self._get_request_id)
+        self.txs = TransactionClient(url, timeout, self._get_request_id)
 
         # Optionally initialize consensus verification
         if enable_consensus:
@@ -153,9 +153,30 @@ class LuxtensorClient(
                 self.init_consensus()
                 logger.info("Consensus verification enabled")
             except Exception as e:
-                logger.warning(f"Failed to initialize consensus: {e}")
+                logger.warning("Failed to initialize consensus: %s", e)
 
-        logger.info(f"Initialized Luxtensor client for {network} at {url}")
+        logger.info("Initialized Luxtensor client for %s at %s", network, url)
+
+    # ── Backward-compatible properties (deprecated naming) ────────────────
+
+    @property
+    def neurons_client(self):
+        """Deprecated: use ``.neurons`` instead."""
+        return self.neurons
+
+    @property
+    def subnets_client(self):
+        """Deprecated: use ``.subnets`` instead."""
+        return self.subnets
+
+    @property
+    def transactions_client(self):
+        """Deprecated: use ``.txs`` instead."""
+        return self.txs
+
+
+# Async client (real implementation)
+from ..async_luxtensor_client import AsyncLuxtensorClient
 
 
 # Helper functions
@@ -164,13 +185,28 @@ def connect(url: str = "http://localhost:8545", **kwargs) -> LuxtensorClient:
     return LuxtensorClient(url=url, **kwargs)
 
 
-async def async_connect(url: str = "http://localhost:8545", **kwargs) -> "LuxtensorClient":
-    """Create async client (placeholder for async implementation)."""
-    return LuxtensorClient(url=url, **kwargs)
+async def async_connect(
+    url: str = "http://localhost:8545", **kwargs
+) -> AsyncLuxtensorClient:
+    """
+    Create and return an AsyncLuxtensorClient instance.
 
+    The client is already connected when returned.
 
-# Classes for type alias compatibility
-AsyncLuxtensorClient = LuxtensorClient  # Placeholder
+    Example::
+
+        client = await async_connect("http://localhost:8545")
+        block = await client.get_block_number()
+        await client.close()
+
+    Prefer using the async context manager instead::
+
+        async with AsyncLuxtensorClient("http://...") as client:
+            block = await client.get_block_number()
+    """
+    client = AsyncLuxtensorClient(url=url, **kwargs)
+    await client.connect()
+    return client
 
 
 __all__ = [

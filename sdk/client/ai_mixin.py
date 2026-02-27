@@ -49,7 +49,7 @@ class AIMixin:
         try:
             return self._rpc()._call_rpc("lux_submitAITask", [task_data])
         except Exception as e:
-            logger.error(f"Failed to submit AI task: {e}")
+            logger.error("Failed to submit AI task: %s", e)
             raise
 
     def get_ai_result(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -65,7 +65,7 @@ class AIMixin:
         try:
             return self._rpc()._call_rpc("lux_getAIResult", [task_id])
         except Exception as e:
-            logger.warning(f"Failed to get AI result for task {task_id}: {e}")
+            logger.warning("Failed to get AI result for task %s: %s", task_id, e)
             return None
 
     def claim_rewards(self, address: str) -> Dict[str, Any]:
@@ -82,7 +82,7 @@ class AIMixin:
             result = self._rpc()._call_rpc("rewards_claim", [address])
             return result if result else {"success": False, "claimed": 0}
         except Exception as e:
-            logger.error(f"Failed to claim rewards for {address}: {e}")
+            logger.error("Failed to claim rewards for %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def get_burn_stats(self) -> Dict[str, Any]:
@@ -96,5 +96,5 @@ class AIMixin:
             result = self._rpc()._call_rpc("rewards_getBurnStats", [])
             return result if result else {}
         except Exception as e:
-            logger.warning(f"Failed to get burn stats: {e}")
+            logger.warning("Failed to get burn stats: %s", e)
             return {}

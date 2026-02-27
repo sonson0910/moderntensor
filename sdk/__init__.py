@@ -91,6 +91,7 @@ from .errors import (
     GasLimitExceededError,
     RateLimitedError,
     MempoolFullError,
+    LuxtensorConnectionError,
     parse_rpc_error,
     check_rpc_response,
 )
@@ -192,6 +193,7 @@ __all__ = [
     "GasLimitExceededError",
     "RateLimitedError",
     "MempoolFullError",
+    "LuxtensorConnectionError",
     "parse_rpc_error",
     "check_rpc_response",
     # Consensus - Slashing

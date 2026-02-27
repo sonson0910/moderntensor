@@ -56,7 +56,7 @@ class RegistrationMixin:
                 return int(cost) if cost else 0
             return 0
         except Exception as e:
-            logger.error(f"Error getting registration cost for subnet {subnet_id}: {e}")
+            logger.error("Error getting registration cost for subnet %s: %s", subnet_id, e)
             raise
 
     def get_max_registrations_per_block(self, subnet_id: int) -> int:
@@ -78,7 +78,7 @@ class RegistrationMixin:
                 return int(val) if val else 0
             return 0
         except Exception as e:
-            logger.error(f"Error getting max registrations per block for subnet {subnet_id}: {e}")
+            logger.error("Error getting max registrations per block for subnet %s: %s", subnet_id, e)
             raise
 
     def is_hotkey_registered(self, subnet_id: int, hotkey: str) -> bool:
@@ -96,7 +96,7 @@ class RegistrationMixin:
             result = self._rpc()._call_rpc("query_isHotkeyRegistered", [subnet_id, hotkey])
             return bool(result)
         except Exception as e:
-            logger.error(f"Error checking if hotkey {hotkey} is registered: {e}")
+            logger.error("Error checking if hotkey %s is registered: %s", hotkey, e)
             raise
 
     def serve_axon(
@@ -160,9 +160,9 @@ class RegistrationMixin:
             # Submit transaction to register axon
             result = self._rpc()._call_rpc("neuron_register", [subnet_id, axon_info])
 
-            logger.info(f"Registered axon for subnet {subnet_id} at {ip}:{port}")
+            logger.info("Registered axon for subnet %s at %s:%s", subnet_id, ip, port)
             return result
 
         except Exception as e:
-            logger.error(f"Error registering axon: {e}")
+            logger.error("Error registering axon: %s", e)
             raise

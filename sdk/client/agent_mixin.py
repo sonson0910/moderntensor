@@ -73,7 +73,7 @@ class AgentMixin:
                 params["metadata"] = metadata
             return self._rpc()._call_rpc("agent_register", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to register agent {address}: {e}")
+            logger.error("Failed to register agent %s: %s", address, e)
             raise
 
     def agent_deregister(
@@ -98,7 +98,7 @@ class AgentMixin:
             }
             return self._rpc()._call_rpc("agent_deregister", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to deregister agent {address}: {e}")
+            logger.error("Failed to deregister agent %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def agent_deposit_gas(
@@ -118,7 +118,7 @@ class AgentMixin:
             params = {"address": address, "amount": amount}
             return self._rpc()._call_rpc("agent_depositGas", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to deposit gas for agent {address}: {e}")
+            logger.error("Failed to deposit gas for agent %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def agent_withdraw_gas(
@@ -145,7 +145,7 @@ class AgentMixin:
             }
             return self._rpc()._call_rpc("agent_withdrawGas", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to withdraw gas for agent {address}: {e}")
+            logger.error("Failed to withdraw gas for agent %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def agent_get_info(self, address: str) -> Optional[Dict[str, Any]]:
@@ -161,7 +161,7 @@ class AgentMixin:
         try:
             return self._rpc()._call_rpc("agent_getInfo", [address])
         except Exception as e:
-            logger.warning(f"Failed to get agent info for {address}: {e}")
+            logger.warning("Failed to get agent info for %s: %s", address, e)
             return None
 
     def agent_list_all(self) -> List[Dict[str, Any]]:
@@ -175,5 +175,5 @@ class AgentMixin:
             result = self._rpc()._call_rpc("agent_listAll", [])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to list agents: {e}")
+            logger.warning("Failed to list agents: %s", e)
             return []

@@ -105,7 +105,7 @@ class RootSubnet:
         # Initialize emission share to 0
         self.emission_shares[netuid] = 0.0
 
-        logger.info(f"Registered subnet {netuid}: {name} (owner: {owner})")
+        logger.info("Registered subnet %s: %s (owner: %s)", netuid, name, owner)
 
         return SubnetRegistrationResult(
             success=True,
@@ -125,12 +125,12 @@ class RootSubnet:
             True if successful
         """
         if netuid not in self.subnets:
-            logger.warning(f"Subnet {netuid} not found")
+            logger.warning("Subnet %s not found", netuid)
             return False
 
         subnet = self.subnets[netuid]
         if subnet.owner != caller:
-            logger.warning(f"Caller {caller} is not owner of subnet {netuid}")
+            logger.warning("Caller %s is not owner of subnet %s", caller, netuid)
             return False
 
         # Remove subnet
@@ -143,7 +143,7 @@ class RootSubnet:
             if netuid in weights.weights:
                 del weights.weights[netuid]
 
-        logger.info(f"Deregistered subnet {netuid}")
+        logger.info("Deregistered subnet %s", netuid)
         return True
 
     def update_root_validators(self, stakers: List[tuple]) -> None:
@@ -167,7 +167,7 @@ class RootSubnet:
                     is_active=True
                 ))
 
-        logger.info(f"Updated root validators: {len(self.root_validators)} validators")
+        logger.info("Updated root validators: %s validators", len(self.root_validators))
 
     def is_root_validator(self, address: str) -> bool:
         """Check if address is a root validator."""
@@ -191,18 +191,18 @@ class RootSubnet:
             True if successful
         """
         if not self.is_root_validator(validator):
-            logger.warning(f"{validator} is not a root validator")
+            logger.warning("%s is not a root validator", validator)
             return False
 
         # Validate weights
         if sum(weights.values()) > 1.0 + 1e-6:  # Allow small floating point error
-            logger.warning(f"Weights sum to {sum(weights.values())}, must be <= 1.0")
+            logger.warning("Weights sum to %s, must be <= 1.0", sum(weights.values()))
             return False
 
         # Validate netuids exist
         for netuid in weights.keys():
             if netuid not in self.subnets:
-                logger.warning(f"Subnet {netuid} does not exist")
+                logger.warning("Subnet %s does not exist", netuid)
                 return False
 
         # Store weights
@@ -215,7 +215,7 @@ class RootSubnet:
         # Recalculate emission shares
         self._calculate_emission_shares()
 
-        logger.info(f"Updated weights for {validator}: {weights}")
+        logger.info("Updated weights for %s: %s", validator, weights)
         return True
 
     def _calculate_emission_shares(self) -> None:

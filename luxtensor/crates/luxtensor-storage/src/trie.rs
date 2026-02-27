@@ -2,6 +2,18 @@ use crate::{Result, StorageError};
 use luxtensor_crypto::{keccak256, Hash};
 use std::collections::HashMap;
 
+/// Pre-computed hash of the empty node: `keccak256(b"")`.
+///
+/// This avoids calling `keccak256(b"")` for every `None` child slot inside
+/// every Branch node.  With 16 children per branch, this eliminates up to
+/// 16 × N_branches redundant hash invocations per `root_hash()` call.
+const EMPTY_NODE_HASH: Hash = [
+    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c,
+    0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
+    0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+];
+
 /// A single element in a raw-preimage Merkle proof.
 ///
 /// Contains the raw bytes (preimage) of a node on the path from root to leaf.
@@ -109,10 +121,10 @@ impl TrieNode {
     /// Compute the hash of this node (recursive Merkle hash)
     fn hash(&self) -> Hash {
         match self {
-            TrieNode::Empty => keccak256(b""),
+            TrieNode::Empty => EMPTY_NODE_HASH,
             TrieNode::Leaf { nibbles, value } => {
                 let encoded_path = hex_prefix_encode(nibbles, true);
-                let mut data = Vec::new();
+                let mut data = Vec::with_capacity(encoded_path.len() + value.len());
                 data.extend_from_slice(&encoded_path);
                 data.extend_from_slice(value);
                 keccak256(&data)
@@ -120,17 +132,18 @@ impl TrieNode {
             TrieNode::Extension { nibbles, child } => {
                 let encoded_path = hex_prefix_encode(nibbles, false);
                 let child_hash = child.hash();
-                let mut data = Vec::new();
+                let mut data = Vec::with_capacity(encoded_path.len() + 32);
                 data.extend_from_slice(&encoded_path);
                 data.extend_from_slice(&child_hash);
                 keccak256(&data)
             }
             TrieNode::Branch { children, value } => {
-                let mut data = Vec::new();
+                let val_len = value.as_ref().map(|v| v.len()).unwrap_or(0);
+                let mut data = Vec::with_capacity(16 * 32 + val_len);
                 for child in children.iter() {
                     match child {
                         Some(node) => data.extend_from_slice(&node.hash()),
-                        None => data.extend_from_slice(&keccak256(b"")),
+                        None => data.extend_from_slice(&EMPTY_NODE_HASH),
                     }
                 }
                 if let Some(val) = value {
@@ -348,11 +361,12 @@ impl TrieNode {
                 data
             }
             TrieNode::Branch { children, value } => {
-                let mut data = Vec::with_capacity(16 * 32 + value.as_ref().map(|v| v.len()).unwrap_or(0));
+                let val_len = value.as_ref().map(|v| v.len()).unwrap_or(0);
+                let mut data = Vec::with_capacity(16 * 32 + val_len);
                 for child in children.iter() {
                     match child {
                         Some(node) => data.extend_from_slice(&node.hash()),
-                        None => data.extend_from_slice(&keccak256(b"")),
+                        None => data.extend_from_slice(&EMPTY_NODE_HASH),
                     }
                 }
                 if let Some(val) = value {
@@ -1181,6 +1195,46 @@ mod tests {
         for (i, key) in prefixed_keys.iter().enumerate() {
             let val = trie.get(key).unwrap();
             assert_eq!(val, Some(format!("v{}", i).into_bytes()));
+        }
+    }
+
+    /// Verify that the compile-time EMPTY_NODE_HASH constant matches runtime keccak256(b"").
+    #[test]
+    fn test_empty_node_hash_constant() {
+        let runtime_hash = keccak256(b"");
+        assert_eq!(
+            EMPTY_NODE_HASH, runtime_hash,
+            "EMPTY_NODE_HASH constant must equal keccak256(b\"\")"
+        );
+    }
+
+    /// Performance regression test: insert 1000 keys, compute root, verify all.
+    #[test]
+    fn test_trie_insert_1k_keys_performance() {
+        let mut trie = MerkleTrie::new();
+
+        // Insert 1000 keys.
+        for i in 0..1000u32 {
+            let key = format!("account_{:08x}", i);
+            let value = format!("balance_{}", i * 1000);
+            trie.insert(key.as_bytes(), value.as_bytes()).unwrap();
+        }
+
+        assert_eq!(trie.len(), 1000);
+
+        // root_hash() should complete without stack overflow or unreasonable time.
+        let root = trie.root_hash();
+        assert_ne!(root, [0u8; 32]);
+        assert_ne!(root, EMPTY_NODE_HASH);
+
+        // Verify all keys are still retrievable.
+        for i in 0..1000u32 {
+            let key = format!("account_{:08x}", i);
+            let value = format!("balance_{}", i * 1000);
+            assert_eq!(
+                trie.get(key.as_bytes()).unwrap(),
+                Some(value.into_bytes()),
+            );
         }
     }
 }

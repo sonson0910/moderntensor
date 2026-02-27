@@ -271,10 +271,10 @@ try:
         settings.CONSENSUS_PARAM_THETA3
     )
     if not math.isclose(theta_sum, 1.0, abs_tol=1e-9):
-        logging.warning(f"Sum of Theta parameters ({theta_sum}) != 1.0")
+        logging.warning("Sum of Theta parameters (%s) != 1.0", theta_sum)
 
 except Exception as e:
-    print(f"CRITICAL: Error loading settings: {e}")
+    print("CRITICAL: Error loading settings: %s" % e)
     settings = Settings()
 
 
@@ -312,4 +312,4 @@ else:
     sdk_logger.addHandler(_handler)
 
 logger = logging.getLogger(__name__)
-logger.info(f"Settings loaded. Log level: {logging.getLevelName(LOG_LEVEL_CONFIG)}")
+logger.info("Settings loaded. Log level: %s", logging.getLevelName(LOG_LEVEL_CONFIG))

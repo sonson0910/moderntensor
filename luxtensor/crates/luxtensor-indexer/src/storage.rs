@@ -1,9 +1,69 @@
 //! PostgreSQL storage layer
+//!
+//! All write operations use [`retry_db_write`] to automatically retry on
+//! transient database errors (connection drops, timeouts, serialization
+//! conflicts). The default policy is **3 attempts** with exponential backoff
+//! starting at 100 ms.
 
-use crate::error::Result;
+use crate::error::{IndexerError, Result};
 use crate::models::*;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use tracing::info;
+use tracing::{info, warn};
+use std::future::Future;
+
+/// Maximum number of retry attempts for transient DB write failures.
+const MAX_RETRIES: u32 = 3;
+/// Initial delay between retry attempts.
+const INITIAL_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Retry a fallible async DB operation with exponential backoff.
+///
+/// Returns the result if successful within [`MAX_RETRIES`] attempts,
+/// or `IndexerError::RetryExhausted` wrapping the last error.
+async fn retry_db_write<F, Fut, T>(op_name: &str, mut f: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, sqlx::Error>>,
+{
+    let mut delay = INITIAL_RETRY_DELAY;
+    let mut last_err = None;
+
+    for attempt in 1..=MAX_RETRIES {
+        match f().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                let is_transient = matches!(
+                    &e,
+                    sqlx::Error::Io(_)
+                    | sqlx::Error::PoolTimedOut
+                    | sqlx::Error::PoolClosed
+                    | sqlx::Error::WorkerCrashed
+                );
+
+                if !is_transient || attempt == MAX_RETRIES {
+                    last_err = Some(e);
+                    break;
+                }
+
+                warn!(
+                    op = op_name,
+                    attempt = attempt,
+                    delay_ms = delay.as_millis() as u64,
+                    error = %e,
+                    "Transient DB error, retrying"
+                );
+                tokio::time::sleep(delay).await;
+                delay *= 2; // exponential backoff
+            }
+        }
+    }
+
+    Err(IndexerError::RetryExhausted {
+        operation: op_name.to_string(),
+        attempts: MAX_RETRIES,
+        last_error: last_err.map(|e| e.to_string()).unwrap_or_default(),
+    })
+}
 
 /// PostgreSQL storage for indexed data
 pub struct Storage {
@@ -141,26 +201,34 @@ impl Storage {
 
     // ======== Block operations ========
 
-    /// Insert or update block
+    /// Insert or update block (with retry).
     pub async fn upsert_block(&self, block: &Block) -> Result<()> {
-        sqlx::query(r#"
-            INSERT INTO blocks (number, hash, parent_hash, timestamp, tx_count)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (number) DO UPDATE SET
-                hash = EXCLUDED.hash,
-                parent_hash = EXCLUDED.parent_hash,
-                timestamp = EXCLUDED.timestamp,
-                tx_count = EXCLUDED.tx_count
-        "#)
-        .bind(block.number)
-        .bind(&block.hash)
-        .bind(&block.parent_hash)
-        .bind(block.timestamp)
-        .bind(block.tx_count)
-        .execute(&self.pool)
-        .await?;
+        let pool = &self.pool;
+        let number = block.number;
+        let hash = block.hash.clone();
+        let parent_hash = block.parent_hash.clone();
+        let timestamp = block.timestamp;
+        let tx_count = block.tx_count;
 
-        Ok(())
+        retry_db_write("upsert_block", || async {
+            sqlx::query(r#"
+                INSERT INTO blocks (number, hash, parent_hash, timestamp, tx_count)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (number) DO UPDATE SET
+                    hash = EXCLUDED.hash,
+                    parent_hash = EXCLUDED.parent_hash,
+                    timestamp = EXCLUDED.timestamp,
+                    tx_count = EXCLUDED.tx_count
+            "#)
+            .bind(number)
+            .bind(&hash)
+            .bind(&parent_hash)
+            .bind(timestamp)
+            .bind(tx_count)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }).await
     }
 
     /// Get block by number
@@ -201,26 +269,38 @@ impl Storage {
 
     // ======== Transaction operations ========
 
-    /// Insert transaction
+    /// Insert transaction (with retry).
     pub async fn insert_transaction(&self, tx: &Transaction) -> Result<()> {
-        sqlx::query(r#"
-            INSERT INTO transactions (hash, block_number, chain_id, from_address, to_address, value, gas_used, status, tx_type)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (hash) DO NOTHING
-        "#)
-        .bind(&tx.hash)
-        .bind(tx.block_number)
-        .bind(tx.chain_id)
-        .bind(&tx.from_address)
-        .bind(&tx.to_address)
-        .bind(&tx.value)
-        .bind(tx.gas_used)
-        .bind(tx.status)
-        .bind(&tx.tx_type)
-        .execute(&self.pool)
-        .await?;
+        let pool = &self.pool;
+        let hash = tx.hash.clone();
+        let block_number = tx.block_number;
+        let chain_id = tx.chain_id;
+        let from_address = tx.from_address.clone();
+        let to_address = tx.to_address.clone();
+        let value = tx.value.clone();
+        let gas_used = tx.gas_used;
+        let status = tx.status;
+        let tx_type = tx.tx_type.clone();
 
-        Ok(())
+        retry_db_write("insert_transaction", || async {
+            sqlx::query(r#"
+                INSERT INTO transactions (hash, block_number, chain_id, from_address, to_address, value, gas_used, status, tx_type)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (hash) DO NOTHING
+            "#)
+            .bind(&hash)
+            .bind(block_number)
+            .bind(chain_id)
+            .bind(&from_address)
+            .bind(&to_address)
+            .bind(&value)
+            .bind(gas_used)
+            .bind(status)
+            .bind(&tx_type)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }).await
     }
 
     /// Get transactions by address
@@ -259,22 +339,31 @@ impl Storage {
 
     // ======== Token transfer operations ========
 
-    /// Insert token transfer
+    /// Insert token transfer (with retry).
     pub async fn insert_token_transfer(&self, transfer: &TokenTransfer) -> Result<()> {
-        sqlx::query(r#"
-            INSERT INTO token_transfers (tx_hash, block_number, from_address, to_address, amount, timestamp)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        "#)
-        .bind(&transfer.tx_hash)
-        .bind(transfer.block_number)
-        .bind(&transfer.from_address)
-        .bind(&transfer.to_address)
-        .bind(&transfer.amount)
-        .bind(transfer.timestamp)
-        .execute(&self.pool)
-        .await?;
+        let pool = &self.pool;
+        let tx_hash = transfer.tx_hash.clone();
+        let block_number = transfer.block_number;
+        let from_address = transfer.from_address.clone();
+        let to_address = transfer.to_address.clone();
+        let amount = transfer.amount.clone();
+        let timestamp = transfer.timestamp;
 
-        Ok(())
+        retry_db_write("insert_token_transfer", || async {
+            sqlx::query(r#"
+                INSERT INTO token_transfers (tx_hash, block_number, from_address, to_address, amount, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            "#)
+            .bind(&tx_hash)
+            .bind(block_number)
+            .bind(&from_address)
+            .bind(&to_address)
+            .bind(&amount)
+            .bind(timestamp)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }).await
     }
 
     /// Get token transfers by address
@@ -301,22 +390,31 @@ impl Storage {
 
     // ======== Stake operations ========
 
-    /// Insert stake event
+    /// Insert stake event (with retry).
     pub async fn insert_stake_event(&self, stake: &StakeEvent) -> Result<()> {
-        sqlx::query(r#"
-            INSERT INTO stakes (block_number, coldkey, hotkey, amount, action, timestamp)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        "#)
-        .bind(stake.block_number)
-        .bind(&stake.coldkey)
-        .bind(&stake.hotkey)
-        .bind(&stake.amount)
-        .bind(&stake.action)
-        .bind(stake.timestamp)
-        .execute(&self.pool)
-        .await?;
+        let pool = &self.pool;
+        let block_number = stake.block_number;
+        let coldkey = stake.coldkey.clone();
+        let hotkey = stake.hotkey.clone();
+        let amount = stake.amount.clone();
+        let action = stake.action.clone();
+        let timestamp = stake.timestamp;
 
-        Ok(())
+        retry_db_write("insert_stake_event", || async {
+            sqlx::query(r#"
+                INSERT INTO stakes (block_number, coldkey, hotkey, amount, action, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            "#)
+            .bind(block_number)
+            .bind(&coldkey)
+            .bind(&hotkey)
+            .bind(&amount)
+            .bind(&action)
+            .bind(timestamp)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }).await
     }
 
     /// Get stake history for hotkey
@@ -348,19 +446,22 @@ impl Storage {
         Ok(status)
     }
 
-    /// Update sync status
+    /// Update sync status (with retry).
     pub async fn update_sync_status(&self, block_number: i64, is_syncing: bool) -> Result<()> {
-        sqlx::query(r#"
-            UPDATE sync_status
-            SET last_indexed_block = $1, last_indexed_at = NOW(), is_syncing = $2
-            WHERE id = 1
-        "#)
-        .bind(block_number)
-        .bind(is_syncing)
-        .execute(&self.pool)
-        .await?;
+        let pool = &self.pool;
 
-        Ok(())
+        retry_db_write("update_sync_status", || async {
+            sqlx::query(r#"
+                UPDATE sync_status
+                SET last_indexed_block = $1, last_indexed_at = NOW(), is_syncing = $2
+                WHERE id = 1
+            "#)
+            .bind(block_number)
+            .bind(is_syncing)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }).await
     }
 
     /// Get database pool reference

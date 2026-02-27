@@ -119,7 +119,7 @@ class ModelManager:
         # Performance metrics
         self.inference_metrics: Dict[str, List[float]] = {}
         
-        logger.info(f"ModelManager initialized with cache_dir={self.cache_dir}")
+        logger.info("ModelManager initialized with cache_dir=%s", self.cache_dir)
     
     def register_model(
         self,
@@ -145,7 +145,7 @@ class ModelManager:
             ModelMetadata object
         """
         if model_id in self.models:
-            logger.warning(f"Model {model_id} already registered, updating...")
+            logger.warning("Model %s already registered, updating...", model_id)
         
         metadata = ModelMetadata(
             model_id=model_id,
@@ -157,7 +157,7 @@ class ModelManager:
         )
         
         self.models[model_id] = metadata
-        logger.info(f"Registered model: {model_id} ({name})")
+        logger.info("Registered model: %s (%s)", model_id, name)
         
         return metadata
     
@@ -199,7 +199,7 @@ class ModelManager:
         )
         
         self.models[model_id].add_version(model_version)
-        logger.info(f"Added version {version} for model {model_id}")
+        logger.info("Added version %s for model %s", version, model_id)
         
         return model_version
     
@@ -217,7 +217,7 @@ class ModelManager:
                         Signature: (model_id: str, version: str, **kwargs) -> Any
         """
         self.loaders[model_id] = loader_func
-        logger.info(f"Registered custom loader for {model_id}")
+        logger.info("Registered custom loader for %s", model_id)
     
     def load_model(
         self,
@@ -248,11 +248,11 @@ class ModelManager:
         # Check cache
         cache_key = f"{model_id}:{version}"
         if cache_key in self.loaded_models:
-            logger.debug(f"Model {cache_key} loaded from cache")
+            logger.debug("Model %s loaded from cache", cache_key)
             return self.loaded_models[cache_key]
         
         # Load model
-        logger.info(f"Loading model {cache_key}...")
+        logger.info("Loading model %s...", cache_key)
         start_time = time.time()
         
         if model_id in self.loaders:
@@ -261,7 +261,7 @@ class ModelManager:
             raise ValueError(f"No loader registered for model {model_id}")
         
         load_time = time.time() - start_time
-        logger.info(f"Model {cache_key} loaded in {load_time:.2f}s")
+        logger.info("Model %s loaded in %ss", cache_key, load_time:.2f)
         
         # Cache model
         self.loaded_models[cache_key] = model
@@ -281,12 +281,12 @@ class ModelManager:
             keys_to_remove = [k for k in self.loaded_models.keys() if k.startswith(f"{model_id}:")]
             for key in keys_to_remove:
                 del self.loaded_models[key]
-            logger.info(f"Unloaded all versions of {model_id}")
+            logger.info("Unloaded all versions of %s", model_id)
         else:
             cache_key = f"{model_id}:{version}"
             if cache_key in self.loaded_models:
                 del self.loaded_models[cache_key]
-                logger.info(f"Unloaded {cache_key}")
+                logger.info("Unloaded %s", cache_key)
     
     def track_inference(
         self,
@@ -378,7 +378,7 @@ class ModelManager:
                 if file_path.is_file():
                     # Skip very large files for efficiency
                     if file_path.stat().st_size > MAX_FILE_SIZE:
-                        logger.warning(f"Skipping large file in checksum: {file_path}")
+                        logger.warning("Skipping large file in checksum: %s", file_path)
                         continue
                     
                     with open(file_path, "rb") as f:

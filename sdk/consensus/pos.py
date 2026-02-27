@@ -124,7 +124,7 @@ class ProofOfStake:
         self._current_epoch = 0
         self._last_block_hash: str = "0" * 64
 
-        logger.info(f"ProofOfStake initialized with {len(self._validators)} validators")
+        logger.info("ProofOfStake initialized with %s validators", len(self._validators))
 
     def _compute_seed(self, slot: int) -> bytes:
         """Compute randomness seed for validator selection."""
@@ -263,7 +263,7 @@ class ProofOfStake:
                 public_key=public_key,
                 active=True,
             )
-            logger.info(f"Added validator {address[:16]}... with stake {stake}")
+            logger.info("Added validator %.16s... with stake %s", address, stake)
 
     def remove_validator(self, address: str) -> None:
         """Remove a validator."""
@@ -272,7 +272,7 @@ class ProofOfStake:
                 raise ProofOfStakeError(f"Validator not found: {address[:16]}...")
 
             del self._validators[address]
-            logger.info(f"Removed validator {address[:16]}...")
+            logger.info("Removed validator %.16s...", address)
 
     def update_validator_stake(self, address: str, new_stake: int) -> None:
         """Update validator stake."""

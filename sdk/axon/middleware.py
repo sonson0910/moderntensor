@@ -51,7 +51,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         uid = request.headers.get("X-UID")
         
         if not api_key or not uid:
-            logger.warning(f"Missing credentials from {request.client.host}")
+            logger.warning("Missing credentials from %s", request.client.host)
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Missing API key or UID"},
@@ -117,7 +117,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
         
         if not allowed:
-            logger.warning(f"Rate limit exceeded for {client_ip}")
+            logger.warning("Rate limit exceeded for %s", client_ip)
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={
@@ -175,7 +175,7 @@ class BlacklistMiddleware(BaseHTTPMiddleware):
         allowed, reason = self.security_manager.is_ip_allowed(client_ip)
         
         if not allowed:
-            logger.warning(f"Blocked request from {client_ip}: {reason}")
+            logger.warning("Blocked request from %s: %s", client_ip, reason)
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": f"Access denied: {reason}"},
@@ -217,7 +217,7 @@ class DDoSProtectionMiddleware(BaseHTTPMiddleware):
         
         # Check connection limit
         if not self.security_manager.check_connection_limit(client_ip, self.max_concurrent):
-            logger.warning(f"Too many concurrent connections from {client_ip}")
+            logger.warning("Too many concurrent connections from %s", client_ip)
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"detail": "Too many concurrent requests"},

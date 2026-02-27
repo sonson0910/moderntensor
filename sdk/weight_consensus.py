@@ -263,15 +263,20 @@ class WeightConsensusClient:
     def get_config(self) -> WeightConsensusConfig:
         """Get consensus configuration from chain.
 
-        Note: weightConsensus_getConfig RPC is not yet implemented on the
-        LuxTensor server. Returns default configuration.
+        .. warning:: **RPC Not Implemented**
+            ``weightConsensus_getConfig`` is not yet available on the
+            LuxTensor node. Returns default :class:`WeightConsensusConfig`.
+            This will be connected to on-chain state once the RPC is deployed.
         """
         if self._config:
             return self._config
 
-        logger.warning(
-            "weightConsensus_getConfig is not yet available on the server. "
-            "Using default WeightConsensusConfig values."
+        import warnings
+        warnings.warn(
+            "weightConsensus_getConfig RPC is not yet implemented. "
+            "Returning default WeightConsensusConfig. Values may not "
+            "match on-chain parameters.",
+            stacklevel=2,
         )
         self._config = WeightConsensusConfig()
         return self._config
@@ -320,7 +325,7 @@ class WeightConsensusClient:
         # Get proposal ID from event/receipt
         proposal_id = self._extract_proposal_id(result)
 
-        logger.info(f"Created proposal {proposal_id} for subnet {subnet_uid}")
+        logger.info("Created proposal %s for subnet %d", proposal_id, subnet_uid)
 
         return proposal_id
 
@@ -379,7 +384,8 @@ class WeightConsensusClient:
         # Submit\n        _ = self.client.submit_transaction(tx)  # Store result for logging/debugging
 
         logger.info(
-            f"Voted {'approve' if approve else 'reject'} on proposal {proposal_id}"
+            "Voted %s on proposal %s",
+            "approve" if approve else "reject", proposal_id,
         )
 
         # Return updated consensus status
@@ -388,12 +394,15 @@ class WeightConsensusClient:
     def check_consensus(self, proposal_id: str) -> ConsensusResult:
         """Check if proposal has reached consensus.
 
-        Note: weightConsensus_checkConsensus RPC is not yet implemented
-        on the LuxTensor server. Returns not-reached by default.
+        .. warning:: **RPC Not Implemented**
+            ``weightConsensus_checkConsensus`` is not yet available on the
+            LuxTensor node. Always returns ``ConsensusResult(reached=False)``.
         """
-        logger.warning(
-            "weightConsensus_checkConsensus is not yet available on the server. "
-            "Weight consensus feature is planned for a future release."
+        import warnings
+        warnings.warn(
+            "weightConsensus_checkConsensus RPC is not yet implemented. "
+            "Always returns ConsensusResult(reached=False).",
+            stacklevel=2,
         )
         return ConsensusResult(reached=False)
 
@@ -444,31 +453,37 @@ class WeightConsensusClient:
         # Submit
         self.client.submit_transaction(tx)
 
-        logger.info(f"Finalized proposal {proposal_id}")
+        logger.info("Finalized proposal %s", proposal_id)
 
         return proposal.weights
 
     def get_proposal(self, proposal_id: str) -> Optional[WeightProposal]:
         """Get proposal by ID.
 
-        Note: weightConsensus_getProposal RPC is not yet implemented on the
-        LuxTensor server. Returns None.
+        .. warning:: **RPC Not Implemented**
+            ``weightConsensus_getProposal`` is not yet available on the
+            LuxTensor node. Always returns ``None``.
         """
-        logger.warning(
-            "weightConsensus_getProposal is not yet available on the server. "
-            "Weight consensus feature is planned for a future release."
+        import warnings
+        warnings.warn(
+            "weightConsensus_getProposal RPC is not yet implemented. "
+            "Always returns None.",
+            stacklevel=2,
         )
         return None
 
     def get_pending_proposals(self, subnet_uid: int) -> List[WeightProposal]:
         """Get all pending proposals for subnet.
 
-        Note: weightConsensus_getPendingProposals RPC is not yet implemented
-        on the LuxTensor server. Returns empty list.
+        .. warning:: **RPC Not Implemented**
+            ``weightConsensus_getPendingProposals`` is not yet available.
+            Always returns ``[]``.
         """
-        logger.warning(
-            "weightConsensus_getPendingProposals is not yet available on the server. "
-            "Weight consensus feature is planned for a future release."
+        import warnings
+        warnings.warn(
+            "weightConsensus_getPendingProposals RPC is not yet implemented. "
+            "Always returns empty list.",
+            stacklevel=2,
         )
         return []
 
@@ -539,7 +554,7 @@ class ValidatorConsensusHelper:
                 self.vote(proposal.id, vote_approve)
                 voted.append(proposal.id)
             except Exception as e:
-                logger.warning(f"Failed to vote on {proposal.id}: {e}")
+                logger.warning("Failed to vote on %s: %s", proposal.id, e)
 
         return voted
 
@@ -554,7 +569,7 @@ class ValidatorConsensusHelper:
                     self.client.finalize_proposal(proposal.id, self.signer)
                     finalized.append(proposal.id)
                 except Exception as e:
-                    logger.warning(f"Failed to finalize {proposal.id}: {e}")
+                    logger.warning("Failed to finalize %s: %s", proposal.id, e)
 
         return finalized
 

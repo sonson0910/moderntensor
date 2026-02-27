@@ -13,9 +13,8 @@ import hashlib
 from Crypto.Hash import keccak
 from ecdsa import SigningKey, SECP256k1, util
 
-# Default chain ID for Luxtensor devnet
-# Override via the chain_id parameter when creating transactions
-DEFAULT_CHAIN_ID = 8898
+# Default chain ID for Luxtensor (re-exported from centralized constants)
+from sdk.constants import LUXTENSOR_CHAIN_ID as DEFAULT_CHAIN_ID
 
 
 def keccak256(data: bytes) -> bytes:

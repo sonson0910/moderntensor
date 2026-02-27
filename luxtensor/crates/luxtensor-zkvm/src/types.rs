@@ -36,7 +36,18 @@ impl std::fmt::Display for ImageId {
     }
 }
 
-/// Input data for a guest program
+/// Input data for a guest program.
+///
+/// # Size Limits
+///
+/// Guest programs run inside a resource-constrained zkVM. Excessively large
+/// inputs can cause OOM or prohibitively long proving times. Call
+/// [`validate()`](Self::validate) before feeding inputs to the prover.
+///
+/// | Field | Max Size |
+/// |--------------|----------|
+/// | `data` | 64 MiB |
+/// | `private_data` | 64 MiB |
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuestInput {
     /// Raw input bytes
@@ -44,6 +55,9 @@ pub struct GuestInput {
     /// Optional private inputs (not included in public journal)
     pub private_data: Option<Vec<u8>>,
 }
+
+/// Maximum input size per field (64 MiB).
+const MAX_INPUT_SIZE: usize = 64 * 1024 * 1024;
 
 impl GuestInput {
     /// Create new guest input
@@ -66,6 +80,35 @@ impl GuestInput {
     pub fn from_typed<T: Serialize>(input: &T) -> crate::Result<Self> {
         let data = bincode::serialize(input)?;
         Ok(Self::new(data))
+    }
+
+    /// Validate that input sizes are within safe bounds.
+    ///
+    /// Returns `Err(ZkVmError::InvalidInput)` if any field exceeds
+    /// [`MAX_INPUT_SIZE`] (64 MiB) or if data is empty.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.data.is_empty() {
+            return Err(crate::error::ZkVmError::InvalidInput(
+                "Guest input data must not be empty".into(),
+            ));
+        }
+        if self.data.len() > MAX_INPUT_SIZE {
+            return Err(crate::error::ZkVmError::InvalidInput(format!(
+                "Input data too large: {} bytes (max {})",
+                self.data.len(),
+                MAX_INPUT_SIZE,
+            )));
+        }
+        if let Some(ref priv_data) = self.private_data {
+            if priv_data.len() > MAX_INPUT_SIZE {
+                return Err(crate::error::ZkVmError::InvalidInput(format!(
+                    "Private data too large: {} bytes (max {})",
+                    priv_data.len(),
+                    MAX_INPUT_SIZE,
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -215,6 +258,25 @@ impl ProverConfig {
             threads: 1,
         }
     }
+
+    /// Validate that config values are sensible.
+    ///
+    /// Checks:
+    /// - `threads` ≥ 1
+    /// - `timeout_seconds` ≥ 10 (or 0 for no timeout)
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.threads == 0 {
+            return Err(crate::error::ZkVmError::InvalidInput(
+                "threads must be >= 1".into(),
+            ));
+        }
+        if self.timeout_seconds > 0 && self.timeout_seconds < 10 {
+            return Err(crate::error::ZkVmError::InvalidInput(
+                "timeout_seconds must be 0 (no timeout) or >= 10".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Result of proof verification
@@ -308,5 +370,43 @@ mod tests {
         let config = ProverConfig::default();
         assert!(!config.use_gpu);
         assert_eq!(config.timeout_seconds, 300);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_guest_input_validate_empty() {
+        let input = GuestInput::new(vec![]);
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn test_guest_input_validate_ok() {
+        let input = GuestInput::new(vec![1, 2, 3]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn test_prover_config_validate_zero_threads() {
+        let config = ProverConfig {
+            threads: 0,
+            ..ProverConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_prover_config_validate_low_timeout() {
+        let config = ProverConfig {
+            timeout_seconds: 5,
+            ..ProverConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        // 0 means no timeout, should be ok
+        let config_no_timeout = ProverConfig {
+            timeout_seconds: 0,
+            ..ProverConfig::default()
+        };
+        assert!(config_no_timeout.validate().is_ok());
     }
 }

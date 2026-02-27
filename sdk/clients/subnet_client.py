@@ -30,7 +30,7 @@ class SubnetClient(BaseRpcClient):
             result = self._call_rpc("subnet_getInfo", [subnet_id])
             return result if result else {}
         except Exception as e:
-            logger.error(f"Failed to get subnet info for {subnet_id}: {e}")
+            logger.error("Failed to get subnet info for %s: %s", subnet_id, e)
             raise
 
     def get_all_subnets(self) -> List[Dict[str, Any]]:
@@ -44,7 +44,7 @@ class SubnetClient(BaseRpcClient):
             result = self._call_rpc("subnet_getAll", [])
             return result if result else []
         except Exception as e:
-            logger.warning(f"Failed to get subnets: {e}")
+            logger.warning("Failed to get subnets: %s", e)
             return []
 
     def subnet_exists(self, subnet_id: int) -> bool:
@@ -74,7 +74,7 @@ class SubnetClient(BaseRpcClient):
             result = self._call_rpc("subnet_getCount", [])
             return result if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get subnet count: {e}")
+            logger.warning("Failed to get subnet count: %s", e)
             return 0
 
     # ========================================================================
@@ -95,7 +95,7 @@ class SubnetClient(BaseRpcClient):
             result = self._call_rpc("subnet_getHyperparameters", [subnet_id])
             return result if result else {}
         except Exception as e:
-            logger.warning(f"Failed to get hyperparameters: {e}")
+            logger.warning("Failed to get hyperparameters: %s", e)
             return {}
 
     def get_subnet_tempo(self, subnet_id: int) -> int:
@@ -139,5 +139,5 @@ class SubnetClient(BaseRpcClient):
                 return result.get(param, result.get(param.lower(), default))
             return default
         except Exception as e:
-            logger.warning(f"Failed to get {param}: {e}")
+            logger.warning("Failed to get %s: %s", param, e)
             return default

@@ -72,7 +72,7 @@ class Axon:
         self._server: Optional[uvicorn.Server] = None
         self._running = False
         
-        logger.info(f"Initialized Axon server (UID: {self.config.uid})")
+        logger.info("Initialized Axon server (UID: %s)", self.config.uid)
     
     def _setup_middleware(self):
         """Set up all middleware in correct order."""
@@ -187,7 +187,7 @@ class Axon:
             elif method.upper() == "DELETE":
                 self.app.delete(endpoint)(handler)
         
-        logger.info(f"Attached handler to {endpoint} ({', '.join(methods)})")
+        logger.info("Attached handler to %s (%s)", endpoint, ', '.join(methods))
         return self
     
     def register_api_key(self, uid: str) -> str:
@@ -307,9 +307,9 @@ class Axon:
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
-                logger.info(f"Updated config: {key} = {value}")
+                logger.info("Updated config: %s = %s", key, value)
             else:
-                logger.warning(f"Unknown config parameter: {key}")
+                logger.warning("Unknown config parameter: %s", key)
 
 
 # Convenience function to create and run an Axon server

@@ -45,6 +45,12 @@ pub struct StateSyncConfig {
     pub verify_proofs: bool,
     /// Snapshot interval (blocks)
     pub snapshot_interval: u64,
+    /// Maximum download bandwidth in bytes per second.
+    ///
+    /// Prevents state sync from saturating the node's network link, which
+    /// would degrade block propagation and P2P messaging.  Set to `0` to
+    /// disable throttling (not recommended in production).
+    pub max_bytes_per_sec: u64,
 }
 
 impl Default for StateSyncConfig {
@@ -56,7 +62,71 @@ impl Default for StateSyncConfig {
             max_retries: 3,
             verify_proofs: true,
             snapshot_interval: 4096, // ~12 hours at 12s blocks
+            max_bytes_per_sec: 10 * 1024 * 1024, // 10 MB/s default
         }
+    }
+}
+
+/// Token-bucket bandwidth throttle for state sync downloads.
+///
+/// Tracks bytes consumed within a rolling window and rejects further
+/// data when the configured rate limit is exceeded. The caller should
+/// back off (e.g. delay the next request) when `consume()` returns
+/// `false`.
+#[derive(Debug, Clone)]
+pub struct BandwidthThrottle {
+    /// Maximum bytes allowed per second.
+    max_bytes_per_sec: u64,
+    /// Bytes consumed in the current window.
+    bytes_in_window: u64,
+    /// Start of the current measurement window.
+    window_start: Instant,
+}
+
+impl BandwidthThrottle {
+    /// Create a new throttle with the given rate limit.
+    ///
+    /// A `max_bytes_per_sec` of `0` disables throttling.
+    pub fn new(max_bytes_per_sec: u64) -> Self {
+        Self {
+            max_bytes_per_sec,
+            bytes_in_window: 0,
+            window_start: Instant::now(),
+        }
+    }
+
+    /// Try to consume `bytes` of bandwidth budget.
+    ///
+    /// Returns `true` if the bytes fit within the current window's budget.
+    /// The window automatically resets after 1 second.
+    pub fn consume(&mut self, bytes: u64) -> bool {
+        if self.max_bytes_per_sec == 0 {
+            return true; // throttling disabled
+        }
+
+        let elapsed = self.window_start.elapsed();
+        if elapsed >= std::time::Duration::from_secs(1) {
+            // Reset window
+            self.bytes_in_window = 0;
+            self.window_start = Instant::now();
+        }
+
+        if self.bytes_in_window + bytes > self.max_bytes_per_sec {
+            return false; // over budget
+        }
+
+        self.bytes_in_window += bytes;
+        true
+    }
+
+    /// Return the number of bytes remaining in the current window.
+    pub fn remaining(&self) -> u64 {
+        self.max_bytes_per_sec.saturating_sub(self.bytes_in_window)
+    }
+
+    /// Whether throttling is currently enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.max_bytes_per_sec > 0
     }
 }
 
@@ -275,6 +345,8 @@ pub struct StateSyncManager {
     snap_sync: SnapSyncState,
     /// Whether the last verification passed
     last_verification_ok: bool,
+    /// Bandwidth rate limiter — prevents state sync from saturating the link.
+    bandwidth_throttle: BandwidthThrottle,
 }
 
 /// Chunk request tracking
@@ -302,6 +374,7 @@ impl StateSyncManager {
     /// Create new sync manager
     pub fn new(config: StateSyncConfig) -> Self {
         let max_dl = config.parallel_downloads;
+        let throttle = BandwidthThrottle::new(config.max_bytes_per_sec);
         Self {
             config,
             target_snapshot: None,
@@ -314,6 +387,7 @@ impl StateSyncManager {
                 ..Default::default()
             },
             last_verification_ok: true,
+            bandwidth_throttle: throttle,
         }
     }
 
@@ -346,6 +420,15 @@ impl StateSyncManager {
             return Err(SyncError::VerificationFailed(
                 "Total download limit exceeded — possible infinite has_more loop".into()
             ));
+        }
+
+        // Bandwidth throttle: reject if over budget for this window.
+        let incoming_bytes = estimate_size(&response.accounts);
+        if !self.bandwidth_throttle.consume(incoming_bytes) {
+            return Err(SyncError::BandwidthExceeded {
+                bytes_requested: incoming_bytes,
+                remaining: self.bandwidth_throttle.remaining(),
+            });
         }
 
         // Always verify proofs in production to prevent accepting malicious state
@@ -396,12 +479,21 @@ impl StateSyncManager {
             ));
         }
 
+        // Bandwidth throttle: 64 bytes per slot (key + value).
+        let incoming_bytes = response.slots.len() as u64 * 64;
+        if !self.bandwidth_throttle.consume(incoming_bytes) {
+            return Err(SyncError::BandwidthExceeded {
+                bytes_requested: incoming_bytes,
+                remaining: self.bandwidth_throttle.remaining(),
+            });
+        }
+
         // Store storage slots
         self.storage_chunks.entry(address).or_default().extend(response.slots.iter().cloned());
 
         // Update progress
         self.progress.storage_synced += response.slots.len() as u64;
-        self.progress.bytes_downloaded += response.slots.len() as u64 * 64;
+        self.progress.bytes_downloaded += incoming_bytes;
 
         Ok(())
     }
@@ -840,6 +932,12 @@ pub enum SyncError {
 
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
+
+    #[error("Bandwidth exceeded: requested {bytes_requested} bytes, {remaining} remaining")]
+    BandwidthExceeded {
+        bytes_requested: u64,
+        remaining: u64,
+    },
 }
 
 /// Verify a Merkle inclusion proof.
@@ -1390,5 +1488,78 @@ mod tests {
         manager.mark_range_downloaded(addr);
         assert_eq!(manager.snap_sync.active_downloads, 1);
         assert!(manager.snap_sync.downloaded_ranges.contains(addr.as_bytes()));
+    }
+
+    // ── Bandwidth throttle tests ────────────────────────────────────
+
+    #[test]
+    fn test_bandwidth_throttle_basic() {
+        let mut throttle = BandwidthThrottle::new(1000); // 1000 bytes/sec
+        // Consume 500 — should succeed
+        assert!(throttle.consume(500));
+        assert_eq!(throttle.remaining(), 500);
+        // Consume 400 — should succeed
+        assert!(throttle.consume(400));
+        assert_eq!(throttle.remaining(), 100);
+        // Consume 200 — should fail (over budget)
+        assert!(!throttle.consume(200));
+        assert_eq!(throttle.remaining(), 100);
+    }
+
+    #[test]
+    fn test_bandwidth_throttle_disabled() {
+        let mut throttle = BandwidthThrottle::new(0); // disabled
+        assert!(!throttle.is_enabled());
+        assert!(throttle.consume(u64::MAX)); // always succeeds
+    }
+
+    #[test]
+    fn test_bandwidth_exceeded_on_state_range() {
+        // Create manager with very low bandwidth limit
+        let mut manager = StateSyncManager::new(StateSyncConfig {
+            max_bytes_per_sec: 100, // 100 bytes/sec — very low
+            verify_proofs: false,
+            ..Default::default()
+        });
+
+        let snapshot = StateSnapshot {
+            block_number: 100,
+            block_hash: [1u8; 32],
+            state_root: [0u8; 32],
+            timestamp: 12345,
+            account_count: 0,
+            storage_count: 0,
+        };
+        manager.start_sync(snapshot);
+
+        // Create a response with enough accounts to exceed the 100 B/s limit.
+        // estimate_size = accounts.len() * 44 bytes
+        let accounts: Vec<(Address, Account)> = (0..10u8)
+            .map(|i| {
+                let mut addr_bytes = [0u8; 20];
+                addr_bytes[0] = i;
+                (Address::from(addr_bytes), Account::default())
+            })
+            .collect();
+
+        let response = StateRange {
+            accounts,
+            proof: vec![],
+            has_more: false,
+            continuation: None,
+        };
+
+        let result = manager.on_state_range(response);
+        assert!(
+            matches!(result, Err(SyncError::BandwidthExceeded { .. })),
+            "Expected BandwidthExceeded, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_sync_config_default_has_bandwidth() {
+        let config = StateSyncConfig::default();
+        assert_eq!(config.max_bytes_per_sec, 10 * 1024 * 1024); // 10 MB/s
     }
 }

@@ -4,6 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "moderntensor"
+# Version note: SDK and LuxTensor engine (Cargo.toml) use independent
+# versioning.  See sdk/client/constants.py::LUXTENSOR_MIN_VERSION for
+# the minimum engine version this SDK is tested against.
 version = "0.4.0"
 description = "Python SDK for ModernTensor — a decentralized Layer 1 blockchain for AI/ML workloads with PoS consensus, zkML proofs, and native AI precompiles."
 readme = "README.md"

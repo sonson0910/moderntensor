@@ -92,7 +92,7 @@ class TrainingMixin:
                 params["hyperparams"] = hyperparams
             return self._rpc()._call_rpc("training_createJob", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to create training job: {e}")
+            logger.error("Failed to create training job: %s", e)
             raise
 
     def training_get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -108,7 +108,7 @@ class TrainingMixin:
         try:
             return self._rpc()._call_rpc("training_getJob", [job_id])
         except Exception as e:
-            logger.warning(f"Failed to get training job {job_id}: {e}")
+            logger.warning("Failed to get training job %s: %s", job_id, e)
             return None
 
     def training_list_jobs(
@@ -128,7 +128,7 @@ class TrainingMixin:
             result = self._rpc()._call_rpc("training_listJobs", params)
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to list training jobs: {e}")
+            logger.warning("Failed to list training jobs: %s", e)
             return []
 
     def training_cancel_job(
@@ -155,7 +155,7 @@ class TrainingMixin:
             }
             return self._rpc()._call_rpc("training_cancelJob", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to cancel training job {job_id}: {e}")
+            logger.error("Failed to cancel training job %s: %s", job_id, e)
             return {"success": False, "error": str(e)}
 
     # ---------------------------------------------------------------
@@ -179,7 +179,7 @@ class TrainingMixin:
             params = {"job_id": job_id, "trainer": trainer}
             return self._rpc()._call_rpc("training_registerTrainer", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to register trainer for job {job_id}: {e}")
+            logger.error("Failed to register trainer for job %s: %s", job_id, e)
             return {"success": False, "error": str(e)}
 
     # ---------------------------------------------------------------
@@ -223,7 +223,7 @@ class TrainingMixin:
                 params["gradient_data"] = gradient_data
             return self._rpc()._call_rpc("training_submitGradient", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to submit gradient for job {job_id}: {e}")
+            logger.error("Failed to submit gradient for job %s: %s", job_id, e)
             return {"success": False, "error": str(e)}
 
     def training_get_gradients(

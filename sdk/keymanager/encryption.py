@@ -1,15 +1,44 @@
 """
 Encryption Module
 
-Provides encryption and decryption functionality for sensitive data.
+Provides encryption and decryption functionality for sensitive data
+using industry-standard algorithms:
+
+- **KDF:** PBKDF2-HMAC-SHA256 (600 000 iterations)
+- **Cipher:** Fernet (AES-128-CBC + HMAC-SHA256)
+
+Security Notes:
+    - Passwords should be at least 8 characters.
+    - A 16-byte random salt is prepended to the ciphertext.
+    - The salt is NOT secret; it prevents rainbow-table attacks.
 """
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 import base64
 import os
+
+
+# ---------------------------------------------------------------------------
+# Typed exceptions
+# ---------------------------------------------------------------------------
+
+class EncryptionError(Exception):
+    """Raised when encryption fails."""
+
+
+class DecryptionError(Exception):
+    """Raised when decryption fails (wrong password or corrupted data)."""
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_MIN_PASSWORD_LENGTH = 8
+_SALT_LENGTH = 16
+_PBKDF2_ITERATIONS = 600_000
 
 
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -33,56 +62,84 @@ def derive_key(password: str, salt: bytes) -> bytes:
     return key
 
 
+def _validate_password(password: str) -> None:
+    """Validate password meets minimum security requirements."""
+    if not password:
+        raise ValueError("Password must not be empty")
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        raise ValueError(
+            f"Password must be at least {_MIN_PASSWORD_LENGTH} characters, "
+            f"got {len(password)}"
+        )
+
+
 def encrypt_data(data: bytes, password: str) -> bytes:
     """
-    Encrypt data with password
+    Encrypt data with a password.
+
+    The output format is ``salt (16 bytes) || Fernet ciphertext``.
 
     Args:
-        data: Data to encrypt
-        password: Encryption password
+        data: Data to encrypt (must be non-empty bytes).
+        password: Encryption password (≥ 8 characters).
 
     Returns:
-        Encrypted data (salt + encrypted_data)
+        Encrypted data (salt + ciphertext).
+
+    Raises:
+        ValueError: If *password* or *data* is invalid.
+        EncryptionError: If the encryption operation fails.
     """
-    # Generate random salt
-    salt = os.urandom(16)
+    _validate_password(password)
+    if not isinstance(data, bytes) or len(data) == 0:
+        raise ValueError("Data must be non-empty bytes")
 
-    # Derive key from password
-    key = derive_key(password, salt)
-
-    # Encrypt data
-    f = Fernet(key)
-    encrypted_data = f.encrypt(data)
-
-    # Prepend salt to encrypted data
-    return salt + encrypted_data
+    try:
+        salt = os.urandom(_SALT_LENGTH)
+        key = derive_key(password, salt)
+        f = Fernet(key)
+        encrypted_data = f.encrypt(data)
+        return salt + encrypted_data
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise EncryptionError(f"Encryption failed: {exc}") from exc
 
 
 def decrypt_data(encrypted_data: bytes, password: str) -> bytes:
     """
-    Decrypt data with password
+    Decrypt data with a password.
+
+    Expects the format produced by :func:`encrypt_data`:
+    ``salt (16 bytes) || Fernet ciphertext``.
 
     Args:
-        encrypted_data: Encrypted data (salt + encrypted_data)
-        password: Decryption password
+        encrypted_data: Encrypted data (salt + ciphertext).
+        password: Decryption password.
 
     Returns:
-        Decrypted data
+        Decrypted plaintext bytes.
 
     Raises:
-        Exception: If decryption fails (wrong password or corrupted data)
+        ValueError: If inputs are invalid.
+        DecryptionError: If the password is wrong or data is corrupted.
     """
-    # Extract salt (first 16 bytes)
-    salt = encrypted_data[:16]
-    encrypted_content = encrypted_data[16:]
+    _validate_password(password)
+    if not isinstance(encrypted_data, bytes) or len(encrypted_data) <= _SALT_LENGTH:
+        raise ValueError(
+            f"Encrypted data must be bytes longer than {_SALT_LENGTH} bytes"
+        )
 
-    # Derive key from password
+    salt = encrypted_data[:_SALT_LENGTH]
+    encrypted_content = encrypted_data[_SALT_LENGTH:]
+
     key = derive_key(password, salt)
-
-    # Decrypt data
     f = Fernet(key)
     try:
-        decrypted_data = f.decrypt(encrypted_content)
-        return decrypted_data
-    except Exception as e:
-        raise Exception("Decryption failed. Wrong password or corrupted data.") from e
+        return f.decrypt(encrypted_content)
+    except InvalidToken as exc:
+        raise DecryptionError(
+            "Decryption failed: wrong password or corrupted data"
+        ) from exc
+    except Exception as exc:
+        raise DecryptionError(f"Decryption failed: {exc}") from exc

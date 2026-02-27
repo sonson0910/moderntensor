@@ -80,7 +80,7 @@ class TextGenerationSubnet(BaseSubnet):
         """Initialize models and resources"""
         super().setup()
         
-        logger.info(f"Setting up TextGenerationSubnet with model: {self.model_name}")
+        logger.info("Setting up TextGenerationSubnet with model: %s", self.model_name)
         
         # Initialize model manager
         self.model_manager = ModelManager()
@@ -121,7 +121,7 @@ class TextGenerationSubnet(BaseSubnet):
             
             # Register loader
             def load_model(model_id, version, **kwargs):
-                logger.info(f"Loading {model_id} from HuggingFace...")
+                logger.info("Loading %s from HuggingFace...", model_id)
                 tokenizer = AutoTokenizer.from_pretrained(model_id)
                 model = AutoModelForCausalLM.from_pretrained(model_id)
                 
@@ -138,7 +138,7 @@ class TextGenerationSubnet(BaseSubnet):
             self.model = loaded["model"]
             self.tokenizer = loaded["tokenizer"]
             
-            logger.info(f"Loaded model: {self.model_name}")
+            logger.info("Loaded model: %s", self.model_name)
             
         except ImportError:
             logger.warning("transformers not installed, using mock model")
@@ -152,7 +152,7 @@ class TextGenerationSubnet(BaseSubnet):
             
             reward_model_name = "OpenAssistant/reward-model-deberta-v3-large-v2"
             
-            logger.info(f"Loading reward model: {reward_model_name}")
+            logger.info("Loading reward model: %s", reward_model_name)
             
             # Register reward model
             self.model_manager.register_model(
@@ -183,7 +183,7 @@ class TextGenerationSubnet(BaseSubnet):
             logger.info("Reward model loaded successfully")
             
         except Exception as e:
-            logger.warning(f"Could not load reward model: {e}")
+            logger.warning("Could not load reward model: %s", e)
             self.reward_model = None
     
     def _create_task_impl(self, context: TaskContext) -> Task:
@@ -336,7 +336,7 @@ class TextGenerationSubnet(BaseSubnet):
             return generated
             
         except Exception as e:
-            logger.error(f"Generation failed: {e}")
+            logger.error("Generation failed: %s", e)
             return self._mock_generation(prompt, max_length)
     
     def _mock_generation(self, prompt: str, max_length: int) -> str:
@@ -457,7 +457,7 @@ class TextGenerationSubnet(BaseSubnet):
             return score
             
         except Exception as e:
-            logger.warning(f"Reward model scoring failed: {e}")
+            logger.warning("Reward model scoring failed: %s", e)
             return 0.7
     
     def get_metadata(self) -> Dict[str, Any]:

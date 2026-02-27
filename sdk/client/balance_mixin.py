@@ -64,7 +64,7 @@ class BalanceMixin:
                 return int(result, 16)
             return int(result) if result else 0
         except Exception as e:
-            logger.error(f"Error getting free balance: {e}")
+            logger.error("Error getting free balance: %s", e)
             raise
 
     def get_reserved_balance(self, address: str) -> int:
@@ -83,7 +83,7 @@ class BalanceMixin:
             logger.warning("Reserved balance not directly available on LuxTensor server")
             return 0
         except Exception as e:
-            logger.error(f"Error getting reserved balance: {e}")
+            logger.error("Error getting reserved balance: %s", e)
             raise
 
     def get_reward_balance(self, address: str) -> RewardBalance:
@@ -116,7 +116,7 @@ class BalanceMixin:
             return balance
 
         except Exception as e:
-            logger.warning(f"Failed to get reward balance for {address}: {e}")
+            logger.warning("Failed to get reward balance for %s: %s", address, e)
             return {"available": 0, "pendingRewards": 0, "staked": 0, "lockedUntil": 0}
 
     def get_total_issuance(self) -> int:
@@ -133,5 +133,5 @@ class BalanceMixin:
                 "Use rewards_getStats for network-level statistics."
             )
         except Exception as e:
-            logger.error(f"Error getting total issuance: {e}")
+            logger.error("Error getting total issuance: %s", e)
             raise

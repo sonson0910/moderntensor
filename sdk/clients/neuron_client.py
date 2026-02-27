@@ -34,7 +34,7 @@ class NeuronClient(BaseRpcClient):
         try:
             return self._call_rpc("neuron_get", [subnet_id, neuron_uid])
         except Exception as e:
-            logger.warning(f"Failed to get neuron {neuron_uid} in subnet {subnet_id}: {e}")
+            logger.warning("Failed to get neuron %s in subnet %s: %s", neuron_uid, subnet_id, e)
             return None
 
     def get_neurons(self, subnet_id: int) -> List[Dict[str, Any]]:
@@ -51,7 +51,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("neuron_listBySubnet", [subnet_id])
             return result if result else []
         except Exception as e:
-            logger.error(f"Failed to get neurons for subnet {subnet_id}: {e}")
+            logger.error("Failed to get neurons for subnet %s: %s", subnet_id, e)
             return []
 
     def get_neuron_for_hotkey(self, subnet_id: int, hotkey: str) -> Optional[Dict[str, Any]]:
@@ -68,7 +68,7 @@ class NeuronClient(BaseRpcClient):
         try:
             return self._call_rpc("neuron_getByHotkey", [subnet_id, hotkey])
         except Exception as e:
-            logger.warning(f"Failed to get neuron for hotkey: {e}")
+            logger.warning("Failed to get neuron for hotkey: %s", e)
             return None
 
     def is_hotkey_registered(self, subnet_id: int, hotkey: str) -> bool:
@@ -99,7 +99,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("neuron_getActive", [subnet_id])
             return result if result else []
         except Exception as e:
-            logger.warning(f"Failed to get active neurons: {e}")
+            logger.warning("Failed to get active neurons: %s", e)
             return []
 
     def get_total_neurons(self, subnet_id: Optional[int] = None) -> int:
@@ -117,7 +117,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("neuron_count", params)
             return result if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get neuron count: {e}")
+            logger.warning("Failed to get neuron count: %s", e)
             return 0
 
     # ========================================================================
@@ -152,7 +152,7 @@ class NeuronClient(BaseRpcClient):
             )
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to register neuron: {e}")
+            logger.error("Failed to register neuron: %s", e)
             return {"success": False, "error": str(e)}
 
     # ========================================================================
@@ -174,7 +174,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("weight_getWeights", [subnet_id, neuron_uid])
             return result if result else []
         except Exception as e:
-            logger.error(f"Failed to get weights: {e}")
+            logger.error("Failed to get weights: %s", e)
             return []
 
     def set_weights(
@@ -203,7 +203,7 @@ class NeuronClient(BaseRpcClient):
             )
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to set weights: {e}")
+            logger.error("Failed to set weights: %s", e)
             return {"success": False, "error": str(e)}
 
     def get_weight_commits(self, subnet_id: int) -> List[Dict[str, Any]]:
@@ -220,7 +220,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("weight_getCommits", [subnet_id])
             return result if result else []
         except Exception as e:
-            logger.warning(f"Failed to get weight commits: {e}")
+            logger.warning("Failed to get weight commits: %s", e)
             return []
 
     # ========================================================================
@@ -259,7 +259,7 @@ class NeuronClient(BaseRpcClient):
                 return float(neuron.get("emission", 0.0))
             return 0.0
         except Exception as e:
-            logger.warning(f"Failed to get emission: {e}")
+            logger.warning("Failed to get emission: %s", e)
             return 0.0
 
     def _get_metric(self, subnet_id: int, neuron_uid: int, metric: str) -> float:
@@ -272,7 +272,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc(f"query_{metric}", [subnet_id, neuron_uid])
             return float(result) if result else 0.0
         except Exception as e:
-            logger.warning(f"Failed to get {metric}: {e}")
+            logger.warning("Failed to get %s: %s", metric, e)
             return 0.0
 
     # ========================================================================
@@ -294,7 +294,7 @@ class NeuronClient(BaseRpcClient):
             result = self._call_rpc("neuron_batchGet", [subnet_id, neuron_uids])
             return result if result else []
         except Exception as e:
-            logger.warning(f"Failed to batch get neurons: {e}")
+            logger.warning("Failed to batch get neurons: %s", e)
             # Fallback to individual queries
             neurons = []
             for uid in neuron_uids:

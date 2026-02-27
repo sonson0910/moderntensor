@@ -326,7 +326,7 @@ class LuxtensorCache:
         self._current_block = block_number
         invalidated = await self.backend.invalidate_by_block(block_number - 10)
         if invalidated > 0:
-            logger.debug(f"Invalidated {invalidated} cache entries on block {block_number}")
+            logger.debug("Invalidated %s cache entries on block %s", invalidated, block_number)
 
     async def get_or_fetch(
         self,

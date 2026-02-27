@@ -31,6 +31,16 @@ pub enum IndexerError {
 
     #[error("Task join error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
+
+    #[error("DB write failed after {attempts} retries on `{operation}`: {last_error}")]
+    RetryExhausted {
+        operation: String,
+        attempts: u32,
+        last_error: String,
+    },
+
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
 /// Result type for indexer operations

@@ -28,33 +28,33 @@ except ImportError:
         def __init__(self, *args, **kwargs): pass
         def inc(self, *args, **kwargs): pass
         def labels(self, *args, **kwargs): return self
-    
+
     class Gauge:
         def __init__(self, *args, **kwargs): pass
         def set(self, *args, **kwargs): pass
         def inc(self, *args, **kwargs): pass
         def dec(self, *args, **kwargs): pass
         def labels(self, *args, **kwargs): return self
-    
+
     class Histogram:
         def __init__(self, *args, **kwargs): pass
         def observe(self, *args, **kwargs): pass
         def labels(self, *args, **kwargs): return self
-        def time(self): 
+        def time(self):
             class Timer:
                 def __enter__(self): return self
                 def __exit__(self, *args): pass
             return Timer()
-    
+
     class Summary:
         def __init__(self, *args, **kwargs): pass
         def observe(self, *args, **kwargs): pass
         def labels(self, *args, **kwargs): return self
-    
+
     class Info:
         def __init__(self, *args, **kwargs): pass
         def info(self, *args, **kwargs): pass
-    
+
     CollectorRegistry = None
     def generate_latest(*args, **kwargs): return b""
     CONTENT_TYPE_LATEST = "text/plain"
@@ -213,28 +213,28 @@ node_uptime_seconds = Gauge(
 class MetricsCollector:
     """
     Central metrics collector for ModernTensor blockchain.
-    
+
     Collects and exposes metrics for Prometheus scraping.
     """
-    
+
     def __init__(self, registry: Optional['CollectorRegistry'] = None):
         """
         Initialize metrics collector.
-        
+
         Args:
             registry: Prometheus registry (optional)
         """
         self.registry = registry
         self.start_time = time.time()
-        
+
         if not PROMETHEUS_AVAILABLE:
             logger.warning(
                 "prometheus_client not installed. Metrics disabled. "
                 "Install with: pip install prometheus-client"
             )
-        
+
         logger.info("MetricsCollector initialized")
-    
+
     def update_blockchain_metrics(
         self,
         height: int,
@@ -242,18 +242,48 @@ class MetricsCollector:
         block_size: int,
         accounts_count: int,
     ):
-        """Update blockchain-related metrics"""
+        """
+        Update blockchain-related metrics.
+
+        Args:
+            height: Current block height (>= 0).
+            transactions_count: Transactions in this block (>= 0).
+            block_size: Block size in bytes (>= 0).
+            accounts_count: Total accounts in state (>= 0).
+
+        Raises:
+            ValueError: If any metric is negative.
+        """
+        for name, val in [("height", height), ("transactions_count", transactions_count),
+                          ("block_size", block_size), ("accounts_count", accounts_count)]:
+            if val < 0:
+                raise ValueError(f"{name} must be >= 0, got {val}")
+
         block_height.set(height)
         blocks_produced_total.inc()
         block_size_bytes.observe(block_size)
         transactions_per_block.observe(transactions_count)
         state_accounts_total.set(accounts_count)
-    
+
     def record_transaction(self, status: str, gas_used: int):
-        """Record transaction metrics"""
+        """
+        Record transaction metrics.
+
+        Args:
+            status: One of ``"success"``, ``"failed"``, or ``"pending"``.
+            gas_used: Gas consumed (>= 0).
+
+        Raises:
+            ValueError: If *status* is unknown or *gas_used* is negative.
+        """
+        _valid = {"success", "failed", "pending"}
+        if status not in _valid:
+            raise ValueError(f"status must be one of {_valid}, got '{status}'")
+        if gas_used < 0:
+            raise ValueError(f"gas_used must be >= 0, got {gas_used}")
         transactions_total.labels(status=status).inc()
         transaction_gas_used.observe(gas_used)
-    
+
     def update_network_metrics(
         self,
         peers_count: int,
@@ -262,16 +292,30 @@ class MetricsCollector:
         """Update network-related metrics"""
         peers_connected.set(peers_count)
         sync_progress.set(sync_percent)
-    
+
     def record_peer_message(self, message_type: str, direction: str, size: int):
-        """Record peer message metrics"""
+        """
+        Record peer message metrics.
+
+        Args:
+            message_type: P2P message type identifier.
+            direction: ``"received"`` or ``"sent"``.
+            size: Message size in bytes (>= 0).
+
+        Raises:
+            ValueError: If *direction* is invalid or *size* is negative.
+        """
+        if direction not in ("received", "sent"):
+            raise ValueError(f"direction must be 'received' or 'sent', got '{direction}'")
+        if size < 0:
+            raise ValueError(f"size must be >= 0, got {size}")
         if direction == "received":
             peer_messages_received.labels(message_type=message_type).inc()
             network_bytes_received.inc(size)
-        elif direction == "sent":
+        else:
             peer_messages_sent.labels(message_type=message_type).inc()
             network_bytes_sent.inc(size)
-    
+
     def update_consensus_metrics(
         self,
         active_validators: int,
@@ -282,45 +326,45 @@ class MetricsCollector:
         validators_active.set(active_validators)
         validator_stake_total.set(total_stake)
         epoch_number.set(current_epoch)
-    
+
     def record_validator_reward(self, amount: int):
         """Record validator reward"""
         validator_rewards_total.inc(amount)
-    
+
     def record_validator_penalty(self, amount: int):
         """Record validator penalty"""
         validator_penalties_total.inc(amount)
-    
+
     def record_ai_task_submitted(self):
         """Record AI task submission"""
         ai_tasks_submitted.inc()
-    
+
     def record_ai_task_completed(self, status: str, execution_time: float):
         """Record AI task completion"""
         ai_tasks_completed.labels(status=status).inc()
         ai_task_execution_time.observe(execution_time)
-    
+
     def update_system_info(self, info: Dict[str, str]):
         """Update system information"""
         system_info.info(info)
-    
+
     def update_uptime(self):
         """Update node uptime"""
         uptime = time.time() - self.start_time
         node_uptime_seconds.set(uptime)
-    
+
     def get_metrics(self) -> bytes:
         """
         Get metrics in Prometheus format.
-        
+
         Returns:
             bytes: Metrics data
         """
         if not PROMETHEUS_AVAILABLE:
             return b"# Prometheus client not available\n"
-        
+
         return generate_latest(self.registry)
-    
+
     def get_content_type(self) -> str:
         """Get content type for metrics endpoint"""
         return CONTENT_TYPE_LATEST

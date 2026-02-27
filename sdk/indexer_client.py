@@ -113,7 +113,7 @@ class IndexerClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as e:
-            logger.error(f"Indexer request failed: {e}")
+            logger.error("Indexer request failed: %s", e)
             raise
 
     def _post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -124,7 +124,7 @@ class IndexerClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as e:
-            logger.error(f"Indexer request failed: {e}")
+            logger.error("Indexer request failed: %s", e)
             raise
 
     # ============ Health & Status ============

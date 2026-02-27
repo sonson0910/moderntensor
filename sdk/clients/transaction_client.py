@@ -142,7 +142,7 @@ class TransactionClient(BaseRpcClient):
             result = self._call_rpc("eth_estimateGas", [tx_params])
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to estimate gas: {e}")
+            logger.warning("Failed to estimate gas: %s", e)
             return 21000  # Default gas
 
     def get_gas_price(self) -> int:
@@ -156,5 +156,5 @@ class TransactionClient(BaseRpcClient):
             result = self._call_rpc("eth_gasPrice", [])
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to get gas price: {e}")
+            logger.warning("Failed to get gas price: %s", e)
             return 0

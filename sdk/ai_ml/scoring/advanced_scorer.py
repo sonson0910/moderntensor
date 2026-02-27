@@ -84,7 +84,7 @@ class AdvancedScorer:
         self.normalize = normalize
         self.criteria: List[ScoringCriteria] = []
         
-        logger.info(f"AdvancedScorer initialized with method: {method}")
+        logger.info("AdvancedScorer initialized with method: %s", method)
     
     def add_criterion(
         self,
@@ -113,7 +113,7 @@ class AdvancedScorer:
         )
         self.criteria.append(criterion)
         
-        logger.debug(f"Added criterion: {name} (weight={weight})")
+        logger.debug("Added criterion: %s (weight=%s)", name, weight)
     
     def score(
         self,
@@ -159,7 +159,7 @@ class AdvancedScorer:
                 }
                 
             except Exception as e:
-                logger.error(f"Error scoring criterion {criterion.name}: {e}")
+                logger.error("Error scoring criterion %s: %s", criterion.name, e)
                 criterion_scores[criterion.name] = {
                     "raw": 0.0,
                     "normalized": 0.0,

@@ -17,9 +17,9 @@ mod metrics;
 mod graceful_shutdown;
 pub mod task_dispatcher;
 
-// Legacy modules — only compiled with `legacy` feature flag
-#[cfg(feature = "legacy")]
 mod p2p_handler;
+
+// Legacy modules — only compiled with `legacy` feature flag
 #[cfg(feature = "legacy")]
 mod shutdown;
 #[cfg(feature = "legacy")]

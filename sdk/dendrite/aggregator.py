@@ -40,7 +40,7 @@ class ResponseAggregator:
         
         if most_common:
             value, count = most_common[0]
-            logger.debug(f"Majority vote: {value} ({count}/{len(values)} votes)")
+            logger.debug("Majority vote: %s (%s/%s votes)", value, count, len(values))
             return value
         
         return None
@@ -72,7 +72,7 @@ class ResponseAggregator:
             return None
         
         avg = statistics.mean(values)
-        logger.debug(f"Average: {avg} from {len(values)} responses")
+        logger.debug("Average: %s from %s responses", avg, len(values))
         return avg
     
     @staticmethod
@@ -102,7 +102,7 @@ class ResponseAggregator:
             return None
         
         med = statistics.median(values)
-        logger.debug(f"Median: {med} from {len(values)} responses")
+        logger.debug("Median: %s from %s responses", med, len(values))
         return med
     
     @staticmethod
@@ -146,7 +146,7 @@ class ResponseAggregator:
             return None
         
         avg = weighted_sum / total_weight
-        logger.debug(f"Weighted average: {avg} from {len(values)} responses")
+        logger.debug("Weighted average: %s from %s responses", avg, len(values))
         return avg
     
     @staticmethod
@@ -276,7 +276,7 @@ class ResponseAggregator:
         }
         
         if strategy not in strategies:
-            logger.warning(f"Unknown strategy '{strategy}', using 'majority'")
+            logger.warning("Unknown strategy '%s', using 'majority'", strategy)
             strategy = "majority"
         
         func = strategies[strategy]
@@ -292,5 +292,5 @@ class ResponseAggregator:
             else:
                 return func(responses, key)
         except Exception as e:
-            logger.error(f"Error in aggregation: {e}")
+            logger.error("Error in aggregation: %s", e)
             return None

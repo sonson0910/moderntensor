@@ -232,3 +232,22 @@ check_exports*.py
 detect_exports*.py
 migrate_*.py
 test_client_refactoring*.py
+
+# ── Specific debug/build junk files ─────────────────────────────
+after_return.txt
+tx_query.json
+test_results.txt
+debug_result.txt
+
+# ── Rust / Cargo ────────────────────────────────────────────────
+**/target/
+**/*.rs.bk
+
+# ── Ruff cache ──────────────────────────────────────────────────
+.ruff_cache/
+
+# ── LuxTensor Node runtime data ─────────────────────────────────
+luxtensor/data/
+luxtensor/data_node*/
+luxtensor/node*/
+

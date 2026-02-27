@@ -161,16 +161,14 @@ mod tests {
             direction: BridgeDirection::Outbound,
             source_chain: ChainId::LuxTensorMainnet,
             target_chain: ChainId::Ethereum,
-            sender: [1u8; 20],
-            recipient: [2u8; 20],
+            sender: [1u8; 20].into(),
+            recipient: [2u8; 20].into(),
             amount: 1_000_000,
             data: vec![],
             source_block: 100,
             source_timestamp: 1700000000,
             source_state_root: [0u8; 32],
             status,
-            attestation_count: 0,
-            required_attestations: 3,
         }
     }
 

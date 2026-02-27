@@ -296,7 +296,8 @@ impl TaskDispatcher {
         {
             let mut queue = self.pending_queue.write();
             if let Some(pos) = queue.iter().position(|task| task.task_id == task_id) {
-                let original_task = queue.remove(pos).unwrap();
+                let original_task = queue.remove(pos)
+                    .expect("BUG: position() found element but remove() returned None");
                 // 🔧 FIX: Store original task metadata so timeout re-queue preserves it
                 self.task_metadata.write().insert(task_id, original_task);
             } else {

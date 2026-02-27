@@ -64,7 +64,7 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("lux_listSubnets", [])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get subnets: {e}")
+            logger.warning("Failed to get subnets: %s", e)
             return []
 
     def get_subnet_info(self, subnet_uid: int) -> Optional[Dict[str, Any]]:
@@ -80,7 +80,7 @@ class SubnetMixin:
         try:
             return self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_uid])
         except Exception as e:
-            logger.warning(f"Failed to get subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get subnet %s: %s", subnet_uid, e)
             return None
 
     def get_subnet_count(self) -> int:
@@ -96,7 +96,7 @@ class SubnetMixin:
                 return int(result.get("count", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get subnet count: {e}")
+            logger.warning("Failed to get subnet count: %s", e)
             return 0
 
     def subnet_exists(self, subnet_uid: int) -> bool:
@@ -130,7 +130,7 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("lux_getMetagraph", [subnet_id])
             return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.error(f"Failed to get metagraph for subnet {subnet_id}: {e}")
+            logger.error("Failed to get metagraph for subnet %s: %s", subnet_id, e)
             return {}
 
     # ------------------------------------------------------------------
@@ -145,7 +145,7 @@ class SubnetMixin:
                 return int(result.get("tempo", 0))
             return 0
         except Exception as e:
-            logger.error(f"Error getting tempo for subnet {subnet_id}: {e}")
+            logger.error("Error getting tempo for subnet %s: %s", subnet_id, e)
             return 0
 
     def get_subnet_emission(self, subnet_id: int) -> int:
@@ -157,7 +157,7 @@ class SubnetMixin:
                 return int(raw) if raw else 0
             return 0
         except Exception as e:
-            logger.error(f"Error getting emission for subnet {subnet_id}: {e}")
+            logger.error("Error getting emission for subnet %s: %s", subnet_id, e)
             return 0
 
     def get_subnet_emissions(self, total_emission: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -185,7 +185,7 @@ class SubnetMixin:
                 for s in subnets
             ]
         except Exception as e:
-            logger.error(f"Failed to get subnet emissions: {e}")
+            logger.error("Failed to get subnet emissions: %s", e)
             return []
 
     def get_subnet_owner(self, subnet_id: int) -> str:
@@ -194,7 +194,7 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
             return result.get("owner", "") if result else ""
         except Exception as e:
-            logger.error(f"Error getting owner for subnet {subnet_id}: {e}")
+            logger.error("Error getting owner for subnet %s: %s", subnet_id, e)
             return ""
 
     def get_subnet_registration_allowed(self, subnet_id: int) -> bool:
@@ -205,7 +205,7 @@ class SubnetMixin:
                 return bool(info.get("active", True))
             return False
         except Exception as e:
-            logger.error(f"Error checking registration for subnet {subnet_id}: {e}")
+            logger.error("Error checking registration for subnet %s: %s", subnet_id, e)
             return False
 
     def get_subnet_network_metadata(self, subnet_id: int) -> Dict[str, Any]:
@@ -214,7 +214,7 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("lux_getSubnetInfo", [subnet_id])
             return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.error(f"Error getting metadata for subnet {subnet_id}: {e}")
+            logger.error("Error getting metadata for subnet %s: %s", subnet_id, e)
             return {}
 
     def get_subnetwork_n(self, subnet_id: int) -> int:
@@ -225,7 +225,7 @@ class SubnetMixin:
                 return int(result.get("count", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.error(f"Error getting subnetwork N for subnet {subnet_id}: {e}")
+            logger.error("Error getting subnetwork N for subnet %s: %s", subnet_id, e)
             return 0
 
     def get_total_subnets(self) -> int:
@@ -242,7 +242,7 @@ class SubnetMixin:
                 return int(root.get("max_neurons", 0))
             return 0
         except Exception as e:
-            logger.error(f"Error getting max subnets: {e}")
+            logger.error("Error getting max subnets: %s", e)
             return 0
 
     def get_subnet_hyperparameters(self, subnet_uid: int) -> Dict[str, Any]:
@@ -269,7 +269,7 @@ class SubnetMixin:
                 "registration_allowed": result.get("active", False),
             }
         except Exception as e:
-            logger.warning(f"Failed to get hyperparameters for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get hyperparameters for subnet %s: %s", subnet_uid, e)
             return {}
 
     def get_activity_cutoff(self, subnet_id: int) -> int:
@@ -303,7 +303,7 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("subnet_create", [name, owner])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to register subnet: {e}")
+            logger.error("Failed to register subnet: %s", e)
             return {"success": False, "error": str(e)}
 
     def set_subnet_weights(self, validator: str, weights: Dict[int, float]) -> Dict[str, Any]:
@@ -322,5 +322,5 @@ class SubnetMixin:
             result = self._rpc()._call_rpc("weight_setWeights", [validator, weights_json])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to set subnet weights: {e}")
+            logger.error("Failed to set subnet weights: %s", e)
             return {"success": False, "error": str(e)}

@@ -344,7 +344,7 @@ impl TransactionExecutor {
 
     // ── Route: Metagraph precompile (AI layer) ───────────────────────────
 
-    fn route_metagraph(&self, tx: &Transaction, actual_gas_used: &mut u64) -> ExecutionStatus {
+    fn route_metagraph(&self, tx: &Transaction, _actual_gas_used: &mut u64) -> ExecutionStatus {
         match MetagraphTxPayload::decode(&tx.data) {
             Ok(payload) => {
                 let meta_status = if let Some(ref mdb) = self.metagraph_db {

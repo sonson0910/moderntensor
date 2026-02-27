@@ -49,7 +49,7 @@ class MinerAIAgent:
         self.config = config or {}
         self.is_ready = False
         
-        logger.info(f"MinerAIAgent initialized for miner {miner_uid}")
+        logger.info("MinerAIAgent initialized for miner %s", miner_uid)
     
     def setup(self) -> None:
         """Setup the agent and subnet"""
@@ -74,12 +74,12 @@ class MinerAIAgent:
         if not self.is_ready:
             raise RuntimeError("Agent not setup. Call setup() first.")
         
-        logger.debug(f"Solving task {task.task_id}")
+        logger.debug("Solving task %s", task.task_id)
         
         # Use subnet to solve task
         result = self.subnet.solve_task(task)
         
-        logger.debug(f"Task {task.task_id} solved")
+        logger.debug("Task %s solved", task.task_id)
         
         return result
     

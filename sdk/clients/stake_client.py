@@ -36,7 +36,7 @@ class StakeClient(BaseRpcClient):
                 return self._hex_to_int(result.get("stake", "0x0"))
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to get stake for {address}: {e}")
+            logger.warning("Failed to get stake for %s: %s", address, e)
             return 0
 
     def get_total_stake(self) -> int:
@@ -50,7 +50,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_getTotalStake", [])
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to get total stake: {e}")
+            logger.warning("Failed to get total stake: %s", e)
             return 0
 
     def get_stake_for_coldkey_and_hotkey(self, coldkey: str, hotkey: str) -> int:
@@ -68,7 +68,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_getStakeForPair", [coldkey, hotkey])
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to get stake for pair: {e}")
+            logger.warning("Failed to get stake for pair: %s", e)
             return 0
 
     def get_all_stake_for_coldkey(self, coldkey: str) -> Dict[str, int]:
@@ -87,7 +87,7 @@ class StakeClient(BaseRpcClient):
                 return {k: self._hex_to_int(v) for k, v in result.items()}
             return {}
         except Exception as e:
-            logger.warning(f"Failed to get stakes for coldkey: {e}")
+            logger.warning("Failed to get stakes for coldkey: %s", e)
             return {}
 
     # ========================================================================
@@ -111,7 +111,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_stake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to stake for {address}: {e}")
+            logger.error("Failed to stake for %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def unstake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
@@ -131,7 +131,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_unstake", [address, str(amount), str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to unstake for {address}: {e}")
+            logger.error("Failed to unstake for %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     # ========================================================================
@@ -164,7 +164,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_delegate", params)
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to delegate: {e}")
+            logger.error("Failed to delegate: %s", e)
             return {"success": False, "error": str(e)}
 
     def undelegate(self, delegator: str, timestamp: int, signature: str) -> Dict[str, Any]:
@@ -183,7 +183,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_undelegate", [delegator, str(timestamp), signature])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to undelegate: {e}")
+            logger.error("Failed to undelegate: %s", e)
             return {"success": False, "error": str(e)}
 
     def get_delegation(self, delegator: str) -> Optional[Dict[str, Any]]:
@@ -199,7 +199,7 @@ class StakeClient(BaseRpcClient):
         try:
             return self._call_rpc("staking_getDelegation", [delegator])
         except Exception as e:
-            logger.warning(f"Failed to get delegation: {e}")
+            logger.warning("Failed to get delegation: %s", e)
             return None
 
     def get_delegates(self) -> List[Dict[str, Any]]:
@@ -213,7 +213,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("staking_getDelegates", [])
             return result if result else []
         except Exception as e:
-            logger.warning(f"Failed to get delegates: {e}")
+            logger.warning("Failed to get delegates: %s", e)
             return []
 
     # ========================================================================
@@ -236,7 +236,7 @@ class StakeClient(BaseRpcClient):
                 return self._hex_to_int(result.get("pending", "0x0"))
             return self._hex_to_int(result)
         except Exception as e:
-            logger.warning(f"Failed to get pending rewards: {e}")
+            logger.warning("Failed to get pending rewards: %s", e)
             return 0
 
     def claim_rewards(self, address: str) -> Dict[str, Any]:
@@ -253,7 +253,7 @@ class StakeClient(BaseRpcClient):
             result = self._call_rpc("rewards_claim", [address])
             return result if result else {"success": False, "claimed": 0}
         except Exception as e:
-            logger.error(f"Failed to claim rewards: {e}")
+            logger.error("Failed to claim rewards: %s", e)
             return {"success": False, "error": str(e)}
 
     def get_staking_minimums(self) -> Dict[str, int]:
@@ -272,5 +272,5 @@ class StakeClient(BaseRpcClient):
                 }
             return {"minValidatorStake": 0, "minDelegation": 0}
         except Exception as e:
-            logger.warning(f"Failed to get staking minimums: {e}")
+            logger.warning("Failed to get staking minimums: %s", e)
             return {"minValidatorStake": 0, "minDelegation": 0}

@@ -22,7 +22,7 @@ pub use eclipse_protection::{
 };
 pub use error::*;
 pub use identity::{print_connection_info, NodeIdentity};
-pub use libp2p::Multiaddr;
+pub use libp2p::{Multiaddr, PeerId};
 pub use light_client::{
     LightClientConfig, LightClientError, LightClientState, MerkleProof, SyncStatus, TrustedHeader,
 };

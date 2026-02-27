@@ -1,7 +1,17 @@
+//! LuxTensor CLI — command-line interface for the LuxTensor blockchain.
+//!
+//! # Modules
+//!
+//! - [`helpers`] — RLP encoding, parsing, cryptographic utilities, RPC client
+
+mod helpers;
+
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use rand::RngCore;
 use std::path::PathBuf;
+
+use helpers::*;
 
 #[derive(Parser)]
 #[command(name = "luxtensor")]
@@ -244,6 +254,10 @@ enum QueryCommands {
     },
 }
 
+// ============================================================
+// Main + dispatch
+// ============================================================
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -280,26 +294,22 @@ async fn main() -> Result<()> {
         },
 
         Commands::Admin(admin) => handle_admin(admin).await?,
-
         Commands::ConfigGen(args) => generate_config(args)?,
-
         Commands::Query(query) => handle_query(query).await?,
-
         Commands::SendTx(args) => handle_send_tx(args).await?,
-
         Commands::Stake(args) => handle_stake(args).await?,
-
         Commands::Unstake(args) => handle_unstake(args).await?,
-
         Commands::Delegate(args) => handle_delegate(args).await?,
-
         Commands::ImportKey(args) => handle_import_key(args)?,
-
         Commands::ExportKey(args) => handle_export_key(args)?,
     }
 
     Ok(())
 }
+
+// ============================================================
+// Admin commands
+// ============================================================
 
 async fn handle_admin(cmd: AdminCommands) -> Result<()> {
     match cmd {
@@ -329,6 +339,10 @@ async fn handle_admin(cmd: AdminCommands) -> Result<()> {
     }
     Ok(())
 }
+
+// ============================================================
+// Query commands
+// ============================================================
 
 async fn handle_query(cmd: QueryCommands) -> Result<()> {
     match cmd {
@@ -361,27 +375,9 @@ async fn handle_query(cmd: QueryCommands) -> Result<()> {
     Ok(())
 }
 
-async fn rpc_call(
-    rpc: &str,
-    method: &str,
-    params: Vec<serde_json::Value>,
-) -> Result<serde_json::Value> {
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-
-    let resp: serde_json::Value = client.post(rpc).json(&body).send().await?.json().await?;
-
-    if let Some(error) = resp.get("error") {
-        anyhow::bail!("RPC error: {}", error);
-    }
-
-    Ok(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
-}
+// ============================================================
+// Config generation
+// ============================================================
 
 fn generate_config(args: ConfigGenArgs) -> Result<()> {
     // SECURITY: Validate node_id >= 1 to prevent u32 underflow wrapping
@@ -457,189 +453,7 @@ log_file = "./node.log"
 }
 
 // ============================================================
-// RLP encoding helpers
-// ============================================================
-
-/// Trim leading zero bytes from a byte slice.
-fn trim_leading_zeros(data: &[u8]) -> &[u8] {
-    let start = data.iter().position(|&b| b != 0).unwrap_or(data.len());
-    &data[start..]
-}
-
-/// Convert u64 to big-endian bytes with leading zeros trimmed.
-fn u64_to_be_trimmed(val: u64) -> Vec<u8> {
-    if val == 0 {
-        return vec![];
-    }
-    trim_leading_zeros(&val.to_be_bytes()).to_vec()
-}
-
-/// RLP encode a byte string.
-fn rlp_encode_bytes(data: &[u8]) -> Vec<u8> {
-    if data.len() == 1 && data[0] < 0x80 {
-        return data.to_vec();
-    }
-    if data.is_empty() {
-        return vec![0x80];
-    }
-    if data.len() <= 55 {
-        let mut out = vec![0x80 + data.len() as u8];
-        out.extend_from_slice(data);
-        out
-    } else {
-        let len_bytes = u64_to_be_trimmed(data.len() as u64);
-        let mut out = vec![0xb7 + len_bytes.len() as u8];
-        out.extend_from_slice(&len_bytes);
-        out.extend_from_slice(data);
-        out
-    }
-}
-
-/// RLP encode a u64 integer value.
-fn rlp_encode_u64(val: u64) -> Vec<u8> {
-    if val == 0 {
-        return vec![0x80];
-    }
-    rlp_encode_bytes(&u64_to_be_trimmed(val))
-}
-
-/// RLP encode a list of already-encoded items.
-fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
-    let mut payload = Vec::new();
-    for item in items {
-        payload.extend_from_slice(item);
-    }
-    if payload.len() <= 55 {
-        let mut out = vec![0xc0 + payload.len() as u8];
-        out.extend_from_slice(&payload);
-        out
-    } else {
-        let len_bytes = u64_to_be_trimmed(payload.len() as u64);
-        let mut out = vec![0xf7 + len_bytes.len() as u8];
-        out.extend_from_slice(&len_bytes);
-        out.extend_from_slice(&payload);
-        out
-    }
-}
-
-// ============================================================
-// Parsing helpers
-// ============================================================
-
-/// Parse a hex-encoded private key string into 32 bytes.
-fn parse_private_key(hex_str: &str) -> Result<[u8; 32]> {
-    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let bytes =
-        hex::decode(hex_str).map_err(|e| anyhow::anyhow!("Invalid private key hex: {}", e))?;
-    if bytes.len() != 32 {
-        anyhow::bail!("Private key must be 32 bytes, got {}", bytes.len());
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&bytes);
-    Ok(key)
-}
-
-/// Parse a hex-encoded u64 value (e.g., "0x5" or "0x1a2b").
-fn parse_hex_u64(s: &str) -> Result<u64> {
-    let s = s.trim_matches('"');
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
-    if s.is_empty() {
-        return Ok(0);
-    }
-    Ok(u64::from_str_radix(s, 16)?)
-}
-
-/// Parse a wei amount from a decimal or hex string into trimmed big-endian bytes.
-fn parse_wei_amount(s: &str) -> Result<Vec<u8>> {
-    if let Some(hex_str) = s.strip_prefix("0x") {
-        let bytes = hex::decode(hex_str)?;
-        Ok(trim_leading_zeros(&bytes).to_vec())
-    } else {
-        let val: u128 = s.parse().map_err(|e| anyhow::anyhow!("Invalid amount '{}': {}", s, e))?;
-        if val == 0 {
-            return Ok(vec![]);
-        }
-        Ok(trim_leading_zeros(&val.to_be_bytes()).to_vec())
-    }
-}
-
-/// Legacy KDF: iterated keccak256 (kept for backward compatibility with v1 keystores).
-fn derive_key_legacy(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
-    let mut key = luxtensor_crypto::keccak256(&[password, salt].concat());
-    for _ in 1..iterations {
-        key = luxtensor_crypto::keccak256(&key);
-    }
-    key
-}
-
-/// Derive a 32-byte encryption key using scrypt KDF (secure replacement for iterated keccak256).
-fn derive_key_scrypt(password: &[u8], salt: &[u8]) -> Result<[u8; 32]> {
-    // scrypt params: log_n=14 (N=16384), r=8, p=1 — matches Ethereum keystore v3 defaults
-    let params = scrypt::Params::new(14, 8, 1, 32)
-        .map_err(|e| anyhow::anyhow!("Invalid scrypt params: {}", e))?;
-    let mut key = [0u8; 32];
-    scrypt::scrypt(password, salt, &params, &mut key)
-        .map_err(|e| anyhow::anyhow!("scrypt KDF failed: {}", e))?;
-    Ok(key)
-}
-
-/// AES-128-CTR encrypt/decrypt (symmetric — same operation for both directions).
-fn aes128_ctr_apply(key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>> {
-    use aes::cipher::{KeyIvInit, StreamCipher};
-    type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
-
-    let mut cipher = Aes128Ctr::new_from_slices(key, iv)
-        .map_err(|e| anyhow::anyhow!("AES-128-CTR init failed: {}", e))?;
-    let mut buffer = data.to_vec();
-    cipher.apply_keystream(&mut buffer);
-    Ok(buffer)
-}
-
-/// Constant-time comparison of two byte slices to prevent timing side-channel attacks.
-/// Used for MAC verification where a timing oracle could leak information about the
-/// correct MAC value.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
-}
-
-/// Read a private key from CLI argument, environment variable, or interactive prompt.
-/// Priority: CLI arg > LUXTENSOR_PRIVATE_KEY env var > interactive prompt (hidden input).
-fn read_private_key(cli_value: Option<String>) -> Result<String> {
-    if let Some(key) = cli_value {
-        eprintln!("\u{26a0}\u{fe0f}  WARNING: Passing private keys via CLI arguments is insecure.");
-        eprintln!("   Your key may be visible in shell history and process listings.");
-        eprintln!("   Consider using LUXTENSOR_PRIVATE_KEY env var or interactive prompt instead.");
-        return Ok(key);
-    }
-
-    if let Ok(key) = std::env::var("LUXTENSOR_PRIVATE_KEY") {
-        if !key.is_empty() {
-            eprintln!(
-                "\u{1f511} Using private key from LUXTENSOR_PRIVATE_KEY environment variable."
-            );
-            return Ok(key);
-        }
-    }
-
-    let key = rpassword::prompt_password("\u{1f511} Enter private key (hex): ")
-        .map_err(|e| anyhow::anyhow!("Failed to read private key: {}", e))?;
-
-    if key.trim().is_empty() {
-        anyhow::bail!("Private key cannot be empty");
-    }
-
-    Ok(key.trim().to_string())
-}
-
-// ============================================================
-// New command handlers
+// Transaction command
 // ============================================================
 
 async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
@@ -765,8 +579,11 @@ async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
     Ok(())
 }
 
+// ============================================================
+// Staking commands
+// ============================================================
+
 async fn handle_stake(args: StakeArgs) -> Result<()> {
-    // Read private key securely
     let from_key = read_private_key(args.from)?;
     let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
@@ -789,7 +606,6 @@ async fn handle_stake(args: StakeArgs) -> Result<()> {
 }
 
 async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
-    // Read private key securely
     let from_key = read_private_key(args.from)?;
     let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
@@ -812,7 +628,6 @@ async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
 }
 
 async fn handle_delegate(args: DelegateArgs) -> Result<()> {
-    // Read private key securely
     let from_key = read_private_key(args.from)?;
     let secret = parse_private_key(&from_key)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
@@ -838,10 +653,13 @@ async fn handle_delegate(args: DelegateArgs) -> Result<()> {
     Ok(())
 }
 
+// ============================================================
+// Key management commands
+// ============================================================
+
 fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     println!("⚠️  WARNING: Handle private keys with extreme care.");
 
-    // Read private key securely
     let pk = read_private_key(args.private_key)?;
     let secret = parse_private_key(&pk)?;
     let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)

@@ -89,7 +89,7 @@ class StakingMixin:
             self._delegates_cache_time = now
             return self._delegates_cache
         except Exception as e:
-            logger.warning(f"Failed to fetch delegates: {e}")
+            logger.warning("Failed to fetch delegates: %s", e)
             # Return stale cache if available, otherwise empty
             return self._delegates_cache if self._delegates_cache is not None else []
 
@@ -200,7 +200,7 @@ class StakingMixin:
             self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to stake for {address}: {e}")
+            logger.error("Failed to stake for %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def unstake(self, address: str, amount: int, timestamp: int, signature: str) -> Dict[str, Any]:
@@ -222,7 +222,7 @@ class StakingMixin:
             self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to unstake for {address}: {e}")
+            logger.error("Failed to unstake for %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def delegate(
@@ -253,7 +253,7 @@ class StakingMixin:
             self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to delegate from {delegator} to {validator}: {e}")
+            logger.error("Failed to delegate from %s to %s: %s", delegator, validator, e)
             return {"success": False, "error": str(e)}
 
     def undelegate(self, delegator: str, timestamp: int, signature: str) -> Dict[str, Any]:
@@ -274,7 +274,7 @@ class StakingMixin:
             self.invalidate_delegate_cache()
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to undelegate for {delegator}: {e}")
+            logger.error("Failed to undelegate for %s: %s", delegator, e)
             return {"success": False, "error": str(e)}
 
     # ------------------------------------------------------------------

@@ -76,7 +76,7 @@ class ConnectionPool:
     def record_error(self, host: str):
         """Record a connection error for a host."""
         self.connection_errors[host] = self.connection_errors.get(host, 0) + 1
-        logger.warning(f"Connection error for {host}, total errors: {self.connection_errors[host]}")
+        logger.warning("Connection error for %s, total errors: %s", host, self.connection_errors[host])
 
     def reset_errors(self, host: str):
         """Reset error count for a host."""
@@ -119,7 +119,7 @@ class ConnectionPool:
                 del self.connection_errors[host]
 
         if hosts_to_remove:
-            logger.info(f"Cleaned up idle connections for {len(hosts_to_remove)} hosts")
+            logger.info("Cleaned up idle connections for %s hosts", len(hosts_to_remove))
 
     async def close(self):
         """Close the connection pool and all connections."""
@@ -211,7 +211,7 @@ class CircuitBreaker:
         if state == self.State.HALF_OPEN:
             # Successful call in half-open, close the circuit
             self._transition_to_closed(host)
-            logger.info(f"Circuit closed for {host} after successful recovery")
+            logger.info("Circuit closed for %s after successful recovery", host)
 
         # Reset failure count on success
         self.failure_count[host] = 0
@@ -226,7 +226,7 @@ class CircuitBreaker:
         if state == self.State.HALF_OPEN:
             # Failed in half-open, open circuit again
             self._transition_to_open(host)
-            logger.warning(f"Circuit opened again for {host} after half-open failure")
+            logger.warning("Circuit opened again for %s after half-open failure", host)
 
         elif state == self.State.CLOSED:
             # Check if threshold exceeded
@@ -358,13 +358,13 @@ class ConnectionLoadBalancer:
         """Mark an endpoint as unhealthy."""
         async with self.lock:
             self.health_status[endpoint] = False
-            logger.warning(f"Marked endpoint {endpoint} as unhealthy")
+            logger.warning("Marked endpoint %s as unhealthy", endpoint)
 
     async def mark_healthy(self, endpoint: str):
         """Mark an endpoint as healthy."""
         async with self.lock:
             self.health_status[endpoint] = True
-            logger.info(f"Marked endpoint {endpoint} as healthy")
+            logger.info("Marked endpoint %s as healthy", endpoint)
 
     async def increment_connections(self, endpoint: str):
         """Increment connection count for endpoint."""
@@ -481,7 +481,7 @@ class ResponseCache:
         lru_key = min(self.access_times.items(), key=lambda x: x[1])[0]
         del self.cache[lru_key]
         del self.access_times[lru_key]
-        logger.debug(f"Evicted LRU cache entry: {lru_key}")
+        logger.debug("Evicted LRU cache entry: %s", lru_key)
 
     async def invalidate(self, key: str):
         """Invalidate a cache entry."""
@@ -622,7 +622,7 @@ class RequestRetryStrategy:
                 if attempt > 0:
                     func_name = func.__name__
                     self.success_after_retry[func_name] += 1
-                    logger.info(f"Succeeded on retry attempt {attempt} for {func_name}")
+                    logger.info("Succeeded on retry attempt %s for %s", attempt, func_name)
 
                 return result
 

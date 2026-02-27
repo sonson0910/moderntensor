@@ -59,3 +59,15 @@ test_output*.txt
 
 # Benchmark results
 benchmark_*.txt
+
+# Ad-hoc Python test scripts (use luxtensor/tests/ for proper tests)
+test_debug_hash.py
+test_signed_tx.py
+test_propagation_quick.py
+test_tx_propagation.py
+audit_scan.py
+
+# Developer-specific multi-node configs
+config.node*.toml
+config2.toml
+config3.toml

@@ -138,7 +138,7 @@ class DistributedTracer:
             )
             
         except Exception as e:
-            logger.error(f"Failed to setup tracing: {e}")
+            logger.error("Failed to setup tracing: %s", e)
             self.enabled = False
     
     def instrument_fastapi(self, app):
@@ -155,7 +155,7 @@ class DistributedTracer:
             FastAPIInstrumentor.instrument_app(app)
             logger.info("FastAPI instrumented with OpenTelemetry")
         except Exception as e:
-            logger.error(f"Failed to instrument FastAPI: {e}")
+            logger.error("Failed to instrument FastAPI: %s", e)
     
     def instrument_requests(self):
         """Instrument requests library with tracing."""
@@ -166,7 +166,7 @@ class DistributedTracer:
             RequestsInstrumentor().instrument()
             logger.info("Requests library instrumented with OpenTelemetry")
         except Exception as e:
-            logger.error(f"Failed to instrument requests: {e}")
+            logger.error("Failed to instrument requests: %s", e)
     
     @contextmanager
     def start_span(
@@ -198,7 +198,7 @@ class DistributedTracer:
             ) as span:
                 yield span
         except Exception as e:
-            logger.error(f"Error in span {name}: {e}")
+            logger.error("Error in span %s: %s", name, e)
             yield None
     
     def trace_function(
@@ -280,7 +280,7 @@ class DistributedTracer:
             if current_span:
                 current_span.add_event(name, attributes or {})
         except Exception as e:
-            logger.error(f"Failed to add span event: {e}")
+            logger.error("Failed to add span event: %s", e)
     
     def set_span_attribute(self, key: str, value: Any):
         """
@@ -298,7 +298,7 @@ class DistributedTracer:
             if current_span:
                 current_span.set_attribute(key, value)
         except Exception as e:
-            logger.error(f"Failed to set span attribute: {e}")
+            logger.error("Failed to set span attribute: %s", e)
     
     def record_exception(self, exception: Exception):
         """
@@ -318,7 +318,7 @@ class DistributedTracer:
                     Status(StatusCode.ERROR, str(exception))
                 )
         except Exception as e:
-            logger.error(f"Failed to record exception: {e}")
+            logger.error("Failed to record exception: %s", e)
     
     def inject_context(self, carrier: Dict):
         """
@@ -333,7 +333,7 @@ class DistributedTracer:
         try:
             inject(carrier)
         except Exception as e:
-            logger.error(f"Failed to inject context: {e}")
+            logger.error("Failed to inject context: %s", e)
     
     def extract_context(self, carrier: Dict):
         """
@@ -351,7 +351,7 @@ class DistributedTracer:
         try:
             return extract(carrier)
         except Exception as e:
-            logger.error(f"Failed to extract context: {e}")
+            logger.error("Failed to extract context: %s", e)
             return None
     
     def shutdown(self):
@@ -361,7 +361,7 @@ class DistributedTracer:
                 self.tracer_provider.shutdown()
                 logger.info("Tracer provider shutdown complete")
             except Exception as e:
-                logger.error(f"Error shutting down tracer: {e}")
+                logger.error("Error shutting down tracer: %s", e)
 
 
 # Convenience functions for common tracing operations

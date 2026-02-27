@@ -166,7 +166,7 @@ class Dendrite:
 
         # Check circuit breaker
         if self.circuit_breaker and not self.circuit_breaker.can_attempt(host):
-            logger.warning(f"Circuit breaker open for {host}, skipping request")
+            logger.warning("Circuit breaker open for %s, skipping request", host)
             return None
 
         # Check deduplication
@@ -205,7 +205,7 @@ class Dendrite:
             return response
 
         except Exception as e:
-            logger.error(f"Query failed for {endpoint}: {e}")
+            logger.error("Query failed for %s: %s", endpoint, e)
 
             # Record failure with circuit breaker
             if self.circuit_breaker:
@@ -277,20 +277,20 @@ class Dendrite:
                 if response is not None:
                     if attempt > 0:
                         self.metrics.retried_queries += 1
-                        logger.info(f"Query succeeded on attempt {attempt + 1}")
+                        logger.info("Query succeeded on attempt %s", attempt + 1)
                     return response
 
             except Exception as e:
                 _ = e  # Capture exception for logging context
-                logger.warning(f"Query attempt {attempt + 1} failed: {e}")
+                logger.warning("Query attempt %s failed: %s", attempt + 1, e)
 
             # Don't sleep after last attempt
             if attempt < self.config.max_retries:
                 delay = self._calculate_retry_delay(attempt)
-                logger.debug(f"Retrying in {delay:.2f}s...")
+                logger.debug("Retrying in %ss...", delay:.2f)
                 await asyncio.sleep(delay)
 
-        logger.error(f"Query failed after {self.config.max_retries + 1} attempts")
+        logger.error("Query failed after %s attempts", self.config.max_retries + 1)
         return None
 
     def _calculate_retry_delay(self, attempt: int) -> float:
@@ -345,7 +345,7 @@ class Dendrite:
             return response.json()
 
         except httpx.HTTPError as e:
-            logger.error(f"HTTP error for {endpoint}: {e}")
+            logger.error("HTTP error for %s: %s", endpoint, e)
             self.pool.record_error(host)
             return None
 

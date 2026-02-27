@@ -6,14 +6,28 @@
 //! - Vector store (HNSW for semantic search)
 //!
 //! # Architecture
+//!
+//! The design intentionally separates **pure storage operations** (get/set
+//! for balances, nonces, contracts, storage slots) from **business logic
+//! operations** (transfers with overflow/underflow checks, contract
+//! deployment, state root calculation).
+//!
+//! Consumers should prefer the [`TransferOps`] trait for balance mutations
+//! in production code, as it enforces all invariants in one place.
+//!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │                      UnifiedStateDB                             │
-//! ├─────────────────┬─────────────────┬───────────────────────────┬─┤
-//! │  AccountState   │   ContractState │  VectorStore (HNSW)       │ │
-//! │  - balances     │   - bytecode    │  - embeddings             │ │
-//! │  - nonces       │   - storage     │  - ANN search             │ │
-//! └─────────────────┴─────────────────┴───────────────────────────┴─┘
+//! ┌───────────────────────────────────────────────────────────┐
+//! │                    UnifiedStateDB                           │
+//! ├───────────────────────────────────────────────────────────┤
+//! │            « Pure Storage Layer »                             │
+//! │  get/set_balance, get/set_nonce, get/set_storage            │
+//! ├───────────────────────────────────────────────────────────┤
+//! │         « Business Logic Layer (TransferOps) »               │
+//! │  credit, debit, transfer, deploy_contract                  │
+//! ├───────────────────┬───────────────────┬───────────────────┤
+//! │  AccountState      │  ContractState    │  VectorStore      │
+//! │  balances, nonces  │  code, storage    │  HNSW embeddings  │
+//! └───────────────────┴───────────────────┴───────────────────┘
 //!                    │ Persistence Layer (RocksDB) │
 //!                    └─────────────────────────────┘
 //! ```
@@ -24,6 +38,38 @@ use parking_lot::RwLock;
 use crate::{Account, Address, Hash, Result, CoreError};
 use crate::constants::chain_id;
 use crate::hnsw::HnswVectorStore;
+
+// =================== Transfer Operations Trait ===================
+//
+// This trait encapsulates all balance-mutation business logic, making
+// the invariant enforcement (overflow/underflow checks, nonce
+// ordering) testable and swappable independently of the storage
+// backing.
+
+/// Business-logic trait for balance/nonce mutations with invariant
+/// enforcement.
+///
+/// Separating this from the raw storage operations in [`UnifiedStateDB`]
+/// improves testability and ensures all balance changes go through
+/// checked paths.  `UnifiedStateDB` implements this trait directly;
+/// consumers should prefer using it for production mutations.
+pub trait TransferOps {
+    /// Credit `amount` to `address`, returning an error on overflow.
+    fn credit(&mut self, address: &Address, amount: u128) -> Result<()>;
+
+    /// Debit `amount` from `address`, returning an error if the balance
+    /// is insufficient.
+    fn debit(&mut self, address: &Address, amount: u128) -> Result<()>;
+
+    /// Atomically transfer `amount` from `from` to `to`.
+    ///
+    /// This is the preferred entry point for value transfers.  It debit
+    /// first (to fail-fast on insufficient balance) and then credits.
+    fn transfer(&mut self, from: &Address, to: &Address, amount: u128) -> Result<()>;
+
+    /// Increment the sender’s nonce (checked, panics on overflow).
+    fn increment_nonce(&mut self, address: &Address) -> Result<()>;
+}
 
 /// Deployed contract information
 #[derive(Debug, Clone)]
@@ -103,36 +149,21 @@ impl UnifiedStateDB {
         state
     }
 
-    // =================== Account Operations ===================
+    // =================== Pure Storage Layer ===================
+    //
+    // These methods perform raw reads/writes with no business-logic
+    // invariant checking.  For checked balance mutations prefer the
+    // `TransferOps` trait (implemented below).
 
     /// Get account balance
     pub fn get_balance(&self, address: &Address) -> u128 {
         *self.balances.get(address).unwrap_or(&0)
     }
 
-    /// Set account balance
+    /// Set account balance (raw — no overflow check)
     pub fn set_balance(&mut self, address: Address, balance: u128) {
         self.balances.insert(address, balance);
         self.dirty = true;
-    }
-
-    /// Credit account (add to balance, returns error on overflow)
-    pub fn credit(&mut self, address: &Address, amount: u128) -> Result<()> {
-        let balance = self.balances.entry(*address).or_insert(0);
-        *balance = balance.checked_add(amount).ok_or(CoreError::BalanceOverflow)?;
-        self.dirty = true;
-        Ok(())
-    }
-
-    /// Debit account (subtract from balance)
-    pub fn debit(&mut self, address: &Address, amount: u128) -> Result<()> {
-        let balance = self.balances.entry(*address).or_insert(0);
-        if *balance < amount {
-            return Err(CoreError::InsufficientBalance);
-        }
-        *balance -= amount;
-        self.dirty = true;
-        Ok(())
     }
 
     /// Get account nonce
@@ -140,15 +171,8 @@ impl UnifiedStateDB {
         *self.nonces.get(address).unwrap_or(&0)
     }
 
-    /// Increment account nonce (checked to prevent overflow)
-    pub fn increment_nonce(&mut self, address: &Address) -> Result<()> {
-        let nonce = self.nonces.entry(*address).or_insert(0);
-        *nonce = nonce.checked_add(1).ok_or(CoreError::NonceOverflow)?;
-        self.dirty = true;
-        Ok(())
-    }
-
-    /// Set account nonce directly (used by state sync from block production)
+    /// Set account nonce directly (raw — used by state sync from block
+    /// production)
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
         self.nonces.insert(address, nonce);
         self.dirty = true;
@@ -282,10 +306,12 @@ impl UnifiedStateDB {
         addresses.sort();
 
         let mut leaves = Vec::with_capacity(addresses.len());
+        // Pre-allocate the per-leaf data buffer: 20 (addr) + 16 (balance) + 8 (nonce)
+        let mut data = Vec::with_capacity(44);
         for addr in addresses {
             let balance = self.get_balance(addr);
             let nonce = self.get_nonce(addr);
-            let mut data = Vec::new();
+            data.clear();
             data.extend_from_slice(addr.as_bytes());
             data.extend_from_slice(&balance.to_le_bytes());
             data.extend_from_slice(&nonce.to_le_bytes());
@@ -304,11 +330,13 @@ impl UnifiedStateDB {
         let mut items: Vec<_> = self.contracts.keys().collect();
         items.sort();
 
-        let mut leaves = Vec::new();
+        let mut leaves = Vec::with_capacity(items.len());
+        // Pre-allocate the per-contract data buffer: 20 (addr) + 32 (code_hash)
+        let mut data = Vec::with_capacity(52);
         for addr in items {
             if let Some(info) = self.contracts.get(addr) {
                 let code_hash = luxtensor_crypto::keccak256(&info.code);
-                let mut data = Vec::new();
+                data.clear();
                 data.extend_from_slice(addr.as_bytes());
                 data.extend_from_slice(&code_hash);
                 // SECURITY: Use hash_leaf (0x00 prefix) to prevent second-preimage attacks
@@ -352,6 +380,46 @@ impl UnifiedStateDB {
 impl Default for UnifiedStateDB {
     fn default() -> Self {
         Self::new(chain_id::DEVNET) // LuxTensor devnet chain ID (8898)
+    }
+}
+
+// =================== TransferOps Implementation ===================
+//
+// Business logic for balance mutations lives here, cleanly separated
+// from the raw storage layer above.
+
+impl TransferOps for UnifiedStateDB {
+    fn credit(&mut self, address: &Address, amount: u128) -> Result<()> {
+        let balance = self.balances.entry(*address).or_insert(0);
+        *balance = balance.checked_add(amount).ok_or(CoreError::BalanceOverflow)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn debit(&mut self, address: &Address, amount: u128) -> Result<()> {
+        let balance = self.balances.entry(*address).or_insert(0);
+        if *balance < amount {
+            return Err(CoreError::InsufficientBalance);
+        }
+        *balance -= amount;
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn transfer(&mut self, from: &Address, to: &Address, amount: u128) -> Result<()> {
+        // Debit first to fail-fast on insufficient balance.
+        self.debit(from, amount)?;
+        // Credit cannot overflow in practice (total supply is bounded),
+        // but the checked add guards against bugs higher up.
+        self.credit(to, amount)?;
+        Ok(())
+    }
+
+    fn increment_nonce(&mut self, address: &Address) -> Result<()> {
+        let nonce = self.nonces.entry(*address).or_insert(0);
+        *nonce = nonce.checked_add(1).ok_or(CoreError::NonceOverflow)?;
+        self.dirty = true;
+        Ok(())
     }
 }
 
@@ -587,5 +655,74 @@ mod tests {
         let root2 = state.root_hash().unwrap();
 
         assert_ne!(root1, root2); // State changed, root should change
+    }
+
+    // ── TransferOps trait tests ──────────────────────────────────────
+
+    #[test]
+    fn test_transfer_success() {
+        let mut state = UnifiedStateDB::new(1);
+        let alice = Address::from([1u8; 20]);
+        let bob = Address::from([2u8; 20]);
+
+        state.credit(&alice, 500).unwrap();
+        state.transfer(&alice, &bob, 200).unwrap();
+
+        assert_eq!(state.get_balance(&alice), 300);
+        assert_eq!(state.get_balance(&bob), 200);
+    }
+
+    #[test]
+    fn test_transfer_insufficient_balance() {
+        let mut state = UnifiedStateDB::new(1);
+        let alice = Address::from([1u8; 20]);
+        let bob = Address::from([2u8; 20]);
+
+        state.credit(&alice, 100).unwrap();
+
+        // Transfer more than balance — should fail and leave state unchanged
+        let result = state.transfer(&alice, &bob, 200);
+        assert!(result.is_err());
+        assert_eq!(state.get_balance(&alice), 100); // unchanged
+        assert_eq!(state.get_balance(&bob), 0);     // unchanged
+    }
+
+    #[test]
+    fn test_transfer_self() {
+        let mut state = UnifiedStateDB::new(1);
+        let alice = Address::from([1u8; 20]);
+
+        state.credit(&alice, 1000).unwrap();
+        // Self-transfer is allowed (debit then credit = no-op on balance)
+        state.transfer(&alice, &alice, 100).unwrap();
+        assert_eq!(state.get_balance(&alice), 1000);
+    }
+
+    #[test]
+    fn test_commit_idempotent() {
+        let mut state = UnifiedStateDB::new(1);
+        let addr = Address::from([1u8; 20]);
+        state.credit(&addr, 500).unwrap();
+
+        let root1 = state.commit().unwrap();
+        let root2 = state.commit().unwrap();
+        assert_eq!(root1, root2, "Committing twice without changes should yield the same root");
+    }
+
+    #[test]
+    fn test_state_root_deterministic() {
+        // Two states with identical content must produce the same root.
+        let mut s1 = UnifiedStateDB::new(1);
+        let mut s2 = UnifiedStateDB::new(1);
+        let addr = Address::from([5u8; 20]);
+
+        s1.credit(&addr, 42).unwrap();
+        s2.credit(&addr, 42).unwrap();
+
+        assert_eq!(
+            s1.root_hash().unwrap(),
+            s2.root_hash().unwrap(),
+            "Identical states must produce identical roots"
+        );
     }
 }

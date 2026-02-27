@@ -20,14 +20,14 @@ Components:
 - TokenomicsIntegration: Integrates with Layer 1 consensus
 """
 
-from sdk.tokenomics.config import TokenomicsConfig, DistributionConfig
-from sdk.tokenomics.emission_controller import EmissionController
-from sdk.tokenomics.recycling_pool import RecyclingPool
-from sdk.tokenomics.burn_manager import BurnManager
-from sdk.tokenomics.reward_distributor import RewardDistributor, DistributionResult
-from sdk.tokenomics.claim_manager import ClaimManager
-from sdk.tokenomics.integration import TokenomicsIntegration, EpochTokenomics, ConsensusData
-from sdk.tokenomics.metrics_collector import NetworkMetricsCollector, NetworkMetrics
+from .config import TokenomicsConfig, DistributionConfig
+from .emission_controller import EmissionController
+from .recycling_pool import RecyclingPool
+from .burn_manager import BurnManager
+from .reward_distributor import RewardDistributor, DistributionResult
+from .claim_manager import ClaimManager
+from .integration import TokenomicsIntegration, EpochTokenomics, ConsensusData
+from .metrics_collector import NetworkMetricsCollector, NetworkMetrics
 
 __all__ = [
     'TokenomicsConfig',

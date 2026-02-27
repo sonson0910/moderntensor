@@ -82,7 +82,7 @@ class NodeMixin:
                 params["block_height"] = block_height
             return self._rpc()._call_rpc("node_register", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to register node {address}: {e}")
+            logger.error("Failed to register node %s: %s", address, e)
             raise
 
     def node_update_stake(
@@ -114,7 +114,7 @@ class NodeMixin:
             }
             return self._rpc()._call_rpc("node_updateStake", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to update stake for node {address}: {e}")
+            logger.error("Failed to update stake for node %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     def node_unregister(
@@ -141,7 +141,7 @@ class NodeMixin:
             }
             return self._rpc()._call_rpc("node_unregister", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to unregister node {address}: {e}")
+            logger.error("Failed to unregister node %s: %s", address, e)
             return {"success": False, "error": str(e)}
 
     # ---------------------------------------------------------------
@@ -162,7 +162,7 @@ class NodeMixin:
         try:
             return self._rpc()._call_rpc("node_getTier", [{"address": address}])
         except Exception as e:
-            logger.warning(f"Failed to get tier for node {address}: {e}")
+            logger.warning("Failed to get tier for node %s: %s", address, e)
             return None
 
     def node_get_info(self, address: str) -> Optional[Dict[str, Any]]:
@@ -179,7 +179,7 @@ class NodeMixin:
         try:
             return self._rpc()._call_rpc("node_getInfo", [{"address": address}])
         except Exception as e:
-            logger.warning(f"Failed to get node info for {address}: {e}")
+            logger.warning("Failed to get node info for %s: %s", address, e)
             return None
 
     def node_get_validators(self) -> List[Dict[str, Any]]:
@@ -193,7 +193,7 @@ class NodeMixin:
             result = self._rpc()._call_rpc("node_getValidators", [])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get validators: {e}")
+            logger.warning("Failed to get validators: %s", e)
             return []
 
     def node_get_infrastructure_nodes(self) -> List[Dict[str, Any]]:
@@ -207,7 +207,7 @@ class NodeMixin:
             result = self._rpc()._call_rpc("node_getInfrastructureNodes", [])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get infrastructure nodes: {e}")
+            logger.warning("Failed to get infrastructure nodes: %s", e)
             return []
 
     def node_get_stats(self) -> Dict[str, Any]:
@@ -220,7 +220,7 @@ class NodeMixin:
         try:
             return self._rpc()._call_rpc("node_getStats", []) or {}
         except Exception as e:
-            logger.warning(f"Failed to get node stats: {e}")
+            logger.warning("Failed to get node stats: %s", e)
             return {}
 
     def node_get_tier_requirements(self) -> Dict[str, Any]:
@@ -233,5 +233,5 @@ class NodeMixin:
         try:
             return self._rpc()._call_rpc("node_getTierRequirements", []) or {}
         except Exception as e:
-            logger.warning(f"Failed to get tier requirements: {e}")
+            logger.warning("Failed to get tier requirements: %s", e)
             return {}

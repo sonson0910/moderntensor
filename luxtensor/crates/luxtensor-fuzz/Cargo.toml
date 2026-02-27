@@ -50,3 +50,15 @@ name = "consensus_message"
 path = "fuzz_targets/consensus_message.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "keccak256"
+path = "fuzz_targets/keccak256.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "value_parser"
+path = "fuzz_targets/value_parser.rs"
+test = false
+doc = false

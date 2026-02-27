@@ -104,7 +104,7 @@ class ValidatorRotation:
         self._pending_validators: Dict[str, PendingValidator] = {}
         self._exiting_validators: Set[str] = set()
 
-        logger.info(f"ValidatorRotation initialized with {len(self._validators)} validators")
+        logger.info("ValidatorRotation initialized with %s validators", len(self._validators))
 
     def current_validators(self) -> Dict[str, ValidatorInfo]:
         """Get current active validators."""
@@ -209,7 +209,7 @@ class ValidatorRotation:
             if len(self._validators) < self.config.max_validators:
                 self._validators[address] = pending.validator
                 activated.append(address)
-                logger.info(f"Activated validator {address[:16]}... at epoch {new_epoch}")
+                logger.info("Activated validator %.16s... at epoch %d", address, new_epoch)
             else:
                 # Re-queue for next epoch
                 self._pending_validators[address] = PendingValidator(
@@ -231,7 +231,7 @@ class ValidatorRotation:
                 del self._validators[address]
             self._exiting_validators.remove(address)
             exited.append(address)
-            logger.info(f"Exited validator {address[:16]}... at epoch {new_epoch}")
+            logger.info("Exited validator %.16s... at epoch %d", address, new_epoch)
 
         return exited
 
@@ -259,7 +259,7 @@ class ValidatorRotation:
             # Schedule exit if below minimum
             if new_stake < self.config.min_stake:
                 self._exiting_validators.add(address)
-                logger.warning(f"Validator {address[:16]}... stake below minimum, scheduling exit")
+                logger.warning("Validator %.16s... stake below minimum, scheduling exit", address)
 
     def pending_count(self) -> int:
         """Get pending validator count."""

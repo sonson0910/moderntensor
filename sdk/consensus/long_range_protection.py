@@ -98,7 +98,7 @@ class LongRangeProtection:
         self._finalized_hash: str = genesis_hash
         self._finalized_height: int = 0
 
-        logger.info(f"LongRangeProtection initialized with genesis {genesis_hash[:16]}...")
+        logger.info("LongRangeProtection initialized with genesis %.16s...", genesis_hash)
 
     def is_within_weak_subjectivity(self, block_height: int) -> bool:
         """Check if a block is within the weak subjectivity period."""
@@ -126,7 +126,7 @@ class LongRangeProtection:
                     )
 
             self._checkpoints.append(checkpoint)
-            logger.info(f"Added checkpoint at height {checkpoint.height}")
+            logger.info("Added checkpoint at height %s", checkpoint.height)
 
     def update_finalized(self, block_hash: str, height: int) -> None:
         """Update finalized block, auto-create checkpoint if at interval."""

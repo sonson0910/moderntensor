@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `luxtensor-fuzz` crate contains **5 fuzz targets** that exercise critical parsing
+The `luxtensor-fuzz` crate contains **7 fuzz targets** that exercise critical parsing
 and validation paths. The crate uses `cargo-fuzz` (libFuzzer backend) and lives in a
 **separate workspace** (`[workspace] members = ["."]` in its own `Cargo.toml`) to
 avoid interfering with the main workspace build.
@@ -16,6 +16,8 @@ avoid interfering with the main workspace build.
 | `rpc_input`         | `fuzz_targets/rpc_input.rs`        | JSON-RPC request parsing boundary      |
 | `address_parser`    | `fuzz_targets/address_parser.rs`   | Ethereum address hex parsing           |
 | `consensus_message` | `fuzz_targets/consensus_message.rs`| Consensus message decode / validate    |
+| `keccak256`          | `fuzz_targets/keccak256.rs`        | Keccak256 hash determinism             |
+| `value_parser`       | `fuzz_targets/value_parser.rs`     | Numeric overflow / arithmetic safety   |
 
 ## Running Locally
 
@@ -39,7 +41,7 @@ cargo +nightly fuzz run tx_parser -- -max_total_time=300   # 5-minute run
 
 ```powershell
 # PowerShell (Windows)
-$targets = @("tx_parser", "block_validator", "rpc_input", "address_parser", "consensus_message")
+$targets = @("tx_parser", "block_validator", "rpc_input", "address_parser", "consensus_message", "keccak256", "value_parser")
 foreach ($t in $targets) {
     Write-Host "=== Fuzzing $t ===" -ForegroundColor Cyan
     cargo +nightly fuzz run $t -- -max_total_time=60
@@ -101,7 +103,8 @@ jobs:
 
 ## Current Status
 
-- ✅ 5 fuzz targets implemented
+- ✅ 7 fuzz targets implemented (tx_parser, block_validator, rpc_input, address_parser, consensus_message, keccak256, value_parser)
 - ✅ All targets build with `cargo +nightly fuzz build`
+- ✅ Fuzz logic lives in `luxtensor-tests/src/fuzz_targets.rs` (247 lines, 8 functions)
 - ⏳ **Not yet integrated into CI** — runs are local-only
 - 📋 Corpus files stored in `corpus/<target>/` (gitignored)

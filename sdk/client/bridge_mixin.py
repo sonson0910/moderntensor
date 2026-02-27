@@ -45,7 +45,7 @@ class BridgeMixin:
         try:
             return self._rpc()._call_rpc("bridge_getConfig", []) or {}
         except Exception as e:
-            logger.warning(f"Failed to get bridge config: {e}")
+            logger.warning("Failed to get bridge config: %s", e)
             return {}
 
     def bridge_get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
@@ -61,7 +61,7 @@ class BridgeMixin:
         try:
             return self._rpc()._call_rpc("bridge_getMessage", [message_id])
         except Exception as e:
-            logger.warning(f"Failed to get bridge message {message_id}: {e}")
+            logger.warning("Failed to get bridge message %s: %s", message_id, e)
             return None
 
     def bridge_list_messages(
@@ -90,7 +90,7 @@ class BridgeMixin:
             result = self._rpc()._call_rpc("bridge_listMessages", [params])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to list bridge messages: {e}")
+            logger.warning("Failed to list bridge messages: %s", e)
             return []
 
     def bridge_get_stats(self) -> Dict[str, Any]:
@@ -103,5 +103,5 @@ class BridgeMixin:
         try:
             return self._rpc()._call_rpc("bridge_getStats", []) or {}
         except Exception as e:
-            logger.warning(f"Failed to get bridge stats: {e}")
+            logger.warning("Failed to get bridge stats: %s", e)
             return {}

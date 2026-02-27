@@ -177,545 +177,61 @@ pub struct NodeService {
 }
 
 impl NodeService {
-    /// Create a new node service
+    /// Create a new node service.
+    ///
+    /// Delegates initialization to 5 phase methods for better readability:
+    /// 1. [`init_storage_layer`] — BlockchainDB, StateDB, CachedStateDB, genesis
+    /// 2. [`init_consensus_and_mempool`] — PoS, VTrust, mempool, rewards, allocation
+    /// 3. [`init_security_modules`] — Eclipse/LongRange protection, liveness, health, BFT, fork choice
+    /// 4. [`init_ai_pipeline`] — MetagraphDB, executor, TaskDispatcher, RANDAO, agents, disputes
+    /// 5. [`init_tokenomics_and_infra`] — Emission, halving, burn, fees, governance, bridge, multisig
     pub async fn new(config: Config) -> Result<Self> {
         info!("🦀 Initializing LuxTensor Node v{}", env!("CARGO_PKG_VERSION"));
         info!("Node name: {}", config.node.name);
         info!("Chain ID: {}", config.node.chain_id);
 
-        // Validate configuration
         config.validate()?;
-
-        // Create data directory if it doesn't exist
         std::fs::create_dir_all(&config.node.data_dir)
             .context(format!("Failed to create data directory: {:?}", config.node.data_dir))?;
         std::fs::create_dir_all(&config.storage.db_path)
             .context(format!("Failed to create storage directory: {:?}", config.storage.db_path))?;
 
-        // Initialize storage
-        info!("📦 Initializing storage...");
-        let db_path_str = config
-            .storage
-            .db_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?;
-        let storage = Arc::new(BlockchainDB::open(db_path_str)?);
-        let initial_best_height = storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
-        info!("  ✓ Storage initialized at {:?}", config.storage.db_path);
+        // Phase 1: Storage
+        let (storage, state_db, merkle_cache, initial_best_height, genesis_hash) =
+            Self::init_storage_layer(&config).await?;
 
-        // Initialize state database
-        info!("💾 Initializing state database...");
-        let state_db = Arc::new(RwLock::new(StateDB::new()));
+        // Phase 2: Consensus + mempool
+        let (consensus, vtrust_scorer, vtrust_snapshot_path, mempool,
+             reward_executor, token_allocation, node_registry) =
+            Self::init_consensus_and_mempool(&config, &storage, &state_db)?;
 
-        // 🔧 FIX: Restore persisted state from RocksDB on startup
-        {
-            let mut state = state_db.write();
-            match state.load_from_db(storage.as_ref()) {
-                Ok(count) if count > 0 => {
-                    info!("  ✓ Restored {} accounts from disk", count);
-                }
-                Ok(_) => {
-                    info!("  ✓ No persisted state found (fresh node)");
-                }
-                Err(e) => {
-                    warn!("  ⚠️ Failed to load persisted state: {} (starting fresh)", e);
-                }
-            }
-        }
+        // Phase 3: Security modules
+        let (db_maintenance, eclipse_protection, long_range_protection,
+             liveness_monitor, graceful_shutdown, health_monitor,
+             fast_finality, fork_choice) =
+            Self::init_security_modules(&config, &storage, &mempool, genesis_hash)?;
 
-        // Wire lazy bytecode loader: StateDB will load contract code from
-        // CF_CONTRACTS on demand rather than keeping it all in memory.
-        {
-            let mut state = state_db.write();
-            state.set_code_store(storage.clone());
-        }
+        // Phase 4: AI pipeline
+        let (metagraph_db, executor, ai_precompile_state, task_dispatcher,
+             randao, slashing_manager, agent_registry, agent_trigger_engine,
+             dispute_manager, scoring_manager, semantic_registry,
+             pot_verifier, request_processor) =
+            Self::init_ai_pipeline(&config, &storage, genesis_hash).await?;
 
-        info!("  ✓ State database initialized (lazy bytecode loading enabled)");
+        // Phase 5: Tokenomics + infrastructure
+        let (network_rate_limiter, emission_controller, halving_schedule,
+             burn_manager, fee_market, governance, commit_reveal,
+             validator_rotation, ai_circuit_breaker, bridge, multisig_manager) =
+            Self::init_tokenomics_and_infra(&config, &storage)?;
 
-        // Initialize Merkle cache wrapping a storage-layer StateDB (RocksDB-backed)
-        let storage_state_db = Arc::new(parking_lot::RwLock::new(
-            luxtensor_storage::StateDB::new(storage.inner_db()),
-        ));
-        let merkle_cache = Arc::new(CachedStateDB::with_defaults(storage_state_db));
-        info!("  ✓ Merkle cache initialized (height_cache=256, account_hashes=4096)");
-
-        // Transaction executor is initialized after MetagraphDB (see below)
-        // so we can attach the metagraph precompile handler.
-
-        // Initialize consensus
-        info!("⚖️  Initializing consensus...");
-        let consensus_config = ConsensusConfig {
-            slot_duration: config.consensus.block_time,
-            min_stake: config.consensus.min_stake.parse().map_err(|e| {
-                anyhow::anyhow!(
-                    "min_stake '{}' is not a valid u128: {}",
-                    config.consensus.min_stake,
-                    e
-                )
-            })?,
-            block_reward: luxtensor_core::constants::tokenomics::INITIAL_BLOCK_REWARD,
-            epoch_length: config.consensus.epoch_length,
-            ..Default::default()
-        };
-        let consensus = Arc::new(RwLock::new(ProofOfStake::new(consensus_config)));
-        info!("  ✓ PoS consensus initialized");
-        info!("    - Min stake: {}", config.consensus.min_stake);
-        info!("    - Max validators: {}", config.consensus.max_validators);
-        info!("    - Epoch length: {} blocks", config.consensus.epoch_length);
-
-        // Initialize VTrust scorer — load persisted snapshot if available (L-NEW-1 fix)
-        let vtrust_snapshot_path = config.node.data_dir.join("vtrust_snapshot.json");
-        let vtrust_scorer = {
-            let mut scorer = VTrustScorer::new();
-            match std::fs::read(&vtrust_snapshot_path) {
-                Ok(bytes) => match serde_json::from_slice::<VTrustSnapshot>(&bytes) {
-                    Ok(snapshot) => {
-                        scorer.restore(snapshot);
-                        info!("  ✓ VTrust scorer restored from {:?}", vtrust_snapshot_path);
-                    }
-                    Err(e) => {
-                        warn!("  ⚠️ Failed to deserialize VTrust snapshot: {} (starting fresh)", e);
-                    }
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    info!("  ✓ No VTrust snapshot found (fresh node)");
-                }
-                Err(e) => {
-                    warn!("  ⚠️ Failed to read VTrust snapshot file: {} (starting fresh)", e);
-                }
-            }
-            Arc::new(RwLock::new(scorer))
-        };
-        info!("  ✓ VTrust scorer initialized");
-
-        // Initialize mempool
-        info!("📝 Initializing transaction mempool...");
-        let mempool = Arc::new(Mempool::new(config.mempool.max_size, config.node.chain_id));
-        info!(
-            "  ✓ Mempool initialized (max size: {}, chain_id: {})",
-            config.mempool.max_size, config.node.chain_id
-        );
-
-        // Check if genesis block exists, create if not.
-        // Treat DB serialization errors (corrupt entry from prior run) the same as absent.
-        let genesis_missing = match storage.get_block_by_height(0) {
-            Ok(Some(_)) => false,
-            Ok(None) => true,
-            Err(e) => {
-                warn!(
-                    "  ⚠️ Corrupt genesis entry in DB ({}), overwriting with fresh genesis \
-                     — wipe data_dir for a clean start",
-                    e
-                );
-                true
-            }
-        };
-        if genesis_missing {
-            info!("🌱 Creating genesis block...");
-            let genesis = Block::genesis();
-            storage.store_block(&genesis)?;
-            info!("  ✓ Genesis block created: {:?}", genesis.hash());
-        } else {
-            info!("  ✓ Genesis block found");
-        }
-
-        // Initialize development accounts ONLY in dev mode
-        // In production, genesis balances should come from the genesis block/config
-        if config.node.dev_mode {
-            let dev_accounts: &[[u8; 20]] = &[
-                [
-                    0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8, 0x82,
-                    0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66,
-                ],
-                [
-                    0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01, 0x0c, 0x7d, 0x01,
-                    0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8,
-                ],
-                [
-                    0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58, 0x5d, 0xd2, 0x99,
-                    0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc,
-                ],
-            ];
-
-            for addr_bytes in dev_accounts {
-                let dev_address = luxtensor_core::Address::from(*addr_bytes);
-                let mut dev_account = luxtensor_core::Account::new();
-                dev_account.balance = 10_000_000_000_000_000_000_000_u128; // 10000 ETH in wei
-                state_db.write().set_account(dev_address, dev_account);
-            }
-            warn!(
-                "⚠️  DEV MODE: {} genesis accounts initialized with 10000 ETH each",
-                dev_accounts.len()
-            );
-        }
-
-        // Initialize reward executor for epoch processing
-        let dao_address = parse_address_from_hex(&config.node.dao_address).unwrap_or_else(|_| {
-            warn!("Invalid DAO address in config, using default zero address");
-            [0u8; 20]
-        });
-        let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
-        info!("  ✓ Reward executor initialized with DAO: 0x{}", hex::encode(&dao_address));
-
-        // Initialize token allocation for TGE and vesting
-        let tge_timestamp = current_timestamp();
-        let token_allocation = Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)));
-        info!("  ✓ Token allocation initialized");
-
-        // Initialize node registry for progressive staking
-        let node_registry = Arc::new(RwLock::new(NodeRegistry::new()));
-        info!("  ✓ Node registry initialized");
-
-        // Initialize database maintenance (backup/restore/pruning)
-        let db_maintenance = Arc::new(DbMaintenance::new(
-            config.storage.db_path.clone(),
-            BackupConfig {
-                backup_dir: config.node.data_dir.join("backups"),
-                max_backups: 5,
-                compress: true,
-            },
-            PruningConfig::default(),
-        ));
-        info!("  ✓ Database maintenance initialized");
-
-        // Initialize eclipse attack protection
-        let eclipse_protection = Arc::new(EclipseProtection::new(EclipseConfig::default()));
-        info!("  ✓ Eclipse protection initialized");
-
-        // Initialize long-range attack protection.
-        // Gracefully handle corrupt/empty DB entries from a previously interrupted run
-        // by falling back to an all-zero genesis hash instead of crashing the node.
-        let genesis_hash = match storage.get_block_by_height(0) {
-            Ok(Some(block)) => block.hash(),
-            Ok(None) => {
-                info!("  ℹ Long-range protection: no genesis block yet, using zero hash");
-                [0u8; 32]
-            }
-            Err(e) => {
-                warn!(
-                    "  ⚠️ Long-range protection: failed to read genesis block ({}), \
-                     using zero hash — wipe data_dir if this persists",
-                    e
-                );
-                [0u8; 32]
-            }
-        };
-        let long_range_protection =
-            Arc::new(LongRangeProtection::new(LongRangeConfig::default(), genesis_hash));
-        info!("  ✓ Long-range protection initialized");
-
-        // Initialize liveness monitor
-        let liveness_monitor =
-            Arc::new(RwLock::new(LivenessMonitor::new(LivenessConfig::default())));
-        info!("  ✓ Liveness monitor initialized");
-
-        // Initialize graceful shutdown handler
-        let graceful_shutdown = Arc::new(GracefulShutdown::new(ShutdownConfig::default()));
-        info!("  ✓ Graceful shutdown handler initialized");
-
-        // Restore mempool from previous shutdown backup (if exists)
-        {
-            let mempool_backup_path = format!("{}/mempool.bin", graceful_shutdown.config().backup_dir);
-            match mempool.load_from_file(&mempool_backup_path) {
-                Ok(0) => {} // No backup found or empty — silent
-                Ok(count) => info!("  ✓ Restored {} pending transactions from previous session", count),
-                Err(e) => warn!("  ⚠️ Failed to load mempool backup: {} (starting fresh)", e),
-            }
-        }
-
-        // Initialize health monitor
-        let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
-        info!("  ✓ Health monitor initialized");
-
-        // Initialize FastFinality (BFT-style finality via 2/3 validator signatures)
-        let fast_finality = Arc::new(RwLock::new(
-            FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
-                .map_err(|e| anyhow::anyhow!("FastFinality init failed: {}", e))?,
-        ));
-        info!("  ✓ Fast finality initialized (threshold: 67%)");
-
-        // Initialize ForkChoice (GHOST algorithm for canonical chain selection).
-        // Gracefully fall back to a fresh genesis block if the stored entry is corrupt.
-        let genesis_block = match storage.get_block_by_height(0) {
-            Ok(Some(block)) => block,
-            Ok(None) => {
-                info!("  ℹ Fork choice: genesis block not in DB yet, using fresh genesis");
-                Block::genesis()
-            }
-            Err(e) => {
-                warn!(
-                    "  ⚠️ Fork choice: failed to read genesis block from DB ({}), \
-                     using fresh genesis — wipe data_dir if this persists",
-                    e
-                );
-                Block::genesis()
-            }
-        };
-        let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
-        info!("  ✓ Fork choice (GHOST) initialized");
-
-        // Initialize Metagraph DB for AI subnet/neuron metadata
-        let metagraph_path = config.node.data_dir.join("metagraph");
-        std::fs::create_dir_all(&metagraph_path)
-            .context(format!("Failed to create metagraph directory: {:?}", metagraph_path))?;
-        let metagraph_db = Arc::new(
-            MetagraphDB::open(&metagraph_path)
-                .context(format!("Failed to open metagraph DB at {:?}", metagraph_path))?,
-        );
-        info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
-
-        // Initialize transaction executor with MetagraphDB attached.
-        // The executor intercepts tx.to == PRECOMPILE_METAGRAPH and writes
-        // to MetagraphDB instead of calling the EVM. This propagates neuron/
-        // validator/subnet ops to ALL nodes via standard block gossip.
-        // Initialize AI Precompile State (before executor, so it can be attached)
-        let ai_precompile_state = Arc::new(luxtensor_contracts::AIPrecompileState::new());
-        info!("  ✓ AI precompile state initialized (AI_REQUEST, VERIFY_PROOF, VECTOR_STORE, etc.)");
-
-        info!("⚡ Initializing transaction executor...");
-        let executor = Arc::new(
-            TransactionExecutor::new(config.node.chain_id)
-                .with_metagraph(metagraph_db.clone())
-                .with_ai_precompiles(ai_precompile_state.clone())
-        );
-        info!("  ✓ Transaction executor initialized (chain_id: {}, metagraph + AI precompiles: attached)",
-            config.node.chain_id);
-
-        // Initialize AI Task Dispatcher for DePIN workload distribution
-        let task_dispatcher =
-            Arc::new(TaskDispatcher::new(metagraph_db.clone(), DispatcherConfig::default()));
-        info!("  ✓ AI Task Dispatcher initialized");
-
-        // Initialize RANDAO mixer for unbiased randomness accumulation
-        let randao =
-            Arc::new(RwLock::new(RandaoMixer::with_genesis(RandaoConfig::default(), genesis_hash)));
-        info!("  ✓ RANDAO mixer initialized");
-
-        // Initialize Slashing manager
-        let slashing_manager = Arc::new(RwLock::new(SlashingManager::new(
-            SlashingConfig::default(),
-            Arc::new(RwLock::new(luxtensor_consensus::ValidatorSet::new())),
-        )));
-        info!("  ✓ Slashing manager initialized");
-
-        // Initialize Agentic EVM — Agent Registry + Trigger Engine
-        let agent_registry = Arc::new(AgentRegistry::with_defaults());
-        let agent_evm = Arc::new(EvmExecutor::new(config.node.chain_id as u64));
-        let agent_trigger_engine = Arc::new(AgentTriggerEngine::new(
-            agent_registry.clone(),
-            agent_evm,
-        ));
-        info!("  ✓ Agentic EVM initialized (agent registry + trigger engine)");
-
-        // Initialize Dispute Manager for optimistic AI execution
-        let dispute_manager = Arc::new(DisputeManager::default_config());
-        info!("  ✓ Dispute Manager initialized (optimistic AI fraud proofs)");
-
-        // Initialize Cross-Chain Bridge (RocksDB-backed persistent store)
-        let bridge_store = Arc::new(RocksDBBridgeStore::new(storage.inner_db()));
-        let bridge = Arc::new(
-            PersistentBridge::new(bridge_store, BridgeConfig::default())
-                .map_err(|e| luxtensor_core::CoreError::InvalidState(format!("Bridge init: {}", e)))?
-        );
-        info!("  ✓ Persistent bridge initialized (RocksDB-backed, write-through cache)");
-        info!("  ✓ Cross-Chain Bridge initialized (lock-and-mint / burn-and-release)");
-
-        // Initialize Multisig Wallet Manager
-        let multisig_manager = Arc::new(MultisigManager::new());
-        info!("  ✓ Multisig Manager initialized (N-of-M signature wallets)");
-
-        // Initialize network-layer rate limiter
-        let network_rate_limiter = Arc::new(NetworkRateLimiter::new(NetworkRateLimiterConfig {
-            requests_per_second: 50, // 50 msgs/s per peer
-            burst_size: 100,         // allow short bursts
-            ban_duration: std::time::Duration::from_secs(300),
-            violations_before_ban: 10,
-        }));
-        info!("  ✓ Network rate limiter initialized");
-
-        // Initialize Emission Controller (tokenomics: halving + utility-adjusted rewards)
-        let emission_controller = Arc::new(RwLock::new(
-            luxtensor_consensus::EmissionController::new(luxtensor_consensus::EmissionConfig::default()),
-        ));
-        info!("  ✓ Emission controller initialized");
-
-        // Initialize Halving Schedule (Bitcoin-like block reward halving)
-        let halving_schedule = Arc::new(luxtensor_consensus::HalvingSchedule::default());
-        info!("  ✓ Halving schedule initialized (interval: {} blocks)", luxtensor_consensus::HALVING_INTERVAL);
-
-        // Initialize Burn Manager (tx fee burn, subnet registration burn, slashing)
-        let burn_manager = Arc::new(
-            luxtensor_consensus::BurnManager::new(luxtensor_consensus::BurnConfig::default()),
-        );
-        info!("  ✓ Burn manager initialized");
-
-        // Initialize EIP-1559 Fee Market (dynamic gas pricing)
-        let fee_market = Arc::new(RwLock::new(luxtensor_consensus::FeeMarket::new()));
-        info!("  ✓ EIP-1559 fee market initialized (base_fee: {} gwei)",
-            luxtensor_consensus::FeeMarket::new().current_base_fee() / 1_000_000_000);
-
-        // Initialize Governance Module (on-chain voting for protocol changes)
-        let governance = Arc::new(RwLock::new(
-            luxtensor_consensus::GovernanceModule::new(luxtensor_consensus::GovernanceConfig::default()),
-        ));
-        info!("  ✓ Governance module initialized (on-chain proposals + voting)");
-
-        // Initialize Commit-Reveal Manager (tamper-proof weight submissions)
-        let commit_reveal = Arc::new(
-            luxtensor_consensus::CommitRevealManager::new(luxtensor_consensus::CommitRevealConfig::default()),
-        );
-        info!("  ✓ Commit-reveal manager initialized (anti-manipulation weight protocol)");
-
-        // Initialize Validator Rotation (epoch-based validator set management)
-        let validator_rotation = Arc::new(RwLock::new(
-            luxtensor_consensus::ValidatorRotation::new(luxtensor_consensus::RotationConfig::default()),
-        ));
-        info!("  ✓ Validator rotation initialized (automatic epoch transitions)");
-
-        // Initialize AI Layer Circuit Breaker (cascading failure protection)
-        let ai_circuit_breaker = Arc::new(luxtensor_consensus::AILayerCircuitBreaker::new());
-        info!("  ✓ AI layer circuit breaker initialized (weight_consensus + commit_reveal + emission)");
-
-        // Initialize Scoring Manager (miner/validator performance tracking)
-        let scoring_manager = Arc::new(RwLock::new(luxtensor_consensus::ScoringManager::new()));
-        info!("  ✓ Scoring manager initialized (miner + validator metrics)");
-
-        // Initialize World Semantic Index (cross-contract HNSW vector registry)
-        let semantic_registry = Arc::new(RwLock::new(
-            luxtensor_core::semantic_registry::SemanticRegistry::default(),
-        ));
-        info!("  ✓ Semantic registry initialized (world vector index, 7 domains)");
-
-        // (ai_precompile_state already initialized above, before executor)
-
-        // Initialize Proof of Training Verifier (gradient verification for federated learning)
-        let pot_verifier = Arc::new(RwLock::new(
-            luxtensor_zkvm::pot_verifier::PoTVerifier::new(),
-        ));
-        info!("  ✓ PoT verifier initialized (structural validation, ZK delegation when configured)");
-
-        // Initialize Oracle Request Processor (dev-mode: mock prover)
-        let request_processor = Arc::new(luxtensor_oracle::RequestProcessor::new());
-
-        // If oracle_elf_path is configured, load ELF binary and initialize for production ZK proofs
-        if let Some(ref elf_path) = config.node.oracle_elf_path {
-            match std::fs::read(elf_path) {
-                Ok(elf_bytes) => {
-                    info!("  📦 Loading Oracle ELF binary from {:?} ({} bytes)", elf_path, elf_bytes.len());
-                    match request_processor.initialize(Some(elf_bytes)).await {
-                        Ok(()) => info!("  ✓ Oracle request processor initialized (production ZK proofs)"),
-                        Err(e) => warn!("  ⚠️ Oracle ELF init failed: {} (falling back to dev-mode)", e),
-                    }
-                }
-                Err(e) => {
-                    warn!("  ⚠️ Failed to read Oracle ELF binary at {:?}: {} (running in dev-mode)", elf_path, e);
-                }
-            }
-        } else {
-            info!("  ✓ Oracle request processor initialized (dev-mode, set oracle_elf_path in config for production)");
-        }
-
-        // Create shutdown channel
+        // Shared channels
         let (shutdown_tx, _) = broadcast::channel(16);
-
-        // Get epoch length from consensus config
         let epoch_length = config.consensus.epoch_length;
+        let genesis_timestamp = Self::resolve_genesis_timestamp(&storage);
 
-        // Get genesis timestamp from genesis block (for slot calculation).
-        // This ensures all nodes use the same genesis timestamp from the chain.
-        // On DB error (corrupt entry), fall back to system time with a warning.
-        let genesis_timestamp = match storage.get_block_by_height(0) {
-            Ok(Some(block)) => block.header.timestamp,
-            Ok(None) => {
-                tracing::warn!(
-                    "No genesis block found — using current system time as genesis timestamp. \
-                     This node should sync the genesis block before participating in consensus."
-                );
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    .as_secs()
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Could not read genesis block for timestamp ({}), using system time \
-                     — wipe data_dir if this persists",
-                    e
-                );
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or(std::time::Duration::ZERO)
-                    .as_secs()
-            }
-        };
-
-        // Load validator keypair + VRF keypair if configured
-        let (validator_keypair, vrf_keypair) = if config.node.is_validator {
-            if let Some(key_path) = &config.node.validator_key_path {
-                match std::fs::read(key_path) {
-                    Ok(key_bytes) if key_bytes.len() >= 32 => {
-                        let mut secret = [0u8; 32];
-                        secret.copy_from_slice(&key_bytes[..32]);
-                        let result = KeyPair::from_secret(&secret);
-
-                        // ── 🎲 VRF keypair derivation (secp256k1 EC-VRF) ─────────────
-                        // Derive the VRF keypair from the same 32-byte secret so validators
-                        // don't need a separate key file. The VRF proof is attached to
-                        // every block header for verifiable randomness (C2 security fix).
-                        // MUST be done BEFORE zeroization of the secret.
-                        let vrf_kp = match luxtensor_crypto::vrf::VrfKeypair::from_seed(&secret) {
-                            Ok(kp) => {
-                                info!("🎲 VRF keypair derived (secp256k1 EC-VRF)");
-                                Some(Arc::new(kp))
-                            }
-                            Err(e) => {
-                                warn!("⚠️ Failed to derive VRF keypair: {}", e);
-                                None
-                            }
-                        };
-
-                        // Also set production-vrf key on consensus if feature is enabled.
-                        #[cfg(feature = "production-vrf")]
-                        {
-                            match consensus.read().set_vrf_key(&secret) {
-                                Ok(()) => info!("🎲 VRF key loaded (production-vrf)"),
-                                Err(e) => warn!("Failed to set VRF key: {}", e),
-                            }
-                        }
-
-                        // SECURITY: Zeroize secret key bytes after use
-                        secret.iter_mut().for_each(|b| *b = 0);
-                        match result {
-                            Ok(keypair) => {
-                                let address = keypair.address();
-                                info!(
-                                    "🔑 Loaded validator key, address: 0x{}",
-                                    hex::encode(&address)
-                                );
-                                (Some(keypair), vrf_kp)
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse validator key: {}", e);
-                                (None, None)
-                            }
-                        }
-                    }
-                    Ok(_) => {
-                        warn!("Validator key file too short, need at least 32 bytes");
-                        (None, None)
-                    }
-                    Err(e) => {
-                        warn!("Could not read validator key file: {}", e);
-                        (None, None)
-                    }
-                }
-            } else {
-                warn!("Validator mode enabled but no key path configured, blocks will be unsigned");
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
+        // Validator keypair + VRF
+        let (validator_keypair, vrf_keypair) =
+            Self::load_validator_keypair(&config, &consensus)?;
 
         Ok(Self {
             config,
@@ -730,7 +246,7 @@ impl NodeService {
             shutdown_tx,
             tasks: Vec::new(),
             epoch_length,
-            broadcast_tx: None, // Will be initialized in start()
+            broadcast_tx: None,
             genesis_timestamp,
             validator_keypair,
             db_maintenance,
@@ -749,8 +265,6 @@ impl NodeService {
             best_height_guard: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
                 initial_best_height,
             )),
-            // 🔧 FIX: If node already has blocks in storage, it was a restart — no sync needed.
-            // Only set syncing=true for brand-new nodes (height == 0).
             is_syncing: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(initial_best_height == 0)),
             agent_registry,
             agent_trigger_engine,
@@ -777,6 +291,481 @@ impl NodeService {
             request_processor,
             vrf_keypair,
         })
+    }
+
+    // ========================================================================
+    // Phase 1: Storage Layer
+    // ========================================================================
+
+    /// Initialize BlockchainDB, StateDB (with lazy bytecode loading), CachedStateDB,
+    /// genesis block, and dev-mode accounts.
+    async fn init_storage_layer(
+        config: &Config,
+    ) -> Result<(
+        Arc<BlockchainDB>,
+        Arc<RwLock<StateDB>>,
+        Arc<CachedStateDB>,
+        u64, // initial_best_height
+        [u8; 32], // genesis_hash
+    )> {
+        info!("📦 Initializing storage...");
+        let db_path_str = config
+            .storage
+            .db_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?;
+        let storage = Arc::new(BlockchainDB::open(db_path_str)?);
+        let initial_best_height = storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
+        info!("  ✓ Storage initialized at {:?}", config.storage.db_path);
+
+        info!("💾 Initializing state database...");
+        let state_db = Arc::new(RwLock::new(StateDB::new()));
+
+        // Restore persisted state from RocksDB on startup
+        {
+            let mut state = state_db.write();
+            match state.load_from_db(storage.as_ref()) {
+                Ok(count) if count > 0 => info!("  ✓ Restored {} accounts from disk", count),
+                Ok(_) => info!("  ✓ No persisted state found (fresh node)"),
+                Err(e) => warn!("  ⚠️ Failed to load persisted state: {} (starting fresh)", e),
+            }
+        }
+
+        // Wire lazy bytecode loader
+        {
+            let mut state = state_db.write();
+            state.set_code_store(storage.clone());
+        }
+        info!("  ✓ State database initialized (lazy bytecode loading enabled)");
+
+        // Merkle cache
+        let storage_state_db = Arc::new(parking_lot::RwLock::new(
+            luxtensor_storage::StateDB::new(storage.inner_db()),
+        ));
+        let merkle_cache = Arc::new(CachedStateDB::with_defaults(storage_state_db));
+        info!("  ✓ Merkle cache initialized (height_cache=256, account_hashes=4096)");
+
+        // Genesis block
+        let genesis_missing = match storage.get_block_by_height(0) {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            Err(e) => {
+                warn!("  ⚠️ Corrupt genesis entry in DB ({}), overwriting", e);
+                true
+            }
+        };
+        if genesis_missing {
+            info!("🌱 Creating genesis block...");
+            let genesis = Block::genesis();
+            storage.store_block(&genesis)?;
+            info!("  ✓ Genesis block created: {:?}", genesis.hash());
+        } else {
+            info!("  ✓ Genesis block found");
+        }
+
+        // Genesis hash for downstream modules
+        let genesis_hash = match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block.hash(),
+            _ => [0u8; 32],
+        };
+
+        // Dev-mode accounts
+        if config.node.dev_mode {
+            let dev_accounts: &[[u8; 20]] = &[
+                [0xf3, 0x9f, 0xd6, 0xe5, 0x1a, 0xad, 0x88, 0xf6, 0xf4, 0xce, 0x6a, 0xb8, 0x82,
+                 0x72, 0x79, 0xcf, 0xff, 0xb9, 0x22, 0x66],
+                [0x70, 0x99, 0x79, 0x70, 0xc5, 0x18, 0x12, 0xdc, 0x3a, 0x01, 0x0c, 0x7d, 0x01,
+                 0xb5, 0x0e, 0x0d, 0x17, 0xdc, 0x79, 0xc8],
+                [0x3c, 0x44, 0xcd, 0xdd, 0xb6, 0xa9, 0x00, 0xfa, 0x2b, 0x58, 0x5d, 0xd2, 0x99,
+                 0xe0, 0x3d, 0x12, 0xfa, 0x42, 0x93, 0xbc],
+            ];
+            for addr_bytes in dev_accounts {
+                let dev_address = luxtensor_core::Address::from(*addr_bytes);
+                let mut dev_account = luxtensor_core::Account::new();
+                dev_account.balance = 10_000_000_000_000_000_000_000_u128;
+                state_db.write().set_account(dev_address, dev_account);
+            }
+            warn!("⚠️  DEV MODE: {} genesis accounts initialized with 10000 ETH each", dev_accounts.len());
+        }
+
+        Ok((storage, state_db, merkle_cache, initial_best_height, genesis_hash))
+    }
+
+    // ========================================================================
+    // Phase 2: Consensus + Mempool
+    // ========================================================================
+
+    /// Initialize PoS consensus, VTrust scorer, mempool, rewards, allocation, registry.
+    fn init_consensus_and_mempool(
+        config: &Config,
+        storage: &Arc<BlockchainDB>,
+        state_db: &Arc<RwLock<StateDB>>,
+    ) -> Result<(
+        Arc<RwLock<ProofOfStake>>,
+        Arc<RwLock<VTrustScorer>>,
+        std::path::PathBuf,
+        Arc<Mempool>,
+        Arc<RwLock<RewardExecutor>>,
+        Arc<RwLock<TokenAllocation>>,
+        Arc<RwLock<NodeRegistry>>,
+    )> {
+        info!("⚖️  Initializing consensus...");
+        let consensus_config = ConsensusConfig {
+            slot_duration: config.consensus.block_time,
+            min_stake: config.consensus.min_stake.parse().map_err(|e| {
+                anyhow::anyhow!("min_stake '{}' is not a valid u128: {}", config.consensus.min_stake, e)
+            })?,
+            block_reward: luxtensor_core::constants::tokenomics::INITIAL_BLOCK_REWARD,
+            epoch_length: config.consensus.epoch_length,
+            ..Default::default()
+        };
+        let consensus = Arc::new(RwLock::new(ProofOfStake::new(consensus_config)));
+        info!("  ✓ PoS consensus initialized (min_stake: {}, epoch: {} blocks)",
+            config.consensus.min_stake, config.consensus.epoch_length);
+
+        // VTrust scorer
+        let vtrust_snapshot_path = config.node.data_dir.join("vtrust_snapshot.json");
+        let vtrust_scorer = {
+            let mut scorer = VTrustScorer::new();
+            match std::fs::read(&vtrust_snapshot_path) {
+                Ok(bytes) => match serde_json::from_slice::<VTrustSnapshot>(&bytes) {
+                    Ok(snapshot) => { scorer.restore(snapshot); info!("  ✓ VTrust scorer restored"); }
+                    Err(e) => warn!("  ⚠️ Failed to deserialize VTrust snapshot: {}", e),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => info!("  ✓ No VTrust snapshot found"),
+                Err(e) => warn!("  ⚠️ Failed to read VTrust snapshot: {}", e),
+            }
+            Arc::new(RwLock::new(scorer))
+        };
+
+        // Mempool
+        info!("📝 Initializing transaction mempool...");
+        let mempool = Arc::new(Mempool::new(config.mempool.max_size, config.node.chain_id));
+        info!("  ✓ Mempool initialized (max: {}, chain_id: {})", config.mempool.max_size, config.node.chain_id);
+
+        // Reward executor
+        let dao_address = parse_address_from_hex(&config.node.dao_address).unwrap_or_else(|_| {
+            warn!("Invalid DAO address in config, using zero address");
+            [0u8; 20]
+        });
+        let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
+        info!("  ✓ Reward executor initialized with DAO: 0x{}", hex::encode(&dao_address));
+
+        let tge_timestamp = current_timestamp();
+        let token_allocation = Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)));
+        let node_registry = Arc::new(RwLock::new(NodeRegistry::new()));
+        info!("  ✓ Token allocation + node registry initialized");
+
+        // Suppress unused variable warnings — these refs are used for type validation
+        let _ = (storage, state_db);
+
+        Ok((consensus, vtrust_scorer, vtrust_snapshot_path, mempool,
+            reward_executor, token_allocation, node_registry))
+    }
+
+    // ========================================================================
+    // Phase 3: Security Modules
+    // ========================================================================
+
+    /// Initialize security, monitoring, and consensus finality modules.
+    fn init_security_modules(
+        config: &Config,
+        storage: &Arc<BlockchainDB>,
+        mempool: &Arc<Mempool>,
+        genesis_hash: [u8; 32],
+    ) -> Result<(
+        Arc<DbMaintenance>,
+        Arc<EclipseProtection>,
+        Arc<LongRangeProtection>,
+        Arc<RwLock<LivenessMonitor>>,
+        Arc<GracefulShutdown>,
+        Arc<RwLock<HealthMonitor>>,
+        Arc<RwLock<FastFinality>>,
+        Arc<RwLock<ForkChoice>>,
+    )> {
+        let db_maintenance = Arc::new(DbMaintenance::new(
+            config.storage.db_path.clone(),
+            BackupConfig {
+                backup_dir: config.node.data_dir.join("backups"),
+                max_backups: 5,
+                compress: true,
+            },
+            PruningConfig::default(),
+        ));
+
+        let eclipse_protection = Arc::new(EclipseProtection::new(EclipseConfig::default()));
+        let long_range_protection = Arc::new(LongRangeProtection::new(LongRangeConfig::default(), genesis_hash));
+        let liveness_monitor = Arc::new(RwLock::new(LivenessMonitor::new(LivenessConfig::default())));
+        let graceful_shutdown = Arc::new(GracefulShutdown::new(ShutdownConfig::default()));
+        info!("  ✓ Security modules initialized (eclipse, long-range, liveness, graceful shutdown)");
+
+        // Restore mempool from previous shutdown backup
+        {
+            let mempool_backup_path = format!("{}/mempool.bin", graceful_shutdown.config().backup_dir);
+            match mempool.load_from_file(&mempool_backup_path) {
+                Ok(0) => {}
+                Ok(count) => info!("  ✓ Restored {} pending transactions from previous session", count),
+                Err(e) => warn!("  ⚠️ Failed to load mempool backup: {} (fresh)", e),
+            }
+        }
+
+        let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
+
+        let fast_finality = Arc::new(RwLock::new(
+            FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
+                .map_err(|e| anyhow::anyhow!("FastFinality init failed: {}", e))?,
+        ));
+        info!("  ✓ Fast finality initialized (BFT threshold: 67%)");
+
+        let genesis_block = match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block,
+            _ => Block::genesis(),
+        };
+        let fork_choice = Arc::new(RwLock::new(ForkChoice::new(genesis_block)));
+        info!("  ✓ Fork choice (GHOST) initialized");
+
+        Ok((db_maintenance, eclipse_protection, long_range_protection,
+            liveness_monitor, graceful_shutdown, health_monitor,
+            fast_finality, fork_choice))
+    }
+
+    // ========================================================================
+    // Phase 4: AI Pipeline
+    // ========================================================================
+
+    /// Initialize MetagraphDB, transaction executor, AI task dispatcher, agents, and scoring.
+    async fn init_ai_pipeline(
+        config: &Config,
+        _storage: &Arc<BlockchainDB>,
+        genesis_hash: [u8; 32],
+    ) -> Result<(
+        Arc<MetagraphDB>,
+        Arc<TransactionExecutor>,
+        Arc<luxtensor_contracts::AIPrecompileState>,
+        Arc<TaskDispatcher>,
+        Arc<RwLock<RandaoMixer>>,
+        Arc<RwLock<SlashingManager>>,
+        Arc<AgentRegistry>,
+        Arc<AgentTriggerEngine>,
+        Arc<DisputeManager>,
+        Arc<RwLock<luxtensor_consensus::ScoringManager>>,
+        Arc<RwLock<luxtensor_core::semantic_registry::SemanticRegistry>>,
+        Arc<RwLock<luxtensor_zkvm::pot_verifier::PoTVerifier>>,
+        Arc<luxtensor_oracle::RequestProcessor>,
+    )> {
+        // MetagraphDB
+        let metagraph_path = config.node.data_dir.join("metagraph");
+        std::fs::create_dir_all(&metagraph_path)
+            .context(format!("Failed to create metagraph directory: {:?}", metagraph_path))?;
+        let metagraph_db = Arc::new(
+            MetagraphDB::open(&metagraph_path)
+                .context(format!("Failed to open metagraph DB at {:?}", metagraph_path))?,
+        );
+        info!("  ✓ Metagraph DB initialized at {:?}", metagraph_path);
+
+        // AI precompile state + executor
+        let ai_precompile_state = Arc::new(luxtensor_contracts::AIPrecompileState::new());
+        info!("⚡ Initializing transaction executor...");
+        let executor = Arc::new(
+            TransactionExecutor::new(config.node.chain_id)
+                .with_metagraph(metagraph_db.clone())
+                .with_ai_precompiles(ai_precompile_state.clone())
+        );
+        info!("  ✓ Transaction executor initialized (chain_id: {}, metagraph + AI precompiles)", config.node.chain_id);
+
+        // Task dispatcher, RANDAO, slashing
+        let task_dispatcher = Arc::new(TaskDispatcher::new(metagraph_db.clone(), DispatcherConfig::default()));
+        let randao = Arc::new(RwLock::new(RandaoMixer::with_genesis(RandaoConfig::default(), genesis_hash)));
+        let slashing_manager = Arc::new(RwLock::new(SlashingManager::new(
+            SlashingConfig::default(),
+            Arc::new(RwLock::new(luxtensor_consensus::ValidatorSet::new())),
+        )));
+
+        // Agentic EVM
+        let agent_registry = Arc::new(AgentRegistry::with_defaults());
+        let agent_evm = Arc::new(EvmExecutor::new(config.node.chain_id as u64));
+        let agent_trigger_engine = Arc::new(AgentTriggerEngine::new(agent_registry.clone(), agent_evm));
+        info!("  ✓ AI pipeline initialized (task dispatcher, RANDAO, slashing, agentic EVM)");
+
+        // Disputes, scoring, semantic
+        let dispute_manager = Arc::new(DisputeManager::default_config());
+        let scoring_manager = Arc::new(RwLock::new(luxtensor_consensus::ScoringManager::new()));
+        let semantic_registry = Arc::new(RwLock::new(
+            luxtensor_core::semantic_registry::SemanticRegistry::default(),
+        ));
+        let pot_verifier = Arc::new(RwLock::new(luxtensor_zkvm::pot_verifier::PoTVerifier::new()));
+        info!("  ✓ Dispute manager + scoring + semantic registry + PoT verifier initialized");
+
+        // Oracle processor
+        let request_processor = Arc::new(luxtensor_oracle::RequestProcessor::new());
+        if let Some(ref elf_path) = config.node.oracle_elf_path {
+            match std::fs::read(elf_path) {
+                Ok(elf_bytes) => {
+                    info!("  📦 Loading Oracle ELF ({} bytes)", elf_bytes.len());
+                    match request_processor.initialize(Some(elf_bytes)).await {
+                        Ok(()) => info!("  ✓ Oracle processor initialized (production ZK proofs)"),
+                        Err(e) => warn!("  ⚠️ Oracle ELF init failed: {} (dev-mode)", e),
+                    }
+                }
+                Err(e) => warn!("  ⚠️ Failed to read Oracle ELF: {} (dev-mode)", e),
+            }
+        } else {
+            info!("  ✓ Oracle processor initialized (dev-mode)");
+        }
+
+        Ok((metagraph_db, executor, ai_precompile_state, task_dispatcher,
+            randao, slashing_manager, agent_registry, agent_trigger_engine,
+            dispute_manager, scoring_manager, semantic_registry,
+            pot_verifier, request_processor))
+    }
+
+    // ========================================================================
+    // Phase 5: Tokenomics + Infrastructure
+    // ========================================================================
+
+    /// Initialize emission, halving, burn, fees, governance, bridge, and multisig.
+    fn init_tokenomics_and_infra(
+        _config: &Config,
+        storage: &Arc<BlockchainDB>,
+    ) -> Result<(
+        Arc<NetworkRateLimiter>,
+        Arc<RwLock<luxtensor_consensus::EmissionController>>,
+        Arc<luxtensor_consensus::HalvingSchedule>,
+        Arc<luxtensor_consensus::BurnManager>,
+        Arc<RwLock<luxtensor_consensus::FeeMarket>>,
+        Arc<RwLock<luxtensor_consensus::GovernanceModule>>,
+        Arc<luxtensor_consensus::CommitRevealManager>,
+        Arc<RwLock<luxtensor_consensus::ValidatorRotation>>,
+        Arc<luxtensor_consensus::AILayerCircuitBreaker>,
+        Arc<PersistentBridge>,
+        Arc<MultisigManager>,
+    )> {
+        let network_rate_limiter = Arc::new(NetworkRateLimiter::new(NetworkRateLimiterConfig {
+            requests_per_second: 50,
+            burst_size: 100,
+            ban_duration: std::time::Duration::from_secs(300),
+            violations_before_ban: 10,
+        }));
+
+        let emission_controller = Arc::new(RwLock::new(
+            luxtensor_consensus::EmissionController::new(luxtensor_consensus::EmissionConfig::default()),
+        ));
+        let halving_schedule = Arc::new(luxtensor_consensus::HalvingSchedule::default());
+        let burn_manager = Arc::new(
+            luxtensor_consensus::BurnManager::new(luxtensor_consensus::BurnConfig::default()),
+        );
+        let fee_market = Arc::new(RwLock::new(luxtensor_consensus::FeeMarket::new()));
+        let governance = Arc::new(RwLock::new(
+            luxtensor_consensus::GovernanceModule::new(luxtensor_consensus::GovernanceConfig::default()),
+        ));
+        let commit_reveal = Arc::new(
+            luxtensor_consensus::CommitRevealManager::new(luxtensor_consensus::CommitRevealConfig::default()),
+        );
+        let validator_rotation = Arc::new(RwLock::new(
+            luxtensor_consensus::ValidatorRotation::new(luxtensor_consensus::RotationConfig::default()),
+        ));
+        let ai_circuit_breaker = Arc::new(luxtensor_consensus::AILayerCircuitBreaker::new());
+        info!("  ✓ Tokenomics pipeline initialized (emission, halving, burn, EIP-1559, governance, rotation)");
+
+        // Bridge
+        let bridge_store = Arc::new(RocksDBBridgeStore::new(storage.inner_db()));
+        let bridge = Arc::new(
+            PersistentBridge::new(bridge_store, BridgeConfig::default())
+                .map_err(|e| luxtensor_core::CoreError::InvalidState(format!("Bridge init: {}", e)))?
+        );
+        let multisig_manager = Arc::new(MultisigManager::new());
+        info!("  ✓ Bridge + multisig initialized");
+
+        Ok((network_rate_limiter, emission_controller, halving_schedule,
+            burn_manager, fee_market, governance, commit_reveal,
+            validator_rotation, ai_circuit_breaker, bridge, multisig_manager))
+    }
+
+    // ========================================================================
+    // Shared helpers for new()
+    // ========================================================================
+
+    /// Resolve genesis timestamp from the stored genesis block, falling back to system time.
+    fn resolve_genesis_timestamp(storage: &Arc<BlockchainDB>) -> u64 {
+        match storage.get_block_by_height(0) {
+            Ok(Some(block)) => block.header.timestamp,
+            Ok(None) => {
+                tracing::warn!("No genesis block found — using system time as genesis timestamp.");
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs()
+            }
+            Err(e) => {
+                tracing::warn!("Could not read genesis block for timestamp ({}), using system time", e);
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs()
+            }
+        }
+    }
+
+    /// Load validator keypair and VRF keypair from config, if this node is a validator.
+    fn load_validator_keypair(
+        config: &Config,
+        _consensus: &Arc<RwLock<ProofOfStake>>,
+    ) -> Result<(Option<KeyPair>, Option<Arc<luxtensor_crypto::vrf::VrfKeypair>>)> {
+        if !config.node.is_validator {
+            return Ok((None, None));
+        }
+
+        let key_path = match &config.node.validator_key_path {
+            Some(p) => p,
+            None => {
+                warn!("Validator mode enabled but no key path configured, blocks will be unsigned");
+                return Ok((None, None));
+            }
+        };
+
+        let key_bytes = match std::fs::read(key_path) {
+            Ok(bytes) if bytes.len() >= 32 => bytes,
+            Ok(_) => {
+                warn!("Validator key file too short, need at least 32 bytes");
+                return Ok((None, None));
+            }
+            Err(e) => {
+                warn!("Could not read validator key file: {}", e);
+                return Ok((None, None));
+            }
+        };
+
+        let mut secret = [0u8; 32];
+        secret.copy_from_slice(&key_bytes[..32]);
+        let result = KeyPair::from_secret(&secret);
+
+        // VRF keypair derivation (secp256k1 EC-VRF) — MUST be done BEFORE zeroization
+        let vrf_kp = match luxtensor_crypto::vrf::VrfKeypair::from_seed(&secret) {
+            Ok(kp) => { info!("🎲 VRF keypair derived (secp256k1 EC-VRF)"); Some(Arc::new(kp)) }
+            Err(e) => { warn!("⚠️ Failed to derive VRF keypair: {}", e); None }
+        };
+
+        #[cfg(feature = "production-vrf")]
+        {
+            match _consensus.read().set_vrf_key(&secret) {
+                Ok(()) => info!("🎲 VRF key loaded (production-vrf)"),
+                Err(e) => warn!("Failed to set VRF key: {}", e),
+            }
+        }
+
+        // SECURITY: Zeroize secret key bytes after use
+        secret.iter_mut().for_each(|b| *b = 0);
+
+        match result {
+            Ok(keypair) => {
+                info!("🔑 Loaded validator key, address: 0x{}", hex::encode(&keypair.address()));
+                Ok((Some(keypair), vrf_kp))
+            }
+            Err(e) => {
+                warn!("Failed to parse validator key: {}", e);
+                Ok((None, None))
+            }
+        }
     }
 
     // NOTE: `start()` has been moved to `startup.rs`

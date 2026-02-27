@@ -59,7 +59,7 @@ class ValidatorAIAgent:
         self.config = config or {}
         self.is_ready = False
         
-        logger.info(f"ValidatorAIAgent initialized for validator {validator_uid}")
+        logger.info("ValidatorAIAgent initialized for validator %s", validator_uid)
     
     def setup(self) -> None:
         """Setup the agent and subnet"""
@@ -84,12 +84,12 @@ class ValidatorAIAgent:
         if not self.is_ready:
             raise RuntimeError("Agent not setup. Call setup() first.")
         
-        logger.debug(f"Creating task for miner {context.miner_uid}")
+        logger.debug("Creating task for miner %s", context.miner_uid)
         
         # Use subnet to create task
         task = self.subnet.create_task(context)
         
-        logger.debug(f"Task {task.task_id} created")
+        logger.debug("Task %s created", task.task_id)
         
         return task
     
@@ -107,7 +107,7 @@ class ValidatorAIAgent:
         if not self.is_ready:
             raise RuntimeError("Agent not setup. Call setup() first.")
         
-        logger.debug(f"Scoring result for task {task.task_id}")
+        logger.debug("Scoring result for task %s", task.task_id)
         
         # Use custom scorer if available, otherwise use subnet's scorer
         if self.scorer:
@@ -118,7 +118,7 @@ class ValidatorAIAgent:
         # Add validator UID to score
         score.validator_uid = self.validator_uid
         
-        logger.debug(f"Result scored: {score.value:.3f}")
+        logger.debug("Result scored: %s", score.value:.3f)
         
         return score
     
@@ -137,11 +137,11 @@ class ValidatorAIAgent:
         Returns:
             Consensus score
         """
-        logger.debug(f"Aggregating consensus from {len(validator_scores)} validators")
+        logger.debug("Aggregating consensus from %s validators", len(validator_scores))
         
         consensus = aggregator.aggregate(validator_scores)
         
-        logger.debug(f"Consensus reached: {consensus.value:.3f}")
+        logger.debug("Consensus reached: %s", consensus.value:.3f)
         
         return consensus
     

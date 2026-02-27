@@ -85,7 +85,7 @@ class ConsensusAggregator:
         self.outlier_threshold = outlier_threshold
         self.min_validators = min_validators
         
-        logger.info(f"ConsensusAggregator initialized with method: {method}")
+        logger.info("ConsensusAggregator initialized with method: %s", method)
     
     def aggregate(
         self,

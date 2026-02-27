@@ -77,7 +77,7 @@ class ZkmlMixin:
                 params["submitter"] = submitter
             return self._rpc()._call_rpc("zkml_submitProof", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to submit zkML proof: {e}")
+            logger.error("Failed to submit zkML proof: %s", e)
             raise
 
     def zkml_get_proof(self, proof_id: str) -> Optional[Dict[str, Any]]:
@@ -93,7 +93,7 @@ class ZkmlMixin:
         try:
             return self._rpc()._call_rpc("zkml_getProof", [proof_id])
         except Exception as e:
-            logger.warning(f"Failed to get zkML proof {proof_id}: {e}")
+            logger.warning("Failed to get zkML proof %s: %s", proof_id, e)
             return None
 
     def zkml_verify_proof(self, proof_id: str) -> Dict[str, Any]:
@@ -109,7 +109,7 @@ class ZkmlMixin:
         try:
             return self._rpc()._call_rpc("zkml_verifyProof", [proof_id]) or {}
         except Exception as e:
-            logger.error(f"Failed to verify zkML proof {proof_id}: {e}")
+            logger.error("Failed to verify zkML proof %s: %s", proof_id, e)
             return {"valid": False, "error": str(e)}
 
     def zkml_generate_proof(
@@ -138,7 +138,7 @@ class ZkmlMixin:
                 params["requester"] = requester
             return self._rpc()._call_rpc("zkml_generateProof", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to generate zkML proof: {e}")
+            logger.error("Failed to generate zkML proof: %s", e)
             raise
 
     # ---------------------------------------------------------------
@@ -170,7 +170,7 @@ class ZkmlMixin:
                 params["description"] = description
             return self._rpc()._call_rpc("zkml_registerModel", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to register zkML model {model_hash}: {e}")
+            logger.error("Failed to register zkML model %s: %s", model_hash, e)
             raise
 
     def zkml_list_trusted_models(self) -> List[Dict[str, Any]]:
@@ -184,7 +184,7 @@ class ZkmlMixin:
             result = self._rpc()._call_rpc("zkml_listTrustedModels", [])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to list trusted zkML models: {e}")
+            logger.warning("Failed to list trusted zkML models: %s", e)
             return []
 
     def zkml_is_model_trusted(self, model_hash: str) -> bool:
@@ -203,5 +203,5 @@ class ZkmlMixin:
                 return bool(result.get("trusted", False))
             return bool(result)
         except Exception as e:
-            logger.warning(f"Failed to check zkML model trust for {model_hash}: {e}")
+            logger.warning("Failed to check zkML model trust for %s: %s", model_hash, e)
             return False

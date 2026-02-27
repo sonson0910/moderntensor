@@ -57,6 +57,7 @@ impl Mempool {
     }
 
     /// Create mempool with custom config
+    #[allow(dead_code)]
     pub fn with_config(
         max_size: usize,
         max_per_sender: usize,
@@ -79,6 +80,7 @@ impl Mempool {
 
     /// Create mempool for development (no signature validation, relaxed limits)
     /// WARNING: Only use for local development/testing!
+    #[allow(dead_code)]
     pub fn new_dev_mode(max_size: usize, chain_id: u64) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -199,6 +201,7 @@ impl Mempool {
 
 
     /// Get all pending transactions
+    #[allow(dead_code)]
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
         let txs = self.transactions.read();
         txs.values().map(|t| t.tx.clone()).collect()
@@ -254,11 +257,13 @@ impl Mempool {
     }
 
     /// Check if mempool is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.transactions.read().is_empty()
     }
 
     /// Get a specific transaction by hash
+    #[allow(dead_code)]
     pub fn get_transaction(&self, hash: &Hash) -> Option<Transaction> {
         self.transactions.read().get(hash).map(|t| t.tx.clone())
     }

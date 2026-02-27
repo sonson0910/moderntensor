@@ -81,22 +81,22 @@ class SecurityManager:
     def add_to_blacklist(self, ip_address: str):
         """Add an IP to the blacklist."""
         self.blacklist_ips.add(ip_address)
-        logger.warning(f"Added {ip_address} to blacklist")
+        logger.warning("Added %s to blacklist", ip_address)
 
     def remove_from_blacklist(self, ip_address: str):
         """Remove an IP from the blacklist."""
         self.blacklist_ips.discard(ip_address)
-        logger.info(f"Removed {ip_address} from blacklist")
+        logger.info("Removed %s from blacklist", ip_address)
 
     def add_to_whitelist(self, ip_address: str):
         """Add an IP to the whitelist."""
         self.whitelist_ips.add(ip_address)
-        logger.info(f"Added {ip_address} to whitelist")
+        logger.info("Added %s to whitelist", ip_address)
 
     def remove_from_whitelist(self, ip_address: str):
         """Remove an IP from the whitelist."""
         self.whitelist_ips.discard(ip_address)
-        logger.info(f"Removed {ip_address} from whitelist")
+        logger.info("Removed %s from whitelist", ip_address)
 
     async def check_rate_limit(
         self,
@@ -220,7 +220,7 @@ class SecurityManager:
         # Store hash and expiry, never plain text key
         self.api_keys[uid] = (key_hash, expiry)
 
-        logger.info(f"Registered new API key for UID: {uid} (expires: {expiry.date()})")
+        logger.info("Registered new API key for UID: %s (expires: %s)", uid, expiry.date())
         return api_key  # Return plain key to user ONCE
 
     def verify_api_key(self, uid: str, api_key: str) -> bool:
@@ -247,7 +247,7 @@ class SecurityManager:
 
         # Check expiration first (fail-fast)
         if datetime.now() > expiry:
-            logger.warning(f"Expired API key used for UID: {uid}")
+            logger.warning("Expired API key used for UID: %s", uid)
             return False
 
         # Hash the provided key and compare
@@ -308,7 +308,7 @@ class SecurityManager:
         """Revoke an API key for a UID."""
         if uid in self.api_keys:
             del self.api_keys[uid]
-            logger.info(f"Revoked API key for UID: {uid}")
+            logger.info("Revoked API key for UID: %s", uid)
 
     def record_failed_auth(self, ip_address: str) -> int:
         """
@@ -554,7 +554,7 @@ class DDoSProtection:
     def _block_ip(self, ip_address: str):
         """Temporarily block an IP address."""
         self.blocked_ips[ip_address] = datetime.now()
-        logger.warning(f"Blocked IP {ip_address} for DDoS protection")
+        logger.warning("Blocked IP %s for DDoS protection", ip_address)
 
     async def increment_connections(self, ip_address: str):
         """Increment concurrent connection count."""
@@ -723,7 +723,7 @@ class JWTAuthenticator:
             return True, payload
 
         except Exception as e:
-            logger.error(f"Token verification error: {e}")
+            logger.error("Token verification error: %s", e)
             return False, None
 
     def revoke_token(self, token: str):

@@ -81,7 +81,7 @@ class RateLimiter:
         # Check limit
         if len(self.buckets[address]) >= self.config.max_requests:
             self.blocked.add(address)
-            logger.warning(f"Rate limit exceeded for {address}")
+            logger.warning("Rate limit exceeded for %s", address)
             return False
 
         # Add current request
@@ -759,7 +759,7 @@ class AuditLogger:
             expected_hash = hashlib.sha256(data).hexdigest()
 
             if event.get('hash') != expected_hash:
-                logger.error(f"Audit log integrity check failed at index {i}")
+                logger.error("Audit log integrity check failed at index %s", i)
                 return False
 
         return True

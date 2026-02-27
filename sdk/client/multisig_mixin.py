@@ -70,7 +70,7 @@ class MultisigMixin:
                 params["name"] = name
             return self._rpc()._call_rpc("multisig_createWallet", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to create multisig wallet: {e}")
+            logger.error("Failed to create multisig wallet: %s", e)
             raise
 
     def multisig_get_wallet(self, wallet_id: str) -> Optional[Dict[str, Any]]:
@@ -86,7 +86,7 @@ class MultisigMixin:
         try:
             return self._rpc()._call_rpc("multisig_getWallet", [wallet_id])
         except Exception as e:
-            logger.warning(f"Failed to get multisig wallet {wallet_id}: {e}")
+            logger.warning("Failed to get multisig wallet %s: %s", wallet_id, e)
             return None
 
     # ---------------------------------------------------------------
@@ -154,7 +154,7 @@ class MultisigMixin:
                 self._rpc()._call_rpc("multisig_approveTransaction", [params]) or {}
             )
         except Exception as e:
-            logger.error(f"Failed to approve multisig transaction {tx_id}: {e}")
+            logger.error("Failed to approve multisig transaction %s: %s", tx_id, e)
             return {"success": False, "error": str(e)}
 
     def multisig_get_transaction(self, tx_id: str) -> Optional[Dict[str, Any]]:
@@ -170,7 +170,7 @@ class MultisigMixin:
         try:
             return self._rpc()._call_rpc("multisig_getTransaction", [tx_id])
         except Exception as e:
-            logger.warning(f"Failed to get multisig transaction {tx_id}: {e}")
+            logger.warning("Failed to get multisig transaction %s: %s", tx_id, e)
             return None
 
     def multisig_get_pending_for_wallet(

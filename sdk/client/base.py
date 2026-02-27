@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
-from sdk.errors import parse_rpc_error
+from sdk.errors import parse_rpc_error, LuxtensorConnectionError
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +60,17 @@ class BaseClient:
     All mixin classes expect these methods to be available.
     """
 
-    url: str
-    network: str
-    timeout: int
-    _request_id: int
-    _http_client: Optional[httpx.Client]
+    def __init__(
+        self,
+        url: str = "http://localhost:8545",
+        network: str = "testnet",
+        timeout: int = 30,
+    ) -> None:
+        self.url = url
+        self.network = network
+        self.timeout = timeout
+        self._request_id: int = 0
+        self._http_client: Optional[httpx.Client] = None
 
     def _get_request_id(self) -> int:
         """Get next request ID"""
@@ -111,10 +117,10 @@ class BaseClient:
             return result.get("result")
 
         except httpx.RequestError as e:
-            logger.error(f"Request error: {e}")
-            raise Exception(f"Failed to connect to Luxtensor at {self.url}: {e}")
+            logger.error("Request error: %s", e)
+            raise LuxtensorConnectionError(self.url, e)
         except Exception as e:
-            logger.error(f"RPC call failed: {e}")
+            logger.error("RPC call failed: %s", e)
             raise
 
     def _safe_call_rpc(self, method: str, params: Optional[List[Any]] = None) -> Optional[Any]:
@@ -134,7 +140,7 @@ class BaseClient:
         try:
             return self._call_rpc(method, params)
         except Exception as e:
-            logger.warning(f"RPC call {method} failed (safe mode): {e}")
+            logger.warning("RPC call %s failed (safe mode): %s", method, e)
             return None
 
     @staticmethod
@@ -203,7 +209,7 @@ class BaseClient:
                 for resp in responses:
                     resp_id = resp.get("id")
                     if "error" in resp:
-                        logger.warning(f"Batch RPC error (id={resp_id}): {resp['error']}")
+                        logger.warning("Batch RPC error (id=%s): %s", resp_id, resp['error'])
                         id_to_result[resp_id] = None
                     else:
                         id_to_result[resp_id] = resp.get("result")
@@ -215,6 +221,6 @@ class BaseClient:
             ]
 
         except Exception as e:
-            logger.error(f"Batch RPC call failed: {e}")
+            logger.error("Batch RPC call failed: %s", e)
             return [None] * len(requests)
 

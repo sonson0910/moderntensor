@@ -13,7 +13,7 @@ use luxtensor_storage::{BlockchainDB, CachedStateDB};
 use parking_lot::RwLock;
 use serde_json::json;
 use std::sync::Arc;
-use tracing::warn as _unused_warn; // reserved for future error logging
+
 
 /// Context for system RPC methods.
 pub struct SystemRpcContext {

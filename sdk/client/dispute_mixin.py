@@ -72,7 +72,7 @@ class DisputeMixin:
                 params["description"] = description
             return self._rpc()._call_rpc("dispute_submit", [params]) or {}
         except Exception as e:
-            logger.error(f"Failed to submit dispute against {target}: {e}")
+            logger.error("Failed to submit dispute against %s: %s", target, e)
             raise
 
     def dispute_get_status(self, dispute_id: str) -> Optional[Dict[str, Any]]:
@@ -88,7 +88,7 @@ class DisputeMixin:
         try:
             return self._rpc()._call_rpc("dispute_getStatus", [dispute_id])
         except Exception as e:
-            logger.warning(f"Failed to get dispute status {dispute_id}: {e}")
+            logger.warning("Failed to get dispute status %s: %s", dispute_id, e)
             return None
 
     def dispute_get_stats(self) -> Dict[str, Any]:
@@ -101,5 +101,5 @@ class DisputeMixin:
         try:
             return self._rpc()._call_rpc("dispute_stats", []) or {}
         except Exception as e:
-            logger.warning(f"Failed to get dispute stats: {e}")
+            logger.warning("Failed to get dispute stats: %s", e)
             return {}

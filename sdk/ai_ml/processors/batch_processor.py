@@ -81,7 +81,7 @@ class BatchProcessor:
         # Dynamic batching
         self.current_batch_size = config.max_batch_size
         
-        logger.info(f"BatchProcessor initialized with config: {config}")
+        logger.info("BatchProcessor initialized with config: %s", config)
     
     async def process(self, tasks: List[Task]) -> List[Result]:
         """
@@ -138,7 +138,7 @@ class BatchProcessor:
         start_time = time.time()
         batch_size = len(tasks)
         
-        logger.debug(f"Processing batch of {batch_size} tasks")
+        logger.debug("Processing batch of %s tasks", batch_size)
         
         try:
             # Process batch
@@ -152,12 +152,12 @@ class BatchProcessor:
             if self.config.enable_dynamic_batching:
                 self._adjust_batch_size(latency_ms)
             
-            logger.debug(f"Batch processed in {latency_ms:.2f}ms")
+            logger.debug("Batch processed in %sms", latency_ms:.2f)
             
             return results
         
         except Exception as e:
-            logger.error(f"Batch processing failed: {e}")
+            logger.error("Batch processing failed: %s", e)
             raise
     
     def _update_metrics(self, batch_size: int, latency_ms: float) -> None:
@@ -188,7 +188,7 @@ class BatchProcessor:
                 self.config.min_batch_size,
                 int(self.current_batch_size * 0.8)
             )
-            logger.debug(f"Decreased batch size to {self.current_batch_size}")
+            logger.debug("Decreased batch size to %s", self.current_batch_size)
         
         # If latency too low, increase batch size
         elif latency_ms < target * 0.8:
@@ -196,7 +196,7 @@ class BatchProcessor:
                 self.config.max_batch_size,
                 int(self.current_batch_size * 1.2)
             )
-            logger.debug(f"Increased batch size to {self.current_batch_size}")
+            logger.debug("Increased batch size to %s", self.current_batch_size)
     
     def get_metrics(self) -> Dict[str, Any]:
         """

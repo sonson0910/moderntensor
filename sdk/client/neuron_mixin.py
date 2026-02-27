@@ -68,7 +68,7 @@ class NeuronMixin:
         try:
             return self._rpc()._call_rpc("lux_getNeuron", [subnet_uid, uid])
         except Exception as e:
-            logger.warning(f"Failed to get neuron {uid} in subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get neuron %s in subnet %s: %s", uid, subnet_uid, e)
             return None
 
     def get_neurons(self, subnet_uid: int) -> List[Dict[str, Any]]:
@@ -85,7 +85,7 @@ class NeuronMixin:
             result = self._rpc()._call_rpc("lux_getNeurons", [subnet_uid])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get neurons for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get neurons for subnet %s: %s", subnet_uid, e)
             return []
 
     def get_neuron_count(self, subnet_uid: int) -> int:
@@ -104,7 +104,7 @@ class NeuronMixin:
                 return int(result.get("count", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get neuron count for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get neuron count for subnet %s: %s", subnet_uid, e)
             return 0
 
     def neuron_exists(self, subnet_uid: int, uid: int) -> bool:
@@ -139,7 +139,7 @@ class NeuronMixin:
             result = self._rpc()._call_rpc("lux_getWeights", [subnet_uid, uid])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get weights for neuron {uid} in subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get weights for neuron %s in subnet %s: %s", uid, subnet_uid, e)
             return []
 
     def get_all_neuron_weights(self, subnet_uid: int) -> List[Dict[str, Any]]:
@@ -156,7 +156,7 @@ class NeuronMixin:
             result = self._rpc()._call_rpc("lux_getAllWeights", [subnet_uid])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get all weights for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get all weights for subnet %s: %s", subnet_uid, e)
             return []
 
     # ------------------------------------------------------------------
@@ -181,7 +181,7 @@ class NeuronMixin:
             uid_set = set(uids)
             return [n for n in all_neurons if n.get("uid") in uid_set]
         except Exception as e:
-            logger.warning(f"Failed to get neurons batch for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get neurons batch for subnet %s: %s", subnet_uid, e)
             return []
 
     def get_active_neurons(self, subnet_uid: int) -> List[Dict[str, Any]]:
@@ -200,7 +200,7 @@ class NeuronMixin:
                 return []
             return [n for n in all_neurons if n.get("active", False)]
         except Exception as e:
-            logger.warning(f"Failed to get active neurons for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get active neurons for subnet %s: %s", subnet_uid, e)
             return []
 
     # ------------------------------------------------------------------
@@ -235,7 +235,7 @@ class NeuronMixin:
                 }
             return None
         except Exception as e:
-            logger.warning(f"Failed to get axon info for neuron {uid}: {e}")
+            logger.warning("Failed to get axon info for neuron %s: %s", uid, e)
             return None
 
     def get_prometheus_info(self, subnet_uid: int, uid: int) -> Optional[Dict[str, Any]]:
@@ -255,7 +255,7 @@ class NeuronMixin:
                 }
             return None
         except Exception as e:
-            logger.warning(f"Failed to get prometheus info for neuron {uid}: {e}")
+            logger.warning("Failed to get prometheus info for neuron %s: %s", uid, e)
             return None
 
     def get_total_neurons(self) -> int:
@@ -279,7 +279,7 @@ class NeuronMixin:
                         total += int(result)
             return total
         except Exception as e:
-            logger.warning(f"Failed to get total neurons: {e}")
+            logger.warning("Failed to get total neurons: %s", e)
             return 0
 
     # ------------------------------------------------------------------
@@ -330,5 +330,5 @@ class NeuronMixin:
                 return str(neuron.get("stake_decimal", neuron.get("stake", "0")))
             return "0"
         except Exception as e:
-            logger.warning(f"Failed to get stake for neuron {uid}: {e}")
+            logger.warning("Failed to get stake for neuron %s: %s", uid, e)
             return "0"

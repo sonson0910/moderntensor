@@ -180,7 +180,7 @@ class ForkResolver:
         """Mark a block as finalized."""
         with self._lock:
             self._finalized_blocks.add(block_hash)
-            logger.debug(f"Finalized block: {block_hash[:16]}...")
+            logger.debug("Finalized block: %.16s...", block_hash)
 
     def finalize_up_to(self, blocks: List[BlockInfo], height: int) -> None:
         """Mark all blocks up to a certain height as finalized."""
@@ -188,7 +188,7 @@ class ForkResolver:
             for block in blocks:
                 if block.height <= height:
                     self._finalized_blocks.add(block.hash)
-            logger.info(f"Finalized blocks up to height {height}")
+            logger.info("Finalized blocks up to height %s", height)
 
     def is_finalized(self, block_hash: str) -> bool:
         """Check if a block is finalized."""

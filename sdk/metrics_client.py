@@ -198,15 +198,15 @@ class MetricsClient:
         """Print formatted status of node and indexer."""
         try:
             node = self.get_node_metrics()
-            logger.info(f"Node: {node}")
+            logger.info("Node: %s", node)
         except Exception as e:
-            logger.error(f"Node error: {e}")
+            logger.error("Node error: %s", e)
 
         try:
             indexer = self.get_indexer_metrics()
-            logger.info(f"Indexer: {indexer}")
+            logger.info("Indexer: %s", indexer)
         except Exception as e:
-            logger.error(f"Indexer error: {e}")
+            logger.error("Indexer error: %s", e)
 
 
 if __name__ == "__main__":

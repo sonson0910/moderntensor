@@ -339,10 +339,15 @@ impl CachedStateDB {
 
     /// Rollback uncommitted changes in the underlying `StateDB`.
     ///
-    /// **Note:** this does *not* roll back the height cache — callers should
-    /// call [`clear_caches`] if they want a full reset.
+    /// **SECURITY:** Also invalidates `last_root` and the per-account hash cache
+    /// to prevent stale reads.  After rollback, the next `commit()` will always
+    /// recompute the state root from scratch rather than returning a cached value
+    /// from a prior (now-reverted) block.
     pub fn rollback(&self) {
         self.inner.read().rollback();
+        // Invalidate caches that may reference the rolled-back state.
+        self.account_hash_cache.write().clear();
+        *self.last_root.write() = None;
     }
 
     /// Clear the underlying `StateDB` in-memory cache (for testing).
@@ -369,6 +374,37 @@ impl CachedStateDB {
         *self.last_root.write() = None;
     }
 
+    /// Invalidate all cached state roots for block heights **strictly above**
+    /// `height`.  The root at `height` itself (if cached) is kept.
+    ///
+    /// This is the correct operation after a chain reorganization: the node
+    /// rolls back to block `height` and all higher-height roots are stale.
+    ///
+    /// Also clears `last_root` if it references a height above the cutoff.
+    pub fn invalidate_roots_above(&self, height: u64) {
+        let mut cache = self.root_cache.write();
+        // LRU cache doesn't support range deletion, so collect keys first.
+        let stale_heights: Vec<u64> = cache
+            .iter()
+            .filter_map(|(&h, _)| if h > height { Some(h) } else { None })
+            .collect();
+        for h in stale_heights {
+            cache.pop(&h);
+        }
+        drop(cache);
+
+        // Clear last_root if it is above the cutoff.
+        let mut last = self.last_root.write();
+        if let Some((last_h, _)) = *last {
+            if last_h > height {
+                *last = None;
+            }
+        }
+
+        // Account hash cache may reference rolled-back state — clear it.
+        self.account_hash_cache.write().clear();
+    }
+
     /// Number of accounts currently in the underlying `StateDB` in-memory cache.
     pub fn cache_size(&self) -> usize {
         self.inner.read().cache_size()
@@ -381,8 +417,17 @@ impl CachedStateDB {
 
     /// Direct access to the underlying shared `StateDB`.
     ///
-    /// Prefer the delegated methods above whenever possible.  This accessor
-    /// exists for subsystems that need the raw `Arc` for their own locking.
+    /// # Security Warning
+    ///
+    /// **Mutations performed through this accessor bypass the `CachedStateDB`
+    /// cache invalidation logic.**  If you call `inner().write().set_balance()`
+    /// (or any other mutating method) directly, the per-account hash cache and
+    /// the height-based root cache will **not** be updated, potentially causing
+    /// stale reads on subsequent `commit()` or `get_state_root()` calls.
+    ///
+    /// Prefer the delegated methods (`set_balance`, `set_account`, `transfer`,
+    /// etc.) whenever possible.  Only use this accessor for **read-only**
+    /// operations or for subsystems that manage their own cache invalidation.
     pub fn inner(&self) -> &Arc<RwLock<StateDB>> {
         &self.inner
     }
@@ -603,5 +648,93 @@ mod tests {
         };
         assert!((stats.hit_ratio() - 0.7).abs() < f64::EPSILON);
         assert!((stats.incremental_ratio() - 0.75).abs() < f64::EPSILON);
+    }
+
+    /// SECURITY: rollback must invalidate last_root so subsequent commit()
+    /// with 0 dirty accounts does NOT return a stale root.
+    #[test]
+    fn test_rollback_invalidates_root_cache() {
+        let (_dir, cached) = create_test_cached_db();
+        let addr = Address::try_from_slice(&[1u8; 20]).unwrap();
+
+        // Commit at height 1.
+        cached.set_balance(&addr, 1_000).unwrap();
+        let root1 = cached.commit(1).unwrap();
+        assert_eq!(cached.last_state_root(), Some((1, root1)));
+
+        // Modify, then rollback.
+        cached.set_balance(&addr, 9_999).unwrap();
+        cached.rollback();
+
+        // last_root must be None after rollback.
+        assert!(
+            cached.last_state_root().is_none(),
+            "rollback must clear last_root to prevent stale reads"
+        );
+
+        // Re-commit at height 1 — must recompute, not use stale cache.
+        // Since we rolled back the 9_999 change, balance is back to 1_000
+        // and commit should produce the same root as before.
+        let root_after = cached.commit(1).unwrap();
+        assert_eq!(root_after, root1);
+    }
+
+    /// Chain reorg: invalidate_roots_above(5) must evict heights > 5.
+    #[test]
+    fn test_reorg_invalidation() {
+        let (_dir, cached) = create_test_cached_db();
+        let addr = Address::try_from_slice(&[1u8; 20]).unwrap();
+
+        // Commit at heights 1..=8.
+        for h in 1..=8u64 {
+            cached.set_balance(&addr, h as u128 * 100).unwrap();
+            cached.commit(h).unwrap();
+        }
+
+        // Simulate reorg back to height 5.
+        cached.invalidate_roots_above(5);
+
+        // Heights 1-5 should still be cached.
+        for h in 1..=5u64 {
+            assert!(
+                cached.get_state_root(h).is_some(),
+                "Height {} should still be cached after reorg to 5",
+                h
+            );
+        }
+
+        // Heights 6-8 should be evicted.
+        for h in 6..=8u64 {
+            assert!(
+                cached.get_state_root(h).is_none(),
+                "Height {} should be evicted after reorg to 5",
+                h
+            );
+        }
+
+        // last_root was at height 8 — should be cleared.
+        assert!(
+            cached.last_state_root().is_none(),
+            "last_root at height 8 must be cleared after reorg to 5"
+        );
+    }
+
+    /// Commit at a different height with 0 dirty must recompute (not return stale).
+    #[test]
+    fn test_commit_different_height_no_dirty_recomputes() {
+        let (_dir, cached) = create_test_cached_db();
+        let addr = Address::try_from_slice(&[1u8; 20]).unwrap();
+
+        cached.set_balance(&addr, 500).unwrap();
+        let root1 = cached.commit(1).unwrap();
+
+        // Commit at height 2 with no changes — should recompute, not skip.
+        let root2 = cached.commit(2).unwrap();
+        // Same state → same root hash, but it should have been computed (not skipped).
+        assert_eq!(root1, root2);
+
+        let stats = cached.stats();
+        // Two actual computations (height 1 and height 2).
+        assert_eq!(stats.full_computations + stats.incremental_computations, 2);
     }
 }

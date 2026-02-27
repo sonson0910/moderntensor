@@ -69,7 +69,7 @@ class MetagraphMixin:
             result = self._rpc()._call_rpc("metagraph_getState", [subnet_id])
             return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.error(f"Failed to get metagraph state for subnet {subnet_id}: {e}")
+            logger.error("Failed to get metagraph state for subnet %s: %s", subnet_id, e)
             return {}
 
     def metagraph_get_weights(self, subnet_id: int) -> List[Dict[str, Any]]:
@@ -86,7 +86,7 @@ class MetagraphMixin:
             result = self._rpc()._call_rpc("metagraph_getWeights", [subnet_id])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get metagraph weights for subnet {subnet_id}: {e}")
+            logger.warning("Failed to get metagraph weights for subnet %s: %s", subnet_id, e)
             return []
 
     def get_metagraph_snapshot(self, subnet_id: int) -> Dict[str, Any]:
@@ -118,7 +118,7 @@ class MetagraphMixin:
             result = self._rpc()._call_rpc("lux_getEmissions", [subnet_id])
             return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.warning(f"Failed to get emissions for subnet {subnet_id}: {e}")
+            logger.warning("Failed to get emissions for subnet %s: %s", subnet_id, e)
             return {}
 
     def get_emissions_for_all_subnets(self) -> List[Dict[str, Any]]:
@@ -141,7 +141,7 @@ class MetagraphMixin:
                         results.append(emission)
             return results
         except Exception as e:
-            logger.error(f"Failed to get emissions for all subnets: {e}")
+            logger.error("Failed to get emissions for all subnets: %s", e)
             return []
 
     # ------------------------------------------------------------------
@@ -181,7 +181,7 @@ class MetagraphMixin:
                 "total_neurons": total_neurons,
             }
         except Exception as e:
-            logger.error(f"Failed to get network state: {e}")
+            logger.error("Failed to get network state: %s", e)
             return {"subnets": [], "total_subnets": 0, "total_neurons": 0}
 
     # ------------------------------------------------------------------
@@ -204,7 +204,7 @@ class MetagraphMixin:
                 return []
             return [n for n in all_neurons if n.get("is_validator", False)]
         except Exception as e:
-            logger.warning(f"Failed to get validator info for subnet {subnet_id}: {e}")
+            logger.warning("Failed to get validator info for subnet %s: %s", subnet_id, e)
             return []
 
     def is_validator(self, subnet_id: int, hotkey: str) -> bool:
@@ -222,7 +222,7 @@ class MetagraphMixin:
             validators = self.get_validator_info(subnet_id)
             return any(v.get("hotkey", "").lower() == hotkey.lower() for v in validators)
         except Exception as e:
-            logger.warning(f"Failed to check validator status for {hotkey}: {e}")
+            logger.warning("Failed to check validator status for %s: %s", hotkey, e)
             return False
 
     def get_system_node_roles(self) -> Dict[str, Any]:
@@ -236,5 +236,5 @@ class MetagraphMixin:
             result = self._rpc()._call_rpc("system_nodeRoles", [])
             return result if isinstance(result, dict) else {}
         except Exception as e:
-            logger.warning(f"Failed to get system node roles: {e}")
+            logger.warning("Failed to get system node roles: %s", e)
             return {}

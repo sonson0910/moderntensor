@@ -42,7 +42,7 @@ class ParallelProcessor:
         else:
             self.executor = ThreadPoolExecutor(max_workers=num_workers)
         
-        logger.info(f"ParallelProcessor initialized with {num_workers} workers")
+        logger.info("ParallelProcessor initialized with %s workers", num_workers)
     
     async def process_parallel(
         self,

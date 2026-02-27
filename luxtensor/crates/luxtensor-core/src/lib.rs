@@ -29,4 +29,4 @@ pub use subnet::{
 pub use metagraph_tx::MetagraphTxPayload;
 pub use transaction::Transaction;
 pub use types::{Address, Hash};
-pub use unified_state::{ContractInfo, StorageSlot, UnifiedStateDB};
+pub use unified_state::{ContractInfo, StorageSlot, TransferOps, UnifiedStateDB};

@@ -191,7 +191,7 @@ class NeuronChecker:
         self.activity_threshold = activity_threshold or self.DEFAULT_ACTIVITY_THRESHOLD
         self.ping_timeout = ping_timeout or self.DEFAULT_PING_TIMEOUT
 
-        logger.info(f"NeuronChecker initialized (threshold={self.activity_threshold} blocks)")
+        logger.info("NeuronChecker initialized (threshold=%s blocks)", self.activity_threshold)
 
     # =========================================================================
     # Main Check Methods
@@ -263,7 +263,7 @@ class NeuronChecker:
             return info
 
         except Exception as e:
-            logger.error(f"Error checking registration for {hotkey}: {e}")
+            logger.error("Error checking registration for %s: %s", hotkey, e)
             info.status = NeuronStatus.NOT_REGISTERED
             info.status_message = f"Error: {str(e)}"
             return info
@@ -282,7 +282,7 @@ class NeuronChecker:
         try:
             return self.client.is_hotkey_registered(subnet_uid, hotkey)
         except Exception as e:
-            logger.error(f"Error checking registration: {e}")
+            logger.error("Error checking registration: %s", e)
             return False
 
     def is_neuron_active(
@@ -388,7 +388,7 @@ class NeuronChecker:
             return results
 
         except Exception as e:
-            logger.error(f"Error getting neurons status: {e}")
+            logger.error("Error getting neurons status: %s", e)
             return []
 
     def get_active_miners(self, subnet_uid: int) -> List[NeuronRegistrationInfo]:
@@ -449,7 +449,7 @@ class NeuronChecker:
             return False, 0
 
         except Exception as e:
-            logger.warning(f"Ping failed for {endpoint}: {e}")
+            logger.warning("Ping failed for %s: %s", endpoint, e)
             return False, 0
 
     async def batch_ping_endpoints(
@@ -504,7 +504,7 @@ class NeuronChecker:
             # Convert u16 to float
             return {i: w / 65535.0 for i, w in enumerate(weights) if w > 0}
         except Exception as e:
-            logger.error(f"Error getting weights: {e}")
+            logger.error("Error getting weights: %s", e)
             return {}
 
     # =========================================================================

@@ -42,7 +42,7 @@ class TaskCache:
         key = self._generate_key(task)
         if key in self.cache:
             self.hits += 1
-            logger.debug(f"Cache hit for task {task.task_id}")
+            logger.debug("Cache hit for task %s", task.task_id)
             return self.cache[key]
         self.misses += 1
         return None
@@ -56,7 +56,7 @@ class TaskCache:
         
         key = self._generate_key(task)
         self.cache[key] = result
-        logger.debug(f"Cached result for task {task.task_id}")
+        logger.debug("Cached result for task %s", task.task_id)
     
     def clear(self) -> None:
         """Clear cache"""
@@ -150,7 +150,7 @@ class BaseSubnet(SubnetProtocol):
         """
         self._setup_done = True
         self._initialized = True
-        logger.info(f"Subnet {self.__class__.__name__} initialized")
+        logger.info("Subnet %s initialized", self.__class__.__name__)
     
     def teardown(self) -> None:
         """
@@ -163,7 +163,7 @@ class BaseSubnet(SubnetProtocol):
             self.cache.clear()
         self._setup_done = False
         self._initialized = False
-        logger.info(f"Subnet {self.__class__.__name__} shut down")
+        logger.info("Subnet %s shut down", self.__class__.__name__)
     
     def is_ready(self) -> bool:
         """Check if subnet is ready"""
@@ -181,11 +181,11 @@ class BaseSubnet(SubnetProtocol):
             return False
         
         if not task.task_data:
-            logger.error(f"Task {task.task_id} missing task_data")
+            logger.error("Task %s missing task_data", task.task_id)
             return False
         
         if not task.context:
-            logger.error(f"Task {task.task_id} missing context")
+            logger.error("Task %s missing context", task.task_id)
             return False
         
         return True

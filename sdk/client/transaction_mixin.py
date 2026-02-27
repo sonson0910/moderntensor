@@ -52,7 +52,7 @@ class TransactionMixin:
             tx_hash = self._rpc()._call_rpc("eth_sendRawTransaction", [signed_tx])
             return TransactionResult(tx_hash=tx_hash, status="pending", block_number=None, error=None)
         except Exception as e:
-            logger.error(f"Failed to submit transaction: {e}")
+            logger.error("Failed to submit transaction: %s", e)
             return TransactionResult(tx_hash="", status="failed", block_number=None, error=str(e))
 
     def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
@@ -102,5 +102,5 @@ class TransactionMixin:
                 return receipt
             time.sleep(poll_interval)
 
-        logger.warning(f"Transaction {tx_hash} not mined after {timeout}s")
+        logger.warning("Transaction %s not mined after %ss", tx_hash, timeout)
         return None

@@ -225,7 +225,7 @@ class RoleManager:
             self._role_permissions[role] = set()
 
         self._role_permissions[role].add(permission)
-        logger.info(f"Added permission {permission.value} to role {role.value}")
+        logger.info("Added permission %s to role %s", permission.value, role.value)
 
     def remove_permission_from_role(self, role: Role, permission: Permission):
         """
@@ -237,7 +237,7 @@ class RoleManager:
         """
         if role in self._role_permissions:
             self._role_permissions[role].discard(permission)
-            logger.info(f"Removed permission {permission.value} from role {role.value}")
+            logger.info("Removed permission %s from role %s", permission.value, role.value)
 
     def list_roles(self) -> List[Role]:
         """List all defined roles."""
@@ -288,7 +288,7 @@ class AccessControl:
             )
 
             self.users[uid] = user
-            logger.info(f"Created user {uid} with roles: {[r.value for r in user.roles]}")
+            logger.info("Created user %s with roles: %s", uid, [r.value for r in user.roles])
 
             return user
 
@@ -315,7 +315,7 @@ class AccessControl:
             if uid in self.users:
                 del self.users[uid]
                 self._invalidate_cache(uid)
-                logger.info(f"Deleted user {uid}")
+                logger.info("Deleted user %s", uid)
 
     def assign_role(self, uid: str, role: Role):
         """
@@ -332,7 +332,7 @@ class AccessControl:
 
             user.add_role(role)
             self._invalidate_cache(uid)
-            logger.info(f"Assigned role {role.value} to user {uid}")
+            logger.info("Assigned role %s to user %s", role.value, uid)
 
     def revoke_role(self, uid: str, role: Role):
         """
@@ -349,7 +349,7 @@ class AccessControl:
 
             user.remove_role(role)
             self._invalidate_cache(uid)
-            logger.info(f"Revoked role {role.value} from user {uid}")
+            logger.info("Revoked role %s from user %s", role.value, uid)
 
     def grant_permission(self, uid: str, permission: Permission):
         """
@@ -366,7 +366,7 @@ class AccessControl:
 
             user.custom_permissions.add(permission)
             self._invalidate_cache(uid)
-            logger.info(f"Granted permission {permission.value} to user {uid}")
+            logger.info("Granted permission %s to user %s", permission.value, uid)
 
     def revoke_permission(self, uid: str, permission: Permission):
         """
@@ -383,7 +383,7 @@ class AccessControl:
 
             user.custom_permissions.discard(permission)
             self._invalidate_cache(uid)
-            logger.info(f"Revoked permission {permission.value} from user {uid}")
+            logger.info("Revoked permission %s from user %s", permission.value, uid)
 
     def get_user_permissions(self, uid: str) -> Set[Permission]:
         """

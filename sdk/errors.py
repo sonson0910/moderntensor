@@ -226,3 +226,19 @@ def check_rpc_response(response: Dict[str, Any]) -> Any:
     if "error" in response:
         raise parse_rpc_error(response["error"])
     return response.get("result")
+
+
+class LuxtensorConnectionError(Exception):
+    """Raised when unable to connect to a Luxtensor node.
+
+    Replaces bare ``Exception`` in ``BaseClient._call_rpc()`` so callers
+    can catch connection errors specifically without masking unrelated errors.
+    """
+
+    def __init__(self, url: str, cause: Optional[Exception] = None):
+        self.url = url
+        self.cause = cause
+        msg = f"Failed to connect to Luxtensor at {url}"
+        if cause:
+            msg += f": {cause}"
+        super().__init__(msg)

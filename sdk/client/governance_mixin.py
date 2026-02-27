@@ -52,7 +52,7 @@ class GovernanceMixin:
                 return int(balance, 16) if balance.startswith("0x") else int(balance)
             return 0
         except Exception as e:
-            logger.warning(f"Failed to get DAO balance: {e}")
+            logger.warning("Failed to get DAO balance: %s", e)
             return 0
 
     def get_proposal(self, proposal_id: int) -> Dict[str, Any]:
@@ -71,7 +71,7 @@ class GovernanceMixin:
                 "Governance features are not yet implemented."
             )
         except Exception as e:
-            logger.error(f"Error getting proposal {proposal_id}: {e}")
+            logger.error("Error getting proposal %s: %s", proposal_id, e)
             raise
 
     def get_proposals(self) -> List[Dict[str, Any]]:
@@ -87,7 +87,7 @@ class GovernanceMixin:
                 "Governance features are not yet implemented."
             )
         except Exception as e:
-            logger.error(f"Error getting proposals: {e}")
+            logger.error("Error getting proposals: %s", e)
             raise
 
     def get_senate_members(self) -> List[str]:
@@ -103,5 +103,5 @@ class GovernanceMixin:
                 "Governance features are not yet implemented."
             )
         except Exception as e:
-            logger.error(f"Error getting senate members: {e}")
+            logger.error("Error getting senate members: %s", e)
             raise

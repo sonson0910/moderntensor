@@ -19,6 +19,12 @@ pub enum OracleError {
 
     #[error("Dispute error: {0}")]
     DisputeError(String),
+
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Operation timed out after {0:?}")]
+    Timeout(std::time::Duration),
 }
 
 pub type Result<T> = std::result::Result<T, OracleError>;

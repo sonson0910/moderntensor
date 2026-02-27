@@ -54,7 +54,7 @@ class RewardMixin:
                 return int(pending, 16) if pending.startswith("0x") else int(pending)
             return 0
         except Exception as e:
-            logger.warning(f"Failed to get pending rewards for {address}: {e}")
+            logger.warning("Failed to get pending rewards for %s: %s", address, e)
             return 0
 
     def get_reward_stats(self) -> Dict[str, Any]:
@@ -68,7 +68,7 @@ class RewardMixin:
             result = self._rpc()._call_rpc("rewards_getStats", [])
             return result if result else {}
         except Exception as e:
-            logger.warning(f"Failed to get reward stats: {e}")
+            logger.warning("Failed to get reward stats: %s", e)
             return {}
 
     def get_reward_history(self, address: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -86,5 +86,5 @@ class RewardMixin:
             result = self._rpc()._call_rpc("rewards_getHistory", [address, limit])
             return result.get("history", []) if result else []
         except Exception as e:
-            logger.warning(f"Failed to get reward history for {address}: {e}")
+            logger.warning("Failed to get reward history for %s: %s", address, e)
             return []

@@ -112,7 +112,7 @@ class ProofGenerator:
         self.verification_key = None
         self.is_setup = False
 
-        logger.info(f"ProofGenerator initialized with backend: {config.backend}")
+        logger.info("ProofGenerator initialized with backend: %s", config.backend)
 
     def setup_circuit(
         self,
@@ -160,7 +160,7 @@ class ProofGenerator:
             import tempfile
             import os
 
-            logger.info(f"Compiling circuit from {model_path} using EZKL")
+            logger.info("Compiling circuit from %s using EZKL", model_path)
 
             # Verify model file exists
             if not model_path.exists():
@@ -173,7 +173,7 @@ class ProofGenerator:
                 # Export ONNX model to circuit using EZKL
                 if hasattr(ezkl, 'export'):
                     ezkl.export(str(model_path), compiled_path)
-                    logger.info(f"Model exported to circuit at {compiled_path}")
+                    logger.info("Model exported to circuit at %s", compiled_path)
 
                 # Generate calibration settings
                 if hasattr(ezkl, 'gen_settings'):
@@ -222,7 +222,7 @@ class ProofGenerator:
                 output_shape=[1],
             )
         except Exception as e:
-            logger.error(f"EZKL circuit compilation failed: {e}, using fallback")
+            logger.error("EZKL circuit compilation failed: %s, using fallback", e)
             from .circuit import Circuit
             return Circuit(
                 circuit_data={"mock": True, "model_path": str(model_path), "error": str(e)},
@@ -295,7 +295,7 @@ class ProofGenerator:
             self.proving_key = b"mock_proving_key"
             self.verification_key = b"mock_verification_key"
         except Exception as e:
-            logger.error(f"EZKL key generation failed: {e}, using mock keys")
+            logger.error("EZKL key generation failed: %s, using mock keys", e)
             self.proving_key = b"mock_proving_key"
             self.verification_key = b"mock_verification_key"
 
@@ -339,7 +339,7 @@ class ProofGenerator:
         circuit_hash = self._calculate_circuit_hash()
 
         proof_time = time.time() - start_time
-        logger.info(f"Proof generated in {proof_time:.2f}s")
+        logger.info("Proof generated in %ss", proof_time:.2f)
 
         return Proof(
             proof_data=proof_bytes,
@@ -419,7 +419,7 @@ class ProofGenerator:
             logger.warning("EZKL not installed, using mock proof")
             return self._generate_mock_proof(witness)
         except Exception as e:
-            logger.error(f"EZKL proof generation failed: {e}")
+            logger.error("EZKL proof generation failed: %s", e)
             return self._generate_mock_proof(witness)
 
     def _generate_mock_proof(self, witness: Dict[str, Any]) -> bytes:
@@ -489,7 +489,7 @@ class ProofGenerator:
                         proof_path,
                         vk_path,
                     )
-                    logger.info(f"EZKL verification result: {result}")
+                    logger.info("EZKL verification result: %s", result)
                     return bool(result)
 
                 # Fallback: validate proof structure
@@ -507,7 +507,7 @@ class ProofGenerator:
             logger.debug("Binary proof format detected, assuming valid")
             return True
         except Exception as e:
-            logger.error(f"Proof verification failed: {e}")
+            logger.error("Proof verification failed: %s", e)
             return self._verify_mock_proof(proof)
 
     def _verify_mock_proof(self, proof: Proof) -> bool:
@@ -528,7 +528,7 @@ class ProofGenerator:
         pk_path.write_bytes(self.proving_key)
         vk_path.write_bytes(self.verification_key)
 
-        logger.info(f"Keys saved to {directory}")
+        logger.info("Keys saved to %s", directory)
 
     def load_keys(self, directory: Path) -> None:
         """Load proving and verification keys"""
@@ -541,4 +541,4 @@ class ProofGenerator:
         self.proving_key = pk_path.read_bytes()
         self.verification_key = vk_path.read_bytes()
 
-        logger.info(f"Keys loaded from {directory}")
+        logger.info("Keys loaded from %s", directory)

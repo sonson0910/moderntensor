@@ -3,22 +3,23 @@ Async Luxtensor Client
 
 Asynchronous blockchain client for ModernTensor network.
 Provides non-blocking operations for all blockchain interactions.
+
+Uses httpx.AsyncClient for consistency with the sync BaseClient.
+
+Example::
+
+    async with AsyncLuxtensorClient("http://localhost:8545") as client:
+        block = await client.get_block_number()
+        neuron = await client.get_neuron(uid=0, netuid=1)
 """
 
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
-import aiohttp
-from aiohttp import ClientSession, ClientTimeout
+import httpx
 
-from sdk.models import (
-    NeuronInfo,
-    SubnetInfo,
-    StakeInfo,
-    BlockInfo,
-    TransactionInfo,
-)
+from .errors import parse_rpc_error, RpcError
 
 
 logger = logging.getLogger(__name__)
@@ -32,19 +33,21 @@ class AsyncLuxtensorClient:
     - Blockchain state queries
     - Transaction submission
     - Network information retrieval
-    - Real-time updates
 
-    Example:
-        ```python
-        async with AsyncLuxtensorClient("ws://localhost:8545") as client:
+    Uses ``httpx.AsyncClient`` internally, consistent with the sync
+    :class:`~sdk.client.base.BaseClient`.
+
+    Example::
+
+        async with AsyncLuxtensorClient("http://localhost:8545") as client:
             neuron = await client.get_neuron(uid=0, netuid=1)
-            print(f"Neuron stake: {neuron.stake}")
-        ```
+            print(f"Neuron stake: {neuron}")
     """
 
     def __init__(
         self,
-        url: str,
+        url: str = "http://localhost:8545",
+        network: str = "testnet",
         timeout: int = 30,
         max_connections: int = 100,
         retry_attempts: int = 3,
@@ -54,277 +57,153 @@ class AsyncLuxtensorClient:
         Initialize async Luxtensor client.
 
         Args:
-            url: WebSocket or HTTP URL to blockchain node
+            url: HTTP URL to blockchain RPC node
+            network: Network name (mainnet, testnet, devnet)
             timeout: Request timeout in seconds
             max_connections: Maximum number of concurrent connections
             retry_attempts: Number of retry attempts for failed requests
-            retry_delay: Delay between retries in seconds
+            retry_delay: Base delay between retries in seconds (exponential backoff)
         """
         self.url = url
-        self.timeout = ClientTimeout(total=timeout)
+        self.network = network
+        self.timeout = timeout
         self.max_connections = max_connections
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
 
-        self._session: Optional[ClientSession] = None
-        self._connection_pool_size = max_connections
+        self._client: Optional[httpx.AsyncClient] = None
         self._request_counter = 0
 
-        logger.info(f"Initialized AsyncLuxtensorClient with URL: {url}")
+        logger.info("Initialized AsyncLuxtensorClient for %s at %s", network, url)
 
-    async def __aenter__(self):
+    # =========================================================================
+    # Lifecycle
+    # =========================================================================
+
+    async def connect(self) -> None:
+        """Establish connection (create async HTTP client)."""
+        if self._client is None:
+            limits = httpx.Limits(
+                max_connections=self.max_connections,
+                max_keepalive_connections=self.max_connections,
+            )
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                limits=limits,
+            )
+            logger.info("Async connection established to %s", self.url)
+
+    async def close(self) -> None:
+        """Close connection and release resources."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+            logger.info("Async connection closed")
+
+    async def __aenter__(self) -> "AsyncLuxtensorClient":
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
         await self.close()
 
-    async def connect(self):
-        """Establish connection to blockchain node."""
-        if self._session is None:
-            connector = aiohttp.TCPConnector(
-                limit=self.max_connections,
-                limit_per_host=self.max_connections,
-            )
-            self._session = ClientSession(
-                connector=connector,
-                timeout=self.timeout,
-            )
-            logger.info("Connection established")
+    # =========================================================================
+    # Internal RPC
+    # =========================================================================
 
-    async def close(self):
-        """Close connection to blockchain node."""
-        if self._session:
-            await self._session.close()
-            self._session = None
-            logger.info("Connection closed")
+    def _get_request_id(self) -> int:
+        """Get next monotonically increasing request ID."""
+        self._request_counter += 1
+        return self._request_counter
 
-    async def _make_request(
+    async def _call_rpc(
         self,
         method: str,
         params: Optional[List[Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """
-        Make RPC request with retry logic.
+        Make a JSON-RPC 2.0 call with retry logic.
 
         Args:
             method: RPC method name
             params: Method parameters
 
         Returns:
-            Response data
+            Result from the RPC response
 
         Raises:
-            ConnectionError: If connection fails after retries
-            ValueError: If response is invalid
+            RpcError: If the server returns a JSON-RPC error
+            ConnectionError: If connection fails after all retries
         """
-        if not self._session:
+        if self._client is None:
             await self.connect()
-
-        self._request_counter += 1
-        request_id = self._request_counter
 
         payload = {
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": self._get_request_id(),
             "method": method,
             "params": params or [],
         }
 
+        last_exc: Optional[Exception] = None
+
         for attempt in range(self.retry_attempts):
             try:
-                async with self._session.post(self.url, json=payload) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+                response = await self._client.post(self.url, json=payload)
+                response.raise_for_status()
+                data = response.json()
 
-                    if "error" in data:
-                        raise ValueError(f"RPC error: {data['error']}")
+                if "error" in data:
+                    err = data["error"]
+                    # Use structured error parsing from sdk.errors
+                    raise parse_rpc_error(err)
 
-                    return data.get("result", {})
+                return data.get("result")
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                if attempt < self.retry_attempts - 1:
-                    logger.warning(
-                        f"Request failed (attempt {attempt + 1}/{self.retry_attempts}): {e}"
-                    )
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                else:
-                    logger.error(f"Request failed after {self.retry_attempts} attempts")
-                    raise ConnectionError(f"Failed to connect to {self.url}") from e
+            except RpcError:
+                raise  # server-side errors are not retryable
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_exc = exc
+                delay = self.retry_delay * (2 ** attempt)
+                logger.warning(
+                    "Async RPC to %s failed (attempt %d/%d): %s — retrying in %.1fs",
+                    self.url, attempt + 1, self.retry_attempts, exc, delay,
+                )
+                await asyncio.sleep(delay)
 
-        raise ConnectionError("Unexpected error in request")
+        raise ConnectionError(
+            f"Failed to connect to {self.url} after "
+            f"{self.retry_attempts} attempts: {last_exc}"
+        ) from last_exc
 
-    # =============================================================================
-    # Neuron Queries
-    # =============================================================================
-
-    async def get_neuron(self, uid: int, netuid: int) -> Optional[NeuronInfo]:
-        """
-        Get neuron information.
-
-        Args:
-            uid: Neuron UID
-            netuid: Network/subnet UID
-
-        Returns:
-            NeuronInfo object or None if not found
-        """
-        try:
-            result = await self._make_request(
-                "query_neuron",
-                params=[netuid, uid]
-            )
-            return NeuronInfo(**result) if result else None
-        except Exception as e:
-            logger.error(f"Error getting neuron {uid} on netuid {netuid}: {e}")
-            return None
-
-    async def get_neurons(self, netuid: int) -> List[NeuronInfo]:
-        """
-        Get all neurons in a subnet.
-
-        Args:
-            netuid: Network/subnet UID
-
-        Returns:
-            List of NeuronInfo objects
-        """
-        try:
-            result = await self._make_request(
-                "neuron_getAll",
-                params=[netuid]
-            )
-            return [NeuronInfo(**n) for n in result] if result else []
-        except Exception as e:
-            logger.error(f"Error getting neurons for netuid {netuid}: {e}")
-            return []
-
-    async def get_neurons_batch(
+    async def _safe_call_rpc(
         self,
-        uids: List[int],
-        netuid: int
-    ) -> List[Optional[NeuronInfo]]:
+        method: str,
+        params: Optional[List[Any]] = None,
+    ) -> Optional[Any]:
         """
-        Get multiple neurons in parallel (batch operation).
+        Safe RPC call that returns None instead of raising on error.
 
-        Args:
-            uids: List of neuron UIDs
-            netuid: Network/subnet UID
-
-        Returns:
-            List of NeuronInfo objects (None for not found)
-        """
-        tasks = [self.get_neuron(uid, netuid) for uid in uids]
-        return await asyncio.gather(*tasks)
-
-    # =============================================================================
-    # Subnet Queries
-    # =============================================================================
-
-    async def get_subnet(self, netuid: int) -> Optional[SubnetInfo]:
-        """
-        Get subnet information.
-
-        Args:
-            netuid: Network/subnet UID
-
-        Returns:
-            SubnetInfo object or None if not found
+        Suitable for query methods where missing data is not fatal.
         """
         try:
-            result = await self._make_request(
-                "subnet_getInfo",
-                params=[netuid]
-            )
-            return SubnetInfo(**result) if result else None
+            return await self._call_rpc(method, params)
         except Exception as e:
-            logger.error(f"Error getting subnet {netuid}: {e}")
+            logger.debug("Safe RPC call %s failed: %s", method, e)
             return None
 
-    async def get_subnets(self) -> List[SubnetInfo]:
-        """
-        Get all subnets.
+    @staticmethod
+    def _hex_to_int(value: Any) -> int:
+        """Convert hex string to int, handles various input types."""
+        if isinstance(value, str):
+            return int(value, 16) if value.startswith("0x") else int(value)
+        return value if value else 0
 
-        Returns:
-            List of SubnetInfo objects
-        """
-        try:
-            result = await self._make_request("subnet_getAll")
-            return [SubnetInfo(**s) for s in result] if result else []
-        except Exception as e:
-            logger.error(f"Error getting subnets: {e}")
-            return []
-
-    # =============================================================================
-    # Stake Queries
-    # =============================================================================
-
-    async def get_stake(self, hotkey: str, coldkey: str) -> Optional[StakeInfo]:
-        """
-        Get stake information for a hotkey-coldkey pair.
-
-        Args:
-            hotkey: Hotkey address
-            coldkey: Coldkey address
-
-        Returns:
-            StakeInfo object or None if not found
-        """
-        try:
-            result = await self._make_request(
-                "query_stakeForColdkeyAndHotkey",
-                params=[coldkey, hotkey]
-            )
-            return StakeInfo(**result) if result else None
-        except Exception as e:
-            logger.error(f"Error getting stake for {hotkey}: {e}")
-            return None
-
-    async def get_total_stake(self, hotkey: str) -> float:
-        """
-        Get total stake for a hotkey.
-
-        Args:
-            hotkey: Hotkey address
-
-        Returns:
-            Total stake amount
-        """
-        try:
-            result = await self._make_request(
-                "query_totalStakeForHotkey",
-                params=[hotkey]
-            )
-            return float(result) if result else 0.0
-        except Exception as e:
-            logger.error(f"Error getting total stake for {hotkey}: {e}")
-            return 0.0
-
-    # =============================================================================
-    # Block Queries
-    # =============================================================================
-
-    async def get_block(self, block_number: Optional[int] = None) -> Optional[BlockInfo]:
-        """
-        Get block information.
-
-        Args:
-            block_number: Block number (None for latest)
-
-        Returns:
-            BlockInfo object or None if not found
-        """
-        try:
-            result = await self._make_request(
-                "eth_getBlockByNumber",
-                params=[hex(block_number) if block_number else "latest", True]
-            )
-            return BlockInfo(**result) if result else None
-        except Exception as e:
-            logger.error(f"Error getting block {block_number}: {e}")
-            return None
+    # =========================================================================
+    # Blockchain Queries
+    # =========================================================================
 
     async def get_block_number(self) -> int:
         """
@@ -333,90 +212,269 @@ class AsyncLuxtensorClient:
         Returns:
             Current block number
         """
-        try:
-            result = await self._make_request("eth_blockNumber")
-            return int(result, 16) if isinstance(result, str) else int(result) if result else 0
-        except Exception as e:
-            logger.error(f"Error getting block number: {e}")
+        result = await self._safe_call_rpc("eth_blockNumber")
+        if result is None:
             return 0
+        return self._hex_to_int(result)
 
-    # =============================================================================
-    # Transaction Operations
-    # =============================================================================
-
-    async def submit_transaction(
-        self,
-        tx_data: Dict[str, Any],
-    ) -> Optional[str]:
+    async def get_block(self, block_number: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
-        Submit a transaction to the blockchain.
+        Get block information.
 
         Args:
-            tx_data: Transaction data
+            block_number: Block number (None for latest)
+
+        Returns:
+            Block data dict or None if not found
+        """
+        block_param = hex(block_number) if block_number is not None else "latest"
+        return await self._safe_call_rpc(
+            "eth_getBlockByNumber", [block_param, True]
+        )
+
+    async def get_chain_info(self) -> Optional[Dict[str, Any]]:
+        """Get chain information (chain ID, network version)."""
+        return await self._safe_call_rpc("luxtensor_getChainInfo")
+
+    # =========================================================================
+    # Account Queries
+    # =========================================================================
+
+    async def get_balance(self, address: str) -> int:
+        """
+        Get account balance.
+
+        Args:
+            address: Account address
+
+        Returns:
+            Balance in base units (wei)
+        """
+        result = await self._safe_call_rpc("eth_getBalance", [address, "latest"])
+        if result is None:
+            return 0
+        return self._hex_to_int(result)
+
+    async def get_nonce(self, address: str) -> int:
+        """
+        Get account nonce (transaction count).
+
+        Args:
+            address: Account address
+
+        Returns:
+            Current nonce
+        """
+        result = await self._safe_call_rpc("eth_getTransactionCount", [address, "latest"])
+        if result is None:
+            return 0
+        return self._hex_to_int(result)
+
+    # =========================================================================
+    # Neuron Queries
+    # =========================================================================
+
+    async def get_neuron(self, uid: int, netuid: int) -> Optional[Dict[str, Any]]:
+        """
+        Get neuron information.
+
+        Args:
+            uid: Neuron UID
+            netuid: Network/subnet UID
+
+        Returns:
+            Neuron data dict or None if not found
+        """
+        return await self._safe_call_rpc("neuron_get", [netuid, uid])
+
+    async def get_neurons(self, netuid: int) -> List[Dict[str, Any]]:
+        """
+        Get all neurons in a subnet.
+
+        Args:
+            netuid: Network/subnet UID
+
+        Returns:
+            List of neuron data dicts
+        """
+        result = await self._safe_call_rpc("neuron_listBySubnet", [netuid])
+        return result if result else []
+
+    async def get_neurons_batch(
+        self,
+        uids: List[int],
+        netuid: int,
+    ) -> List[Optional[Dict[str, Any]]]:
+        """
+        Get multiple neurons in parallel (batch operation).
+
+        Args:
+            uids: List of neuron UIDs
+            netuid: Network/subnet UID
+
+        Returns:
+            List of neuron data (None for not found)
+        """
+        tasks = [self.get_neuron(uid, netuid) for uid in uids]
+        return await asyncio.gather(*tasks)
+
+    # =========================================================================
+    # Subnet Queries
+    # =========================================================================
+
+    async def get_subnet(self, netuid: int) -> Optional[Dict[str, Any]]:
+        """
+        Get subnet information.
+
+        Args:
+            netuid: Network/subnet UID
+
+        Returns:
+            Subnet data dict or None if not found
+        """
+        return await self._safe_call_rpc("subnet_getInfo", [netuid])
+
+    async def get_subnets(self) -> List[Dict[str, Any]]:
+        """
+        Get all subnets.
+
+        Returns:
+            List of subnet data dicts
+        """
+        result = await self._safe_call_rpc("subnet_getAll")
+        return result if result else []
+
+    # =========================================================================
+    # Stake Queries
+    # =========================================================================
+
+    async def get_stake(self, hotkey: str, coldkey: str) -> int:
+        """
+        Get stake for a hotkey-coldkey pair.
+
+        Args:
+            hotkey: Hotkey address
+            coldkey: Coldkey address
+
+        Returns:
+            Stake amount in base units
+        """
+        result = await self._safe_call_rpc(
+            "staking_getStakeForPair", [coldkey, hotkey]
+        )
+        if result is None:
+            return 0
+        return self._hex_to_int(result)
+
+    async def get_total_stake(self, hotkey: str) -> int:
+        """
+        Get total stake for a hotkey.
+
+        Args:
+            hotkey: Hotkey address
+
+        Returns:
+            Total stake amount in base units
+        """
+        result = await self._safe_call_rpc(
+            "staking_getStake", [hotkey]
+        )
+        if result is None:
+            return 0
+        return self._hex_to_int(result)
+
+    # =========================================================================
+    # Transaction Operations
+    # =========================================================================
+
+    async def submit_transaction(self, raw_tx: str) -> Optional[str]:
+        """
+        Submit a signed transaction.
+
+        Args:
+            raw_tx: Hex-encoded signed transaction data
 
         Returns:
             Transaction hash or None if failed
         """
         try:
-            result = await self._make_request(
-                "eth_sendRawTransaction",
-                params=[tx_data]
-            )
-            return result.get("tx_hash") if result else None
+            result = await self._call_rpc("eth_sendRawTransaction", [raw_tx])
+            return result
         except Exception as e:
-            logger.error(f"Error submitting transaction: {e}")
+            logger.error("Failed to submit transaction: %s", e)
             return None
 
-    async def get_transaction(self, tx_hash: str) -> Optional[TransactionInfo]:
+    async def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         """
-        Get transaction information.
+        Get transaction by hash.
 
         Args:
             tx_hash: Transaction hash
 
         Returns:
-            TransactionInfo object or None if not found
+            Transaction data dict or None if not found
         """
-        try:
-            result = await self._make_request(
-                "eth_getTransactionByHash",
-                params=[tx_hash]
-            )
-            return TransactionInfo(**result) if result else None
-        except Exception as e:
-            logger.error(f"Error getting transaction {tx_hash}: {e}")
-            return None
+        return await self._safe_call_rpc("eth_getTransactionByHash", [tx_hash])
 
-    # =============================================================================
+    async def get_transaction_receipt(self, tx_hash: str) -> Optional[Dict[str, Any]]:
+        """
+        Get transaction receipt.
+
+        Args:
+            tx_hash: Transaction hash
+
+        Returns:
+            Receipt data dict or None if not found
+        """
+        return await self._safe_call_rpc("eth_getTransactionReceipt", [tx_hash])
+
+    # =========================================================================
     # Utility Methods
-    # =============================================================================
+    # =========================================================================
 
     async def is_connected(self) -> bool:
         """
-        Check if client is connected to blockchain.
+        Check if client can reach the blockchain node.
 
         Returns:
             True if connected, False otherwise
         """
         try:
-            await self.get_block_number()
+            await self._call_rpc("eth_blockNumber")
             return True
         except Exception:
             return False
 
-    async def wait_for_block(self, target_block: int, poll_interval: float = 1.0):
+    async def wait_for_block(
+        self,
+        target_block: int,
+        poll_interval: float = 1.0,
+        timeout: Optional[float] = None,
+    ) -> int:
         """
         Wait for a specific block number.
 
         Args:
             target_block: Target block number to wait for
             poll_interval: Polling interval in seconds
+            timeout: Maximum wait time in seconds (None for indefinite)
+
+        Returns:
+            The block number reached
+
+        Raises:
+            asyncio.TimeoutError: If timeout is reached
         """
-        while True:
-            current_block = await self.get_block_number()
-            if current_block >= target_block:
-                break
-            await asyncio.sleep(poll_interval)
+        async def _poll():
+            while True:
+                current = await self.get_block_number()
+                if current >= target_block:
+                    return current
+                await asyncio.sleep(poll_interval)
+
+        if timeout is not None:
+            return await asyncio.wait_for(_poll(), timeout=timeout)
+        return await _poll()
 
     def __repr__(self) -> str:
-        return f"AsyncLuxtensorClient(url='{self.url}')"
+        return f"AsyncLuxtensorClient(url='{self.url}', network='{self.network}')"

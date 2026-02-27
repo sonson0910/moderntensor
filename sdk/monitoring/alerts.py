@@ -137,7 +137,7 @@ class AlertRule:
                     annotations=self.annotations,
                 )
         except Exception as e:
-            logger.error(f"Error evaluating alert rule {self.name}: {e}")
+            logger.error("Error evaluating alert rule %s: %s", self.name, e)
         
         return None
 
@@ -223,10 +223,10 @@ Annotations:
                 server.login(self.smtp_user, self.smtp_password)
                 server.send_message(msg)
             
-            logger.info(f"Sent email alert: {alert.name}")
+            logger.info("Sent email alert: %s", alert.name)
             
         except Exception as e:
-            logger.error(f"Failed to send email alert: {e}")
+            logger.error("Failed to send email alert: %s", e)
 
 
 class WebhookNotificationChannel(NotificationChannel):
@@ -270,10 +270,10 @@ class WebhookNotificationChannel(NotificationChannel):
                             f"{await response.text()}"
                         )
                     else:
-                        logger.info(f"Sent webhook alert: {alert.name}")
+                        logger.info("Sent webhook alert: %s", alert.name)
         
         except Exception as e:
-            logger.error(f"Failed to send webhook alert: {e}")
+            logger.error("Failed to send webhook alert: %s", e)
 
 
 class SlackNotificationChannel(NotificationChannel):
@@ -367,10 +367,10 @@ class SlackNotificationChannel(NotificationChannel):
                             f"{await response.text()}"
                         )
                     else:
-                        logger.info(f"Sent Slack alert: {alert.name}")
+                        logger.info("Sent Slack alert: %s", alert.name)
         
         except Exception as e:
-            logger.error(f"Failed to send Slack alert: {e}")
+            logger.error("Failed to send Slack alert: %s", e)
 
 
 class AlertManager:
@@ -397,7 +397,7 @@ class AlertManager:
             rule: Alert rule to add
         """
         self.rules.append(rule)
-        logger.info(f"Added alert rule: {rule.name}")
+        logger.info("Added alert rule: %s", rule.name)
     
     def add_channel(self, channel: NotificationChannel):
         """
@@ -407,7 +407,7 @@ class AlertManager:
             channel: Notification channel to add
         """
         self.channels.append(channel)
-        logger.info(f"Added notification channel: {channel.__class__.__name__}")
+        logger.info("Added notification channel: %s", channel.__class__.__name__)
     
     async def evaluate_rules(self, data: Dict[str, Any]):
         """
@@ -461,7 +461,7 @@ class AlertManager:
             alert.status = AlertStatus.RESOLVED
             alert.resolved_at = datetime.utcnow()
             del self.active_alerts[name]
-            logger.info(f"Resolved alert: {name}")
+            logger.info("Resolved alert: %s", name)
     
     def acknowledge_alert(self, name: str):
         """
@@ -474,7 +474,7 @@ class AlertManager:
             alert = self.active_alerts[name]
             alert.status = AlertStatus.ACKNOWLEDGED
             alert.acknowledged_at = datetime.utcnow()
-            logger.info(f"Acknowledged alert: {name}")
+            logger.info("Acknowledged alert: %s", name)
     
     def get_active_alerts(
         self,

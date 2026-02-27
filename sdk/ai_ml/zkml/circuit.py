@@ -45,7 +45,7 @@ class CircuitCompiler:
             backend: Backend to use ("ezkl", "zkml")
         """
         self.backend = backend
-        logger.info(f"CircuitCompiler initialized with backend: {backend}")
+        logger.info("CircuitCompiler initialized with backend: %s", backend)
     
     def compile(self, model_path: Path) -> Circuit:
         """
@@ -67,7 +67,7 @@ class CircuitCompiler:
         try:
             import ezkl
             
-            logger.info(f"Compiling {model_path} with EZKL")
+            logger.info("Compiling %s with EZKL", model_path)
             
             # In production: use ezkl.compile()
             circuit_data = {

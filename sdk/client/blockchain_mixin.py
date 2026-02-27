@@ -103,7 +103,7 @@ class BlockchainMixin:
                 version=version or "unknown",
             )
         except Exception as e:
-            logger.warning(f"Failed to get chain info: {e}")
+            logger.warning("Failed to get chain info: %s", e)
             return ChainInfo(
                 chain_id=HEX_ZERO, network=self.network, block_height=0, version="unknown"
             )

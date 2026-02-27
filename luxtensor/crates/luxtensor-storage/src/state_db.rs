@@ -318,7 +318,7 @@ impl StateDB {
 
         let mut batch = rocksdb::WriteBatch::default();
 
-        // Capture dirty addresses before releasing the read lock.
+        // Pre-allocate with known size for efficiency.
         let dirty_addresses: Vec<Address> = dirty.iter().cloned().collect();
 
         for address in dirty.iter() {
@@ -562,5 +562,41 @@ mod tests {
         // Access should hit cache
         let _ = state_db.get_balance(&address).unwrap();
         assert_eq!(state_db.cache_size(), 1);
+    }
+
+    /// Verify that committing twice with no changes produces the same root.
+    #[test]
+    fn test_commit_idempotent() {
+        let (_dir, state_db) = create_test_db();
+        let addr = Address::try_from_slice(&[1u8; 20]).unwrap();
+
+        state_db.set_balance(&addr, 1_000).unwrap();
+        let root1 = state_db.commit().unwrap();
+
+        // Nothing changed → commit should return the same root.
+        let root2 = state_db.commit().unwrap();
+        assert_eq!(root1, root2, "commit with no changes must return same root");
+    }
+
+    /// Verify that rollback → commit produces the same root as before the change.
+    #[test]
+    fn test_rollback_then_commit_consistency() {
+        let (_dir, state_db) = create_test_db();
+        let addr = Address::try_from_slice(&[1u8; 20]).unwrap();
+
+        // Commit initial state.
+        state_db.set_balance(&addr, 1_000).unwrap();
+        let root_before = state_db.commit().unwrap();
+
+        // Modify, then rollback.
+        state_db.set_balance(&addr, 9_999).unwrap();
+        state_db.rollback();
+
+        // Commit again → root must match root_before since state was rolled back.
+        let root_after = state_db.commit().unwrap();
+        assert_eq!(
+            root_before, root_after,
+            "state root after rollback+commit must match original"
+        );
     }
 }

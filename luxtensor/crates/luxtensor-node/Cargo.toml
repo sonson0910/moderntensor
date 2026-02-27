@@ -43,6 +43,7 @@ tikv-jemallocator = "0.6"
 
 [features]
 legacy = ["luxtensor-network/legacy"]
+production-vrf = []
 
 [dev-dependencies]
 tempfile = "3.8"

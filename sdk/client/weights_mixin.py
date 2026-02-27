@@ -83,7 +83,7 @@ class WeightsMixin:
             result = self._rpc()._call_rpc("lux_getAllWeights", [subnet_uid])
             return result if isinstance(result, list) else []
         except Exception as e:
-            logger.warning(f"Failed to get all weights for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get all weights for subnet %s: %s", subnet_uid, e)
             return []
 
     def get_weight_matrix(self, subnet_uid: int) -> List[Tuple[int, int, float]]:
@@ -107,7 +107,7 @@ class WeightsMixin:
                 for w in weights
             ]
         except Exception as e:
-            logger.warning(f"Failed to get weight matrix for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get weight matrix for subnet %s: %s", subnet_uid, e)
             return []
 
     def get_weight_version(self, subnet_uid: int) -> int:
@@ -127,7 +127,7 @@ class WeightsMixin:
                 return int(result.get("version", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get weight version for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get weight version for subnet %s: %s", subnet_uid, e)
             return 0
 
     def get_weight_commit(self, subnet_uid: int, uid: int) -> int:
@@ -170,7 +170,7 @@ class WeightsMixin:
                 return int(result.get("rate_limit", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get weight rate limit for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get weight rate limit for subnet %s: %s", subnet_uid, e)
             return 0
 
     def get_max_weight_limit(self, subnet_uid: int) -> float:
@@ -189,7 +189,7 @@ class WeightsMixin:
                 return float(result.get("max_weight", 1.0))
             return float(result) if result else 1.0
         except Exception as e:
-            logger.warning(f"Failed to get max weight limit for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get max weight limit for subnet %s: %s", subnet_uid, e)
             return 1.0
 
     def get_min_allowed_weights(self, subnet_uid: int) -> int:
@@ -208,7 +208,7 @@ class WeightsMixin:
                 return int(result.get("min_weights", 0))
             return int(result) if result else 0
         except Exception as e:
-            logger.warning(f"Failed to get min allowed weights for subnet {subnet_uid}: {e}")
+            logger.warning("Failed to get min allowed weights for subnet %s: %s", subnet_uid, e)
             return 0
 
     # ------------------------------------------------------------------
@@ -246,7 +246,7 @@ class WeightsMixin:
             result = self._rpc()._call_rpc("weight_setWeights", [params])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to commit weights for neuron {from_uid}: {e}")
+            logger.error("Failed to commit weights for neuron %s: %s", from_uid, e)
             return {"success": False, "error": str(e)}
 
     def commit_weights_merkle(
@@ -284,5 +284,5 @@ class WeightsMixin:
             result = self._rpc()._call_rpc("weight_commitMerkle", [params])
             return result if result else {"success": False, "error": "No result"}
         except Exception as e:
-            logger.error(f"Failed to commit Merkle weights for neuron {from_uid}: {e}")
+            logger.error("Failed to commit Merkle weights for neuron %s: %s", from_uid, e)
             return {"success": False, "error": str(e)}

@@ -45,7 +45,7 @@ class TaskQueue:
         self.size = 0
         self.counter = itertools.count()  # For tie-breaking in priority queue
         
-        logger.info(f"TaskQueue initialized: {config}")
+        logger.info("TaskQueue initialized: %s", config)
     
     async def put(self, task: Task, priority: int = 0) -> None:
         """

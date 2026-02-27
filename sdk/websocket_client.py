@@ -18,6 +18,8 @@ from enum import Enum
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from sdk.client.constants import DEFAULT_WS_URL
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ class LuxtensorWebSocket:
         async def on_block(event: BlockEvent):
             print(f"New block: {event.block_number}")
 
-        ws = LuxtensorWebSocket("ws://localhost:8546")
+        ws = LuxtensorWebSocket(DEFAULT_WS_URL)
         ws.subscribe_blocks(on_block)
         await ws.connect()
         ```
@@ -74,7 +76,7 @@ class LuxtensorWebSocket:
 
     def __init__(
         self,
-        ws_url: str = "ws://localhost:8546",
+        ws_url: str = DEFAULT_WS_URL,
         reconnect_delay: float = 5.0,
         max_reconnect_attempts: int = 10,
         ping_interval: float = 20.0,
@@ -192,9 +194,9 @@ class LuxtensorWebSocket:
                 )
                 if sub_id:
                     self._subscription_ids[sub_id] = sub_type
-                    logger.info(f"Subscribed to {sub_type.value}: {sub_id}")
+                    logger.info("Subscribed to %s: %s", sub_type.value, sub_id)
             except Exception as e:
-                logger.error(f"Failed to subscribe to {sub_type.value}: {e}")
+                logger.error("Failed to subscribe to %s: %s", sub_type.value, e)
 
     async def _handle_message(self, message: str) -> None:
         """Handle incoming WebSocket message."""
@@ -221,7 +223,7 @@ class LuxtensorWebSocket:
                     await self._dispatch_event(sub_type, result)
 
         except json.JSONDecodeError:
-            logger.error(f"Failed to parse message: {message[:100]}")
+            logger.error("Failed to parse message: %.100s", message)
 
     async def _dispatch_event(
         self, sub_type: SubscriptionType, data: Dict[str, Any]
@@ -252,7 +254,7 @@ class LuxtensorWebSocket:
                     callback(event)
 
             except Exception as e:
-                logger.error(f"Callback error for {sub_type.value}: {e}")
+                logger.error("Callback error for %s: %s", sub_type.value, e)
 
     def _create_event(
         self, sub_type: SubscriptionType, data: Dict[str, Any]
@@ -302,7 +304,7 @@ class LuxtensorWebSocket:
 
         while self._running:
             try:
-                logger.info(f"Connecting to {self.ws_url}...")
+                logger.info("Connecting to %s...", self.ws_url)
 
                 async with websockets.connect(
                     self.ws_url,
@@ -321,9 +323,9 @@ class LuxtensorWebSocket:
                         await self._handle_message(message)
 
             except ConnectionClosed as e:
-                logger.warning(f"WebSocket closed: {e}")
+                logger.warning("WebSocket closed: %s", e)
             except Exception as e:
-                logger.error(f"WebSocket error: {e}")
+                logger.error("WebSocket error: %s", e)
 
             self._ws = None
 
@@ -336,7 +338,7 @@ class LuxtensorWebSocket:
                 logger.error("Max reconnection attempts reached")
                 break
 
-            logger.info(f"Reconnecting in {self.reconnect_delay}s (attempt {attempt})...")
+            logger.info("Reconnecting in %ss (attempt %s)...", self.reconnect_delay, attempt)
             await asyncio.sleep(self.reconnect_delay)
 
     async def disconnect(self) -> None:
@@ -366,7 +368,7 @@ async def subscribe_to_blocks(
         async def on_block(block):
             print(f"Block {block.block_number}")
 
-        ws = await subscribe_to_blocks("ws://localhost:8546", on_block)
+        ws = await subscribe_to_blocks(DEFAULT_WS_URL, on_block)
         ```
     """
     ws = LuxtensorWebSocket(ws_url)

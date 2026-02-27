@@ -57,7 +57,7 @@ class UtilsMixin:
                 "timestamp": int(time.time()),
             }
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            logger.error("Health check failed: %s", e)
             return {
                 "is_healthy": False,
                 "error": str(e),
@@ -91,15 +91,15 @@ class UtilsMixin:
                 )
 
                 if current_height >= target_block:
-                    logger.info(f"Reached target block {target_block}")
+                    logger.info("Reached target block %s", target_block)
                     return True
 
                 time.sleep(poll_interval)
             except Exception as e:
-                logger.warning(f"Error checking block height: {e}")
+                logger.warning("Error checking block height: %s", e)
                 time.sleep(poll_interval)
 
-        logger.warning(f"Timeout waiting for block {target_block}")
+        logger.warning("Timeout waiting for block %s", target_block)
         return False
 
     # NOTE: get_transaction() and get_transaction_receipt() moved to TransactionMixin
@@ -111,7 +111,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("eth_estimateGas", [transaction])
             return int(result, 16) if isinstance(result, str) else result
         except Exception as e:
-            logger.error(f"Gas estimation failed: {e}")
+            logger.error("Gas estimation failed: %s", e)
             return 21000
 
     def to_wei(self, amount: float) -> int:
@@ -135,7 +135,7 @@ class UtilsMixin:
                 "version": health.get("version", "unknown"),
             }
         except Exception as e:
-            logger.error(f"Error getting network info: {e}")
+            logger.error("Error getting network info: %s", e)
             raise
 
     def get_network_version(self) -> str:
@@ -143,7 +143,7 @@ class UtilsMixin:
         try:
             return self._rpc()._call_rpc("web3_clientVersion", [])
         except Exception as e:
-            logger.error(f"Error getting network version: {e}")
+            logger.error("Error getting network version: %s", e)
             raise
 
     def get_peer_count(self) -> int:
@@ -152,7 +152,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("net_peerCount", [])
             return int(result, 16) if isinstance(result, str) and result.startswith("0x") else int(result)
         except Exception as e:
-            logger.error(f"Error getting peer count: {e}")
+            logger.error("Error getting peer count: %s", e)
             raise
 
     def is_connected(self) -> bool:
@@ -169,14 +169,14 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("eth_syncing", [])
             return result is not False
         except Exception as e:
-            logger.error(f"Error checking sync status: {e}")
+            logger.error("Error checking sync status: %s", e)
             return False
 
     def switch_network(self, url: str, network: str = "testnet") -> None:
         """Switch to a different network."""
         self.url = url
         self.network = network
-        logger.info(f"Switched to network: {network} at {url}")
+        logger.info("Switched to network: %s at %s", network, url)
 
     def get_network_state_summary(self) -> Dict[str, Any]:
         """Get a comprehensive summary of network state."""
@@ -190,7 +190,7 @@ class UtilsMixin:
             }
             return summary
         except Exception as e:
-            logger.error(f"Error getting network state summary: {e}")
+            logger.error("Error getting network state summary: %s", e)
             raise
 
     # UID/Hotkey Lookups
@@ -201,7 +201,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("query_uidForHotkey", [subnet_id, hotkey])
             return int(result) if result is not None else None
         except Exception as e:
-            logger.error(f"Error getting UID for hotkey {hotkey}: {e}")
+            logger.error("Error getting UID for hotkey %s: %s", hotkey, e)
             raise
 
     def get_hotkey_for_uid(self, subnet_id: int, neuron_uid: int) -> Optional[str]:
@@ -210,7 +210,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("query_hotkeyForUid", [subnet_id, neuron_uid])
             return result
         except Exception as e:
-            logger.error(f"Error getting hotkey for UID {neuron_uid}: {e}")
+            logger.error("Error getting hotkey for UID %s: %s", neuron_uid, e)
             raise
 
     # Root Network
@@ -221,7 +221,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("subnet_getRootValidators", [])
             return result if result else []
         except Exception as e:
-            logger.error(f"Error getting root validators: {e}")
+            logger.error("Error getting root validators: %s", e)
             raise
 
     def get_root_validator_count(self) -> int:
@@ -231,7 +231,7 @@ class UtilsMixin:
             validators = self._rpc()._call_rpc("subnet_getRootValidators", [])
             return len(validators) if validators else 0
         except Exception as e:
-            logger.error(f"Error getting root validator count: {e}")
+            logger.error("Error getting root validator count: %s", e)
             raise
 
     def is_root_validator(self, hotkey: str) -> bool:
@@ -246,7 +246,7 @@ class UtilsMixin:
                         return True
             return False
         except Exception as e:
-            logger.error(f"Error checking root validator status: {e}")
+            logger.error("Error checking root validator status: %s", e)
             raise
 
     def get_root_config(self) -> Dict[str, Any]:
@@ -255,7 +255,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("subnet_getConfig", [0])
             return result
         except Exception as e:
-            logger.error(f"Error getting root config: {e}")
+            logger.error("Error getting root config: %s", e)
             raise
 
     def get_root_network_validators(self) -> List[Dict[str, Any]]:
@@ -264,7 +264,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("subnet_getRootValidators", [])
             return result if result else []
         except Exception as e:
-            logger.error(f"Error getting root network validators: {e}")
+            logger.error("Error getting root network validators: %s", e)
             raise
 
     # Validators
@@ -275,7 +275,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("staking_getValidators", [subnet_id])
             return result if result else []
         except Exception as e:
-            logger.error(f"Error getting validators for subnet {subnet_id}: {e}")
+            logger.error("Error getting validators for subnet %s: %s", subnet_id, e)
             raise
 
     def has_validator_permit(self, subnet_id: int, neuron_uid: int) -> bool:
@@ -287,7 +287,7 @@ class UtilsMixin:
                 return bool(neuron.get("validator_permit", False))
             return False
         except Exception as e:
-            logger.error(f"Error checking validator permit: {e}")
+            logger.error("Error checking validator permit: %s", e)
             raise
 
     def get_validator_status(self, hotkey: str) -> Dict[str, Any]:
@@ -296,7 +296,7 @@ class UtilsMixin:
             result = self._rpc()._call_rpc("lux_getValidatorStatus", [hotkey])
             return result
         except Exception as e:
-            logger.error(f"Error getting validator status: {e}")
+            logger.error("Error getting validator status: %s", e)
             raise
 
     # Transfers
@@ -310,7 +310,7 @@ class UtilsMixin:
             logger.warning("Transfer history not available on LuxTensor server")
             return []
         except Exception as e:
-            logger.error(f"Error getting transfer history: {e}")
+            logger.error("Error getting transfer history: %s", e)
             raise
 
     def get_transactions_for_address(
@@ -322,5 +322,5 @@ class UtilsMixin:
             logger.warning("Transaction query for address not available on LuxTensor server")
             return []
         except Exception as e:
-            logger.error(f"Error getting transactions for address: {e}")
+            logger.error("Error getting transactions for address: %s", e)
             raise

@@ -7,13 +7,15 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field, asdict
 
+from sdk.constants import CHAIN_ID_MAINNET, CHAIN_ID_TESTNET, CHAIN_ID_DEVNET
+
 
 @dataclass
 class NetworkConfig:
     """Network configuration"""
     name: str = "testnet"
     rpc_url: str = "http://localhost:8545"
-    chain_id: int = 8898  # Default to devnet (matches luxtensor-core constants)
+    chain_id: int = CHAIN_ID_DEVNET  # Default to devnet (matches luxtensor-core constants)
     explorer_url: Optional[str] = None
 
 
@@ -103,30 +105,30 @@ class CLIConfig:
             yaml.dump(self.to_dict(), f, default_flow_style=False)
 
 
-# Network presets (chain IDs match luxtensor-core/src/constants.rs)
+# Network presets (chain IDs from sdk.constants — single source of truth)
 NETWORKS = {
     'mainnet': NetworkConfig(
         name='mainnet',
         rpc_url='https://mainnet.luxtensor.io',
-        chain_id=8898,
+        chain_id=CHAIN_ID_MAINNET,
         explorer_url='https://explorer.luxtensor.io'
     ),
     'testnet': NetworkConfig(
         name='testnet',
         rpc_url='https://testnet.luxtensor.io',
-        chain_id=9999,
+        chain_id=CHAIN_ID_TESTNET,
         explorer_url='https://testnet-explorer.luxtensor.io'
     ),
     'devnet': NetworkConfig(
         name='devnet',
         rpc_url='http://localhost:8545',
-        chain_id=8898,
+        chain_id=CHAIN_ID_DEVNET,
         explorer_url=None
     ),
     'local': NetworkConfig(
         name='local',
         rpc_url='http://localhost:8545',
-        chain_id=8898,
+        chain_id=CHAIN_ID_DEVNET,
         explorer_url=None
     ),
 }

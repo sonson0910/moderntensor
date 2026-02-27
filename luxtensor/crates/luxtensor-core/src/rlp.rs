@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_to_minimal_be() {
-        assert_eq!(to_minimal_be(0), vec![]);
+        assert_eq!(to_minimal_be(0), Vec::<u8>::new());
         assert_eq!(to_minimal_be(1), vec![1]);
         assert_eq!(to_minimal_be(256), vec![1, 0]);
         assert_eq!(to_minimal_be(0xFFFF), vec![0xFF, 0xFF]);

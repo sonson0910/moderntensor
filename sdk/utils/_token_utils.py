@@ -1,7 +1,11 @@
 """
-Luxtensor SDK Utilities
+Luxtensor Token & Address Utilities
 
-Token unit conversion utilities and common helpers.
+Token unit conversion utilities and common address helpers.
+
+Migrated from sdk/utils.py into the sdk/utils/ package to eliminate
+the importlib hack that was needed when utils.py coexisted with the
+utils/ package directory.
 """
 
 from typing import Union

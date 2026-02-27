@@ -47,7 +47,7 @@ class SubnetConfigMixin:
                 return result.get(field, default)
             return default
         except Exception as e:
-            logger.error(f"Error getting {field} for subnet {subnet_id}: {e}")
+            logger.error("Error getting %s for subnet %s: %s", field, subnet_id, e)
             raise
 
     def get_immunity_period(self, subnet_id: int) -> int:

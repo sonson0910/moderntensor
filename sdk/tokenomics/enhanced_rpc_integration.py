@@ -147,7 +147,7 @@ class CircuitBreaker:
             logger.warning("Circuit breaker OPEN - service still unhealthy")
         elif self.failure_count >= self.config.failure_threshold:
             self.state = ConnectionState.OPEN
-            logger.warning(f"Circuit breaker OPEN - {self.failure_count} failures")
+            logger.warning("Circuit breaker OPEN - %s failures", self.failure_count)
 
 
 class EnhancedRPCIntegration:
@@ -180,7 +180,7 @@ class EnhancedRPCIntegration:
         self._batch_queue: List[Dict[str, Any]] = []
         self._batch_lock = asyncio.Lock()
 
-        logger.info(f"EnhancedRPCIntegration initialized with URL: {self.config.url}")
+        logger.info("EnhancedRPCIntegration initialized with URL: %s", self.config.url)
 
     async def connect(self):
         """Establish connection pool."""
@@ -240,7 +240,7 @@ class EnhancedRPCIntegration:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Health check error: {e}")
+                logger.error("Health check error: %s", e)
 
     async def _check_health(self) -> bool:
         """Check if blockchain is healthy."""
@@ -319,15 +319,15 @@ class EnhancedRPCIntegration:
 
             except asyncio.TimeoutError:
                 last_error = f"Timeout after {timeout or self.config.timeout}s"
-                logger.warning(f"Request timeout (attempt {attempt + 1}): {method}")
+                logger.warning("Request timeout (attempt %s): %s", attempt + 1, method)
 
             except aiohttp.ClientError as e:
                 last_error = f"Client error: {str(e)}"
-                logger.warning(f"Client error (attempt {attempt + 1}): {e}")
+                logger.warning("Client error (attempt %s): %s", attempt + 1, e)
 
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Request failed (attempt {attempt + 1}): {e}")
+                logger.warning("Request failed (attempt %s): %s", attempt + 1, e)
 
             # Record failure
             response_time = time.time() - start_time
@@ -417,7 +417,7 @@ class EnhancedRPCIntegration:
         except Exception as e:
             response_time = time.time() - start_time
             self.metrics.record_request(False, response_time, str(e))
-            logger.error(f"Batch execution failed: {e}")
+            logger.error("Batch execution failed: %s", e)
             raise
 
     def get_metrics(self) -> Dict[str, Any]:

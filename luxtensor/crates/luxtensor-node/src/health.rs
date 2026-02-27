@@ -102,8 +102,10 @@ pub struct HealthConfig {
     /// Maximum sync lag before warning
     pub max_sync_lag: u64,
     /// Minimum disk space in MB
+    #[allow(dead_code)]
     pub min_disk_space_mb: u64,
     /// Maximum memory usage percent
+    #[allow(dead_code)]
     pub max_memory_percent: u8,
 }
 
@@ -160,12 +162,14 @@ impl HealthMonitor {
     }
 
     /// Update sync status
+    #[allow(dead_code)]
     pub fn update_sync_status(&self, is_syncing: bool, progress: u8) {
         *self.is_syncing.write() = is_syncing;
         *self.sync_progress.write() = progress;
     }
 
     /// Update mempool size
+    #[allow(dead_code)]
     pub fn update_mempool_size(&self, size: usize) {
         *self.mempool_size.write() = size;
     }
@@ -227,16 +231,19 @@ impl HealthMonitor {
     }
 
     /// Simple health check (just returns healthy/unhealthy)
+    #[allow(dead_code)]
     pub fn is_healthy(&self) -> bool {
         self.get_health().healthy
     }
 
     /// Get uptime
+    #[allow(dead_code)]
     pub fn uptime(&self) -> Duration {
         self.start_time.elapsed()
     }
 
     /// Log current health status
+    #[allow(dead_code)]
     pub fn log_health(&self) {
         let status = self.get_health();
         if status.healthy {

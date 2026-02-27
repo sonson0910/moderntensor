@@ -231,10 +231,10 @@ class ZkMLResponseVerifier:
                 config=proof_config,
             )
 
-            logger.info(f"zkML verifier initialized with backend: {self.config.backend}")
+            logger.info("zkML verifier initialized with backend: %s", self.config.backend)
 
         except ImportError as e:
-            logger.warning(f"Could not import zkML modules: {e}")
+            logger.warning("Could not import zkML modules: %s", e)
             self._proof_verifier = None
 
     def verify_response(
@@ -305,7 +305,7 @@ class ZkMLResponseVerifier:
                 return self._handle_invalid_proof(original_score, verification_time)
 
         except Exception as e:
-            logger.error(f"Proof verification error: {e}")
+            logger.error("Proof verification error: %s", e)
             return VerificationResult(
                 is_valid=False,
                 proof_score=0.0,
@@ -334,7 +334,7 @@ class ZkMLResponseVerifier:
             return self._proof_verifier.verify(proof)
 
         except Exception as e:
-            logger.error(f"Proof verification failed: {e}")
+            logger.error("Proof verification failed: %s", e)
             return False
 
     def _handle_missing_proof(
@@ -481,7 +481,7 @@ class MinerProofHelper:
             logger.info("Miner proof helper setup complete")
 
         except Exception as e:
-            logger.error(f"Failed to setup proof generator: {e}")
+            logger.error("Failed to setup proof generator: %s", e)
             self._is_setup = False
 
     def generate_proof(
@@ -543,7 +543,7 @@ class MinerProofHelper:
             return response
 
         except Exception as e:
-            logger.error(f"Failed to attach proof: {e}")
+            logger.error("Failed to attach proof: %s", e)
             return response
 
 

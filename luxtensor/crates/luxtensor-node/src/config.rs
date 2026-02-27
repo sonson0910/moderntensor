@@ -240,6 +240,7 @@ impl Default for FaucetConfig {
 
 impl FaucetConfig {
     /// Parse drip_amount string to u128
+    #[allow(dead_code)]
     pub fn drip_amount_u128(&self) -> u128 {
         self.drip_amount.parse::<u128>().unwrap_or(1_000_000_000_000_000_000_000)
     }

@@ -139,12 +139,12 @@ class ConsensusMixin:
                 return False
 
             if not self._fork_choice.is_canonical(block_hash):
-                logger.warning(f"Block not canonical: {block_hash}")
+                logger.warning("Block not canonical: %s", block_hash)
                 return False
 
             return True
         except Exception as e:
-            logger.error(f"Block verification failed: {e}")
+            logger.error("Block verification failed: %s", e)
             return False
 
     def check_finality(self, block_hash: str) -> bool:
@@ -171,7 +171,7 @@ class ConsensusMixin:
                 circuit_broken=self._circuit_breaker.state() == "open",
             )
         except Exception as e:
-            logger.error(f"Failed to get consensus state: {e}")
+            logger.error("Failed to get consensus state: %s", e)
             return ConsensusState(0, 0, 0, 0, False, False)
 
     def calculate_block_reward(self, block_height: int) -> int:

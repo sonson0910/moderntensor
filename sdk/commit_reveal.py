@@ -224,15 +224,20 @@ class CommitRevealClient:
     def get_config(self) -> CommitRevealConfig:
         """Get commit-reveal configuration from chain.
 
-        Note: commitReveal_getConfig RPC is not yet implemented on the
-        LuxTensor server. Returns default configuration.
+        .. warning:: **RPC Not Implemented**
+            ``commitReveal_getConfig`` is not yet available on the
+            LuxTensor node. Returns default :class:`CommitRevealConfig`.
+            This will be connected to on-chain state once the RPC is deployed.
         """
         if self._config:
             return self._config
 
-        logger.warning(
-            "commitReveal_getConfig is not yet available on the server. "
-            "Using default CommitRevealConfig values."
+        import warnings
+        warnings.warn(
+            "commitReveal_getConfig RPC is not yet implemented. "
+            "Returning default CommitRevealConfig. Values may not "
+            "match on-chain parameters.",
+            stacklevel=2,
         )
         self._config = CommitRevealConfig()
         return self._config
@@ -241,8 +246,12 @@ class CommitRevealClient:
         """
         Get current epoch state for subnet.
 
-        Note: commitReveal_getEpochState RPC is not yet implemented on the
-        LuxTensor server. Returns None until the feature is deployed.
+        .. warning:: **RPC Not Implemented**
+            ``commitReveal_getEpochState`` is not yet available on the
+            LuxTensor node. Always returns ``None``. Methods that depend
+            on epoch state (``get_current_phase``, ``has_committed``,
+            ``has_revealed``, ``get_pending_commits``) will also return
+            empty/None results.
 
         Args:
             subnet_uid: Subnet ID
@@ -250,9 +259,12 @@ class CommitRevealClient:
         Returns:
             EpochState or None if feature not available
         """
-        logger.warning(
-            "commitReveal_getEpochState is not yet available on the server. "
-            "Commit-reveal feature is planned for a future release."
+        import warnings
+        warnings.warn(
+            "commitReveal_getEpochState RPC is not yet implemented. "
+            "Always returns None. Commit-reveal features are planned "
+            "for a future release.",
+            stacklevel=2,
         )
         return None
 
@@ -315,7 +327,7 @@ class CommitRevealClient:
         result = self.client.submit_transaction(tx)
 
         logger.info(
-            f"Committed weights for subnet {subnet_uid}: {result.tx_hash}"
+            "Committed weights for subnet %d: %s", subnet_uid, result.tx_hash
         )
 
         return {
@@ -398,7 +410,7 @@ class CommitRevealClient:
         result = self.client.submit_transaction(tx)
 
         logger.info(
-            f"Revealed weights for subnet {subnet_uid}: {result.tx_hash}"
+            "Revealed weights for subnet %d: %s", subnet_uid, result.tx_hash
         )
 
         return {
@@ -415,12 +427,15 @@ class CommitRevealClient:
     def get_finalized_weights(self, subnet_uid: int) -> List[Tuple[int, int]]:
         """Get finalized weights from last epoch.
 
-        Note: commitReveal_getFinalizedWeights RPC is not yet implemented
-        on the LuxTensor server. Returns empty list.
+        .. warning:: **RPC Not Implemented**
+            ``commitReveal_getFinalizedWeights`` is not yet available.
+            Always returns ``[]``. Use ``weight_getWeights`` RPC instead.
         """
-        logger.warning(
-            "commitReveal_getFinalizedWeights is not yet available on the server. "
-            "Use weight_getWeights RPC for current weights instead."
+        import warnings
+        warnings.warn(
+            "commitReveal_getFinalizedWeights RPC is not yet implemented. "
+            "Always returns empty list. Use weight_getWeights RPC instead.",
+            stacklevel=2,
         )
         return []
 
