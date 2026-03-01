@@ -387,6 +387,11 @@ impl TransactionExecutor {
             let contract_addr_bytes: [u8; 20] = *to_addr.as_bytes();
 
             // Sync caller balance into EVM state before execution
+            // M2 NOTE: We sync sender balance before EVM execution. The EVM executor
+            // maintains its own internal account state. For full state consistency,
+            // a production implementation should use StateDB as the canonical backend
+            // for the EVM. Current limitation: contracts reading third-party balances
+            // via BALANCE opcode may see stale data.
             self.evm.fund_account(&tx.from, sender_balance_before);
 
             match self.evm.call(
@@ -401,7 +406,8 @@ impl TransactionExecutor {
                 tx.gas_price as u128,
             ) {
                 Ok((_output, evm_gas_used, evm_logs)) => {
-                    *actual_gas_used = evm_gas_used.max(*actual_gas_used);
+                    // H5 FIX: Use EVM gas directly for contract calls (EVM is authoritative)
+                    *actual_gas_used = evm_gas_used;
                     *tx_logs = convert_evm_logs(&evm_logs);
                     // Credit value to contract if sent
                     if tx.value > 0 {
@@ -458,7 +464,8 @@ impl TransactionExecutor {
             tx.gas_price as u128,
         ) {
             Ok((contract_address_vec, evm_gas_used, evm_logs, deployed_code)) => {
-                *actual_gas_used = evm_gas_used.max(*actual_gas_used);
+                // H5 FIX: Use EVM gas directly for deployments (EVM is authoritative)
+                *actual_gas_used = evm_gas_used;
                 *tx_logs = convert_evm_logs(&evm_logs);
                 // Build contract address
                 let mut contract_addr_bytes = [0u8; 20];

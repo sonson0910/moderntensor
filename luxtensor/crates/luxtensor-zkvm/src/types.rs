@@ -57,6 +57,10 @@ pub struct GuestInput {
 }
 
 /// Maximum input size per field (64 MiB).
+///
+/// This is the maximum size accepted by `GuestInput::validate()`.
+/// The prover enforces a stricter limit of 16 MiB in `ZkProver::prove()`
+/// to prevent OOM during proof generation.
 const MAX_INPUT_SIZE: usize = 64 * 1024 * 1024;
 
 impl GuestInput {

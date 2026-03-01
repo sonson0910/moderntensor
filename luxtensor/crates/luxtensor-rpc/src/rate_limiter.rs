@@ -20,8 +20,14 @@ pub struct RateLimiterConfig {
 
 impl Default for RateLimiterConfig {
     fn default() -> Self {
+        // Allow overriding via environment variable for production tuning
+        let max_requests = std::env::var("LUXTENSOR_RPC_RATE_LIMIT")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(100);
+
         Self {
-            max_requests: 100,           // 100 requests
+            max_requests,              // default 100 requests
             window: Duration::from_secs(60), // per minute
             cleanup_interval: Duration::from_secs(300), // cleanup every 5 min
         }

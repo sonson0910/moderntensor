@@ -160,9 +160,10 @@ impl P2PNode {
         // and ensure stability across Rust versions.
         // NOTE: Only hashes message.data (no source) for consistency with swarm.rs
         // — the same content from different sources should be deduped.
+        // 🔧 FIX F14: Use full 32-byte keccak256 hash (was truncated to 20 bytes)
         let message_id_fn = |message: &Message| {
             let hash = luxtensor_crypto::keccak256(&message.data);
-            MessageId::from(hash[..20].to_vec())
+            MessageId::from(hash.to_vec())
         };
 
         ConfigBuilder::default()
@@ -194,7 +195,9 @@ impl P2PNode {
     /// Broadcast a transaction to the network
     pub fn broadcast_transaction(&mut self, tx: Transaction) -> Result<(), NetworkError> {
         let message = NetworkMessage::NewTransaction(tx);
-        let data = bincode::serialize(&message)
+        // 🔧 FIX F8: Use serialize_message() with size-limited fixint encoding
+        // instead of raw bincode::serialize which bypasses all safety measures.
+        let data = crate::messages::serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         self.publish_to_topic(&self.topics.transactions.clone(), data)?;
@@ -214,7 +217,8 @@ impl P2PNode {
         let block_height = block.header.height;
 
         let message = NetworkMessage::NewBlock(block);
-        let data = bincode::serialize(&message)
+        // 🔧 FIX F8: Use serialize_message() with safe encoding
+        let data = crate::messages::serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
         self.publish_to_topic(&self.topics.blocks.clone(), data)?;

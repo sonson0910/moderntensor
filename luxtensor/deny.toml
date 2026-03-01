@@ -60,8 +60,10 @@ deny = [
     # crypto: prevent use of deprecated/weak crypto
     { name = "openssl", wrappers = ["openssl-sys"] },
 
-    # Prevent accidental std::env dependency leaks
+    # Prevent accidental std::env dependency leaks in node binaries.
+    # Indexer is exempted because it runs as a separate service with its own DB config.
     { name = "dotenv", reason = "Use config files, not .env in production" },
+    { name = "dotenvy", wrappers = ["luxtensor-indexer"], reason = "Use config files, not .env in node binaries" },
 ]
 
 # ============================================================

@@ -11,8 +11,9 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Load config
-    dotenv::dotenv().ok();
+    // Load config from environment variables directly.
+    // NOTE: dotenv removed (banned in deny.toml). In production, set env vars
+    // via systemd, Docker, or your orchestrator — never auto-load .env files.
     let config = OracleConfig::from_env()?;
 
     // Run Oracle

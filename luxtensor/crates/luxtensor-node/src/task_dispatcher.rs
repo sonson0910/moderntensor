@@ -6,6 +6,8 @@
 //! - Task assignment and result tracking
 //! - Timeout and retry mechanisms
 
+use luxtensor_crypto::keccak256;
+use luxtensor_crypto::signature::recover_address_strict;
 use luxtensor_storage::MetagraphDB;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -286,17 +288,40 @@ impl TaskDispatcher {
     }
 
     /// Handle task claim from miner
+    ///
+    /// SECURITY: The signature MUST be a 65-byte ECDSA signature (r||s||v) over
+    /// `keccak256(task_id || miner)`. The recovered address must match `miner`
+    /// to prevent unauthorized task claims.
     pub fn handle_claim(
         &self,
         task_id: [u8; 32],
         miner: [u8; 20],
-        _signature: Vec<u8>,
+        signature: Vec<u8>,
     ) -> Result<TaskAssignment, String> {
+        // SECURITY: Verify signature to prevent unauthorized task claims (TD-1 FIX)
+        {
+            let mut msg = Vec::with_capacity(52); // 32 (task_id) + 20 (miner)
+            msg.extend_from_slice(&task_id);
+            msg.extend_from_slice(&miner);
+            let msg_hash = keccak256(&msg);
+
+            let recovered = recover_address_strict(&msg_hash, &signature)
+                .map_err(|e| format!("Invalid claim signature: {}", e))?;
+
+            if *recovered.as_bytes() != miner {
+                return Err(format!(
+                    "Signature mismatch: recovered 0x{} but claim is for 0x{}",
+                    hex::encode(&recovered.as_bytes()[..8]),
+                    hex::encode(&miner[..8])
+                ));
+            }
+        }
         // Check if task is still pending and preserve its metadata for potential re-queue
         {
             let mut queue = self.pending_queue.write();
             if let Some(pos) = queue.iter().position(|task| task.task_id == task_id) {
-                let original_task = queue.remove(pos)
+                let original_task = queue
+                    .remove(pos)
                     .expect("BUG: position() found element but remove() returned None");
                 // 🔧 FIX: Store original task metadata so timeout re-queue preserves it
                 self.task_metadata.write().insert(task_id, original_task);
@@ -334,11 +359,12 @@ impl TaskDispatcher {
             retry_count: 0,
         };
 
-        // Update miner task count
+        // Update miner task count and last_seen timestamp
         {
             let mut miners = self.miners.write();
             if let Some(info) = miners.get_mut(&miner) {
                 info.current_tasks += 1;
+                info.last_seen = now;
             }
         }
 
@@ -380,6 +406,15 @@ impl TaskDispatcher {
         {
             let mut results = self.results.write();
             results.insert(task_id, result);
+            // M1 FIX: Evict oldest results to prevent unbounded memory growth.
+            // Keep at most 10,000 completed results. Since HashMap doesn't track
+            // insertion order, we just remove arbitrary entries when over capacity.
+            const MAX_RESULTS: usize = 10_000;
+            while results.len() > MAX_RESULTS {
+                if let Some(key) = results.keys().next().copied() {
+                    results.remove(&key);
+                }
+            }
         }
 
         // Update miner stats
@@ -389,6 +424,12 @@ impl TaskDispatcher {
                 info.current_tasks = info.current_tasks.saturating_sub(1);
                 // Update average execution time
                 info.avg_execution_time = (info.avg_execution_time + execution_time_ms) / 2;
+                // Update last_seen timestamp
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs();
+                info.last_seen = now;
             }
         }
 
@@ -446,13 +487,13 @@ impl TaskDispatcher {
             // Re-queue if retries remaining, using preserved original metadata
             if a.retry_count < self.config.max_retries {
                 // 🔧 FIX: Retrieve original task metadata instead of creating empty defaults
-                let requeue_task = self
-                    .task_metadata
-                    .write()
-                    .remove(&task_id)
-                    .unwrap_or_else(|| {
+                let requeue_task =
+                    self.task_metadata.write().remove(&task_id).unwrap_or_else(|| {
                         // Fallback: should never happen if metadata was stored on claim
-                        warn!("Task metadata missing for 0x{}, using defaults", hex::encode(&task_id[..8]));
+                        warn!(
+                            "Task metadata missing for 0x{}, using defaults",
+                            hex::encode(&task_id[..8])
+                        );
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs())
@@ -536,12 +577,19 @@ pub struct DispatchService {
     running: Arc<RwLock<bool>>,
     /// Optional command sender for P2P broadcast integration
     command_tx: Option<tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>>,
+    /// Validator keypair for signing task dispatches (private_key, address)
+    validator_key: Option<([u8; 32], [u8; 20])>,
 }
 
 impl DispatchService {
     /// Create a new dispatch service without P2P integration
     pub fn new(dispatcher: Arc<TaskDispatcher>) -> Self {
-        Self { dispatcher, running: Arc::new(RwLock::new(false)), command_tx: None }
+        Self {
+            dispatcher,
+            running: Arc::new(RwLock::new(false)),
+            command_tx: None,
+            validator_key: None,
+        }
     }
 
     /// Create a new dispatch service with P2P broadcast capability
@@ -549,7 +597,74 @@ impl DispatchService {
         dispatcher: Arc<TaskDispatcher>,
         command_tx: tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>,
     ) -> Self {
-        Self { dispatcher, running: Arc::new(RwLock::new(false)), command_tx: Some(command_tx) }
+        warn!(
+            "DispatchService created without validator key — task dispatches will be unsigned. \
+               Use with_p2p_signed() for production."
+        );
+        Self {
+            dispatcher,
+            running: Arc::new(RwLock::new(false)),
+            command_tx: Some(command_tx),
+            validator_key: None,
+        }
+    }
+
+    /// Create a new dispatch service with P2P broadcast and task signing.
+    ///
+    /// Task dispatches will be signed with the validator's private key,
+    /// preventing malicious nodes from injecting fake task assignments.
+    pub fn with_p2p_signed(
+        dispatcher: Arc<TaskDispatcher>,
+        command_tx: tokio::sync::mpsc::Sender<luxtensor_network::SwarmCommand>,
+        validator_private_key: [u8; 32],
+        validator_address: [u8; 20],
+    ) -> Self {
+        info!("DispatchService initialized with validator signing key");
+        Self {
+            dispatcher,
+            running: Arc::new(RwLock::new(false)),
+            command_tx: Some(command_tx),
+            validator_key: Some((validator_private_key, validator_address)),
+        }
+    }
+
+    /// Sign a task dispatch message using the validator keypair.
+    /// Returns (signature, address) or None if no key is configured.
+    fn sign_task_dispatch(
+        &self,
+        task_id: &[u8; 32],
+        model_hash: &str,
+        input_hash: &[u8; 32],
+        reward: u128,
+        deadline: u64,
+    ) -> (Vec<u8>, [u8; 20]) {
+        match &self.validator_key {
+            Some((private_key, address)) => {
+                // Build deterministic message: keccak256(task_id || model_hash || input_hash || reward || deadline)
+                let mut msg_data = Vec::with_capacity(32 + model_hash.len() + 32 + 16 + 8);
+                msg_data.extend_from_slice(task_id);
+                msg_data.extend_from_slice(model_hash.as_bytes());
+                msg_data.extend_from_slice(input_hash);
+                msg_data.extend_from_slice(&reward.to_be_bytes());
+                msg_data.extend_from_slice(&deadline.to_be_bytes());
+
+                let message_hash = luxtensor_crypto::keccak256(&msg_data);
+                match luxtensor_crypto::signature::KeyPair::from_secret(private_key) {
+                    Ok(kp) => match kp.sign(&message_hash) {
+                        Ok(sig) => (sig.to_vec(), *address),
+                        Err(e) => {
+                            warn!("Failed to sign task dispatch: {}", e);
+                            (vec![], *address)
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Invalid validator private key: {}", e);
+                        (vec![], *address)
+                    }
+                }
+            }
+            None => (vec![], [0u8; 20]),
+        }
     }
 
     /// Start the dispatch service
@@ -557,15 +672,20 @@ impl DispatchService {
     /// This should be called with a command sender for P2P integration:
     /// ```ignore
     /// let service = DispatchService::new(dispatcher, Some(swarm_command_tx));
-    /// service.start().await;
+    /// let shutdown_rx = shutdown_tx.subscribe();
+    /// service.start(shutdown_rx).await;
     /// ```
-    pub async fn start(&self) {
+    pub async fn start(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
         *self.running.write() = true;
         info!("Task dispatch service started");
 
         let interval = Duration::from_millis(self.dispatcher.config.dispatch_interval_ms);
 
-        while *self.running.read() {
+        loop {
+            if !*self.running.read() {
+                break;
+            }
+
             // Check for timeouts
             let _timed_out = self.dispatcher.check_timeouts();
 
@@ -576,17 +696,32 @@ impl DispatchService {
                     // Limit broadcast batch
                     let deadline = task.created_at + self.dispatcher.config.task_timeout;
                     use luxtensor_network::SwarmCommand;
+
+                    // Sign the task dispatch with validator keypair
+                    let (signature, address) = self.sign_task_dispatch(
+                        &task.task_id,
+                        &task.model_hash,
+                        &task.input_hash,
+                        task.reward,
+                        deadline,
+                    );
+
+                    if signature.is_empty() && self.validator_key.is_some() {
+                        warn!(
+                            "Skipping unsigned task dispatch 0x{} — signing failed",
+                            hex::encode(&task.task_id[..8])
+                        );
+                        continue;
+                    }
+
                     if let Err(e) = tx.try_send(SwarmCommand::BroadcastTaskDispatch {
                         task_id: task.task_id,
                         model_hash: task.model_hash.clone(),
                         input_hash: task.input_hash,
                         reward: task.reward,
                         deadline,
-                        // TODO: Sign with validator keypair when available
-                        // For now, empty signature will cause receivers to reject
-                        // unless the node is configured as a validator with signing key
-                        validator_signature: vec![],
-                        validator_address: [0u8; 20],
+                        validator_signature: signature,
+                        validator_address: address,
                     }) {
                         warn!(
                             "Failed to broadcast task 0x{}: {}",
@@ -599,7 +734,14 @@ impl DispatchService {
                 }
             }
 
-            tokio::time::sleep(interval).await;
+            // H4 FIX: Use tokio::select! to check shutdown signal alongside sleep
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = shutdown_rx.recv() => {
+                    info!("Task dispatch service shutting down");
+                    break;
+                }
+            }
         }
 
         info!("Task dispatch service stopped");
@@ -614,6 +756,7 @@ impl DispatchService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use luxtensor_crypto::signature::KeyPair;
     use luxtensor_storage::NeuronData;
     use tempfile::TempDir;
 
@@ -629,6 +772,31 @@ mod tests {
         let db = Arc::new(MetagraphDB::open(temp_dir.path()).unwrap());
         let dispatcher = TaskDispatcher::new(db.clone(), DispatcherConfig::default());
         (dispatcher, db)
+    }
+
+    /// Create a 65-byte recoverable ECDSA signature (r||s||v) suitable for
+    /// `recover_address_strict`. Returns (miner_address, signature).
+    fn sign_claim(task_id: &[u8; 32], keypair: &KeyPair) -> (([u8; 20], Vec<u8>)) {
+        let miner_addr = *keypair.address().as_bytes();
+        let mut msg = Vec::with_capacity(52);
+        msg.extend_from_slice(task_id);
+        msg.extend_from_slice(&miner_addr);
+        let msg_hash = keccak256(&msg);
+
+        let sig64 = keypair.sign(&msg_hash).expect("signing failed");
+
+        // Try recovery IDs 0 and 1 to find the one that recovers our address.
+        for v in 0u8..=1 {
+            let mut sig65 = Vec::with_capacity(65);
+            sig65.extend_from_slice(&sig64);
+            sig65.push(v);
+            if let Ok(recovered) = recover_address_strict(&msg_hash, &sig65) {
+                if *recovered.as_bytes() == miner_addr {
+                    return (miner_addr, sig65);
+                }
+            }
+        }
+        panic!("Could not find valid recovery ID for test signature");
     }
 
     #[test]
@@ -662,7 +830,8 @@ mod tests {
     fn test_task_claim() {
         let dispatcher = create_test_dispatcher();
         let task_id = [1u8; 32];
-        let miner_addr = [2u8; 20];
+        let keypair = KeyPair::generate();
+        let (miner_addr, signature) = sign_claim(&task_id, &keypair);
 
         // Register miner
         dispatcher.register_miner(MinerInfo {
@@ -678,8 +847,8 @@ mod tests {
         // Enqueue task
         dispatcher.enqueue_task_id(task_id, "test_model".to_string(), [0u8; 32], 1000);
 
-        // Claim task
-        let result = dispatcher.handle_claim(task_id, miner_addr, vec![]);
+        // Claim task with valid signature
+        let result = dispatcher.handle_claim(task_id, miner_addr, signature);
         assert!(result.is_ok());
         assert_eq!(dispatcher.pending_count(), 0);
         assert_eq!(dispatcher.active_count(), 1);
@@ -689,7 +858,8 @@ mod tests {
     fn test_submit_result() {
         let dispatcher = create_test_dispatcher();
         let task_id = [1u8; 32];
-        let miner_addr = [2u8; 20];
+        let keypair = KeyPair::generate();
+        let (miner_addr, signature) = sign_claim(&task_id, &keypair);
 
         // Setup
         dispatcher.register_miner(MinerInfo {
@@ -702,7 +872,7 @@ mod tests {
             last_seen: 0,
         });
         dispatcher.enqueue_task_id(task_id, "test_model".to_string(), [0u8; 32], 1000);
-        dispatcher.handle_claim(task_id, miner_addr, vec![]).unwrap();
+        dispatcher.handle_claim(task_id, miner_addr, signature).unwrap();
 
         // Submit result
         let result = dispatcher.handle_result(task_id, [3u8; 32], 500, None);
@@ -725,7 +895,7 @@ mod tests {
             hotkey: miner_a,
             coldkey: [0u8; 20],
             stake: 0,
-            trust: 60000,    // ~0.915 normalized (near max)
+            trust: 60000, // ~0.915 normalized (near max)
             rank: 50000,
             incentive: 40000,
             dividends: 0,

@@ -76,6 +76,14 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     /// @notice Aggregated model checkpoints per job per round
     mapping(uint256 => mapping(uint256 => bytes32)) public roundCheckpoints;
 
+    /// @notice Track submissions per job: jobId => trainer => hasSubmitted
+    /// @dev SECURITY (M-11): O(1) duplicate detection for submitGradient
+    mapping(uint256 => mapping(address => bool)) public hasSubmitted;
+
+    /// @notice Counter for active jobs (Open or Training)
+    /// @dev SECURITY (M-12): Avoids unbounded loop in getActiveJobsCount
+    uint256 public activeJobCount;
+
     // ==================== EVENTS ====================
 
     event JobCreated(
@@ -184,6 +192,9 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
             depositedRewards: totalRewards
         });
 
+        // SECURITY (M-12): Track active job count
+        activeJobCount++;
+
         emit JobCreated(
             jobId,
             modelId,
@@ -218,6 +229,47 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
         }
     }
 
+    // ==================== VERIFICATION ====================
+
+    /**
+     * @notice Verify a trainer's submission for the current round (owner/oracle only)
+     * @dev SECURITY (SC-8 FIX): PoT verification gate — submissions default to
+     *      unverified and must be explicitly verified before rewards are distributed.
+     * @param jobId Job ID
+     * @param trainerIndex Index of the trainer's submission in the round
+     */
+    function verifySubmission(
+        uint256 jobId,
+        uint256 trainerIndex
+    ) external onlyOwner {
+        TrainingJob storage job = jobs[jobId];
+        require(job.status == JobStatus.Training, "Job not training");
+        uint256 round = job.currentRound;
+        GradientSubmission[] storage submissions = roundSubmissions[jobId][
+            round
+        ];
+        require(trainerIndex < submissions.length, "Invalid index");
+        require(!submissions[trainerIndex].verified, "Already verified");
+        submissions[trainerIndex].verified = true;
+    }
+
+    /**
+     * @notice Batch-verify all submissions for the current round (owner/oracle only)
+     * @dev For off-chain PoT: oracle verifies all at once after checking proofs
+     * @param jobId Job ID
+     */
+    function verifyAllSubmissions(uint256 jobId) external onlyOwner {
+        TrainingJob storage job = jobs[jobId];
+        require(job.status == JobStatus.Training, "Job not training");
+        uint256 round = job.currentRound;
+        GradientSubmission[] storage submissions = roundSubmissions[jobId][
+            round
+        ];
+        for (uint256 i = 0; i < submissions.length; i++) {
+            submissions[i].verified = true;
+        }
+    }
+
     // ==================== TRAINING ====================
 
     /**
@@ -240,10 +292,9 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
             round
         ];
 
-        // Check not already submitted
-        for (uint256 i = 0; i < submissions.length; i++) {
-            if (submissions[i].trainer == msg.sender) revert AlreadySubmitted();
-        }
+        // SECURITY (M-11): O(1) duplicate check instead of linear scan
+        require(!hasSubmitted[jobId][msg.sender], "Already submitted");
+        hasSubmitted[jobId][msg.sender] = true;
 
         submissions.push(
             GradientSubmission({
@@ -251,7 +302,10 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
                 gradientHash: gradientHash,
                 checkpointHash: checkpointHash,
                 timestamp: block.timestamp,
-                verified: true // TODO: Implement PoT verification
+                // SECURITY (SC-8 FIX): Default to false — submissions must be
+                // verified via verifySubmission() before rewards are distributed.
+                // Previously hardcoded to true, bypassing PoT entirely.
+                verified: false
             })
         );
 
@@ -291,7 +345,8 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
                     distributed++;
                     // Last verified trainer gets remainder to prevent dust loss
                     uint256 amount = (distributed == verifiedCount)
-                        ? job.rewardPerRound - (rewardPerTrainer * (verifiedCount - 1))
+                        ? job.rewardPerRound -
+                            (rewardPerTrainer * (verifiedCount - 1))
                         : rewardPerTrainer;
                     mdtToken.safeTransfer(submissions[i].trainer, amount);
                     emit RewardDistributed(
@@ -311,16 +366,25 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
             submissions.length
         );
 
+        // SECURITY (SC-4 FIX): Reset hasSubmitted for all trainers who submitted
+        // in this round, so they can submit again in the next round.
+        for (uint256 i = 0; i < submissions.length; i++) {
+            delete hasSubmitted[jobId][submissions[i].trainer];
+        }
+
         // Move to next round or complete
         job.currentRound++;
         if (job.currentRound >= job.totalRounds) {
             job.status = JobStatus.Completed;
+            // SECURITY (M-12): Decrement active job count
+            activeJobCount--;
             emit JobCompleted(jobId, job.totalRounds);
         }
     }
 
     /**
      * @dev Aggregate gradients using FedAvg (simplified on-chain version)
+     * @dev SECURITY (C-2): Pre-allocate fixed-size buffer to avoid O(n²) reallocation
      * @return aggregatedHash Hash representing aggregated model state
      */
     function _aggregateGradients(
@@ -333,9 +397,17 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
 
         // Simple aggregation: keccak256 of all gradient hashes
         // Real FedAvg would happen off-chain with this as commitment
-        bytes memory combined;
-        for (uint256 i = 0; i < submissions.length; i++) {
-            combined = abi.encodePacked(combined, submissions[i].gradientHash);
+        uint256 count = submissions.length;
+        if (count == 0) return bytes32(0);
+
+        // Pre-allocate buffer: each gradientHash is 32 bytes
+        bytes memory combined = new bytes(count * 32);
+        for (uint256 i = 0; i < count; i++) {
+            bytes32 hash = submissions[i].gradientHash;
+            uint256 offset = i * 32;
+            assembly {
+                mstore(add(add(combined, 32), offset), hash)
+            }
         }
         return keccak256(combined);
     }
@@ -362,6 +434,9 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
         uint256 refundAmount = job.depositedRewards - usedRewards;
 
         job.status = JobStatus.Cancelled;
+
+        // SECURITY (M-12): Decrement active job count
+        activeJobCount--;
 
         if (refundAmount > 0) {
             mdtToken.safeTransfer(job.creator, refundAmount);
@@ -401,14 +476,8 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     /**
      * @notice Get active jobs count
      */
-    function getActiveJobsCount() external view returns (uint256 count) {
-        for (uint256 i = 0; i < nextJobId; i++) {
-            if (
-                jobs[i].status == JobStatus.Open ||
-                jobs[i].status == JobStatus.Training
-            ) {
-                count++;
-            }
-        }
+    /// @dev SECURITY (M-12): Returns cached counter instead of iterating all jobs
+    function getActiveJobsCount() external view returns (uint256) {
+        return activeJobCount;
     }
 }

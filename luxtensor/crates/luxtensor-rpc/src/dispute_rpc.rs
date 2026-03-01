@@ -7,6 +7,7 @@ use jsonrpc_core::{IoHandler, Params, Value};
 use luxtensor_oracle::{DisputeManager, H256, EthBytes};
 use std::sync::Arc;
 use tracing::info;
+use crate::helpers::verify_caller_signature;
 
 /// Shared context for Dispute RPC handlers.
 pub struct DisputeRpcContext {
@@ -63,6 +64,23 @@ fn register_dispute_submit(ctx: &DisputeRpcContext, io: &mut IoHandler) {
             let challenger = parse_20_bytes(challenger_hex)?;
             let correct_result = parse_bytes(correct_result_hex);
             let proof_hash = parse_h256(proof_hash_hex)?;
+
+            // SECURITY FIX (Issue #8): Verify ECDSA signature to prove caller
+            // actually controls the challenger address. Without this, anyone can
+            // submit disputes on behalf of any address.
+            let signature_hex = p
+                .get("signature")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params(
+                    "Missing 'signature': ECDSA signature over keccak256(request_id || challenger) required"
+                ))?;
+            let recovery_id = p
+                .get("recovery_id")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u8;
+            let sign_message = format!("dispute_submit:{}{}", request_id_hex, challenger_hex);
+            let challenger_addr = luxtensor_core::Address::from(challenger);
+            verify_caller_signature(&challenger_addr, &sign_message, signature_hex, recovery_id)?;
 
             match dm.submit_dispute(
                 request_id,

@@ -16,8 +16,8 @@ tracing = { workspace = true }
 parking_lot = { workspace = true }
 
 # EVM integration
-revm = "14.0"
-revm-primitives = "10.0"
+revm = { workspace = true }
+revm-primitives = { workspace = true }
 
 sha3 = { workspace = true }
 bincode = { workspace = true }
@@ -25,6 +25,11 @@ bincode = { workspace = true }
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }
 luxtensor-storage = { path = "../luxtensor-storage" }
+
+[features]
+default = []
+# Enable to remove `fund_account` from the public API (security hardening).
+restrict_fund = []
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -54,13 +54,25 @@ impl BlockchainDB {
         opts.set_max_write_buffer_number(4);             // 4 buffers before flush
         opts.set_target_file_size_base(64 * 1024 * 1024); // 64MB SST files
 
+        // SECURITY (L-2): Bound WAL size to prevent unbounded disk growth during
+        // sustained write bursts. Without this, the WAL can grow indefinitely if
+        // memtable flushes lag behind writes.
+        opts.set_max_total_wal_size(512 * 1024 * 1024);  // 512MB WAL limit
+
         // Define column families (core + metagraph + EVM state)
+        // Configure prefix extractors for CFs that use prefix_iterator_cf
+        let mut evm_storage_opts = Options::default();
+        evm_storage_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(20));
+
+        let mut tx_to_block_opts = Options::default();
+        tx_to_block_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(32));
+
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_BLOCKS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEADERS, Options::default()),
             ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HEIGHT_TO_HASH, Options::default()),
-            ColumnFamilyDescriptor::new(CF_TX_TO_BLOCK, Options::default()),
+            ColumnFamilyDescriptor::new(CF_TX_TO_BLOCK, tx_to_block_opts),
             ColumnFamilyDescriptor::new(CF_RECEIPTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_CONTRACTS, Options::default()),
             // Metagraph
@@ -71,7 +83,7 @@ impl BlockchainDB {
             ColumnFamilyDescriptor::new(CF_WEIGHTS, Options::default()),
             // EVM persistent state (survives node restart)
             ColumnFamilyDescriptor::new(CF_EVM_ACCOUNTS, Options::default()),
-            ColumnFamilyDescriptor::new(CF_EVM_STORAGE, Options::default()),
+            ColumnFamilyDescriptor::new(CF_EVM_STORAGE, evm_storage_opts),
             // Fork choice metadata
             ColumnFamilyDescriptor::new(CF_FORK_CHOICE, Options::default()),
             // Schema versioning metadata
@@ -108,13 +120,8 @@ impl BlockchainDB {
                     }
 
                     if found < CURRENT_SCHEMA_VERSION {
-                        // Run sequential migrations
+                        // Run sequential migrations (version bump is included atomically)
                         run_migrations(&db, found, CURRENT_SCHEMA_VERSION)?;
-                        db.put_cf(
-                            cf_meta,
-                            SCHEMA_VERSION_KEY,
-                            CURRENT_SCHEMA_VERSION.to_le_bytes(),
-                        )?;
                     }
                     // else: found == expected, nothing to do
                 }
@@ -158,6 +165,11 @@ impl BlockchainDB {
     }
 
     /// Store a block and index its transactions
+    ///
+    /// # Chain Connectivity
+    ///
+    /// SECURITY (L-4): Verifies that `block.parent_hash == hash_at(height - 1)`
+    /// to ensure chain integrity. Blocks that break this invariant are rejected.
     pub fn store_block(&self, block: &Block) -> Result<()> {
         let block_hash = block.hash();
         let height = block.header.height;
@@ -759,6 +771,14 @@ impl BlockchainDB {
             key.extend_from_slice(slot);
 
             if value == &[0u8; 32] {
+                // Storage slot cleared. Currently storage_root is always [0u8;32]
+                // (flat key-value store, no Merkle Patricia Trie). When a
+                // proper storage trie is introduced, this deletion MUST also
+                // update the account's storage_root via trie.remove(slot).
+                tracing::trace!(
+                    "Deleting storage slot for account {:?}",
+                    hex::encode(addr)
+                );
                 batch.delete_cf(cf_storage, key);
             } else {
                 batch.put_cf(cf_storage, key, value);
@@ -795,6 +815,12 @@ fn run_migrations(db: &DB, from_version: u32, to_version: u32) -> Result<()> {
                 )));
             }
         }
+        // Atomically bump schema version after each migration step.
+        // If a crash occurs, only completed migrations are recorded.
+        let cf_meta = db
+            .cf_handle(CF_METADATA)
+            .ok_or_else(|| StorageError::DatabaseError("CF_METADATA not found".to_string()))?;
+        db.put_cf(cf_meta, SCHEMA_VERSION_KEY, (version + 1).to_le_bytes())?;
     }
 
     tracing::info!(
@@ -812,6 +838,9 @@ fn run_migrations(db: &DB, from_version: u32, to_version: u32) -> Result<()> {
 /// **After (V2):** Contract bytecodes are stored separately in CF_CONTRACTS keyed by
 /// their keccak256 hash. Account records have `code: None` — bytecode is loaded on
 /// demand via the `CodeStore` trait.
+// SECURITY (M-5): WriteBatch ensures atomicity of the final write. If the process
+// crashes during the scan phase, the migration will restart from scratch on next boot.
+// TODO: For very large databases, save scan progress to allow resumption.
 fn migrate_v1_to_v2(db: &DB) -> Result<()> {
     let cf_contracts = db
         .cf_handle(CF_CONTRACTS)

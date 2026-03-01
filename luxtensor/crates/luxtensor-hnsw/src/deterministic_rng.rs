@@ -127,10 +127,15 @@ impl DeterministicRng {
     ///
     /// Note: We only use this for level calculation which is then converted
     /// to a discrete level. The float is NOT used for distance calculations.
+    ///
+    /// SECURITY (HNSW-13b): Pre-compute the reciprocal as a constant to
+    /// guarantee identical results across all compilers/platforms.
     pub fn next_f64(&mut self) -> f64 {
         let bits = self.next_u64();
-        // Convert to f64 in [0, 1) using the standard technique
-        (bits >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
+        // Convert to f64 in [0, 1) using the standard technique.
+        // The divisor 2^53 = 9007199254740992.0 is exactly representable as f64.
+        const RECIP: f64 = 1.0 / 9_007_199_254_740_992.0; // 1.0 / (1u64 << 53) as f64
+        (bits >> 11) as f64 * RECIP
     }
 
     /// Generate a random usize in [0, max).
@@ -138,7 +143,19 @@ impl DeterministicRng {
         if max == 0 {
             return 0;
         }
-        (self.next_u64() as usize) % max
+        if max == 1 {
+            return 0;
+        }
+        // Rejection sampling to eliminate modulo bias.
+        // For max values close to usize::MAX, the expected number of
+        // iterations is < 2, so this is efficient in practice.
+        let threshold = usize::MAX - (usize::MAX % max);
+        loop {
+            let val = self.next_u64() as usize;
+            if val < threshold {
+                return val % max;
+            }
+        }
     }
 
     /// Advance the internal state using Keccak256.

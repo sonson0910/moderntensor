@@ -280,12 +280,12 @@ pub fn register_staking_methods(
                 )));
             }
 
-            // Check if already delegated
-            if db.get_delegation(&delegator)
+            // Check if already delegated to this validator
+            if db.get_delegation(&delegator, &validator)
                 .map_err(|e| internal_error(&e.to_string()))?
                 .is_some()
             {
-                return Err(Error::invalid_params("Already delegated. Undelegate first."));
+                return Err(Error::invalid_params("Already delegated to this validator. Undelegate first."));
             }
 
             // Store delegation
@@ -319,16 +319,17 @@ pub fn register_staking_methods(
         let db = db.clone();
         async move {
             let parsed: Vec<String> = params.parse()?;
-            if parsed.len() < 3 {
+            if parsed.len() < 4 {
                 return Err(Error::invalid_params(
-                    "Missing parameters. Required: delegator, timestamp, signature"
+                    "Missing parameters. Required: delegator, validator, timestamp, signature"
                 ));
             }
 
             let delegator = parse_address(&parsed[0])?;
-            let timestamp: u64 = parsed[1].parse()
+            let validator = parse_address(&parsed[1])?;
+            let timestamp: u64 = parsed[2].parse()
                 .map_err(|_| Error::invalid_params("Invalid timestamp"))?;
-            let signature = parsed[2].clone();
+            let signature = parsed[3].clone();
 
             // Security: Verify timestamp is recent (within 5 minutes)
             let now = get_current_timestamp();
@@ -348,9 +349,9 @@ pub fn register_staking_methods(
                 ));
             }
 
-            let delegation = db.get_delegation(&delegator)
+            let delegation = db.get_delegation(&delegator, &validator)
                 .map_err(|e| internal_error(&e.to_string()))?
-                .ok_or_else(|| Error::invalid_params("No delegation found"))?;
+                .ok_or_else(|| Error::invalid_params("No delegation found for this delegator-validator pair"))?;
 
             // Check lock period
             let now = get_current_timestamp();
@@ -362,7 +363,7 @@ pub fn register_staking_methods(
                 )));
             }
 
-            db.delete_delegation(&delegator)
+            db.delete_delegation(&delegator, &validator)
                 .map_err(|e| internal_error(&e.to_string()))?;
 
             Ok(serde_json::json!({
@@ -401,6 +402,7 @@ pub fn register_staking_methods(
     });
 
     // staking_getDelegation - Get delegation info (from DB)
+    // Accepts: [delegator] for all delegations, or [delegator, validator] for specific pair
     let db = metagraph_db.clone();
     io.add_method("staking_getDelegation", move |params: Params| {
         let db = db.clone();
@@ -411,12 +413,15 @@ pub fn register_staking_methods(
             }
 
             let delegator = parse_address(&parsed[0])?;
-            let delegation = db.get_delegation(&delegator)
-                .map_err(|e| internal_error(&e.to_string()))?;
 
-            match delegation {
-                Some(info) => {
-                    Ok(serde_json::json!({
+            if parsed.len() >= 2 {
+                // Specific (delegator, validator) pair
+                let validator = parse_address(&parsed[1])?;
+                let delegation = db.get_delegation(&delegator, &validator)
+                    .map_err(|e| internal_error(&e.to_string()))?;
+
+                match delegation {
+                    Some(info) => Ok(serde_json::json!({
                         "delegator": format!("0x{}", hex::encode(delegator)),
                         "validator": format!("0x{}", hex::encode(info.validator)),
                         "amount": format!("0x{:x}", info.amount),
@@ -424,14 +429,39 @@ pub fn register_staking_methods(
                         "lockDays": info.lock_days,
                         "startBlock": info.start_block,
                         "delegatedAt": info.delegated_at
-                    }))
-                }
-                None => {
-                    Ok(serde_json::json!({
+                    })),
+                    None => Ok(serde_json::json!({
                         "delegator": format!("0x{}", hex::encode(delegator)),
                         "delegation": null
-                    }))
+                    })),
                 }
+            } else {
+                // All delegations for this delegator
+                let delegations = db.get_delegations_for_delegator(&delegator)
+                    .map_err(|e| internal_error(&e.to_string()))?;
+
+                if delegations.is_empty() {
+                    return Ok(serde_json::json!({
+                        "delegator": format!("0x{}", hex::encode(delegator)),
+                        "delegations": []
+                    }));
+                }
+
+                let results: Vec<serde_json::Value> = delegations.iter().map(|info| {
+                    serde_json::json!({
+                        "validator": format!("0x{}", hex::encode(info.validator)),
+                        "amount": format!("0x{:x}", info.amount),
+                        "amountDecimal": info.amount.to_string(),
+                        "lockDays": info.lock_days,
+                        "startBlock": info.start_block,
+                        "delegatedAt": info.delegated_at
+                    })
+                }).collect();
+
+                Ok(serde_json::json!({
+                    "delegator": format!("0x{}", hex::encode(delegator)),
+                    "delegations": results
+                }))
             }
         }
     });
@@ -514,7 +544,7 @@ pub fn register_staking_methods(
             // In our model, stake is per-address. For coldkey-hotkey pairs,
             // we lookup the hotkey's stake (which would be delegated from coldkey)
             // First check if there's a delegation from coldkey to hotkey
-            if let Ok(Some(delegation)) = db.get_delegation(&coldkey) {
+            if let Ok(Some(delegation)) = db.get_delegation(&coldkey, &hotkey) {
                 if delegation.validator == hotkey {
                     return Ok(serde_json::json!({
                         "coldkey": format!("0x{}", hex::encode(coldkey)),

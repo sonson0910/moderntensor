@@ -168,4 +168,18 @@ contract ExampleGame {
     function updateModel(bytes32 newModelHash) external onlyOwner {
         gameModelHash = newModelHash;
     }
+
+    /**
+     * @notice Withdraw trapped ETH (from refunds/cancellations)
+     * @dev SECURITY (H-11): Prevents permanent ETH lock in contract
+     */
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No balance");
+        (bool success, ) = payable(owner).call{value: balance}("");
+        require(success, "Transfer failed");
+    }
+
+    /// @notice Allow contract to receive ETH (refunds from oracle)
+    receive() external payable {}
 }

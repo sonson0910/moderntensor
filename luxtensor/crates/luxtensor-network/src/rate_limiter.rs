@@ -131,6 +131,16 @@ impl RateLimiter {
         allowed
     }
 
+    /// 🔧 FIX F2: Dual-key rate check using both PeerId and IP address.
+    ///
+    /// Prevents Sybil bypass where an attacker generates N peer IDs from the
+    /// same IP to get N independent rate-limit buckets.  The IP bucket is
+    /// keyed with an `ip:` prefix so it cannot collide with peer IDs.
+    pub fn check_with_ip(&self, peer_id: &str, ip: &std::net::IpAddr) -> bool {
+        let ip_key = format!("ip:{}", ip);
+        self.check(peer_id) && self.check(&ip_key)
+    }
+
     /// Check if request is allowed with custom cost
     pub fn check_with_cost(&self, peer_id: &str, cost: f64) -> bool {
         if self.is_banned(peer_id) {

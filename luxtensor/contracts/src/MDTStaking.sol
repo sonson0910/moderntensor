@@ -31,9 +31,18 @@ contract MDTStaking is Ownable, ReentrancyGuard {
 
     mapping(address => StakeLock[]) public stakeLocks;
 
+    /// @notice Maximum active locks per staker
+    /// @dev SECURITY (H-7): Prevents unbounded array gas DoS
+    uint256 public constant MAX_LOCKS_PER_STAKER = 50;
+
     uint256 public totalStaked;
     uint256 public totalBonusPaid;
     uint256 public totalBonusLiability;
+
+    /// @notice Test mode flag — enables lockSeconds() for testing
+    /// @dev SECURITY (SC-2 FIX): Can only be disabled (one-way), never re-enabled.
+    /// Call disableTestMode() before mainnet launch to permanently remove lockSeconds().
+    bool public testMode = true;
 
     event Staked(
         address indexed staker,
@@ -52,6 +61,15 @@ contract MDTStaking is Ownable, ReentrancyGuard {
     constructor(address _token) Ownable(msg.sender) {
         require(_token != address(0), "Invalid token");
         token = IERC20(_token);
+    }
+
+    /**
+     * @notice Permanently disable test mode (removes lockSeconds access)
+     * @dev SECURITY (SC-2 FIX): One-way toggle — cannot be re-enabled after calling.
+     *      Must be called before mainnet deployment.
+     */
+    function disableTestMode() external onlyOwner {
+        testMode = false;
     }
 
     /**
@@ -74,6 +92,11 @@ contract MDTStaking is Ownable, ReentrancyGuard {
         require(amount > 0, "Amount must be > 0");
         require(lockDays > 0, "Lock days must be > 0");
         require(lockDays <= 365, "Max lock is 365 days");
+        // SECURITY (H-7): Prevent unbounded stakeLocks array
+        require(
+            stakeLocks[msg.sender].length < MAX_LOCKS_PER_STAKER,
+            "Too many active locks"
+        );
 
         // Transfer tokens to contract
         token.safeTransferFrom(msg.sender, address(this), amount);
@@ -105,15 +128,21 @@ contract MDTStaking is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Lock MDT tokens for seconds (for testing)
+     * @notice Lock MDT tokens for seconds (for testing only)
+     * @dev SECURITY (SC-2 FIX): Gated behind testMode flag. Call disableTestMode()
+     *      before mainnet to permanently disable this function.
      */
     function lockSeconds(
         uint256 amount,
         uint256 lockSeconds_
-    ) external nonReentrant {
+    ) external onlyOwner nonReentrant {
+        require(testMode, "Test mode disabled");
         require(amount > 0, "Amount must be > 0");
-        require(lockSeconds_ > 0, "Lock seconds must be > 0");
-
+        require(lockSeconds_ > 0, "Lock seconds must be > 0"); // SECURITY (H-7): Prevent unbounded stakeLocks array
+        require(
+            stakeLocks[msg.sender].length < MAX_LOCKS_PER_STAKER,
+            "Too many active locks"
+        );
         token.safeTransferFrom(msg.sender, address(this), amount);
 
         uint256 lockDays = lockSeconds_ / 86400;

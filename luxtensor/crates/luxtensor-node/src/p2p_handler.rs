@@ -24,13 +24,13 @@ use luxtensor_consensus::ProofOfStake;
 use luxtensor_core::{Block, Hash, Transaction};
 use luxtensor_network::eclipse_protection::EclipseProtection;
 use luxtensor_network::rate_limiter::RateLimiter as NetworkRateLimiter;
-use luxtensor_network::{SwarmCommand, SwarmP2PEvent};
-use luxtensor_storage::BlockchainDB;
+use luxtensor_network::{PeerId, SwarmCommand, SwarmP2PEvent};
+use luxtensor_storage::{BlockchainDB, CachedStateDB};
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Shared context for all P2P event handlers.
 ///
@@ -58,6 +58,7 @@ pub(crate) struct P2PContext {
     pub epoch_length: u64,
     pub best_height: Arc<AtomicU64>,
     pub is_syncing: Arc<AtomicBool>,
+    pub merkle_cache: Arc<CachedStateDB>,
 }
 
 impl P2PContext {
@@ -65,21 +66,16 @@ impl P2PContext {
     pub async fn run(self, mut event_rx: mpsc::Receiver<SwarmP2PEvent>) {
         while let Some(event) = event_rx.recv().await {
             match event {
-                SwarmP2PEvent::NewBlock(block) => self.handle_new_block(block).await,
-                SwarmP2PEvent::NewTransaction(tx) => self.handle_new_transaction(tx).await,
+                SwarmP2PEvent::NewBlock(block, source_peer) => self.handle_new_block(block, source_peer).await,
+                SwarmP2PEvent::NewTransaction(tx, source_peer) => self.handle_new_transaction(tx, source_peer).await,
                 SwarmP2PEvent::PeerConnected(peer_id) => {
                     self.handle_peer_connected(peer_id).await;
                 }
                 SwarmP2PEvent::PeerDisconnected(peer_id) => {
                     self.handle_peer_disconnected(peer_id);
                 }
-                SwarmP2PEvent::SyncRequest {
-                    from_height,
-                    to_height,
-                    requester_id,
-                } => {
-                    self.handle_sync_request(from_height, to_height, requester_id)
-                        .await;
+                SwarmP2PEvent::SyncRequest { from_height, to_height, requester_id } => {
+                    self.handle_sync_request(from_height, to_height, requester_id).await;
                 }
             }
         }
@@ -90,21 +86,26 @@ impl P2PContext {
     // Handler: NewBlock
     // ========================================================================
 
-    async fn handle_new_block(&self, block: Block) {
+    async fn handle_new_block(&self, block: Block, source_peer: PeerId) {
         let height = block.header.height;
         let block_hash = block.hash();
 
-        // 🛡️ Rate-limit: only for blocks far ahead of our chain tip.
+        // 🛡️ SECURITY FIX (Issue #12): Rate-limit by libp2p PeerId (cryptographic
+        // identity), NOT by block.header.validator which is attacker-controlled.
+        // Generating a new PeerId requires a new keypair, making Sybil attacks costly.
         let current_best = self.best_height.load(Ordering::Relaxed);
-        let proposer_id = hex::encode(&block.header.validator);
-        if height > current_best + 100 && !self.rate_limiter.check(&proposer_id) {
-            warn!("🛡️ Block #{} rate-limited from proposer {}", height, proposer_id);
+        let peer_key = source_peer.to_string();
+        if height > current_best + 100 && !self.rate_limiter.check(&peer_key) {
+            warn!("🛡️ Block #{} rate-limited from peer {}", height, peer_key);
             return;
         }
 
         // 🛡️ Long-range attack protection: validate against checkpoints
         if !self.long_range_protection.validate_against_checkpoints(block_hash, height) {
-            warn!("🛡️ Block #{} rejected: checkpoint mismatch (potential long-range attack)", height);
+            warn!(
+                "🛡️ Block #{} rejected: checkpoint mismatch (potential long-range attack)",
+                height
+            );
             return;
         }
 
@@ -181,10 +182,12 @@ impl P2PContext {
             self.best_height.store(height, Ordering::SeqCst);
             info!("📥 Synced block #{} from peer", height);
 
-            // Resume block production if we were syncing
+            // C4 FIX: Do NOT reset is_syncing here — a single block doesn't mean
+            // we're caught up. The periodic sync task in startup.rs handles
+            // is_syncing recovery with proper timeout and progress tracking.
+            // Premature reset here causes fork storms when nodes are far behind.
             if self.is_syncing.load(Ordering::SeqCst) {
-                info!("🔄 Sync progress: stored block #{}, resuming production...", height);
-                self.is_syncing.store(false, Ordering::SeqCst);
+                debug!("🔄 Sync progress: stored block #{} (still syncing)", height);
             }
 
             // Remove confirmed txs from pending pool
@@ -198,17 +201,39 @@ impl P2PContext {
             }
 
             self.execute_and_persist_block(&block, height, block_hash);
+
+            // C2 FIX: Verify state_root matches after re-executing block transactions.
+            // If the block producer computed a different state root, our state has diverged.
+            if block.header.state_root != [0u8; 32] {
+                match self.merkle_cache.commit(height) {
+                    Ok(local_root) => {
+                        if local_root != block.header.state_root {
+                            // SECURITY FIX (Issue #4): State divergence is CRITICAL.
+                            // Set is_syncing=true to prevent this node from producing
+                            // blocks on a forked state. The node must resync to recover.
+                            error!(
+                                "🚨 CRITICAL: Block #{} state_root MISMATCH: local={} vs header={} — \
+                                 node is DIVERGED. Halting block production and requesting resync.",
+                                height,
+                                hex::encode(&local_root[..8]),
+                                hex::encode(&block.header.state_root[..8]),
+                            );
+                            self.is_syncing.store(true, Ordering::SeqCst);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Could not verify state_root for block #{}: {}", height, e);
+                    }
+                }
+            }
+
             self.update_post_block_state(&block, height, block_hash);
         }
     }
 
     /// Validate sequential height, parent hash chain link, and timestamp monotonicity.
     fn validate_block_structure(&self, block: &Block, height: u64) -> bool {
-        let my_height = self
-            .storage
-            .get_best_height()
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+        let my_height = self.storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
 
         if height > my_height + 1 {
             // Gap — request sync
@@ -271,6 +296,17 @@ impl P2PContext {
 
     /// Validate block signature, proposer registration, and VRF proof.
     fn validate_block_proposer(&self, block: &Block, height: u64) -> bool {
+        // C3 FIX: After bootstrap phase, reject blocks with zeroed validator field.
+        // Blocks with validator == [0u8; 32] bypass all signature and VRF checks.
+        // Only allow unsigned blocks for genesis (height 0) and first block (height 1).
+        if height > 1 && block.header.validator == [0u8; 32] {
+            warn!(
+                "🚫 Block #{} rejected: zeroed validator field (unsigned blocks not allowed after height 1)",
+                height
+            );
+            return false;
+        }
+
         // Validate block signature (if validator field is set)
         if block.header.validator != [0u8; 32] && !block.header.signature.is_empty() {
             let validator_addr = &block.header.validator[12..32];
@@ -280,7 +316,7 @@ impl P2PContext {
             let header_hash = unsigned_header.hash();
 
             if sig_backup.len() >= 64 {
-                match luxtensor_crypto::recover_address(&header_hash, &sig_backup) {
+                match luxtensor_crypto::recover_address_strict(&header_hash, &sig_backup) {
                     Ok(recovered_addr) => {
                         if recovered_addr.as_bytes() != validator_addr {
                             warn!(
@@ -311,10 +347,7 @@ impl P2PContext {
                 let pos = self.consensus.read();
                 let vs = pos.validator_set();
                 let vs_lock = vs.read();
-                vs_lock
-                    .active_validators()
-                    .iter()
-                    .any(|v| v.address == proposer_addr)
+                vs_lock.active_validators().iter().any(|v| v.address == proposer_addr)
             };
 
             if !is_active_validator {
@@ -376,6 +409,11 @@ impl P2PContext {
     }
 
     /// Execute block transactions against StateDB and persist to storage.
+    ///
+    /// M6 NOTE: Failed transactions are logged and skipped — this is standard blockchain
+    /// behavior (a failed TX is still included in the block and consumes gas). However,
+    /// without state_root verification (see C2 fix), state divergence from failed TXs
+    /// goes undetected. The C2 fix adds post-execution state_root comparison.
     fn execute_and_persist_block(&self, block: &Block, height: u64, block_hash: [u8; 32]) {
         // Write lock only during TX execution
         {
@@ -456,11 +494,12 @@ impl P2PContext {
     // Handler: NewTransaction
     // ========================================================================
 
-    async fn handle_new_transaction(&self, tx: Transaction) {
-        // Rate-limit: check per-sender message rate
-        let sender_id = hex::encode(&tx.from);
-        if !self.rate_limiter.check(&sender_id) {
-            warn!("🛡️ Transaction rate-limited from sender {}", sender_id);
+    async fn handle_new_transaction(&self, tx: Transaction, source_peer: PeerId) {
+        // SECURITY FIX (Issue #12): Rate-limit by libp2p PeerId (cryptographic
+        // identity), NOT by tx.from which is attacker-controlled.
+        let peer_key = source_peer.to_string();
+        if !self.rate_limiter.check(&peer_key) {
+            warn!("🛡️ Transaction rate-limited from peer {}", peer_key);
             return;
         }
 
@@ -475,6 +514,17 @@ impl P2PContext {
         match self.mempool.add_transaction(tx.clone()) {
             Ok(_) => {
                 // Mempool accepted — add to shared pending pool
+                // H2 FIX: Cap shared_pending_txs to prevent unbounded memory growth.
+                // Evict oldest entry if at capacity (mempool already bounds its own map).
+                const MAX_SHARED_PENDING: usize = 10_000;
+                if self.shared_pending_txs.len() >= MAX_SHARED_PENDING {
+                    // Remove one arbitrary entry to make room (DashMap doesn't support LRU directly)
+                    if let Some(entry) = self.shared_pending_txs.iter().next() {
+                        let old_key = *entry.key();
+                        drop(entry);
+                        self.shared_pending_txs.remove(&old_key);
+                    }
+                }
                 self.shared_pending_txs.insert(tx_hash, tx.clone());
                 // Also add to RPC UnifiedMempool
                 if let Err(e) = self.rpc_mempool.add_transaction(tx) {
@@ -498,8 +548,7 @@ impl P2PContext {
         // Eclipse Protection: track peer
         let peer_id_str = peer_id.to_string();
         let synthetic_ip = crate::service::peer_id_to_synthetic_ip(&peer_id_str);
-        self.eclipse_protection
-            .add_peer(peer_id_str.clone(), synthetic_ip, false);
+        self.eclipse_protection.add_peer(peer_id_str.clone(), synthetic_ip, false);
         info!("👋 Peer connected: {} (eclipse: tracked as {})", peer_id, synthetic_ip);
 
         // Update global peer count
@@ -511,11 +560,7 @@ impl P2PContext {
         self.health_monitor.write().update_peer_count(current_peer_count);
 
         // Request sync when peer connects
-        let my_height = self
-            .storage
-            .get_best_height()
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+        let my_height = self.storage.get_best_height().unwrap_or(Some(0)).unwrap_or(0);
         if let Some(ref tx) = self.broadcast_tx {
             if let Err(e) = tx
                 .send(SwarmCommand::RequestSync {
@@ -576,12 +621,7 @@ impl P2PContext {
                 requester_id
             );
             if let Some(ref tx) = self.broadcast_tx {
-                if let Err(e) = tx
-                    .send(SwarmCommand::SendBlocks {
-                        blocks: blocks_to_send,
-                    })
-                    .await
-                {
+                if let Err(e) = tx.send(SwarmCommand::SendBlocks { blocks: blocks_to_send }).await {
                     warn!("Failed to send blocks in sync response: {}", e);
                 }
             }

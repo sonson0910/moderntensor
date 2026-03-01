@@ -49,7 +49,7 @@ impl IndexerMetrics {
 
     /// Record a block being indexed
     pub fn record_block(&self, block_number: u64, tx_count: usize) {
-        self.last_indexed_block.store(block_number, Ordering::Relaxed);
+        self.last_indexed_block.store(block_number, Ordering::Release);
         self.total_blocks_indexed.fetch_add(1, Ordering::Relaxed);
         self.total_transactions.fetch_add(tx_count as u64, Ordering::Relaxed);
     }
@@ -66,7 +66,7 @@ impl IndexerMetrics {
 
     /// Set syncing status
     pub fn set_syncing(&self, syncing: bool) {
-        self.is_syncing.store(syncing, Ordering::Relaxed);
+        self.is_syncing.store(syncing, Ordering::Release);
     }
 
     /// Get uptime in seconds
@@ -80,18 +80,18 @@ impl IndexerMetrics {
         if uptime == 0 {
             return 0.0;
         }
-        self.total_blocks_indexed.load(Ordering::Relaxed) as f64 / uptime as f64
+        self.total_blocks_indexed.load(Ordering::Acquire) as f64 / uptime as f64
     }
 
     /// Get metrics as JSON
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "lastIndexedBlock": self.last_indexed_block.load(Ordering::Relaxed),
-            "totalBlocksIndexed": self.total_blocks_indexed.load(Ordering::Relaxed),
-            "totalTransactions": self.total_transactions.load(Ordering::Relaxed),
-            "totalTransfers": self.total_transfers.load(Ordering::Relaxed),
-            "totalStakeEvents": self.total_stake_events.load(Ordering::Relaxed),
-            "isSyncing": self.is_syncing.load(Ordering::Relaxed),
+            "lastIndexedBlock": self.last_indexed_block.load(Ordering::Acquire),
+            "totalBlocksIndexed": self.total_blocks_indexed.load(Ordering::Acquire),
+            "totalTransactions": self.total_transactions.load(Ordering::Acquire),
+            "totalTransfers": self.total_transfers.load(Ordering::Acquire),
+            "totalStakeEvents": self.total_stake_events.load(Ordering::Acquire),
+            "isSyncing": self.is_syncing.load(Ordering::Acquire),
             "uptimeSecs": self.uptime_secs(),
             "blocksPerSec": self.blocks_per_sec(),
         })
@@ -132,12 +132,12 @@ indexer_uptime_seconds {}
 # TYPE indexer_blocks_per_second gauge
 indexer_blocks_per_second {:.4}
 "#,
-            self.last_indexed_block.load(Ordering::Relaxed),
-            self.total_blocks_indexed.load(Ordering::Relaxed),
-            self.total_transactions.load(Ordering::Relaxed),
-            self.total_transfers.load(Ordering::Relaxed),
-            self.total_stake_events.load(Ordering::Relaxed),
-            if self.is_syncing.load(Ordering::Relaxed) { 1 } else { 0 },
+            self.last_indexed_block.load(Ordering::Acquire),
+            self.total_blocks_indexed.load(Ordering::Acquire),
+            self.total_transactions.load(Ordering::Acquire),
+            self.total_transfers.load(Ordering::Acquire),
+            self.total_stake_events.load(Ordering::Acquire),
+            if self.is_syncing.load(Ordering::Acquire) { 1 } else { 0 },
             self.uptime_secs(),
             self.blocks_per_sec(),
         )

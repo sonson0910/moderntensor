@@ -19,7 +19,7 @@ rand = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
-sha3 = "0.10"
+sha3 = { workspace = true }
 sha2 = "0.10"
 # RFC 9381 ECVRF: only compiled when `production-vrf` feature is enabled.
 vrf-rfc9381 = { version = "0.0.4", features = ["edwards25519"], optional = true }

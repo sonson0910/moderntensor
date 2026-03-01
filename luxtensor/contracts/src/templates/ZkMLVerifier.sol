@@ -203,10 +203,13 @@ contract ZkMLVerifier is Ownable {
             return abi.decode(result, (bool));
         }
 
-        // Fallback: structural validation when precompile not deployed
-        // Verify seal hash matches expected format
-        bytes32 sealHash = keccak256(proof.seal);
-        return sealHash != bytes32(0);
+        // SECURITY (H-9): Revert when precompile not deployed (production mode)
+        // Only dev mode should accept structural-only validation
+        if (devModeEnabled) {
+            bytes32 sealHash = keccak256(proof.seal);
+            return sealHash != bytes32(0);
+        }
+        revert("STARK precompile not deployed");
     }
 
     /**

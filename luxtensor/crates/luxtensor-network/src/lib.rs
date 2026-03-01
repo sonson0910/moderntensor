@@ -21,10 +21,11 @@ pub use eclipse_protection::{
     EclipseConfig, EclipseProtection, EclipseStats, PeerInfo as EclipsePeerInfo,
 };
 pub use error::*;
-pub use identity::{print_connection_info, NodeIdentity};
+pub use identity::{print_connection_info, NodeIdentity, RotationResult};
 pub use libp2p::{Multiaddr, PeerId};
 pub use light_client::{
-    LightClientConfig, LightClientError, LightClientState, MerkleProof, SyncStatus, TrustedHeader,
+    LightClientConfig, LightClientError, LightClientState, MerkleProof, SimpleValidatorSet,
+    SyncStatus, TrustedHeader, ValidatorVerifier,
 };
 pub use messages::{NetworkMessage, TOPIC_BLOCKS, TOPIC_SYNC, TOPIC_TRANSACTIONS};
 #[cfg(feature = "legacy")]
@@ -34,7 +35,7 @@ pub use peer_discovery::{
     DiscoveredPeer, DiscoveryConfig, DiscoveryStats, PeerCapabilities, PeerDiscovery,
 };
 pub use rate_limiter::{RateLimiter, RateLimiterConfig, RateLimiterStats};
-pub use seeds::{get_seeds_for_chain, has_hardcoded_seeds};
+pub use seeds::{get_seeds_for_chain, has_hardcoded_seeds, validate_bootstrap_config};
 pub use state_sync::{
     GetStateRange, GetStorageRange, StateRange, StateSnapshot, StateSyncConfig, StateSyncManager,
     StorageRange, SyncError, SyncPhase, SyncProgress,

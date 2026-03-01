@@ -100,6 +100,12 @@ impl BridgeStore for RocksDBBridgeStore {
             .map_err(|e| BridgeError::StoreError(e.to_string()))
     }
 
+    /// List bridge messages filtered by status.
+    ///
+    /// PERFORMANCE (M-4): This performs a full table scan — iterates ALL stored
+    /// messages and deserializes each to check the status field. For large message
+    /// volumes, add a secondary index CF (e.g., `bridge_status_idx`) keyed by
+    /// `status || message_id` to enable O(1) lookups per status.
     fn list_by_status(&self, status: BridgeMessageStatus) -> BridgeResult<Vec<BridgeMessage>> {
         let cf = self.cf_messages()?;
         let mut result = Vec::new();

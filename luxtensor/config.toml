@@ -1,14 +1,24 @@
+# ============================================================
+# LOCAL DEVELOPMENT configuration — NOT for testnet/production.
+# Testnet uses genesis.testnet.json (chain_id = 9999).
+# Production uses config.production.toml.
+# ============================================================
+
 [node]
 name = "luxtensor-node"
+# Local dev chain_id (8898). Testnet chain_id is 9999 (see genesis.testnet.json).
 chain_id = 8898
 data_dir = "./data"
 is_validator = true
-dev_mode = true
+# Set to true ONLY for local development. Never enable in production/testnet.
+dev_mode = false
 
 [consensus]
 block_time = 3
 epoch_length = 100
 min_stake = "1000000000000000000"
+# Local dev: 100 validators allowed. Testnet genesis overrides to 21.
+# In production, the genesis value takes precedence over this config.
 max_validators = 100
 
 [network]
@@ -31,7 +41,9 @@ listen_port = 8545
 ws_port = 8546
 ws_enabled = true
 threads = 4
-cors_origins = ["*"]
+# WARNING: Never use ["*"] in production — restricts cross-origin access.
+# For production, list specific allowed origins.
+cors_origins = ["http://localhost:3000", "http://localhost:8080"]
 
 [logging]
 level = "info"

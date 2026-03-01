@@ -16,9 +16,10 @@
 
 use crate::error::OracleError;
 use ethers::types::{Bytes, H256};
+use luxtensor_crypto::keccak256;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -62,6 +63,8 @@ pub struct OptimisticRecord {
     pub commitment_hash: H256,
     /// Miner address (20 bytes)
     pub miner_address: [u8; 20],
+    /// Miner's staked amount at time of submission (for accurate slash calculation)
+    pub miner_stake: u128,
     /// Block when the optimistic result was submitted
     pub submitted_at: u64,
     /// Block deadline by which disputes must be filed
@@ -171,6 +174,7 @@ impl DisputeManager {
         result: Bytes,
         commitment_hash: H256,
         miner_address: [u8; 20],
+        miner_stake: u128,
         submitted_at: u64,
         dispute_deadline: u64,
     ) -> Result<(), OracleError> {
@@ -194,6 +198,7 @@ impl DisputeManager {
             result,
             commitment_hash,
             miner_address,
+            miner_stake,
             submitted_at,
             dispute_deadline,
             status: DisputeStatus::Pending,
@@ -273,9 +278,7 @@ impl DisputeManager {
         // 2. Check active disputes capacity
         let mut disputes = self.active_disputes.write().await;
         if disputes.len() >= self.config.max_active_disputes {
-            return Err(OracleError::DisputeError(
-                "Active dispute queue is full".to_string(),
-            ));
+            return Err(OracleError::DisputeError("Active dispute queue is full".to_string()));
         }
 
         // 3. Record the dispute
@@ -288,10 +291,7 @@ impl DisputeManager {
         };
 
         // Update record status
-        record.status = DisputeStatus::Challenged {
-            challenger,
-            challenged_at: current_block,
-        };
+        record.status = DisputeStatus::Challenged { challenger, challenged_at: current_block };
 
         disputes.insert(request_id, fraud_proof);
 
@@ -333,8 +333,7 @@ impl DisputeManager {
             let expired: Vec<H256> = pending
                 .iter()
                 .filter(|(_, r)| {
-                    r.status == DisputeStatus::Pending
-                        && current_block > r.dispute_deadline + grace
+                    r.status == DisputeStatus::Pending && current_block > r.dispute_deadline + grace
                 })
                 .map(|(id, _)| *id)
                 .collect();
@@ -362,9 +361,7 @@ impl DisputeManager {
             };
 
             for fraud_proof in disputes {
-                let verification_result = self
-                    .verify_dispute(&fraud_proof, slash_percent)
-                    .await;
+                let verification_result = self.verify_dispute(&fraud_proof, slash_percent).await;
 
                 match verification_result {
                     Ok(Some((miner, amount))) => {
@@ -402,12 +399,34 @@ impl DisputeManager {
         outcome
     }
 
-    /// Verify a single fraud proof by comparing the challenger's result
-    /// against the miner's submitted result.
+    /// Verify a single fraud proof by:
+    /// 1. Validating the challenger's commitment (proof_hash)
+    /// 2. Comparing the challenger's result against the miner's
+    /// 3. Computing the slash amount from the miner's actual stake
+    ///
+    /// # Commitment Verification
+    /// The `proof_hash` in the fraud proof must equal
+    /// `keccak256(request_id || model_hash || input_data || correct_result)`.
+    /// This prevents challengers from submitting arbitrary results without
+    /// computing a verifiable commitment tied to the original request.
+    ///
+    /// # Security Limitation
+    /// The current implementation uses a hash-based commitment scheme.
+    /// A challenger can claim any result is "correct" as long as they
+    /// provide a matching commitment hash. In production, the challenger
+    /// MUST also submit a verifiable ZK proof (RISC Zero seal) that
+    /// independently proves the correct result. Without ZK proof
+    /// verification, this dispute mechanism trusts the challenger's
+    /// claimed result.
+    ///
+    /// TODO(#DISPUTE-ZK): Integrate ZK proof verification in dispute
+    /// resolution. The challenger's `FraudProof` should include a seal
+    /// that is verified via `risc0_zkvm::verify()` before accepting
+    /// the challenger's result as ground truth.
     ///
     /// # Returns
     /// - `Ok(Some((miner_addr, slash_amount)))` — fraud proven, miner should be slashed
-    /// - `Ok(None)` — dispute invalid, miner's result was correct
+    /// - `Ok(None)` — dispute invalid (bad commitment, matching results, or zero stake)
     /// - `Err(...)` — verification failed (internal error)
     async fn verify_dispute(
         &self,
@@ -423,30 +442,54 @@ impl DisputeManager {
             ))
         })?;
 
-        // Compare the miner's result with the challenger's claimed correct result.
-        // In a full implementation, this would re-execute the computation via zkVM
-        // and verify the ZK proof. For now, we compare commitment hashes.
-        let results_match = record.result == fraud_proof.correct_result;
+        // Step 1: Verify challenger's commitment proof.
+        // proof_hash must equal keccak256(request_id || model_hash || input_data || correct_result)
+        let mut commitment_data = Vec::with_capacity(
+            32 + 32 + record.input_data.len() + fraud_proof.correct_result.len(),
+        );
+        commitment_data.extend_from_slice(fraud_proof.request_id.as_bytes());
+        commitment_data.extend_from_slice(record.model_hash.as_bytes());
+        commitment_data.extend_from_slice(&record.input_data);
+        commitment_data.extend_from_slice(&fraud_proof.correct_result);
+        let expected_commitment = H256::from(keccak256(&commitment_data));
 
+        if fraud_proof.proof_hash != expected_commitment {
+            warn!(
+                request_id = ?fraud_proof.request_id,
+                expected = ?expected_commitment,
+                got = ?fraud_proof.proof_hash,
+                "Fraud proof rejected: invalid commitment hash"
+            );
+            record.status = DisputeStatus::Resolved;
+            return Ok(None);
+        }
+
+        // Step 2: Compare results
+        let results_match = record.result == fraud_proof.correct_result;
         if results_match {
             // Miner was correct — reject the dispute
             record.status = DisputeStatus::Resolved;
             return Ok(None);
         }
 
-        // Miner's result was WRONG — fraud confirmed!
-        //
-        // In production, we would also verify the challenger's ZK proof to ensure
-        // the challenger isn't lying. For now, any mismatch = fraud.
-        //
-        // The slash amount is computed as:  stake * slash_percent / 100
-        // Since we don't have the miner's stake here, we return a placeholder
-        // and let the consensus layer apply the actual slash via SlashingManager.
-        let slash_amount = slash_percent as u128 * 1_000_000_000_000_000_000 / 100;
+        // Step 3: Results differ AND commitment is valid — compute slash from actual stake
+        let miner_stake = record.miner_stake;
+        if miner_stake == 0 {
+            warn!(
+                request_id = ?fraud_proof.request_id,
+                miner = ?hex::encode(record.miner_address),
+                "Fraud proved but miner has zero recorded stake — cannot slash"
+            );
+            record.status = DisputeStatus::Resolved;
+            return Ok(None);
+        }
 
-        record.status = DisputeStatus::Slashed {
-            slash_amount,
-        };
+        let slash_amount = miner_stake
+            .checked_mul(slash_percent as u128)
+            .map(|v| v / 100)
+            .unwrap_or(miner_stake); // On overflow, cap at full stake rather than u128::MAX
+
+        record.status = DisputeStatus::Slashed { slash_amount };
 
         Ok(Some((record.miner_address, slash_amount)))
     }
@@ -476,6 +519,27 @@ mod tests {
         [0xBB; 20]
     }
 
+    /// Default miner stake for tests (10 MDT = 10e18 wei)
+    fn test_miner_stake() -> u128 {
+        10_000_000_000_000_000_000
+    }
+
+    /// Compute a valid commitment hash for a fraud proof.
+    /// commitment = keccak256(request_id || model_hash || input_data || correct_result)
+    fn compute_commitment(
+        request_id: &H256,
+        model_hash: &H256,
+        input_data: &[u8],
+        correct_result: &[u8],
+    ) -> H256 {
+        let mut data = Vec::new();
+        data.extend_from_slice(request_id.as_bytes());
+        data.extend_from_slice(model_hash.as_bytes());
+        data.extend_from_slice(input_data);
+        data.extend_from_slice(correct_result);
+        H256::from(keccak256(&data))
+    }
+
     #[tokio::test]
     async fn test_record_and_finalize() {
         let dm = DisputeManager::default_config();
@@ -486,11 +550,12 @@ mod tests {
             req_id,
             test_model_hash(),
             Bytes::from(vec![1, 2, 3]),
-            Bytes::from(vec![4, 5, 6]),     // miner's result
-            H256::from([0x03; 32]),          // commitment
+            Bytes::from(vec![4, 5, 6]), // miner's result
+            H256::from([0x03; 32]),     // commitment
             test_miner(),
-            100,   // submitted at block 100
-            150,   // dispute deadline block 150
+            test_miner_stake(),
+            100, // submitted at block 100
+            150, // dispute deadline block 150
         )
         .await
         .unwrap();
@@ -505,37 +570,45 @@ mod tests {
         // Process at block 165 — past deadline + grace
         let outcome = dm.process_block(165, 20).await;
         assert_eq!(outcome.finalized_count, 1);
-        assert_eq!(
-            dm.get_dispute_status(&req_id).await,
-            Some(DisputeStatus::Finalized)
-        );
+        assert_eq!(dm.get_dispute_status(&req_id).await, Some(DisputeStatus::Finalized));
     }
 
     #[tokio::test]
     async fn test_submit_dispute_and_verify_fraud() {
         let dm = DisputeManager::default_config();
         let req_id = test_request_id();
+        let input_data = vec![1, 2, 3];
+        let correct_result = vec![7, 8, 9]; // challenger's correct result (different from miner's)
 
         // Record an optimistic result
         dm.record_optimistic_result(
             req_id,
             test_model_hash(),
-            Bytes::from(vec![1, 2, 3]),
-            Bytes::from(vec![4, 5, 6]),     // miner's "wrong" result
+            Bytes::from(input_data.clone()),
+            Bytes::from(vec![4, 5, 6]), // miner's "wrong" result
             H256::from([0x03; 32]),
             test_miner(),
+            test_miner_stake(),
             100,
             150,
         )
         .await
         .unwrap();
 
-        // Challenger submits a different result (fraud proof)
+        // Compute valid commitment for the fraud proof
+        let proof_hash = compute_commitment(
+            &req_id,
+            &test_model_hash(),
+            &input_data,
+            &correct_result,
+        );
+
+        // Challenger submits a different result with valid commitment
         dm.submit_dispute(
             req_id,
             test_challenger(),
-            Bytes::from(vec![7, 8, 9]),     // challenger's "correct" result (different!)
-            H256::from([0x04; 32]),
+            Bytes::from(correct_result),
+            proof_hash,
             120,
         )
         .await
@@ -548,34 +621,44 @@ mod tests {
         assert_eq!(outcome.disputes_verified, 1);
         assert_eq!(outcome.slashed_miners.len(), 1);
         assert_eq!(outcome.slashed_miners[0].0, test_miner());
+        // Slash = 10 MDT * 20% = 2 MDT
+        assert_eq!(outcome.slashed_miners[0].1, test_miner_stake() * 20 / 100);
     }
 
     #[tokio::test]
     async fn test_submit_dispute_and_reject_invalid() {
         let dm = DisputeManager::default_config();
         let req_id = test_request_id();
+        let input_data = vec![1, 2, 3];
         let result = Bytes::from(vec![4, 5, 6]);
 
         // Record an optimistic result
         dm.record_optimistic_result(
             req_id,
             test_model_hash(),
-            Bytes::from(vec![1, 2, 3]),
-            result.clone(),            // miner's "correct" result
+            Bytes::from(input_data.clone()),
+            result.clone(), // miner's "correct" result
             H256::from([0x03; 32]),
             test_miner(),
+            test_miner_stake(),
             100,
             150,
         )
         .await
         .unwrap();
 
-        // Challenger submits the SAME result (invalid dispute)
+        // Challenger submits the SAME result with valid commitment
+        let proof_hash = compute_commitment(
+            &req_id,
+            &test_model_hash(),
+            &input_data,
+            &result,
+        );
         dm.submit_dispute(
             req_id,
             test_challenger(),
-            result,                    // same as miner's
-            H256::from([0x04; 32]),
+            result, // same as miner's
+            proof_hash,
             120,
         )
         .await
@@ -585,10 +668,43 @@ mod tests {
         let outcome = dm.process_block(125, 20).await;
         assert_eq!(outcome.rejected_disputes, 1);
         assert_eq!(outcome.slashed_miners.len(), 0);
-        assert_eq!(
-            dm.get_dispute_status(&req_id).await,
-            Some(DisputeStatus::Resolved)
-        );
+        assert_eq!(dm.get_dispute_status(&req_id).await, Some(DisputeStatus::Resolved));
+    }
+
+    #[tokio::test]
+    async fn test_dispute_invalid_commitment_rejected() {
+        let dm = DisputeManager::default_config();
+        let req_id = test_request_id();
+
+        dm.record_optimistic_result(
+            req_id,
+            test_model_hash(),
+            Bytes::from(vec![1, 2, 3]),
+            Bytes::from(vec![4, 5, 6]),
+            H256::from([0x03; 32]),
+            test_miner(),
+            test_miner_stake(),
+            100,
+            150,
+        )
+        .await
+        .unwrap();
+
+        // Challenger submits a different result but with INVALID commitment
+        dm.submit_dispute(
+            req_id,
+            test_challenger(),
+            Bytes::from(vec![7, 8, 9]),
+            H256::from([0xFF; 32]), // bogus commitment
+            120,
+        )
+        .await
+        .unwrap();
+
+        // Process — should reject due to invalid commitment
+        let outcome = dm.process_block(125, 20).await;
+        assert_eq!(outcome.rejected_disputes, 1);
+        assert_eq!(outcome.slashed_miners.len(), 0);
     }
 
     #[tokio::test]
@@ -603,8 +719,9 @@ mod tests {
             Bytes::from(vec![4, 5, 6]),
             H256::from([0x03; 32]),
             test_miner(),
+            test_miner_stake(),
             100,
-            150,   // deadline at block 150
+            150, // deadline at block 150
         )
         .await
         .unwrap();
@@ -642,6 +759,7 @@ mod tests {
                 Bytes::from(vec![i]),
                 H256::from([i; 32]),
                 test_miner(),
+                test_miner_stake(),
                 100,
                 150,
             )
@@ -658,6 +776,7 @@ mod tests {
                 Bytes::from(vec![0xFF]),
                 H256::from([0xFF; 32]),
                 test_miner(),
+                test_miner_stake(),
                 100,
                 150,
             )

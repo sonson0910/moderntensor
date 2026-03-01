@@ -1,6 +1,6 @@
 //! Luxtensor Indexer service entry point
 
-use luxtensor_indexer::{Config, Indexer, Backfill, Storage};
+use luxtensor_indexer::{Backfill, Config, Indexer, Storage};
 use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -27,7 +27,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
 
     info!("Configuration:");
-    info!("  Database: {}", config.database_url.split('@').last().unwrap_or("***"));
+    // SECURITY (L-2): Do not log database connection details.
+    info!("  Database: [REDACTED]");
     info!("  Node RPC: {}", config.node_ws_url.replace("ws", "http"));
     info!("  GraphQL:  {}", config.graphql_bind);
     info!("  Mode:     {}", mode);
@@ -35,17 +36,12 @@ async fn main() -> anyhow::Result<()> {
     match mode {
         "backfill" => {
             // Backfill mode: fetch historical blocks via RPC
-            let start_block: u64 = args.get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let start_block: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
 
-            let end_block: Option<u64> = args.get(3)
-                .and_then(|s| s.parse().ok());
+            let end_block: Option<u64> = args.get(3).and_then(|s| s.parse().ok());
 
-            let batch_size: u64 = std::env::var("BATCH_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(100);
+            let batch_size: u64 =
+                std::env::var("BATCH_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
             info!("Backfill mode: block {} to {:?}", start_block, end_block);
 
@@ -54,9 +50,8 @@ async fn main() -> anyhow::Result<()> {
             storage.run_migrations().await?;
 
             // Convert WS URL to HTTP
-            let rpc_url = config.node_ws_url
-                .replace("ws://", "http://")
-                .replace("wss://", "https://");
+            let rpc_url =
+                config.node_ws_url.replace("ws://", "http://").replace("wss://", "https://");
 
             // Run backfill
             let backfill = Backfill::new(&rpc_url, storage, batch_size);

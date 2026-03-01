@@ -12,25 +12,25 @@
   },
   "initial_validators": [
     {
-      "address": "0x0000000000000000000000000000000000000001",
-      "pubkey": "0x04...",
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "pubkey": "0x04ba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4",
       "stake": "100000000000000000000",
       "commission": 10,
-      "name": "Genesis Validator 1"
+      "name": "Testnet Validator 1 (Hardhat #1)"
     },
     {
-      "address": "0x0000000000000000000000000000000000000002",
-      "pubkey": "0x04...",
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "pubkey": "0x0404c8b3605660868ac283ed4865042e2cea54a55b4b5a8151a0a392dee750096e49cdbed72cee7c24c0e0a6e92101ca55ebf3ab0c7c8bd333f4eab4f87e8f7d4de",
       "stake": "100000000000000000000",
       "commission": 10,
-      "name": "Genesis Validator 2"
+      "name": "Testnet Validator 2 (Hardhat #2)"
     },
     {
-      "address": "0x0000000000000000000000000000000000000003",
-      "pubkey": "0x04...",
+      "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "pubkey": "0x04e8f22e2ce84fc55f34e0dfa92ef90f3a0a9af7f7c03c9c1c2b6b8e3b6a4b7d1c8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e",
       "stake": "100000000000000000000",
       "commission": 10,
-      "name": "Genesis Validator 3"
+      "name": "Testnet Validator 3 (Hardhat #3)"
     }
   ],
   "initial_balances": [
@@ -38,16 +38,6 @@
       "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
       "balance": "10000000000000000000000",
       "comment": "Testnet faucet"
-    },
-    {
-      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "balance": "1000000000000000000000",
-      "comment": "Development account 1"
-    },
-    {
-      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-      "balance": "1000000000000000000000",
-      "comment": "Development account 2"
     }
   ],
   "token": {

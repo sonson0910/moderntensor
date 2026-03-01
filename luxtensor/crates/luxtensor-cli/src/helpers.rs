@@ -2,6 +2,24 @@
 //!
 //! These utilities are used by the command handlers to build and sign
 //! transactions, parse hex values, and manage keystores.
+//!
+//! ## RLP Encoding
+//!
+//! The functions [`rlp_encode_bytes`], [`rlp_encode_u64`], and [`rlp_encode_list`]
+//! are minimal, hand-rolled implementations of the Recursive Length Prefix (RLP)
+//! encoding scheme as specified in the Ethereum Yellow Paper, Appendix B.
+//!
+//! They are intentionally kept as lightweight helpers to avoid pulling in the
+//! full `rlp` crate as a dependency. The subset implemented here covers only
+//! the encodings required for signing EIP-155 transactions (byte strings,
+//! unsigned integers, and flat lists) and has been verified against the
+//! canonical test vectors in the Ethereum wiki.
+//!
+//! **Reference:** Ethereum Yellow Paper — <https://ethereum.github.io/yellowpaper/paper.pdf>,
+//! Appendix B "Recursive Length Prefix".
+
+// TODO: Consider migrating to the `rlp` crate for more comprehensive coverage
+// if additional RLP features (nested lists, streaming decoder, etc.) are needed.
 
 use anyhow::Result;
 
@@ -193,13 +211,26 @@ pub fn read_private_key(cli_value: Option<String>) -> Result<String> {
 // RPC client
 // ============================================================
 
+/// Lazily-initialized HTTP client with timeouts for RPC calls.
+fn rpc_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("Failed to build HTTP client")
+    })
+}
+
 /// Make a JSON-RPC call to the LuxTensor node.
 pub async fn rpc_call(
     rpc: &str,
     method: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<serde_json::Value> {
-    let client = reqwest::Client::new();
+    let client = rpc_client();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,

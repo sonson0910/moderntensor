@@ -32,6 +32,7 @@ pub fn register_staking_handlers(
     unified_state: Arc<RwLock<UnifiedStateDB>>,
     metagraph: Arc<MetagraphDB>,
     mempool: Arc<luxtensor_core::UnifiedMempool>,
+    locked_stakes: Arc<parking_lot::RwLock<std::collections::HashMap<[u8; 20], (u128, u64, u64)>>>,
 ) {
     // Load existing validators from DB into ValidatorSet on startup
     // AND sync to MetagraphDB (Yuma reads from MetagraphDB)
@@ -227,11 +228,12 @@ pub fn register_staking_handlers(
         } else {
             // SECURITY: Do NOT use all-zero pubkey [0u8; 32] as it is a known placeholder.
             // Derive a unique placeholder pubkey from the address (keccak256-based seed).
-            // This is NOT a real secp256k1 key - it marks this validator as "pubkey not set".
-            // Validators are expected to call staking_registerValidator to set a real pubkey.
+            // This marks this validator as "pubkey not set" (0xFF prefix).
+            // Validators MUST call staking_registerValidator to set a real pubkey
+            // before they can participate in block production or signing.
             let addr_bytes = address.as_bytes();
             let mut pubkey_seed = [0u8; 32];
-            // Prefix first 12 bytes with 0xFF as marker for "unregistered pubkey"
+            // Prefix first 3 bytes with 0xFF/0xFE/0xFD as marker for "unregistered pubkey"
             pubkey_seed[0] = 0xFF;
             pubkey_seed[1] = 0xFE;
             pubkey_seed[2] = 0xFD;
@@ -241,10 +243,13 @@ pub fn register_staking_handlers(
             }
             tracing::warn!(
                 "Validator {} added via addStake without a registered pubkey. \
-                 Call staking_registerValidator to set a real public key.",
+                 Call staking_registerValidator to set a real public key. \
+                 This validator CANNOT produce blocks until a real pubkey is registered.",
                 hex::encode(addr_bytes)
             );
-            let validator = Validator::new(address, amount, pubkey_seed);
+            let mut validator = Validator::new(address, amount, pubkey_seed);
+            // Mark as inactive until real pubkey is registered
+            validator.active = false;
             validator_set
                 .add_validator(validator)
                 .map_err(|e| jsonrpc_core::Error::invalid_params(e))?;
@@ -746,24 +751,16 @@ pub fn register_staking_handlers(
     // STAKING LOCK/UNLOCK WITH TIME CONSTRAINTS
     // =========================================================================
 
-    // Storage for locked stakes: address -> (amount, unlock_timestamp)
-    use std::collections::HashMap;
+    // Storage for locked stakes: address -> (amount, unlock_timestamp, bonus_rate)
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Shared state for locked stakes
-    // TODO: Move LOCKED_STAKES into the RpcServer struct for proper lifecycle management.
-    // Currently a global singleton to simplify handler closures, but should be managed
-    // alongside other server state for clean shutdown and multi-instance testing.
-    lazy_static::lazy_static! {
-        static ref LOCKED_STAKES: parking_lot::RwLock<HashMap<[u8; 20], (u128, u64, u64)>> = {
-            parking_lot::RwLock::new(HashMap::new())
-        };
-    }
+    // Server-scoped locked stakes (passed in from caller, not a global singleton)
+    let locked_stakes_ref = locked_stakes;
 
-    // Load existing stakes from DB into LOCKED_STAKES
+    // Load existing stakes from DB into locked_stakes
     {
         if let Ok(stakes) = db.get_all_stakes() {
-            let mut locks = LOCKED_STAKES.write();
+            let mut locks = locked_stakes_ref.write();
             for (addr, data) in &stakes {
                 if addr.len() >= 20 {
                     if let Ok((amount, unlock_ts, bonus)) = bincode::deserialize::<(u128, u64, u64)>(data) {
@@ -788,8 +785,10 @@ pub fn register_staking_handlers(
     // Params: [address, amount, lock_seconds, timestamp, signature]
     // Returns: { success, unlock_timestamp }
     let is_dev_chain = chain_id == 31337 || chain_id == 1337;
+    let locked_stakes_for_lock_sec = locked_stakes_ref.clone();
     io.add_method("staking_lockStakeSeconds", move |params: Params| {
         let db_for_lock = db_for_lock.clone();
+        let locked_stakes = locked_stakes_for_lock_sec.clone();
         async move {
         if !is_dev_chain {
             return Err(jsonrpc_core::Error {
@@ -879,7 +878,7 @@ pub fn register_staking_handlers(
 
         // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
         {
-            let mut locks = LOCKED_STAKES.write();
+            let mut locks = locked_stakes.write();
             let addr_bytes: [u8; 20] = *address.as_bytes();
 
             // Check if already locked (under write lock)
@@ -920,7 +919,9 @@ pub fn register_staking_handlers(
     // SECURITY: Requires signature verification to prove ownership of the address.
     // Params: [address, amount, lock_days, timestamp, signature]
     // Returns: { success, unlock_timestamp, bonus_rate }
+    let locked_stakes_for_lock = locked_stakes_ref.clone();
     io.add_method("staking_lockStake", move |params: Params| {
+        let locked_stakes = locked_stakes_for_lock.clone();
         async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 5 {
@@ -997,7 +998,7 @@ pub fn register_staking_handlers(
 
         // SECURITY: Atomic check+insert under single write lock (eliminates TOCTOU)
         {
-            let mut locks = LOCKED_STAKES.write();
+            let mut locks = locked_stakes.write();
             let addr_bytes: [u8; 20] = *address.as_bytes();
 
             if let Some((_, existing_unlock, _)) = locks.get(&addr_bytes) {
@@ -1028,8 +1029,10 @@ pub fn register_staking_handlers(
     // Params: [address, timestamp, signature]
     // Returns: { success, amount } or error if lock not expired
     let db_for_unlock = db.clone();
+    let locked_stakes_for_unlock = locked_stakes_ref.clone();
     io.add_method("staking_unlockStake", move |params: Params| {
         let db_for_unlock = db_for_unlock.clone();
+        let locked_stakes = locked_stakes_for_unlock.clone();
         async move {
         let parsed: Vec<serde_json::Value> = params.parse()?;
         if parsed.len() < 3 {
@@ -1075,7 +1078,7 @@ pub fn register_staking_handlers(
             ))?;
 
         // SECURITY: Atomic check+remove under single write lock (eliminates TOCTOU)
-        let mut locks = LOCKED_STAKES.write();
+        let mut locks = locked_stakes.write();
 
         match locks.get(&addr_bytes).cloned() {
             None => {
@@ -1133,7 +1136,9 @@ pub fn register_staking_handlers(
     });
 
     // staking_getLockInfo - Get lock information for an address
+    let locked_stakes_for_info = locked_stakes_ref.clone();
     io.add_method("staking_getLockInfo", move |params: Params| {
+        let locked_stakes = locked_stakes_for_info.clone();
         async move {
         let parsed: Vec<String> = params.parse()?;
         if parsed.is_empty() {
@@ -1148,7 +1153,7 @@ pub fn register_staking_handlers(
             .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
 
-        let locks = LOCKED_STAKES.read();
+        let locks = locked_stakes.read();
         match locks.get(&addr_bytes) {
             None => {
                 Ok(serde_json::json!({

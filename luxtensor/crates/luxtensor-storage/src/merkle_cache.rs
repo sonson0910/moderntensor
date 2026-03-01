@@ -428,6 +428,8 @@ impl CachedStateDB {
     /// Prefer the delegated methods (`set_balance`, `set_account`, `transfer`,
     /// etc.) whenever possible.  Only use this accessor for **read-only**
     /// operations or for subsystems that manage their own cache invalidation.
+    // SECURITY (H-4): This method bypasses cache invalidation.
+    #[deprecated(note = "SECURITY (H-4): Bypasses cache invalidation. Use forwarded methods (get_account, set_account, etc.) instead.")]
     pub fn inner(&self) -> &Arc<RwLock<StateDB>> {
         &self.inner
     }

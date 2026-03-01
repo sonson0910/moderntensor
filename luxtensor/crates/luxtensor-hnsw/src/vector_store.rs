@@ -143,8 +143,16 @@ impl HnswVectorStore {
     /// only clears the mapping and f32 data. The fixed-point node remains
     /// in the graph but becomes unreachable from search results.
     pub fn remove(&mut self, id: u64) -> bool {
-        if let Some(_index) = self.id_to_index.remove(&id) {
-            self.index_to_id.remove(&_index);
+        if let Some(index) = self.id_to_index.remove(&id) {
+            // Mark node as deleted in the HNSW graph so it's excluded from searches.
+            // The graph uses tombstone-based deletion (append-only structure).
+            if let Err(e) = self.graph.mark_deleted(index) {
+                tracing::warn!(id, index, error = %e, "Failed to mark graph node as deleted");
+                // Restore the mapping since the graph deletion failed
+                self.id_to_index.insert(id, index);
+                return false;
+            }
+            self.index_to_id.remove(&index);
             self.vectors_f32.remove(&id);
             self.timestamps.remove(&id);
             true
@@ -180,6 +188,12 @@ impl HnswVectorStore {
                 expected: self.dimension,
                 actual: query.len(),
             });
+        }
+
+        // SECURITY (HNSW-13): Reject NaN/Infinity in query vectors, which would
+        // produce non-deterministic distance comparisons and corrupt results.
+        if query.iter().any(|v| !v.is_finite()) {
+            return Err(HnswError::InvalidData);
         }
 
         if self.graph.is_empty() {
@@ -264,11 +278,15 @@ impl HnswVectorStore {
 
         let (nearest_id, distance) = results[0];
 
-        let label = labels
-            .iter()
-            .find(|(id, _)| *id == nearest_id)
-            .map(|(_, l)| *l)
-            .unwrap_or(0);
+        let label = labels.iter().find(|(id, _)| *id == nearest_id).map(|(_, l)| *l);
+
+        let label = match label {
+            Some(l) => l,
+            None => {
+                tracing::warn!(nearest_id, "Nearest neighbor not found in labels");
+                return Err(HnswError::InvalidData);
+            }
+        };
 
         // Convert distance to confidence (1.0 = exact match, 0.0 = very far)
         let confidence = (-distance.sqrt()).exp().clamp(0.0, 1.0);
@@ -282,6 +300,14 @@ impl HnswVectorStore {
     /// # Returns
     /// * Score in range [0.0, 1.0] where 1.0 = highly anomalous
     pub fn anomaly_score(&self, query: &[f32]) -> Result<f32, HnswError> {
+        // SECURITY (HNSW-14): Validate query dimension before use.
+        if query.len() != self.dimension {
+            return Err(HnswError::DimensionMismatch {
+                expected: self.dimension,
+                actual: query.len(),
+            });
+        }
+
         if self.is_empty() {
             return Ok(1.0);
         }
@@ -294,6 +320,11 @@ impl HnswVectorStore {
         }
 
         let avg_distance: f32 = results.iter().map(|(_, d)| d).sum::<f32>() / results.len() as f32;
+
+        // SECURITY (HNSW-15): Guard against NaN from f32 arithmetic on extreme distances
+        if !avg_distance.is_finite() {
+            return Ok(1.0);
+        }
 
         let threshold = 2.0;
         let score = 1.0 / (1.0 + (-((avg_distance / threshold) - 1.0)).exp());
@@ -318,13 +349,23 @@ impl HnswVectorStore {
             });
         }
 
+        // SECURITY (HNSW-16): Reject NaN/Infinity inputs for deterministic results
+        if vector_a.iter().any(|v| !v.is_finite()) || vector_b.iter().any(|v| !v.is_finite()) {
+            return Err(HnswError::InvalidData);
+        }
+
+        // SECURITY (HNSW-17): Validate threshold is in a sensible range
+        if !threshold.is_finite() {
+            return Err(HnswError::InvalidParameter("threshold must be finite".to_string()));
+        }
+
         // Use fixed-point for deterministic distance
         let fixed_a = self.f32_to_fixed(vector_a)?;
         let fixed_b = self.f32_to_fixed(vector_b)?;
         let distance: f32 = fixed_a.squared_distance(&fixed_b).to_num::<f32>();
 
         // Convert distance to similarity (1.0 = identical, 0.0 = very different)
-        let similarity = (-distance.sqrt() / 2.0).exp();
+        let similarity = if distance.is_finite() { (-distance.sqrt() / 2.0).exp() } else { 0.0 };
         let is_similar = similarity >= threshold;
 
         Ok((is_similar, similarity))
@@ -334,6 +375,10 @@ impl HnswVectorStore {
 
     /// Calculate Merkle root hash for consensus verification.
     /// Produces a deterministic 32-byte hash from all stored vectors.
+    ///
+    /// SECURITY (HNSW-18): Includes vector count and dimension in the hash
+    /// preimage to prevent length-extension or domain-confusion attacks where
+    /// two different stores with different counts could collide.
     pub fn root_hash(&self) -> [u8; 32] {
         if self.is_empty() {
             return [0u8; 32];
@@ -345,11 +390,17 @@ impl HnswVectorStore {
 
         // Hash all vector data in sorted order
         let mut data = Vec::new();
+        // Include count and dimension in hash preimage for domain separation
+        data.extend_from_slice(&(ids.len() as u64).to_le_bytes());
+        data.extend_from_slice(&(self.dimension as u64).to_le_bytes());
         for id in ids {
             data.extend_from_slice(&id.to_le_bytes());
             if let Some(vector) = self.vectors_f32.get(&id) {
                 for val in vector {
-                    data.extend_from_slice(&val.to_le_bytes());
+                    // CONSENSUS: Canonicalize ±0.0 to +0.0 to prevent consensus divergence
+                    // from semantically-equal but bitwise-different representations.
+                    let canonical = if *val == 0.0 { 0.0f32 } else { *val };
+                    data.extend_from_slice(&canonical.to_le_bytes());
                 }
             }
         }
@@ -398,25 +449,19 @@ impl HnswVectorStore {
 
         let mut pos = 0;
 
-        let dimension = u32::from_le_bytes(
-            bytes[pos..pos + 4]
-                .try_into()
-                .map_err(|_| HnswError::InvalidData)?,
-        ) as usize;
+        let dimension =
+            u32::from_le_bytes(bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 4;
 
-        let count = u64::from_le_bytes(
-            bytes[pos..pos + 8]
-                .try_into()
-                .map_err(|_| HnswError::InvalidData)?,
-        ) as usize;
+        let count =
+            u64::from_le_bytes(bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 8;
 
-        let max_capacity = u64::from_le_bytes(
-            bytes[pos..pos + 8]
-                .try_into()
-                .map_err(|_| HnswError::InvalidData)?,
-        ) as usize;
+        let max_capacity =
+            u64::from_le_bytes(bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?)
+                as usize;
         pos += 8;
 
         // Validation
@@ -427,13 +472,22 @@ impl HnswVectorStore {
         }
 
         // Each entry: id(8) + dimension*4 (vector) + timestamp(8)
-        let entry_size = 8 + dimension * 4 + 8;
-        let expected_size = 20 + count * entry_size;
+        // SECURITY (HNSW-19b): Use checked arithmetic to prevent integer overflow
+        // on crafted payloads with large dimension/count values.
+        let entry_size = dimension
+            .checked_mul(4)
+            .and_then(|v| v.checked_add(16)) // 8 (id) + 8 (timestamp)
+            .ok_or(HnswError::InvalidData)?;
+        let expected_size = count
+            .checked_mul(entry_size)
+            .and_then(|v| v.checked_add(20))
+            .ok_or(HnswError::InvalidData)?;
         if bytes.len() < expected_size {
             return Err(HnswError::InvalidData);
         }
 
-        let mut store = Self::with_capacity(dimension, max_capacity.max(Self::DEFAULT_MAX_CAPACITY));
+        let mut store =
+            Self::with_capacity(dimension, max_capacity.max(Self::DEFAULT_MAX_CAPACITY));
 
         for _ in 0..count {
             if pos + 8 > bytes.len() {
@@ -441,9 +495,7 @@ impl HnswVectorStore {
             }
 
             let id = u64::from_le_bytes(
-                bytes[pos..pos + 8]
-                    .try_into()
-                    .map_err(|_| HnswError::InvalidData)?,
+                bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?,
             );
             pos += 8;
 
@@ -453,18 +505,14 @@ impl HnswVectorStore {
                     return Err(HnswError::InvalidData);
                 }
                 let v = f32::from_le_bytes(
-                    bytes[pos..pos + 4]
-                        .try_into()
-                        .map_err(|_| HnswError::InvalidData)?,
+                    bytes[pos..pos + 4].try_into().map_err(|_| HnswError::InvalidData)?,
                 );
                 pos += 4;
                 vector.push(v);
             }
 
             let timestamp = u64::from_le_bytes(
-                bytes[pos..pos + 8]
-                    .try_into()
-                    .map_err(|_| HnswError::InvalidData)?,
+                bytes[pos..pos + 8].try_into().map_err(|_| HnswError::InvalidData)?,
             );
             pos += 8;
 
@@ -489,6 +537,27 @@ impl HnswVectorStore {
     /// If the input dimension is less than 768, pads with zeros.
     /// If greater, truncates (shouldn't happen in production).
     fn f32_to_fixed(&self, input: &[f32]) -> Result<FixedPointVector<STANDARD_DIM>, HnswError> {
+        if input.len() > STANDARD_DIM {
+            tracing::error!(
+                input_dim = input.len(),
+                max_dim = STANDARD_DIM,
+                "Input vector dimension exceeds maximum — data will be truncated!"
+            );
+            return Err(HnswError::DimensionMismatch {
+                expected: STANDARD_DIM,
+                actual: input.len(),
+            });
+        }
+        if input.len() != STANDARD_DIM && input.len() != self.dimension {
+            // SECURITY: Log dimension mismatch for debugging. Silent padding
+            // can mask bugs where wrong-dimension vectors enter the index.
+            tracing::debug!(
+                input_dim = input.len(),
+                store_dim = self.dimension,
+                standard_dim = STANDARD_DIM,
+                "Vector dimension mismatch — padding to standard dimension"
+            );
+        }
         let mut padded = [0.0f32; STANDARD_DIM];
         let copy_len = input.len().min(STANDARD_DIM);
         padded[..copy_len].copy_from_slice(&input[..copy_len]);
@@ -643,9 +712,8 @@ mod tests {
     fn test_similarity_check() {
         let store = HnswVectorStore::new(4);
 
-        let (is_similar, score) = store
-            .similarity_check(&[1.0, 0.0, 0.0, 0.0], &[1.0, 0.0, 0.0, 0.0], 0.5)
-            .unwrap();
+        let (is_similar, score) =
+            store.similarity_check(&[1.0, 0.0, 0.0, 0.0], &[1.0, 0.0, 0.0, 0.0], 0.5).unwrap();
 
         assert!(is_similar);
         assert!((score - 1.0).abs() < 0.01);

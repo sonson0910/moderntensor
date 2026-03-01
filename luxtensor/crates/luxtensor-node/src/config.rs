@@ -345,6 +345,18 @@ impl Config {
             }
         }
 
+        // M7 FIX: Reject dev_mode on production chain IDs
+        {
+            let is_production_chain = self.node.chain_id == 8898 || self.node.chain_id == 9999;
+            if self.node.dev_mode && is_production_chain {
+                anyhow::bail!(
+                    "dev_mode=true is not allowed on production chain {} — \
+                     dev_mode pre-funds accounts with test tokens which would be catastrophic on mainnet.",
+                    self.node.chain_id
+                );
+            }
+        }
+
         // Validate network config
         if self.network.listen_port == 0 {
             anyhow::bail!("Invalid network port: 0");

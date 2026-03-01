@@ -25,7 +25,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
     /// @notice Maximum total supply: 21,000,000 MDT
-    uint256 public constant MAX_SUPPLY = 21_000_000 * 10**18;
+    uint256 public constant MAX_SUPPLY = 21_000_000 * 10 ** 18;
 
     /// @notice Whether minting is permanently finished
     bool public mintingFinished = false;
@@ -35,14 +35,14 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
 
     /// @notice Allocation categories
     enum Category {
-        EmissionRewards,    // 45%
-        EcosystemGrants,    // 12%
-        TeamCoreDev,        // 10%
-        PrivateSale,        // 8%
-        IDO,                // 5%
-        DaoTreasury,        // 10%
-        InitialLiquidity,   // 5%
-        FoundationReserve   // 5%
+        EmissionRewards, // 45%
+        EcosystemGrants, // 12%
+        TeamCoreDev, // 10%
+        PrivateSale, // 8%
+        IDO, // 5%
+        DaoTreasury, // 10%
+        InitialLiquidity, // 5%
+        FoundationReserve // 5%
     }
 
     /// @notice Track minted amounts per category
@@ -54,7 +54,11 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
     /// @notice Events
     event TGEExecuted(uint256 timestamp, uint256 totalMinted);
     event MintingFinished(uint256 timestamp);
-    event CategoryMinted(Category indexed category, address indexed to, uint256 amount);
+    event CategoryMinted(
+        Category indexed category,
+        address indexed to,
+        uint256 amount
+    );
 
     /// @notice Modifier to check minting is still allowed
     modifier canMint() {
@@ -68,14 +72,14 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
         Ownable(msg.sender)
     {
         // Set allocation amounts
-        categoryAllocation[Category.EmissionRewards] = MAX_SUPPLY * 45 / 100;    // 9,450,000 MDT
-        categoryAllocation[Category.EcosystemGrants] = MAX_SUPPLY * 12 / 100;    // 2,520,000 MDT
-        categoryAllocation[Category.TeamCoreDev] = MAX_SUPPLY * 10 / 100;        // 2,100,000 MDT
-        categoryAllocation[Category.PrivateSale] = MAX_SUPPLY * 8 / 100;         // 1,680,000 MDT
-        categoryAllocation[Category.IDO] = MAX_SUPPLY * 5 / 100;                 // 1,050,000 MDT
-        categoryAllocation[Category.DaoTreasury] = MAX_SUPPLY * 10 / 100;        // 2,100,000 MDT
-        categoryAllocation[Category.InitialLiquidity] = MAX_SUPPLY * 5 / 100;    // 1,050,000 MDT
-        categoryAllocation[Category.FoundationReserve] = MAX_SUPPLY * 5 / 100;   // 1,050,000 MDT
+        categoryAllocation[Category.EmissionRewards] = (MAX_SUPPLY * 45) / 100; // 9,450,000 MDT
+        categoryAllocation[Category.EcosystemGrants] = (MAX_SUPPLY * 12) / 100; // 2,520,000 MDT
+        categoryAllocation[Category.TeamCoreDev] = (MAX_SUPPLY * 10) / 100; // 2,100,000 MDT
+        categoryAllocation[Category.PrivateSale] = (MAX_SUPPLY * 8) / 100; // 1,680,000 MDT
+        categoryAllocation[Category.IDO] = (MAX_SUPPLY * 5) / 100; // 1,050,000 MDT
+        categoryAllocation[Category.DaoTreasury] = (MAX_SUPPLY * 10) / 100; // 2,100,000 MDT
+        categoryAllocation[Category.InitialLiquidity] = (MAX_SUPPLY * 5) / 100; // 1,050,000 MDT
+        categoryAllocation[Category.FoundationReserve] = (MAX_SUPPLY * 5) / 100; // 1,050,000 MDT
     }
 
     /**
@@ -84,7 +88,11 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
      * @param to Recipient address
      * @param amount Amount to mint
      */
-    function mintCategory(Category category, address to, uint256 amount) external onlyOwner canMint {
+    function mintCategory(
+        Category category,
+        address to,
+        uint256 amount
+    ) external onlyOwner canMint {
         require(to != address(0), "MDTToken: mint to zero address");
         require(
             categoryMinted[category] + amount <= categoryAllocation[category],
@@ -106,9 +114,15 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
      * @param category The allocation category
      * @param to Recipient address (vesting contract, DAO, etc.)
      */
-    function executeTGE(Category category, address to) external onlyOwner canMint {
+    function executeTGE(
+        Category category,
+        address to
+    ) external onlyOwner canMint {
         require(to != address(0), "MDTToken: mint to zero address");
-        require(categoryMinted[category] == 0, "MDTToken: category already minted");
+        require(
+            categoryMinted[category] == 0,
+            "MDTToken: category already minted"
+        );
 
         uint256 amount = categoryAllocation[category];
         categoryMinted[category] = amount;
@@ -125,22 +139,38 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
      * @notice Check if all categories have been minted
      */
     function allCategoriesMinted() public view returns (bool) {
-        return categoryMinted[Category.EmissionRewards] == categoryAllocation[Category.EmissionRewards] &&
-               categoryMinted[Category.EcosystemGrants] == categoryAllocation[Category.EcosystemGrants] &&
-               categoryMinted[Category.TeamCoreDev] == categoryAllocation[Category.TeamCoreDev] &&
-               categoryMinted[Category.PrivateSale] == categoryAllocation[Category.PrivateSale] &&
-               categoryMinted[Category.IDO] == categoryAllocation[Category.IDO] &&
-               categoryMinted[Category.DaoTreasury] == categoryAllocation[Category.DaoTreasury] &&
-               categoryMinted[Category.InitialLiquidity] == categoryAllocation[Category.InitialLiquidity] &&
-               categoryMinted[Category.FoundationReserve] == categoryAllocation[Category.FoundationReserve];
+        return
+            categoryMinted[Category.EmissionRewards] ==
+            categoryAllocation[Category.EmissionRewards] &&
+            categoryMinted[Category.EcosystemGrants] ==
+            categoryAllocation[Category.EcosystemGrants] &&
+            categoryMinted[Category.TeamCoreDev] ==
+            categoryAllocation[Category.TeamCoreDev] &&
+            categoryMinted[Category.PrivateSale] ==
+            categoryAllocation[Category.PrivateSale] &&
+            categoryMinted[Category.IDO] == categoryAllocation[Category.IDO] &&
+            categoryMinted[Category.DaoTreasury] ==
+            categoryAllocation[Category.DaoTreasury] &&
+            categoryMinted[Category.InitialLiquidity] ==
+            categoryAllocation[Category.InitialLiquidity] &&
+            categoryMinted[Category.FoundationReserve] ==
+            categoryAllocation[Category.FoundationReserve];
     }
 
     /**
-     * @notice Permanently finish minting - IRREVERSIBLE
-     * @dev Can only be called after all categories are minted
-     *      After this, no more tokens can ever be minted
+     * @notice Permanently finish minting and renounce ownership - IRREVERSIBLE
+     * @dev SECURITY (L-8): This action is PERMANENT and IRREVERSIBLE.
+     *      After calling this function:
+     *      - No more tokens can ever be minted
+     *      - All admin functions become permanently inaccessible
+     *      - The contract becomes fully autonomous
+     *
+     *      Consider using a timelock or multi-sig before calling this.
      */
-    function finishMinting() external onlyOwner canMint {
+    function finishMinting(
+        bool confirmIrreversible
+    ) external onlyOwner canMint {
+        require(confirmIrreversible, "Must confirm irreversible action");
         require(allCategoriesMinted(), "MDTToken: not all categories minted");
         require(totalSupply() == MAX_SUPPLY, "MDTToken: supply mismatch");
 
@@ -149,30 +179,35 @@ contract MDTToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
         emit MintingFinished(block.timestamp);
         emit TGEExecuted(tgeTimestamp, totalSupply());
 
-        // Renounce ownership - no one can mint ever again
         renounceOwnership();
     }
 
     /**
      * @notice Get remaining mintable amount for a category
      */
-    function remainingAllocation(Category category) external view returns (uint256) {
+    function remainingAllocation(
+        Category category
+    ) external view returns (uint256) {
         return categoryAllocation[category] - categoryMinted[category];
     }
 
     /**
      * @notice Get all category allocations
      */
-    function getAllocations() external view returns (
-        uint256 emissionRewards,
-        uint256 ecosystemGrants,
-        uint256 teamCoreDev,
-        uint256 privateSale,
-        uint256 ido,
-        uint256 daoTreasury,
-        uint256 initialLiquidity,
-        uint256 foundationReserve
-    ) {
+    function getAllocations()
+        external
+        view
+        returns (
+            uint256 emissionRewards,
+            uint256 ecosystemGrants,
+            uint256 teamCoreDev,
+            uint256 privateSale,
+            uint256 ido,
+            uint256 daoTreasury,
+            uint256 initialLiquidity,
+            uint256 foundationReserve
+        )
+    {
         return (
             categoryAllocation[Category.EmissionRewards],
             categoryAllocation[Category.EcosystemGrants],

@@ -11,7 +11,7 @@ pub struct ProofElement {
 
 /// Merkle tree implementation
 pub struct MerkleTree {
-    _leaves: Vec<Hash>,  // Keep for future use
+    leaves: Vec<Hash>,
     nodes: Vec<Hash>,
 }
 
@@ -19,7 +19,7 @@ impl MerkleTree {
     /// Create a new Merkle tree from leaves
     pub fn new(leaves: Vec<Hash>) -> Self {
         let nodes = Self::build_tree(&leaves);
-        Self { _leaves: leaves, nodes }
+        Self { leaves, nodes }
     }
 
     /// Hash a leaf with 0x00 domain separator.
@@ -52,7 +52,10 @@ impl MerkleTree {
         }
 
         if leaves.len() == 1 {
-            return vec![leaves[0]];
+            // SECURITY: Hash single leaf through hash_pair for consistent domain
+            // separation. Without this, a raw leaf hash could be confused with a
+            // root of a single-element tree. (M-2)
+            return vec![Self::hash_pair(&leaves[0], &leaves[0])];
         }
 
         let mut current_level: Vec<Hash> = leaves.to_vec();
@@ -106,13 +109,13 @@ impl MerkleTree {
         note = "Use `get_proof_with_positions()` which includes positional encoding for secure verification"
     )]
     pub fn get_proof(&self, index: usize) -> Vec<Hash> {
-        if self._leaves.is_empty() || index >= self._leaves.len() {
+        if self.leaves.is_empty() || index >= self.leaves.len() {
             return vec![];
         }
 
         let mut proof = Vec::new();
         let mut current_index = index;
-        let mut current_level = self._leaves.clone();
+        let mut current_level = self.leaves.clone();
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
@@ -151,13 +154,21 @@ impl MerkleTree {
 
     /// Generate Merkle proof with explicit position information (recommended)
     pub fn get_proof_with_positions(&self, index: usize) -> Vec<ProofElement> {
-        if self._leaves.is_empty() || index >= self._leaves.len() {
+        if self.leaves.is_empty() || index >= self.leaves.len() {
             return vec![];
+        }
+
+        // Single-leaf tree: the proof is the leaf itself as its own sibling (M-2)
+        if self.leaves.len() == 1 && index == 0 {
+            return vec![ProofElement {
+                hash: self.leaves[0],
+                is_left: false,
+            }];
         }
 
         let mut proof = Vec::new();
         let mut current_index = index;
-        let mut current_level = self._leaves.clone();
+        let mut current_level = self.leaves.clone();
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
@@ -206,6 +217,7 @@ impl MerkleTree {
     /// information instead of relying on lexicographic ordering.
     pub fn verify_proof_with_positions(leaf: &Hash, proof: &[ProofElement], root: &Hash) -> bool {
         if proof.is_empty() {
+            // Empty proof is only valid for empty trees (root = zero hash)
             return leaf == root;
         }
 
@@ -232,8 +244,12 @@ mod tests {
     #[test]
     fn test_merkle_tree_single_leaf() {
         let leaves = vec![[1u8; 32]];
-        let tree = MerkleTree::new(leaves);
-        assert_eq!(tree.root(), [1u8; 32]);
+        let tree = MerkleTree::new(leaves.clone());
+        // After M-2 fix: single-leaf root is hash_pair(leaf, leaf), not raw leaf
+        let expected = MerkleTree::hash_pair(&leaves[0], &leaves[0]);
+        assert_eq!(tree.root(), expected);
+        // Ensure root differs from raw leaf (domain separation)
+        assert_ne!(tree.root(), [1u8; 32]);
     }
 
     #[test]

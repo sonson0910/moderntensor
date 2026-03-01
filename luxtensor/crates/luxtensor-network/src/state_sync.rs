@@ -725,6 +725,9 @@ impl StateSyncManager {
     ///
     /// The pivot is the block whose state we will download via snap sync.
     /// Choosing a block well behind HEAD avoids re-org risk.
+    ///
+    /// ⚠️ DEPRECATED: Prefer [`select_pivot_block_multi`] which requires
+    /// agreement from multiple peers to prevent state sync poisoning (F3).
     pub fn select_pivot_block(
         &mut self,
         head_block: u64,
@@ -751,6 +754,72 @@ impl StateSyncManager {
         self.progress.phase = SyncPhase::DownloadingAccounts;
 
         Ok(pivot)
+    }
+
+    /// 🔧 FIX F3: Multi-peer pivot block selection with majority consensus.
+    ///
+    /// Gathers `(height, block_hash, state_root)` from multiple peers and
+    /// selects a pivot only when `min_agreement` peers agree on the same
+    /// `(height, state_root)` tuple. This prevents a single malicious peer
+    /// from poisoning the entire snap sync with a forged state root.
+    ///
+    /// # Arguments
+    /// * `candidates` - `(peer_id, height, block_hash, state_root)` from each peer
+    /// * `min_agreement` - Minimum peers that must agree (e.g. 3)
+    pub fn select_pivot_block_multi(
+        &mut self,
+        candidates: &[(String, u64, Hash, Hash)],
+        min_agreement: usize,
+    ) -> Result<u64, SyncError> {
+        if candidates.len() < min_agreement {
+            return Err(SyncError::PivotSelectionFailed(format!(
+                "Only {} candidate(s) provided, need at least {} for consensus",
+                candidates.len(), min_agreement
+            )));
+        }
+
+        // Group by (height, state_root) and count votes
+        let mut votes: std::collections::HashMap<(u64, Hash), (usize, Hash)> =
+            std::collections::HashMap::new();
+        for (_, height, block_hash, state_root) in candidates {
+            let entry = votes.entry((*height, *state_root)).or_insert((0, *block_hash));
+            entry.0 += 1;
+        }
+
+        // Find the tuple with the most votes, require min_agreement
+        let best = votes
+            .iter()
+            .max_by_key(|(_, (count, _))| *count);
+
+        match best {
+            Some(((height, state_root), (count, block_hash))) if *count >= min_agreement => {
+                let behind = self.snap_sync.pivot_behind;
+                if *height < behind {
+                    return Err(SyncError::PivotSelectionFailed(format!(
+                        "Agreed HEAD {} < pivot distance {} — chain too short",
+                        height, behind
+                    )));
+                }
+                let pivot = height - behind;
+                self.snap_sync.pivot_block = Some(pivot);
+                self.snap_sync.pivot_hash = Some(*block_hash);
+                self.snap_sync.pivot_state_root = Some(*state_root);
+                self.snap_sync.phase = SnapSyncPhase::DownloadingState;
+                self.progress.phase = SyncPhase::DownloadingAccounts;
+                Ok(pivot)
+            }
+            Some(((_, _), (count, _))) => {
+                Err(SyncError::PivotSelectionFailed(format!(
+                    "No consensus: best agreement is only {} out of {} peers (need {})",
+                    count, candidates.len(), min_agreement
+                )))
+            }
+            None => {
+                Err(SyncError::PivotSelectionFailed(
+                    "No candidates provided".to_string()
+                ))
+            }
+        }
     }
 
     /// Get the current snap sync phase.

@@ -18,6 +18,7 @@ sha2 = { workspace = true }
 alloy-rlp = { workspace = true }
 flate2 = "1.0"
 lru = "0.12"
+# SECURITY: tar has had path traversal CVEs. Ensure all extraction validates paths.
 tar = "0.4"
 
 luxtensor-core = { path = "../luxtensor-core" }

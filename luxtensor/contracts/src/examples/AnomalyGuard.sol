@@ -52,6 +52,13 @@ contract AnomalyGuard is Ownable, ReentrancyGuard, Pausable {
     /// @notice Historical anomaly scores per address
     mapping(address => uint256[]) public scoreHistory;
 
+    /// @notice Maximum score history entries per address
+    /// @dev SECURITY (M-13): Prevents unbounded growth of scoreHistory
+    uint256 public constant MAX_SCORE_HISTORY = 100;
+
+    /// @notice Circular buffer write index per address
+    mapping(address => uint256) public scoreHistoryIndex;
+
     /// @notice Total transactions analyzed
     uint256 public totalAnalyzed;
 
@@ -161,8 +168,14 @@ contract AnomalyGuard is Ownable, ReentrancyGuard, Pausable {
 
         totalAnalyzed++;
 
-        // Store score in history
-        scoreHistory[msg.sender].push(score);
+        // SECURITY (M-13): Circular buffer for bounded score history
+        uint256 idx = scoreHistoryIndex[msg.sender];
+        if (scoreHistory[msg.sender].length < MAX_SCORE_HISTORY) {
+            scoreHistory[msg.sender].push(score);
+        } else {
+            scoreHistory[msg.sender][idx % MAX_SCORE_HISTORY] = score;
+        }
+        scoreHistoryIndex[msg.sender] = idx + 1;
 
         // Check against threshold
         passed = score < anomalyThreshold;

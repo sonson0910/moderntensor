@@ -391,17 +391,34 @@ impl UnifiedMempool {
         let mut txs = self.transactions.write();
         let now = Instant::now();
 
-        // Collect expired hashes for metadata cleanup
-        let expired_hashes: Vec<Hash> = txs
+        // Collect expired hashes AND their senders for metadata + sender count cleanup
+        let expired: Vec<(Hash, Address)> = txs
             .iter()
             .filter(|(_, timed_tx)| now.duration_since(timed_tx.added_at) >= self.tx_expiration)
-            .map(|(hash, _)| *hash)
+            .map(|(hash, timed_tx)| (*hash, timed_tx.tx.from))
             .collect();
+
+        let expired_hashes: Vec<Hash> = expired.iter().map(|(h, _)| *h).collect();
 
         for hash in &expired_hashes {
             txs.remove(hash);
         }
         drop(txs);
+
+        // SECURITY FIX: Decrement sender_tx_count for each expired transaction.
+        // Previously this was missing, causing ghost counts to accumulate and
+        // permanently block senders from submitting new transactions.
+        if !expired.is_empty() {
+            let mut sender_counts = self.sender_tx_count.write();
+            for (_, sender) in &expired {
+                if let Some(count) = sender_counts.get_mut(sender) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        sender_counts.remove(sender);
+                    }
+                }
+            }
+        }
 
         // Also cleanup corresponding metadata
         if !expired_hashes.is_empty() {

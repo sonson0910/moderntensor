@@ -53,17 +53,11 @@ pub(crate) fn detect_external_ip() -> Option<String> {
     None
 }
 
-/// Convert PeerId to synthetic IP for subnet diversity tracking
-/// This is a hash-based approach since libp2p PeerIds don't directly contain IPs
+/// Convert PeerId to synthetic IP for subnet diversity tracking.
+///
+/// L4 FIX: Uses Keccak-256 instead of DefaultHasher for deterministic output
+/// across Rust compiler versions. DefaultHasher's output is not guaranteed stable.
 pub(crate) fn peer_id_to_synthetic_ip(peer_id: &str) -> std::net::IpAddr {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    peer_id.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    // Create a synthetic IPv4 from the hash for subnet diversity calculation
-    let bytes = hash.to_be_bytes();
-    std::net::IpAddr::V4(std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]))
+    let hash = luxtensor_crypto::keccak256(peer_id.as_bytes());
+    std::net::IpAddr::V4(std::net::Ipv4Addr::new(hash[0], hash[1], hash[2], hash[3]))
 }

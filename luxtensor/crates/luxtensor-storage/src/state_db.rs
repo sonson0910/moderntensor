@@ -1,10 +1,17 @@
-use crate::{Result, StorageError};
+// NOTE (I-1): This implementation uses `bincode` for account serialization instead
+// of RLP (Recursive Length Prefix) as used by standard Ethereum clients. This is
+// intentional — LuxTensor is not wire-compatible with Ethereum peers and uses
+// bincode for its compact binary encoding and derive-based ergonomics.
+
 use crate::trie::MerkleTrie;
+use crate::{Result, StorageError};
 use luxtensor_core::{Account, Address};
 use luxtensor_crypto::{keccak256, Hash};
+use lru::LruCache;
 use parking_lot::RwLock;
-use rocksdb::{DB, WriteOptions};
+use rocksdb::{WriteOptions, DB};
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 /// Key prefix for contract code storage
@@ -13,10 +20,24 @@ const CONTRACT_CODE_PREFIX: &[u8] = b"code:";
 /// Key prefix for HNSW vector index storage
 const HNSW_INDEX_PREFIX: &[u8] = b"hnsw:";
 
-/// State database with RocksDB backend and LRU cache
+/// Maximum number of account entries in the in-memory LRU cache.
+///
+/// SECURITY (H-2): Bounds the cache to prevent OOM on networks with millions
+/// of accounts. Dirty (uncommitted) entries are retained until commit();
+/// only clean read-through entries are subject to LRU eviction.
+/// At ~200 bytes per Account, 100K entries ≈ 20 MB.
+const MAX_ACCOUNT_CACHE_ENTRIES: usize = 100_000;
+
+/// State database with RocksDB backend and in-memory cache
 pub struct StateDB {
     db: Arc<DB>,
-    cache: RwLock<HashMap<Address, Account>>,
+    /// In-memory account cache.
+    ///
+    /// SECURITY (H-2): Bounded LRU cache (MAX_ACCOUNT_CACHE_ENTRIES) that evicts
+    /// least-recently-used entries when full, preventing OOM on networks with
+    /// millions of accounts. Dirty entries are protected: commit() verifies all
+    /// dirty addresses still reside in the cache before persisting to RocksDB.
+    cache: RwLock<LruCache<Address, Account>>,
     dirty: RwLock<HashSet<Address>>,
     /// Contract bytecode storage: code_hash -> bytecode
     contract_code: RwLock<HashMap<Hash, Vec<u8>>>,
@@ -30,23 +51,54 @@ pub struct StateDB {
 
 impl StateDB {
     /// Create a new state database
+    ///
+    /// SECURITY (C-1): Rebuilds the Merkle trie from all accounts persisted in
+    /// RocksDB so that the state root is correct even after a process restart.
     pub fn new(db: Arc<DB>) -> Self {
+        let trie = RwLock::new(MerkleTrie::new());
+
+        // SECURITY (C-1): Rebuild trie from persisted accounts on startup.
+        // Without this, the trie starts empty and the state root would only
+        // reflect accounts modified after restart, not the full account set.
+        {
+            let mut t = trie.write();
+            let iter = db.iterator(rocksdb::IteratorMode::Start);
+            for item in iter {
+                if let Ok((key, value)) = item {
+                    // Account keys are raw 20-byte addresses (no prefix)
+                    if key.len() == 20 {
+                        if let Ok(_account) = bincode::deserialize::<Account>(&value) {
+                            let trie_key = keccak256(&key);
+                            // value is the serialized account bytes — insert into trie
+                            let _ = t.insert(&trie_key, &value);
+                        }
+                    }
+                }
+            }
+            let count = t.len();
+            if count > 0 {
+                tracing::info!("🔄 Rebuilt Merkle trie with {} accounts from RocksDB", count);
+            }
+        }
+
         Self {
             db,
-            cache: RwLock::new(HashMap::new()),
+            cache: RwLock::new(LruCache::new(
+                NonZeroUsize::new(MAX_ACCOUNT_CACHE_ENTRIES).unwrap(),
+            )),
             dirty: RwLock::new(HashSet::new()),
             contract_code: RwLock::new(HashMap::new()),
             dirty_codes: RwLock::new(HashSet::new()),
-            trie: RwLock::new(MerkleTrie::new()),
+            trie,
         }
     }
 
-    /// Get an account by address
+    /// Get an account by address, checking the in-memory cache first, then RocksDB.
     pub fn get_account(&self, address: &Address) -> Result<Account> {
-        // Check cache first
+        // Check cache first (peek avoids LRU promotion, keeping read-lock perf)
         {
             let cache = self.cache.read();
-            if let Some(account) = cache.get(address) {
+            if let Some(account) = cache.peek(address) {
                 return Ok(account.clone());
             }
         }
@@ -56,9 +108,9 @@ impl StateDB {
             Some(bytes) => {
                 let account: Account = bincode::deserialize(&bytes)?;
 
-                // Update cache
+                // Update cache (put handles LRU eviction automatically)
                 let mut cache = self.cache.write();
-                cache.insert(*address, account.clone());
+                cache.put(*address, account.clone());
 
                 Ok(account)
             }
@@ -69,10 +121,10 @@ impl StateDB {
         }
     }
 
-    /// Set an account
+    /// Set (insert or update) an account in the cache and mark it as dirty for the next commit.
     pub fn set_account(&self, address: Address, account: Account) {
         let mut cache = self.cache.write();
-        cache.insert(address, account);
+        cache.put(address, account);
 
         let mut dirty = self.dirty.write();
         dirty.insert(address);
@@ -181,8 +233,11 @@ impl StateDB {
         account.code_hash = code_hash;
         self.set_account(*address, account);
 
-        tracing::info!("📦 Contract code stored at 0x{} (code_hash: 0x{})",
-            hex::encode(address.as_bytes()), hex::encode(&code_hash[..8]));
+        tracing::info!(
+            "📦 Contract code stored at 0x{} (code_hash: 0x{})",
+            hex::encode(address.as_bytes()),
+            hex::encode(&code_hash[..8])
+        );
 
         Ok(code_hash)
     }
@@ -217,14 +272,16 @@ impl StateDB {
                 Ok(Some(code))
             }
             None => {
-                tracing::warn!("⚠️ Contract code not found for hash 0x{}",
-                    hex::encode(&account.code_hash[..8]));
+                tracing::warn!(
+                    "⚠️ Contract code not found for hash 0x{}",
+                    hex::encode(&account.code_hash[..8])
+                );
                 Ok(None)
             }
         }
     }
 
-    /// Check if address is a contract (has code)
+    /// Check if address is a contract (has non-zero `code_hash`).
     pub fn is_contract(&self, address: &Address) -> Result<bool> {
         let account = self.get_account(address)?;
         Ok(account.code_hash != [0u8; 32])
@@ -255,11 +312,7 @@ impl StateDB {
         let opts = WriteOptions::default();
         self.db.put_opt(&key, &data, &opts)?;
 
-        tracing::info!(
-            "📊 HNSW index '{}' stored ({} bytes)",
-            name,
-            data.len()
-        );
+        tracing::info!("📊 HNSW index '{}' stored ({} bytes)", name, data.len());
 
         Ok(())
     }
@@ -313,8 +366,9 @@ impl StateDB {
     /// clean accounts retain their entries from previous commits, giving a
     /// correct incremental state root over the full account set.
     pub fn commit(&self) -> Result<Hash> {
-        let dirty = self.dirty.read();
+        // SECURITY (C-2): Lock ordering: cache FIRST, then dirty — consistent with set_account()
         let cache = self.cache.read();
+        let dirty = self.dirty.read();
 
         let mut batch = rocksdb::WriteBatch::default();
 
@@ -322,37 +376,45 @@ impl StateDB {
         let dirty_addresses: Vec<Address> = dirty.iter().cloned().collect();
 
         for address in dirty.iter() {
-            if let Some(account) = cache.get(address) {
+            if let Some(account) = cache.peek(address) {
                 let bytes = bincode::serialize(account)?;
                 batch.put(address.as_bytes(), bytes);
+            } else {
+                // SECURITY (H-2): A dirty entry was evicted from the LRU cache
+                // before commit. This is a critical invariant violation — the
+                // modified account state is lost. This can only happen if the
+                // dirty set exceeds MAX_ACCOUNT_CACHE_ENTRIES, which requires
+                // an abnormally large block.
+                return Err(StorageError::DatabaseError(format!(
+                    "CRITICAL: dirty account 0x{} was evicted from LRU cache before commit",
+                    hex::encode(address.as_bytes()),
+                )));
             }
         }
 
-        self.db.write(batch)?;
-
-        // Clear dirty set
-        drop(dirty);
-        self.dirty.write().clear();
-
-        // Flush dirty contract codes to RocksDB
+        // SECURITY (C-4): Merge contract code writes into the SAME batch
+        // for atomicity — prevents partial commits on crash.
         {
             let dirty_codes = self.dirty_codes.read();
             if !dirty_codes.is_empty() {
                 let codes = self.contract_code.read();
-                let mut code_batch = rocksdb::WriteBatch::default();
                 for code_hash in dirty_codes.iter() {
                     if let Some(code) = codes.get(code_hash) {
                         let mut key = CONTRACT_CODE_PREFIX.to_vec();
                         key.extend_from_slice(code_hash);
-                        code_batch.put(&key, code);
+                        batch.put(&key, code);
                     }
                 }
-                drop(codes);
-                drop(dirty_codes);
-                self.db.write(code_batch)?;
-                self.dirty_codes.write().clear();
             }
         }
+
+        // Single atomic write for both accounts AND contract codes
+        self.db.write(batch)?;
+
+        // Clear dirty sets
+        drop(dirty);
+        self.dirty.write().clear();
+        self.dirty_codes.write().clear();
 
         // SECURITY (H-3): Apply incremental trie updates.
         // The trie is persisted as a field, so each commit only touches the
@@ -365,10 +427,11 @@ impl StateDB {
                 dirty_addresses.len(),
             );
             for address in dirty_addresses.iter() {
-                if let Some(account) = cache.get(address) {
+                if let Some(account) = cache.peek(address) {
                     let key = keccak256(address.as_bytes());
-                    let value = bincode::serialize(account)
-                        .map_err(|e| StorageError::SerializationError(format!("account serialize: {}", e)))?;
+                    let value = bincode::serialize(account).map_err(|e| {
+                        StorageError::SerializationError(format!("account serialize: {}", e))
+                    })?;
                     trie.insert(&key, &value)?;
                 }
             }
@@ -383,34 +446,54 @@ impl StateDB {
     /// SECURITY (M-3): Also clears dirty_codes to correctly revert any contract
     /// code changes that occurred within the same transaction batch.
     pub fn rollback(&self) {
-        let dirty = self.dirty.read();
+        // SECURITY (C-2): Lock ordering: cache FIRST, then dirty — consistent with set_account()
+        let dirty_addresses: Vec<Address> = self.dirty.read().iter().cloned().collect();
         let mut cache = self.cache.write();
 
         // Remove all dirty entries from cache
-        for address in dirty.iter() {
-            cache.remove(address);
+        for address in &dirty_addresses {
+            cache.pop(address);
         }
 
-        drop(dirty);
+        drop(cache);
         self.dirty.write().clear();
 
         // SECURITY (M-3): Clear dirty contract codes — without this, rolled-back
         // contract code changes would persist and be committed on the next call.
         self.dirty_codes.write().clear();
+
+        // SECURITY (H-4): Revert trie entries for dirty accounts.
+        // Without this, rolled-back account updates remain in the trie,
+        // causing the next commit()'s state root to include phantom changes.
+        {
+            let mut trie = self.trie.write();
+            for address in &dirty_addresses {
+                let trie_key = keccak256(address.as_bytes());
+                let _ = trie.delete(&trie_key);
+
+                // If the account exists in RocksDB (was previously committed),
+                // re-insert it into the trie to restore the pre-rollback state.
+                if let Ok(Some(bytes)) = self.db.get(address.as_bytes()) {
+                    if let Ok(_account) = bincode::deserialize::<Account>(&bytes) {
+                        let _ = trie.insert(&trie_key, &bytes);
+                    }
+                }
+            }
+        }
     }
 
-    /// Clear cache (useful for testing)
+    /// Clear all cached accounts and the dirty set. Primarily used in tests.
     pub fn clear_cache(&self) {
         self.cache.write().clear();
         self.dirty.write().clear();
     }
 
-    /// Get cache size
+    /// Return the number of accounts currently held in the in-memory cache.
     pub fn cache_size(&self) -> usize {
         self.cache.read().len()
     }
 
-    /// Get number of dirty accounts
+    /// Return the number of accounts marked dirty (modified but not yet committed).
     pub fn dirty_count(&self) -> usize {
         self.dirty.read().len()
     }
@@ -594,9 +677,6 @@ mod tests {
 
         // Commit again → root must match root_before since state was rolled back.
         let root_after = state_db.commit().unwrap();
-        assert_eq!(
-            root_before, root_after,
-            "state root after rollback+commit must match original"
-        );
+        assert_eq!(root_before, root_after, "state root after rollback+commit must match original");
     }
 }

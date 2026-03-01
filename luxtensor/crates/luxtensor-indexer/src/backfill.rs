@@ -15,6 +15,8 @@ pub struct Backfill {
     storage: Arc<Storage>,
     decoder: EventDecoder,
     batch_size: u64,
+    /// SECURITY (M-2): Reuse a single HTTP client to avoid per-call TLS handshake overhead.
+    client: reqwest::Client,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +47,7 @@ impl Backfill {
             storage: storage.clone(),
             decoder: EventDecoder::new(storage),
             batch_size,
+            client: reqwest::Client::new(),
         }
     }
 
@@ -71,16 +74,43 @@ impl Backfill {
             info!("Indexing blocks {} - {}", current, batch_end);
 
             for block_num in current..=batch_end {
-                match self.index_block(block_num).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("Failed to index block {}: {}. Retrying...", block_num, e);
-                        sleep(Duration::from_millis(500)).await;
-                        // Retry once
-                        if let Err(e) = self.index_block(block_num).await {
-                            error!("Failed to index block {} after retry: {}", block_num, e);
+                // SECURITY (IDX-M6): Retry with exponential backoff instead of
+                // single retry-then-drop which silently loses blocks.
+                const MAX_BLOCK_RETRIES: u32 = 5;
+                let mut retry_delay = Duration::from_millis(500);
+                let mut indexed = false;
+
+                for attempt in 1..=MAX_BLOCK_RETRIES {
+                    match self.index_block(block_num).await {
+                        Ok(_) => {
+                            indexed = true;
+                            break;
+                        }
+                        Err(e) => {
+                            if attempt == MAX_BLOCK_RETRIES {
+                                error!(
+                                    block = block_num,
+                                    attempts = MAX_BLOCK_RETRIES,
+                                    error = %e,
+                                    "Failed to index block after all retries — block SKIPPED"
+                                );
+                            } else {
+                                warn!(
+                                    block = block_num,
+                                    attempt = attempt,
+                                    delay_ms = retry_delay.as_millis() as u64,
+                                    error = %e,
+                                    "Failed to index block, retrying"
+                                );
+                                sleep(retry_delay).await;
+                                retry_delay = retry_delay.saturating_mul(2);
+                            }
                         }
                     }
+                }
+
+                if !indexed {
+                    warn!(block = block_num, "Block was skipped after {} retries", MAX_BLOCK_RETRIES);
                 }
             }
 
@@ -128,9 +158,14 @@ impl Backfill {
         }
 
         // Parse block
+        // SECURITY (IDX-M2): Validate block hash is present instead of silently
+        // storing an empty string, which could corrupt the index.
         let block_hash = block_data.get("hash")
             .and_then(|h| h.as_str())
-            .unwrap_or("")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| IndexerError::Parse(
+                format!("Block {} has no 'hash' field", block_number)
+            ))?
             .to_string();
 
         let parent_hash = block_data.get("parentHash")
@@ -172,8 +207,6 @@ impl Backfill {
 
     /// Make RPC call
     async fn rpc_call(&self, method: &str, params: Vec<serde_json::Value>) -> Result<serde_json::Value> {
-        let client = reqwest::Client::new();
-
         let request = RpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -181,7 +214,7 @@ impl Backfill {
             id: 1,
         };
 
-        let response = client
+        let response = self.client
             .post(&self.rpc_url)
             .json(&request)
             .send()

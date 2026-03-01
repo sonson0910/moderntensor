@@ -1,8 +1,8 @@
 # LuxTensor Clippy Configuration — Production-Grade Lints
 # See: https://doc.rust-lang.org/clippy/configuration.html
 
-# Cognitive complexity threshold for functions
-cognitive-complexity-threshold = 30
+# Cognitive complexity threshold (default: 25, lowered from 30 for security-critical code)
+cognitive-complexity-threshold = 25
 
 # Maximum number of lines in a function body
 too-many-lines-threshold = 200

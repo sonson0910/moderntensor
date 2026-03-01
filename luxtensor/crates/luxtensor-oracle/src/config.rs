@@ -17,12 +17,33 @@ use std::env;
 /// |----------|---------|-------------|
 /// | `NODE_WS_URL` | `ws://127.0.0.1:8546` | WebSocket endpoint of the LuxTensor node |
 /// | `DATABASE_URL` | _(none)_ | PostgreSQL connection URL for persistent storage |
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct OracleConfig {
     pub node_ws_url: String,
     pub oracle_contract_address: Address,
+    /// Hex-encoded private key for signing oracle transactions.
+    ///
+    /// # Security
+    /// In production, prefer loading from an HSM (Hardware Security Module)
+    /// or cloud KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault) instead of
+    /// plain-text environment variables. Environment variables can leak
+    /// through process listings, core dumps, and logging.
+    ///
+    /// TODO: Add HSM/KMS signer integration (e.g., via `ethers::signers::aws`).
     pub private_key: String,
     pub database_url: Option<String>,
+}
+
+// SECURITY: Manually implement Debug to redact the private key field.
+impl std::fmt::Debug for OracleConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OracleConfig")
+            .field("node_ws_url", &self.node_ws_url)
+            .field("oracle_contract_address", &self.oracle_contract_address)
+            .field("private_key", &"[REDACTED]")
+            .field("database_url", &self.database_url)
+            .finish()
+    }
 }
 
 impl OracleConfig {

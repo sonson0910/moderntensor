@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 /// accepting messages at deserialization layer that gossipsub already rejects.
 pub const MAX_MESSAGE_SIZE: u64 = 4 * 1024 * 1024;
 
+/// 🔧 FIX F5: Protocol-level caps for request messages to prevent DoS.
+/// A single `GetBlockHeaders { max_count: u32::MAX }` would trigger billions
+/// of database lookups on the responder.
+pub const MAX_HEADERS_REQUEST: u32 = 1024;
+/// Maximum number of block hashes in a GetBlocks request.
+pub const MAX_BLOCKS_REQUEST: usize = 256;
+/// 🔧 FIX F18: Maximum ECDSA signature length (DER-encoded + buffer).
+pub const MAX_SIGNATURE_LEN: usize = 73;
+
 /// Serialize a NetworkMessage using fixint encoding.
 ///
 /// IMPORTANT: Must use the same options as `deserialize_message()` to ensure
@@ -27,10 +36,34 @@ pub fn serialize_message(msg: &NetworkMessage) -> Result<Vec<u8>, bincode::Error
 /// exactly represented. Trailing bytes could be used to bypass size
 /// limits or cause message ID collisions.
 pub fn deserialize_message(data: &[u8]) -> Result<NetworkMessage, bincode::Error> {
-    bincode::DefaultOptions::new()
+    let msg: NetworkMessage = bincode::DefaultOptions::new()
         .with_limit(MAX_MESSAGE_SIZE)
         .with_fixint_encoding()
-        .deserialize(data)
+        .deserialize(data)?;
+
+    // 🔧 FIX F5 + F18: Validate request sizes after deserialization
+    match &msg {
+        NetworkMessage::GetBlockHeaders { max_count, .. } if *max_count > MAX_HEADERS_REQUEST => {
+            return Err(bincode::ErrorKind::Custom(
+                format!("GetBlockHeaders max_count {} exceeds limit {}", max_count, MAX_HEADERS_REQUEST),
+            ).into());
+        }
+        NetworkMessage::GetBlocks(hashes) if hashes.len() > MAX_BLOCKS_REQUEST => {
+            return Err(bincode::ErrorKind::Custom(
+                format!("GetBlocks hash count {} exceeds limit {}", hashes.len(), MAX_BLOCKS_REQUEST),
+            ).into());
+        }
+        NetworkMessage::AITaskDispatch { validator_signature, .. }
+            if validator_signature.len() > MAX_SIGNATURE_LEN =>
+        {
+            return Err(bincode::ErrorKind::Custom(
+                format!("AITaskDispatch signature {} bytes exceeds limit {}", validator_signature.len(), MAX_SIGNATURE_LEN),
+            ).into());
+        }
+        _ => {}
+    }
+
+    Ok(msg)
 }
 
 /// Network message types

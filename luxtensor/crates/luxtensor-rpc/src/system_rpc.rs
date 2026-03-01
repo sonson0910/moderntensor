@@ -14,7 +14,6 @@ use parking_lot::RwLock;
 use serde_json::json;
 use std::sync::Arc;
 
-
 /// Context for system RPC methods.
 pub struct SystemRpcContext {
     pub db: Arc<BlockchainDB>,
@@ -112,9 +111,7 @@ pub fn register_system_methods(ctx: &SystemRpcContext, io: &mut IoHandler) {
         let fn_clone = metrics_fn.clone();
         io.add_method("system_metrics", move |_params: Params| {
             let fn_clone = fn_clone.clone();
-            async move {
-                Ok(fn_clone())
-            }
+            async move { Ok(fn_clone()) }
         });
     }
 
@@ -123,9 +120,7 @@ pub fn register_system_methods(ctx: &SystemRpcContext, io: &mut IoHandler) {
         let fn_clone = prom_fn.clone();
         io.add_method("system_prometheusMetrics", move |_params: Params| {
             let fn_clone = fn_clone.clone();
-            async move {
-                Ok(serde_json::Value::String(fn_clone()))
-            }
+            async move { Ok(serde_json::Value::String(fn_clone())) }
         });
     }
 }
@@ -158,17 +153,15 @@ pub fn register_monitoring_methods(ctx: &SystemRpcContext, io: &mut IoHandler) {
 
     // system_getRateLimitStatus
     let _rl = ctx.rate_limiter.clone();
-    io.add_method("system_getRateLimitStatus", move |_params: Params| {
-        async move {
-            Ok(serde_json::json!({
-                "enabled": true,
-                "config": {
-                    "max_requests_per_minute": 100,
-                    "window_seconds": 60
-                },
-                "message": "Rate limiting active for DoS protection"
-            }))
-        }
+    io.add_method("system_getRateLimitStatus", move |_params: Params| async move {
+        Ok(serde_json::json!({
+            "enabled": true,
+            "config": {
+                "max_requests_per_minute": 100,
+                "window_seconds": 60
+            },
+            "message": "Rate limiting active for DoS protection"
+        }))
     });
 
     // debug_forkChoiceState - Return block scores and attestation stakes for debugging
@@ -176,32 +169,45 @@ pub fn register_monitoring_methods(ctx: &SystemRpcContext, io: &mut IoHandler) {
     io.add_method("debug_forkChoiceState", move |_params: Params| {
         let db_for_debug = db_for_debug.clone();
         async move {
+            // SECURITY (RPC-2 FIX): Require admin auth for debug endpoints
+            crate::admin_auth::check_admin_auth("debug_forkChoiceState", None)?;
+
             let block_scores = match db_for_debug.load_all_block_scores() {
-                Ok(scores) => scores.iter().map(|(hash, score)| {
-                    serde_json::json!({
-                        "hash": format!("0x{}", hex::encode(hash)),
-                        "score": score
+                Ok(scores) => scores
+                    .iter()
+                    .map(|(hash, score)| {
+                        serde_json::json!({
+                            "hash": format!("0x{}", hex::encode(hash)),
+                            "score": score
+                        })
                     })
-                }).collect::<Vec<_>>(),
-                Err(e) => return Err(jsonrpc_core::Error {
-                    code: jsonrpc_core::ErrorCode::InternalError,
-                    message: format!("Failed to load block scores: {}", e),
-                    data: None,
-                }),
+                    .collect::<Vec<_>>(),
+                Err(e) => {
+                    return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::InternalError,
+                        message: format!("Failed to load block scores: {}", e),
+                        data: None,
+                    })
+                }
             };
 
             let attestation_stakes = match db_for_debug.load_all_attestation_stakes() {
-                Ok(stakes) => stakes.iter().map(|(hash, stake)| {
-                    serde_json::json!({
-                        "hash": format!("0x{}", hex::encode(hash)),
-                        "stake": stake.to_string()
+                Ok(stakes) => stakes
+                    .iter()
+                    .map(|(hash, stake)| {
+                        serde_json::json!({
+                            "hash": format!("0x{}", hex::encode(hash)),
+                            "stake": stake.to_string()
+                        })
                     })
-                }).collect::<Vec<_>>(),
-                Err(e) => return Err(jsonrpc_core::Error {
-                    code: jsonrpc_core::ErrorCode::InternalError,
-                    message: format!("Failed to load attestation stakes: {}", e),
-                    data: None,
-                }),
+                    .collect::<Vec<_>>(),
+                Err(e) => {
+                    return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::InternalError,
+                        message: format!("Failed to load attestation stakes: {}", e),
+                        data: None,
+                    })
+                }
             };
 
             Ok(serde_json::json!({

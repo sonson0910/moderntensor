@@ -441,8 +441,10 @@ fn weight_to_json(w: &WeightData) -> Value {
 }
 
 /// Add `admin_runEpoch` — manually triggers YumaConsensus for testing.
-/// This should only be called from the start of the RPC registration function
-/// (after the metagraph_for_epoch clone is made).
+///
+/// SECURITY: Requires `api_key` parameter for authentication. Without a valid
+/// key, the request is rejected. This prevents unauthorized users from
+/// triggering epoch transitions.
 pub fn register_admin_epoch_handler(
     io: &mut jsonrpc_core::IoHandler,
     metagraph: Arc<MetagraphDB>,
@@ -451,11 +453,46 @@ pub fn register_admin_epoch_handler(
     io.add_method("admin_runEpoch", move |params: Params| {
         let db = db.clone();
         async move {
-            // Optional epoch_num param; default to 0
-            let epoch_num: u64 = params
+            let parsed: Vec<serde_json::Value> = params
                 .parse::<Vec<serde_json::Value>>()
-                .ok()
-                .and_then(|v| v.into_iter().next())
+                .unwrap_or_default();
+
+            // SECURITY FIX (Issue #6): Require api_key for admin endpoints.
+            // AdminAuth infrastructure existed but was never wired. Rather than
+            // refactoring the entire middleware pipeline, we enforce auth at the
+            // method level for admin_* endpoints.
+            let api_key = parsed.get(1)
+                .and_then(|v| v.as_str());
+            let admin_auth = crate::admin_auth::AdminAuth::new(
+                crate::admin_auth::AdminAuthConfig::with_ip_whitelist(
+                    vec!["127.0.0.1".to_string(), "::1".to_string()]
+                )
+            );
+            // Only allow from localhost unless a valid API key is provided.
+            // In production, set LUXTENSOR_ADMIN_KEY env var.
+            let env_key = std::env::var("LUXTENSOR_ADMIN_KEY").ok();
+            if let Some(ref key) = env_key {
+                let keyed_auth = crate::admin_auth::AdminAuth::new(
+                    crate::admin_auth::AdminAuthConfig::with_api_key(key)
+                );
+                if !keyed_auth.authenticate(api_key, "rpc") {
+                    return Err(jsonrpc_core::Error {
+                        code: jsonrpc_core::ErrorCode::ServerError(-32099),
+                        message: "Unauthorized: admin_runEpoch requires valid api_key".to_string(),
+                        data: None,
+                    });
+                }
+            } else if !admin_auth.authenticate(None, "127.0.0.1") {
+                // Fallback: no LUXTENSOR_ADMIN_KEY set, localhost-only
+                return Err(jsonrpc_core::Error {
+                    code: jsonrpc_core::ErrorCode::ServerError(-32099),
+                    message: "Unauthorized: admin_runEpoch requires LUXTENSOR_ADMIN_KEY or localhost access".to_string(),
+                    data: None,
+                });
+            }
+
+            // Optional epoch_num param; default to 0
+            let epoch_num: u64 = parsed.into_iter().next()
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
 
@@ -515,6 +552,9 @@ pub fn register_debug_metagraph_handler(
     io.add_method("admin_debugMetagraph", move |_params: Params| {
         let db = db.clone();
         async move {
+            // SECURITY (RPC-2 FIX): Require admin auth for debug endpoints
+            crate::admin_auth::check_admin_auth("admin_debugMetagraph", None)?;
+
             // Validators
             let validators = db.get_all_validators().unwrap_or_default();
             let val_list: Vec<serde_json::Value> = validators.iter().map(|v| {

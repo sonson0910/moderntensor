@@ -73,6 +73,13 @@ contract AIOracle is Ownable, ReentrancyGuard {
     /// @notice zkML verifier address
     address public zkmlVerifier;
 
+    /// @notice Registered fulfillers (miners/validators)
+    /// @dev SECURITY (H-10): Fulfiller whitelist to prevent front-running
+    mapping(address => bool) public registeredFulfillers;
+
+    /// @notice Whether fulfiller registration is required
+    bool public requireRegistration = true;
+
     // ========== EVENTS ==========
 
     event AIRequestCreated(
@@ -96,6 +103,8 @@ contract AIOracle is Ownable, ReentrancyGuard {
     event DefaultTimeoutUpdated(uint256 oldTimeout, uint256 newTimeout);
     event ZkMLVerifierUpdated(address oldVerifier, address newVerifier);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
+    event FulfillerRegistered(address indexed fulfiller);
+    event FulfillerRevoked(address indexed fulfiller);
 
     // ========== CONSTRUCTOR ==========
 
@@ -202,6 +211,14 @@ contract AIOracle is Ownable, ReentrancyGuard {
         require(block.number <= req.deadline, "Request expired");
         require(result.length > 0, "Empty result");
 
+        // SECURITY (H-10): Enforce fulfiller registration
+        if (requireRegistration) {
+            require(
+                registeredFulfillers[msg.sender],
+                "Not registered fulfiller"
+            );
+        }
+
         // Verify zkML proof if verifier is set
         if (zkmlVerifier != address(0) && proofHash != bytes32(0)) {
             // Call ZkMLVerifier to check proof validity
@@ -295,6 +312,30 @@ contract AIOracle is Ownable, ReentrancyGuard {
         require(_timeout >= 10 && _timeout <= 10000, "Invalid timeout");
         emit DefaultTimeoutUpdated(defaultTimeout, _timeout);
         defaultTimeout = _timeout;
+    }
+
+    /**
+     * @notice Register a fulfiller
+     * @dev SECURITY (H-10): Fulfiller whitelist management
+     */
+    function registerFulfiller(address fulfiller) external onlyOwner {
+        registeredFulfillers[fulfiller] = true;
+        emit FulfillerRegistered(fulfiller);
+    }
+
+    /**
+     * @notice Revoke a fulfiller
+     */
+    function revokeFulfiller(address fulfiller) external onlyOwner {
+        registeredFulfillers[fulfiller] = false;
+        emit FulfillerRevoked(fulfiller);
+    }
+
+    /**
+     * @notice Toggle registration requirement
+     */
+    function setRequireRegistration(bool required) external onlyOwner {
+        requireRegistration = required;
     }
 
     /**

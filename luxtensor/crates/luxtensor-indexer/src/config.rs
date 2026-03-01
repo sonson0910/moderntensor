@@ -57,6 +57,7 @@ impl Config {
     }
 
     /// Create config for testing
+    #[cfg(test)]
     pub fn for_testing() -> Self {
         Self {
             database_url: "postgres://postgres:postgres@localhost/luxtensor_indexer_test".to_string(),

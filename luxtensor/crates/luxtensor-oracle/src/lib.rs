@@ -4,23 +4,23 @@
 
 pub mod config;
 pub mod dispute;
+pub mod error;
 pub mod listener;
 pub mod processor;
 pub mod submitter;
-pub mod error;
 
 pub use config::OracleConfig;
-pub use dispute::{DisputeManager, DisputeConfig, DisputeStatus, FraudProof};
+pub use dispute::{DisputeConfig, DisputeManager, DisputeStatus, FraudProof};
 pub use listener::EventWatcher;
 pub use processor::RequestProcessor;
 pub use submitter::TxSubmitter;
 
 // Re-export ethers types used in the dispute API so downstream crates
 // (like luxtensor-rpc) don't need a direct ethers dependency.
-pub use ethers::types::{H256, Bytes as EthBytes};
+pub use ethers::types::{Bytes as EthBytes, H256};
 
-use tracing::{info, warn, error};
 use std::time::Duration;
+use tracing::{error, info, warn};
 
 /// Maximum number of reconnection attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -88,40 +88,44 @@ pub async fn run(config: OracleConfig) -> anyhow::Result<()> {
         info!("Oracle Node initialized. Listening for events...");
 
         // 2. Watch events with handler
-        let result = watcher.watch_events(|event| {
-            let watcher_clone = watcher.clone();
-            let processor_ref = &processor;
-            let submitter_ref = &submitter;
+        let result = watcher
+            .watch_events(|event| {
+                let watcher_clone = watcher.clone();
+                let processor_ref = &processor;
+                let submitter_ref = &submitter;
 
-            async move {
-                info!("Event received: RequestID={:?}", hex::encode(event.request_id));
+                async move {
+                    info!("Event received: RequestID={:?}", hex::encode(event.request_id));
 
-                let input_data = match watcher_clone.get_request_input(event.request_id).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!("Failed to fetch request input: {}", e);
-                        return;
-                    }
-                };
-
-                match processor_ref.process_request(
-                    event.request_id.into(),
-                    event.model_hash.into(),
-                    input_data
-                ).await {
-                    Ok((result, proof_hash)) => {
-                        if let Err(e) = submitter_ref.submit_fulfillment(
-                            event.request_id,
-                            result,
-                            proof_hash.into()
-                        ).await {
-                            error!("Failed to submit transaction: {}", e);
+                    let input_data = match watcher_clone.get_request_input(event.request_id).await {
+                        Ok(data) => data,
+                        Err(e) => {
+                            error!("Failed to fetch request input: {}", e);
+                            return;
                         }
-                    },
-                    Err(e) => error!("Failed to process request: {}", e),
+                    };
+
+                    match processor_ref
+                        .process_request(
+                            event.request_id.into(),
+                            event.model_hash.into(),
+                            input_data,
+                        )
+                        .await
+                    {
+                        Ok((result, proof_hash)) => {
+                            if let Err(e) = submitter_ref
+                                .submit_fulfillment(event.request_id, result, proof_hash.into())
+                                .await
+                            {
+                                error!("Failed to submit transaction: {}", e);
+                            }
+                        }
+                        Err(e) => error!("Failed to process request: {}", e),
+                    }
                 }
-            }
-        }).await;
+            })
+            .await;
 
         // 3. Event stream ended — reconnect with backoff
         match result {
@@ -136,13 +140,18 @@ pub async fn run(config: OracleConfig) -> anyhow::Result<()> {
         consecutive_failures += 1;
         if consecutive_failures > MAX_RECONNECT_ATTEMPTS {
             error!(
-                "Too many consecutive reconnection failures ({}), shutting down",
-                consecutive_failures
+                consecutive_failures = consecutive_failures,
+                max_attempts = MAX_RECONNECT_ATTEMPTS,
+                "CRITICAL: Oracle node exhausted all reconnection attempts. \
+                 Manual intervention required. Check node connectivity and restart the oracle."
             );
             anyhow::bail!("Oracle exceeded maximum reconnection attempts");
         }
 
-        warn!("Reconnecting in {:?} (attempt {}/{})", backoff, consecutive_failures, MAX_RECONNECT_ATTEMPTS);
+        warn!(
+            "Reconnecting in {:?} (attempt {}/{})",
+            backoff, consecutive_failures, MAX_RECONNECT_ATTEMPTS
+        );
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }

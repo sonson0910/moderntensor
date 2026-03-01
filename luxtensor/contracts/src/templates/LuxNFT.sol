@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title LuxNFT - AI-Powered NFT Template for LuxTensor
@@ -23,7 +24,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * - Proof of AI computation NFTs
  * - AI model ownership NFTs
  */
-contract LuxNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable {
+contract LuxNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable, Pausable {
     /// @notice Current token ID counter
     uint256 private _nextTokenId;
 
@@ -76,7 +77,7 @@ contract LuxNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable {
     function mint(
         address to,
         string memory uri
-    ) public payable returns (uint256) {
+    ) public payable whenNotPaused returns (uint256) {
         if (mintPrice > 0) {
             require(msg.value >= mintPrice, "Insufficient payment");
         }
@@ -105,7 +106,7 @@ contract LuxNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable {
         string memory uri,
         string memory prompt,
         bytes32 modelHash
-    ) public payable returns (uint256) {
+    ) public payable whenNotPaused returns (uint256) {
         uint256 tokenId = mint(to, uri);
 
         tokenPrompts[tokenId] = prompt;
@@ -151,6 +152,16 @@ contract LuxNFT is ERC721, ERC721URIStorage, ERC721Burnable, Ownable {
      */
     function setMintPrice(uint256 _mintPrice) public onlyOwner {
         mintPrice = _mintPrice;
+    }
+
+    /// @notice Pause minting (emergency)
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpause minting
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     /**

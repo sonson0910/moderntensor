@@ -1,16 +1,16 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum CryptoError {
     #[error("Invalid signature")]
     InvalidSignature,
-    
+
     #[error("Invalid public key")]
     InvalidPublicKey,
-    
+
     #[error("Invalid private key")]
     InvalidPrivateKey,
-    
+
     #[error("Secp256k1 error: {0}")]
     Secp256k1Error(String),
 }

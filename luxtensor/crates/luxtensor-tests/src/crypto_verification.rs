@@ -3,7 +3,7 @@
 //! Tests to verify ECDSA and Keccak256 implementations match Ethereum standards.
 //! These tests use known test vectors from Ethereum to ensure compatibility.
 
-use luxtensor_crypto::{keccak256, KeyPair, verify_signature};
+use luxtensor_crypto::{keccak256, verify_signature, KeyPair};
 
 #[cfg(test)]
 mod ecdsa_tests {
@@ -56,7 +56,10 @@ mod ecdsa_tests {
         // Verify with wrong message should fail
         let wrong_hash = keccak256(b"wrong message");
         let is_invalid = verify_signature(&wrong_hash, &signature, &public_key);
-        assert!(is_invalid.is_ok() && !is_invalid.unwrap(), "Signature should be invalid for wrong message");
+        assert!(
+            is_invalid.is_ok() && !is_invalid.unwrap(),
+            "Signature should be invalid for wrong message"
+        );
     }
 
     /// Test address derivation from public key matches Ethereum
@@ -119,15 +122,13 @@ mod ecdsa_tests {
 
 #[cfg(test)]
 mod merkle_tests {
-    use luxtensor_crypto::MerkleTree;
     use super::*;
+    use luxtensor_crypto::MerkleTree;
 
     /// Test Merkle tree root is deterministic
     #[test]
     fn test_merkle_deterministic() {
-        let leaves: Vec<[u8; 32]> = (0..10)
-            .map(|i| keccak256(&[i as u8]))
-            .collect();
+        let leaves: Vec<[u8; 32]> = (0..10).map(|i| keccak256(&[i as u8])).collect();
 
         let tree1 = MerkleTree::new(leaves.clone());
         let tree2 = MerkleTree::new(leaves.clone());
@@ -141,8 +142,14 @@ mod merkle_tests {
         let leaves = vec![keccak256(b"single")];
         let tree = MerkleTree::new(leaves.clone());
 
-        // Single element tree root should be the hash of that element
-        assert_eq!(tree.root(), leaves[0]);
+        // Single element tree root is hash_pair(leaf, leaf) for domain separation (M-2).
+        // Replicate hash_pair logic: 0x01 prefix + left + right
+        let mut combined = Vec::with_capacity(65);
+        combined.push(0x01); // Internal node domain separator
+        combined.extend_from_slice(&leaves[0]);
+        combined.extend_from_slice(&leaves[0]);
+        let expected = keccak256(&combined);
+        assert_eq!(tree.root(), expected);
     }
 
     /// Test empty Merkle tree
@@ -158,16 +165,15 @@ mod merkle_tests {
     /// Test Merkle proof verification
     #[test]
     fn test_merkle_proof() {
-        let leaves: Vec<[u8; 32]> = (0..8)
-            .map(|i| keccak256(&[i as u8]))
-            .collect();
+        let leaves: Vec<[u8; 32]> = (0..8).map(|i| keccak256(&[i as u8])).collect();
 
         let tree = MerkleTree::new(leaves.clone());
 
         // Get proof with positions for first leaf
         let proof = tree.get_proof_with_positions(0);
         if !proof.is_empty() {
-            let is_valid = MerkleTree::verify_proof_with_positions(&leaves[0], &proof, &tree.root());
+            let is_valid =
+                MerkleTree::verify_proof_with_positions(&leaves[0], &proof, &tree.root());
             assert!(is_valid, "Merkle proof should be valid");
         }
     }

@@ -238,16 +238,28 @@ contract TokenVesting is ReentrancyGuard {
     }
 
     /**
-     * @dev Emergency withdraw all funds (only owner)
+     * @notice Emergency withdraw ONLY uncommitted funds
+     * @dev SECURITY (C-1): Only withdraws excess beyond committed vesting obligations
      */
     function emergencyWithdraw() external nonReentrant onlyOwner {
-        uint256 balance = address(this).balance;
-        require(balance > 0, "No funds to withdraw");
+        uint256 contractBalance = address(this).balance;
 
-        (bool success, ) = payable(owner).call{value: balance}("");
+        // Calculate total committed (unreleased) vesting amounts
+        uint256 committed = 0;
+        for (uint256 i = 0; i < vestingIdCounter; i++) {
+            VestingSchedule storage schedule = vestingSchedules[i];
+            if (schedule.initialized && !schedule.revoked) {
+                committed += schedule.totalAmount - schedule.releasedAmount;
+            }
+        }
+
+        require(contractBalance > committed, "No uncommitted funds");
+
+        uint256 withdrawable = contractBalance - committed;
+        (bool success, ) = payable(owner).call{value: withdrawable}("");
         require(success, "Transfer failed");
 
-        emit EmergencyWithdraw(owner, balance);
+        emit EmergencyWithdraw(owner, withdrawable);
     }
 
     /**

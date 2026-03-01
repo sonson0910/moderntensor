@@ -40,6 +40,33 @@ impl Default for EclipseConfig {
     }
 }
 
+impl EclipseConfig {
+    /// 🔧 FIX F12: Strict mainnet configuration — max 2 peers per /24 subnet
+    /// to prevent a single data-center operator from filling 16% of the peer table.
+    pub fn mainnet() -> Self {
+        Self {
+            max_peers_per_subnet16: 3,
+            max_peers_per_subnet24: 2,
+            min_outbound_connections: 8,
+            max_inbound_connections: 100,
+            peer_rotation_interval: 3600,
+            min_diversity_score: 60,
+        }
+    }
+
+    /// Devnet configuration — relaxed limits for local development.
+    pub fn devnet() -> Self {
+        Self {
+            max_peers_per_subnet16: 8,
+            max_peers_per_subnet24: 8,
+            min_outbound_connections: 1,
+            max_inbound_connections: 200,
+            peer_rotation_interval: 3600,
+            min_diversity_score: 0,
+        }
+    }
+}
+
 /// Peer connection info
 #[derive(Debug, Clone)]
 pub struct PeerInfo {
@@ -107,10 +134,12 @@ impl EclipseProtection {
         let subnet16 = Self::get_subnet16(ip);
         let subnet24 = Self::get_subnet24(ip);
 
-        // Check banned subnets
-        if self.banned_subnets.read().contains(&subnet16) ||
-           self.banned_subnets.read().contains(&subnet24) {
-            return false;
+        // 🔧 FIX F16: Single read-lock acquisition instead of two sequential .read() calls
+        {
+            let banned = self.banned_subnets.read();
+            if banned.contains(&subnet16) || banned.contains(&subnet24) {
+                return false;
+            }
         }
 
         // Check /16 limit

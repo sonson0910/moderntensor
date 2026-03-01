@@ -1,10 +1,10 @@
 // Prometheus metrics for Luxtensor node
 // Add to Cargo.toml: prometheus = "0.13"
 
+use parking_lot::{Mutex, RwLock};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use parking_lot::RwLock;
-use std::collections::VecDeque;
 
 /// Maximum history points for moving averages
 const MAX_HISTORY: usize = 100;
@@ -19,8 +19,11 @@ pub struct NodeMetrics {
     pub tx_count: AtomicU64,
     /// Pending transactions in mempool
     pub mempool_size: AtomicU64,
-    /// Total staked amount (in smallest unit)
-    pub total_stake: AtomicU64,
+    /// Total staked amount (in smallest unit / wei).
+    /// L6 FIX: Changed from AtomicU64 to Mutex<u128> to support total stake
+    /// values exceeding ~18.4 ETH (u64::MAX wei). Using Mutex because
+    /// AtomicU128 is not stable on Rust 1.85.
+    pub total_stake: Mutex<u128>,
 
     // Enhanced metrics
     /// Block production times in ms (for average calculation)
@@ -66,7 +69,7 @@ impl Default for NodeMetrics {
             peer_count: AtomicU64::new(0),
             tx_count: AtomicU64::new(0),
             mempool_size: AtomicU64::new(0),
-            total_stake: AtomicU64::new(0),
+            total_stake: Mutex::new(0u128),
             block_times: RwLock::new(VecDeque::with_capacity(MAX_HISTORY)),
             start_time: Instant::now(),
             last_block_time_ms: AtomicU64::new(0),
@@ -221,7 +224,7 @@ luxtensor_rpc_errors {}
             self.peer_count.load(Ordering::Relaxed),
             self.tx_count.load(Ordering::Relaxed),
             self.mempool_size.load(Ordering::Relaxed),
-            self.total_stake.load(Ordering::Relaxed),
+            *self.total_stake.lock(),
             self.avg_block_time_ms(),
             self.last_block_time_ms.load(Ordering::Relaxed),
             self.uptime_secs(),
@@ -247,7 +250,7 @@ luxtensor_rpc_errors {}
             "peerCount": self.peer_count.load(Ordering::Relaxed),
             "txCount": self.tx_count.load(Ordering::Relaxed),
             "mempoolSize": self.mempool_size.load(Ordering::Relaxed),
-            "totalStake": self.total_stake.load(Ordering::Relaxed).to_string(),
+            "totalStake": (*self.total_stake.lock()).to_string(),
             "avgBlockTimeMs": self.avg_block_time_ms(),
             "lastBlockTimeMs": self.last_block_time_ms.load(Ordering::Relaxed),
             "uptimeSecs": self.uptime_secs(),
@@ -303,4 +306,3 @@ mod tests {
         assert!(metrics.uptime_secs() >= 0);
     }
 }
-

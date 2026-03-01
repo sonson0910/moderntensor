@@ -191,6 +191,7 @@ async fn create_blockchain(node: &Node, block_count: u64) {
             gas_used: 0,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, vec![]);
@@ -268,6 +269,7 @@ async fn create_blocks_with_txs(node: &Node, block_count: u64, accounts: &[Addre
             gas_used: (transactions.len() as u64) * 21000,
             gas_limit: 10_000_000,
             extra_data: vec![],
+            vrf_proof: None,
         };
 
         let block = Block::new(header, transactions);

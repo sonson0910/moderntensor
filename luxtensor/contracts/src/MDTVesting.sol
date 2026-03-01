@@ -153,6 +153,9 @@ contract MDTVesting is Ownable, ReentrancyGuard {
         require(tgeTimestamp > 0, "TGE not set");
 
         // VT-01: Check for duplicate schedule with same parameters
+        // SECURITY (M-10): Duplicate check intentionally ignores totalAmount to prevent
+        // accidental double-allocation of the same vesting category. If a beneficiary needs
+        // additional allocation with the same parameters, revoke the old schedule first.
         VestingSchedule[] storage existing = vestingSchedules[beneficiary];
         for (uint256 i = 0; i < existing.length; i++) {
             if (

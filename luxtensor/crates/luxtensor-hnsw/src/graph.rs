@@ -190,14 +190,29 @@ impl<const D: usize> HnswGraph<D> {
     }
 
     /// Create a new HNSW graph with custom parameters.
-    pub fn with_params(ml: f64, ef_construction: usize) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns `InvalidParameter` if `ml` is not finite/positive or `ef_construction` is zero.
+    pub fn with_params(ml: f64, ef_construction: usize) -> Result<Self> {
+        // SECURITY (HNSW-07): Validate parameters to prevent nonsensical graph construction.
+        // A non-positive or non-finite ml would cause broken level assignment.
+        if !ml.is_finite() || ml <= 0.0 {
+            return Err(HnswError::InvalidParameter(
+                format!("ml must be finite and positive, got {}", ml),
+            ));
+        }
+        if ef_construction == 0 {
+            return Err(HnswError::InvalidParameter(
+                "ef_construction must be > 0".to_string(),
+            ));
+        }
+        Ok(Self {
             nodes: Vec::new(),
             entry_point: None,
             max_level: 0,
             ml,
             ef_construction,
-        }
+        })
     }
 
     /// Get the total number of nodes (including soft-deleted ones).
@@ -243,6 +258,14 @@ impl<const D: usize> HnswGraph<D> {
         // If we just deleted the entry point, find a new one at the same or lower level
         if self.entry_point == Some(id) {
             self.entry_point = self.find_new_entry_point();
+            // SECURITY (HNSW-09): Update max_level when entry point changes.
+            // If the deleted node was the only one at max_level, we must lower it
+            // to avoid greedy-descent starting above all remaining nodes.
+            if let Some(new_ep) = self.entry_point {
+                self.max_level = self.nodes[new_ep].level;
+            } else {
+                self.max_level = 0;
+            }
         }
 
         Ok(())
@@ -262,11 +285,16 @@ impl<const D: usize> HnswGraph<D> {
     }
 
     /// Find the best non-deleted entry point (highest level, lowest ID for determinism).
+    ///
+    /// SECURITY (HNSW-08): Uses lowest ID for deterministic tie-breaking
+    /// (consensus-critical — all validators must agree on the entry point).
     fn find_new_entry_point(&self) -> Option<usize> {
-        self.nodes.iter()
+        // Recalculate max_level from surviving nodes
+        let result = self.nodes.iter()
             .filter(|n| !n.deleted)
             .max_by_key(|n| (n.level, std::cmp::Reverse(n.id)))
-            .map(|n| n.id)
+            .map(|n| n.id);
+        result
     }
 
     // ── Insertion ────────────────────────────────────────────────────────
@@ -416,7 +444,7 @@ impl<const D: usize> HnswGraph<D> {
     ///
     /// # Arguments
     /// * `query` - The query vector
-    /// * `k` - Number of neighbors to return
+    /// * `k` - Number of neighbors to return (must be > 0)
     /// * `ef` - Search expansion factor (higher = more accurate but slower)
     ///
     /// # Returns
@@ -428,12 +456,21 @@ impl<const D: usize> HnswGraph<D> {
         k: usize,
         ef: usize,
     ) -> Result<Vec<(usize, I64F32)>> {
+        // SECURITY (HNSW-10): Validate k > 0 to avoid returning
+        // meaningless empty results that callers may not expect.
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+
         if self.entry_point.is_none() {
             return Err(HnswError::EmptyGraph);
         }
 
-        let mut current_node = self.entry_point
-            .unwrap_or_else(|| unreachable!());
+        let current_node = match self.entry_point {
+            Some(ep) => ep,
+            None => return Err(HnswError::EmptyGraph),
+        };
+        let mut current_node = current_node;
 
         // Greedy search from top to level 1
         for lc in (1..=self.max_level).rev() {
@@ -455,6 +492,9 @@ impl<const D: usize> HnswGraph<D> {
     }
 
     /// Greedy search at a single layer, returning the closest node.
+    ///
+    /// SECURITY (HNSW-11): Bounds-check neighbor IDs to avoid panic on
+    /// corrupted graphs (e.g. from a bad deserialization or manual edit).
     fn search_layer_greedy(&self, query: &FixedPointVector<D>, entry: usize, level: u8) -> usize {
         let mut current = entry;
         let mut current_dist = query.squared_distance(&self.nodes[current].vector);
@@ -465,6 +505,10 @@ impl<const D: usize> HnswGraph<D> {
 
             if let Some(neighbors) = neighbors {
                 for &neighbor_id in neighbors.iter() {
+                    // Skip out-of-bounds neighbor IDs (defensive against corruption)
+                    if neighbor_id >= self.nodes.len() {
+                        continue;
+                    }
                     let dist = query.squared_distance(&self.nodes[neighbor_id].vector);
                     if dist < current_dist {
                         current = neighbor_id;
@@ -519,15 +563,19 @@ impl<const D: usize> HnswGraph<D> {
             let neighbors = self.nodes[current.id]
                 .neighbors
                 .get(level as usize)
-                .cloned()
-                .unwrap_or_default();
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
 
-            for neighbor_id in neighbors {
+            for &neighbor_id in neighbors {
                 if visited.contains(&neighbor_id) {
                     continue;
                 }
                 visited.insert(neighbor_id);
 
+                // SECURITY (HNSW-12): Bounds-check in search_layer too
+                if neighbor_id >= self.nodes.len() {
+                    continue;
+                }
                 let dist = query.squared_distance(&self.nodes[neighbor_id].vector);
                 let furthest_dist = results.peek().map(|f| f.0.distance).unwrap_or(I64F32::MAX);
 

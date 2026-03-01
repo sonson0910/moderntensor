@@ -127,9 +127,12 @@ impl CheckpointManager {
         }
     }
 
-    /// Check if a checkpoint should be created at this height
+    /// Check if a checkpoint should be created at the given height.
+    ///
+    /// SECURITY (L-3): Uses `self.config.checkpoint_interval` instead of the
+    /// compile-time constant, allowing runtime configuration of checkpoint frequency.
     pub fn should_create_checkpoint(&self, height: u64) -> bool {
-        height > 0 && height % CHECKPOINT_INTERVAL == 0
+        height > 0 && height % self.config.checkpoint_interval == 0
     }
 
     /// Create a checkpoint at the current state
@@ -215,7 +218,12 @@ impl CheckpointManager {
         checkpoints
     }
 
-    /// Restore from a checkpoint
+    /// Restore from a checkpoint.
+    ///
+    /// WARNING (L-1): This method does NOT verify that the target database at
+    /// `target_db_path` is closed before overwriting files. Restoring while the
+    /// target DB is still open can corrupt both the checkpoint and the live database.
+    /// Callers MUST ensure the target `rocksdb::DB` is dropped before calling this.
     pub fn restore_checkpoint(
         &self,
         height: u64,
@@ -306,10 +314,26 @@ impl CheckpointManager {
                 .into_owned();
 
             // Check for absolute paths or path traversal sequences
-            if entry_path.is_absolute() || entry_path.components().any(|c| c == std::path::Component::ParentDir) {
+            if entry_path.is_absolute() {
                 return Err(CheckpointError::ImportFailed(
-                    format!("Refusing to extract archive entry with path traversal: {:?}", entry_path)
+                    format!("Refusing to extract archive entry with absolute path: {:?}", entry_path)
                 ));
+            }
+            for component in entry_path.components() {
+                match component {
+                    std::path::Component::ParentDir => {
+                        return Err(CheckpointError::ImportFailed(
+                            format!("Refusing to extract archive entry with path traversal: {:?}", entry_path)
+                        ));
+                    }
+                    // SECURITY (M-8): Also reject Windows UNC/device paths
+                    std::path::Component::Prefix(_) => {
+                        return Err(CheckpointError::ImportFailed(
+                            "Path contains Windows prefix (UNC/device path) — rejected for security".into()
+                        ));
+                    }
+                    _ => {}
+                }
             }
 
             let target = snapshot_path.join(&entry_path);
@@ -339,15 +363,19 @@ impl CheckpointManager {
         Ok(())
     }
 
+    /// Prune old checkpoints beyond the configured maximum.
+    ///
+    /// SECURITY (L-4): Uses `self.config.max_checkpoints` instead of the
+    /// compile-time constant for runtime configuration.
     fn prune_old_checkpoints(&mut self) {
-        if self.checkpoints.len() <= MAX_CHECKPOINTS {
+        if self.checkpoints.len() <= self.config.max_checkpoints {
             return;
         }
 
         let mut heights: Vec<u64> = self.checkpoints.keys().copied().collect();
         heights.sort();
 
-        while heights.len() > MAX_CHECKPOINTS {
+        while heights.len() > self.config.max_checkpoints {
             if let Some(oldest) = heights.first().copied() {
                 heights.remove(0);
                 self.checkpoints.remove(&oldest);

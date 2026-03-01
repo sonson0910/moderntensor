@@ -905,6 +905,8 @@ pub fn vector_query_precompile(
 
     // SECURITY: Reject NaN/Infinity
     validate_float_vector(&query)?;
+    // CONSENSUS: Quantize for deterministic comparison
+    quantize_to_deterministic(&mut query);
 
     // 4. Perform Search (with RwLock poisoning handling)
     let results = {
@@ -1051,6 +1053,9 @@ pub fn classify_precompile(
         query.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
 
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&query)?;
+
     // Parse labels (each is 12 bytes: 8-byte id + 4-byte label)
     let labels_data_start = labels_offset + 32;
     let mut labels = Vec::with_capacity(labels_len);
@@ -1149,6 +1154,9 @@ pub fn cluster_assign_precompile(
         query.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
 
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&query)?;
+
     // Find nearest centroid using HNSW search
     let store = state
         .vector_store
@@ -1220,6 +1228,9 @@ pub fn anomaly_score_precompile(
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
         query.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
+
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&query)?;
 
     // Calculate anomaly score
     let store = state
@@ -1331,6 +1342,10 @@ pub fn similarity_gate_precompile(
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
         vec_b.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
+
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&vec_a)?;
+    validate_float_vector(&vec_b)?;
 
     // Check similarity
     let store = state
@@ -1632,6 +1647,11 @@ pub fn global_search_precompile(
             .map_err(|_| PrecompileError::other("Invalid float bytes"))?;
         query.push(f32::from_bits(u32::from_be_bytes(bytes)));
     }
+
+    // SECURITY: Reject NaN/Infinity
+    validate_float_vector(&query)?;
+    // CONSENSUS: Quantize for deterministic comparison
+    quantize_to_deterministic(&mut query);
 
     // Perform global search
     let registry = state

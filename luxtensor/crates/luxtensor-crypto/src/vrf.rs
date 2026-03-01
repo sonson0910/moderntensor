@@ -100,8 +100,18 @@ pub struct VrfKeypair {
 
 impl Drop for VrfKeypair {
     fn drop(&mut self) {
-        // Zeroize the secret key — Scalar doesn't impl Zeroize, so overwrite
-        self.secret_key = Scalar::ZERO;
+        // SECURITY: Use volatile writes to zero scalar memory. Regular assignment
+        // (self.secret_key = Scalar::ZERO) can be optimized away by the compiler
+        // since the struct is about to be deallocated. (M-1)
+        let ptr = &mut self.secret_key as *mut Scalar as *mut u8;
+        let size = core::mem::size_of::<Scalar>();
+        for i in 0..size {
+            // SAFETY: ptr points to valid, aligned memory within self.
+            // Volatile write prevents dead-store elimination by the optimizer.
+            unsafe {
+                core::ptr::write_volatile(ptr.add(i), 0u8);
+            }
+        }
     }
 }
 
@@ -176,6 +186,9 @@ impl VrfKeypair {
     /// Returns an error if the seed reduces to the zero scalar (e.g. all-zero seed).
     pub fn from_seed(seed: &[u8; 32]) -> Result<Self, VrfError> {
         // Derive secret key scalar from seed
+        // NOTE: reduce_bytes on a 256-bit input has negligible bias (~2^-128)
+        // since the secp256k1 curve order n ≈ 2^256. For applications requiring
+        // zero bias, use a 512-bit seed with HKDF. Acceptable for testnet/PoS.
         let sk = <Scalar as Reduce<k256::U256>>::reduce_bytes(&(*seed).into());
         // SECURITY: reject zero scalars — never fall back to a predictable key
         if bool::from(sk.is_zero()) {
@@ -220,6 +233,12 @@ impl VrfKeypair {
         k_input.extend_from_slice(b"ECVRF_nonce");
         let k_hash = keccak256(&k_input);
         let k = <Scalar as Reduce<k256::U256>>::reduce_bytes(&k_hash.into());
+
+        // SECURITY: k=0 would make U=V=identity, degenerating the proof and
+        // potentially leaking sk via s = k - c*sk = -c*sk (M-4)
+        if bool::from(k.is_zero()) {
+            return Err(VrfError::InvalidProof);
+        }
 
         // SECURITY: Zeroize secret key material from heap
         sk_bytes.zeroize();
@@ -311,8 +330,9 @@ pub fn vrf_verify(
         };
 
         // Decode c and s as scalars
-        let c = <Scalar as Reduce<k256::U256>>::reduce_bytes(&proof.c.into());
-        let s = <Scalar as Reduce<k256::U256>>::reduce_bytes(&proof.s.into());
+        // SECURITY: Validate canonical range to prevent proof malleability (H-1)
+        let c = validate_scalar_canonical(&proof.c)?;
+        let s = validate_scalar_canonical(&proof.s)?;
 
         // H = hash_to_curve(pk, alpha)
         let h = hash_to_curve(&pk_full, alpha)?;
@@ -343,6 +363,19 @@ pub fn vrf_verify(
     }
 
     Err(VrfError::VerificationFailed)
+}
+
+/// Validate that a 32-byte scalar is in canonical range [0, n) where n is the secp256k1 curve order.
+/// Rejects byte representations >= n that would be silently reduced, preventing proof malleability.
+fn validate_scalar_canonical(bytes: &[u8; 32]) -> Result<Scalar, VrfError> {
+    use k256::elliptic_curve::ops::Reduce;
+    let reduced = <Scalar as Reduce<k256::U256>>::reduce_bytes(&(*bytes).into());
+    let reduced_bytes: [u8; 32] = reduced.to_bytes().into();
+    // If reducing changed the bytes, the input was non-canonical (>= n)
+    if reduced_bytes != *bytes {
+        return Err(VrfError::InvalidProof);
+    }
+    Ok(reduced)
 }
 
 /// Convert VRF gamma point to output hash
@@ -584,6 +617,27 @@ mod tests {
         assert!(vrf_output_below_threshold(&output, 101));
         assert!(!vrf_output_below_threshold(&output, 100));
         assert!(!vrf_output_below_threshold(&output, 50));
+    }
+
+    // ── H-1 Security Test: Non-canonical scalar rejection ─────────────
+
+    #[test]
+    fn test_non_canonical_scalar_rejected() {
+        // Create a valid proof first
+        let keypair = VrfKeypair::from_seed(&[42u8; 32]).unwrap();
+        let (_, proof) = keypair.prove(b"test").unwrap();
+
+        // Tamper with c to be non-canonical (set to 0xFF...FF which is > curve order)
+        let mut tampered = proof.clone();
+        tampered.c = [0xFF; 32];
+        let result = vrf_verify(&keypair.public_key, b"test", &tampered);
+        assert!(result.is_err(), "non-canonical c scalar should be rejected");
+
+        // Tamper with s
+        let mut tampered_s = proof.clone();
+        tampered_s.s = [0xFF; 32];
+        let result = vrf_verify(&keypair.public_key, b"test", &tampered_s);
+        assert!(result.is_err(), "non-canonical s scalar should be rejected");
     }
 
     // ── R-1 Security Tests: Fuzzing VrfProof::from_bytes ──────────────

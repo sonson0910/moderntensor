@@ -24,10 +24,17 @@ impl TxSubmitter {
             .map_err(|e| OracleError::Connection(e.to_string()))?;
 
         // Get chain ID from the connected node instead of hardcoding
-        let chain_id = provider.get_chainid()
+        let chain_id_u256 = provider.get_chainid()
             .await
-            .map_err(|e| OracleError::Connection(format!("Failed to get chain ID: {}", e)))?
-            .as_u64();
+            .map_err(|e| OracleError::Connection(format!("Failed to get chain ID: {}", e)))?;
+
+        // SECURITY: Validate chain_id fits in u64 to prevent silent truncation
+        if chain_id_u256 > ethers::types::U256::from(u64::MAX) {
+            return Err(OracleError::Connection(format!(
+                "Chain ID {} exceeds u64::MAX", chain_id_u256
+            )));
+        }
+        let chain_id = chain_id_u256.as_u64();
 
         let wallet = LocalWallet::from_str(&config.private_key)
             .map_err(|e| OracleError::Connection(format!("Invalid private key: {}", e)))?

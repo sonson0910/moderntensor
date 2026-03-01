@@ -285,7 +285,12 @@ impl EvmExecutor {
     /// This method is `pub` because it's used by sibling crates (luxtensor-node,
     /// luxtensor-rpc). It must NEVER be exposed through any RPC endpoint or
     /// user-facing API.
-    #[doc(hidden)]
+    ///
+    /// # Security
+    /// This function can mint arbitrary balances. Callers MUST ensure `amount`
+    /// is derived from a previously validated canonical balance — never from
+    /// untrusted user input. Misuse will break the token supply invariant.
+    #[cfg(not(feature = "restrict_fund"))]
     pub fn fund_account(&self, address: &Address, amount: u128) {
         let addr = address_to_revm(address);
         let mut accounts = self.accounts.write();

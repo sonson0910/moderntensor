@@ -1,0 +1,53 @@
+# ====================================================================
+# LuxTensor LOCAL DEVELOPMENT Configuration
+# ====================================================================
+# This configuration is for local development ONLY.
+# DO NOT use this in testnet or production deployments.
+# For testnet, see: config.testnet.toml
+# For production, see: config.production.toml
+# ====================================================================
+
+[node]
+name = "luxtensor-dev-node"
+# Local dev chain ID — distinct from testnet (9999) and mainnet
+chain_id = 8898
+data_dir = "./data"
+is_validator = true
+# Dev mode enables relaxed validation, test accounts, and faster block times.
+# NEVER enable in production or testnet.
+dev_mode = true
+
+[consensus]
+block_time = 3
+epoch_length = 100
+min_stake = "1000000000000000000"
+# Dev allows more validators for testing. Testnet genesis caps at 21.
+max_validators = 100
+
+[network]
+listen_addr = "0.0.0.0"
+listen_port = 30303
+bootstrap_nodes = []
+max_peers = 50
+enable_mdns = true
+
+[storage]
+db_path = "./data/db"
+enable_compression = true
+max_open_files = 1000
+cache_size = 256
+
+[rpc]
+enabled = true
+listen_addr = "127.0.0.1"
+listen_port = 8545
+ws_port = 8546
+ws_enabled = true
+threads = 4
+# CORS wildcard is acceptable for local development only
+cors_origins = ["*"]
+
+[logging]
+level = "debug"
+log_to_file = false
+json_format = false

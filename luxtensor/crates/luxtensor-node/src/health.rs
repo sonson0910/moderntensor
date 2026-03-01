@@ -9,7 +9,25 @@
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sysinfo::{Disks, System};
 use tracing::{info, warn};
+
+/// Get available disk space in bytes for the given path using sysinfo.
+/// Finds the disk whose mount point best matches the given path.
+fn get_available_disk_space(path: &std::path::Path) -> Option<u64> {
+    let disks = Disks::new_with_refreshed_list();
+    let mut best_match: Option<(usize, u64)> = None;
+    for disk in disks.list() {
+        let mount = disk.mount_point();
+        if path.starts_with(mount) {
+            let mount_len = mount.as_os_str().len();
+            if best_match.is_none() || mount_len > best_match.unwrap().0 {
+                best_match = Some((mount_len, disk.available_space()));
+            }
+        }
+    }
+    best_match.map(|(_, space)| space)
+}
 
 /// Health status of the node
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,10 +120,8 @@ pub struct HealthConfig {
     /// Maximum sync lag before warning
     pub max_sync_lag: u64,
     /// Minimum disk space in MB
-    #[allow(dead_code)]
     pub min_disk_space_mb: u64,
     /// Maximum memory usage percent
-    #[allow(dead_code)]
     pub max_memory_percent: u8,
 }
 
@@ -133,6 +149,8 @@ pub struct HealthMonitor {
     sync_progress: RwLock<u8>,
     last_block_time: RwLock<Instant>,
     mempool_size: RwLock<usize>,
+    /// Data directory path for disk space checks
+    data_dir: Option<std::path::PathBuf>,
 }
 
 impl HealthMonitor {
@@ -147,6 +165,22 @@ impl HealthMonitor {
             sync_progress: RwLock::new(100),
             last_block_time: RwLock::new(Instant::now()),
             mempool_size: RwLock::new(0),
+            data_dir: None,
+        }
+    }
+
+    /// Create a new health monitor with data directory for disk space checks
+    pub fn with_data_dir(config: HealthConfig, data_dir: std::path::PathBuf) -> Self {
+        Self {
+            config,
+            start_time: Instant::now(),
+            block_height: RwLock::new(0),
+            peer_count: RwLock::new(0),
+            is_syncing: RwLock::new(false),
+            sync_progress: RwLock::new(100),
+            last_block_time: RwLock::new(Instant::now()),
+            mempool_size: RwLock::new(0),
+            data_dir: Some(data_dir),
         }
     }
 
@@ -213,6 +247,30 @@ impl HealthMonitor {
             issues.push(HealthIssue::SyncLagging {
                 lag: (100 - sync_progress) as u64,
             });
+        }
+
+        // Check disk space on data directory
+        if let Some(ref data_dir) = self.data_dir {
+            if let Some(available) = get_available_disk_space(data_dir) {
+                let available_mb = available / (1024 * 1024);
+                if available_mb < self.config.min_disk_space_mb {
+                    issues.push(HealthIssue::LowDiskSpace { available_mb });
+                }
+            }
+        }
+
+        // Check memory usage via sysinfo
+        {
+            let mut sys = System::new();
+            sys.refresh_memory();
+            let total = sys.total_memory();
+            let used = sys.used_memory();
+            if total > 0 {
+                let percent = ((used as f64 / total as f64) * 100.0) as u8;
+                if percent > self.config.max_memory_percent {
+                    issues.push(HealthIssue::HighMemoryUsage { percent });
+                }
+            }
         }
 
         let healthy = issues.is_empty() || !issues.iter().any(|i| i.is_critical());

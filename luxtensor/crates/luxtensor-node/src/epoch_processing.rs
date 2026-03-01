@@ -96,10 +96,7 @@ impl NodeService {
         ai_circuit_breaker: &Arc<luxtensor_consensus::AILayerCircuitBreaker>,
     ) {
         let epoch_num = new_height / epoch_length;
-        info!(
-            "🎯 Epoch {} completed at block #{}, processing rewards...",
-            epoch_num, new_height
-        );
+        info!("🎯 Epoch {} completed at block #{}, processing rewards...", epoch_num, new_height);
 
         // Create utility metrics for this epoch
         let actual_utilization = ((total_gas as f64 / BLOCK_GAS_LIMIT as f64) * 100.0) as u32;
@@ -109,8 +106,7 @@ impl NodeService {
         let metagraph_subnets = metagraph_db.get_all_subnets().unwrap_or_default();
         let metagraph_delegations = metagraph_db.get_all_delegations().unwrap_or_default();
 
-        let active_validator_count =
-            metagraph_validators.iter().filter(|v| v.is_active).count();
+        let active_validator_count = metagraph_validators.iter().filter(|v| v.is_active).count();
 
         let utility = UtilityMetrics {
             active_validators: active_validator_count.max(1) as u64,
@@ -124,16 +120,20 @@ impl NodeService {
         // ── 🧠 STEP 1: SAC Yuma Consensus (BEFORE reward) ────────────────────
         // Compute trust/rank/incentive/dividends from weight matrix FIRST so
         // rewards use *current* epoch scores instead of stale data.
-        {
+        let yuma_updates = {
             let updates = YumaConsensus::compute(metagraph_db, epoch_num);
             if !updates.is_empty() {
-                YumaConsensus::apply_updates(metagraph_db, updates, epoch_num);
-                info!("🧠 Yuma consensus: updated {} neurons for epoch {}",
-                      metagraph_db.get_all_subnets().map(|s| s.len()).unwrap_or(0), epoch_num);
+                YumaConsensus::apply_updates(metagraph_db, updates.clone(), epoch_num);
+                info!(
+                    "🧠 Yuma consensus: updated {} neurons for epoch {}",
+                    metagraph_db.get_all_subnets().map(|s| s.len()).unwrap_or(0),
+                    epoch_num
+                );
             } else {
                 debug!("⚠️  YumaConsensus: no updates for epoch {} (no weights set?)", epoch_num);
             }
-        }
+            updates
+        };
 
         // ── 🎯 STEP 2: Build miner/validator lists with FRESH scores ──────────
         // Re-read neurons AFTER Yuma update so incentive scores are current.
@@ -213,10 +213,7 @@ impl NodeService {
 
         info!(
             "💰 Epoch {} rewards distributed: {} total emission, {} participants, {} DAO",
-            epoch_num,
-            result.total_emission,
-            result.participants_rewarded,
-            result.dao_allocation
+            epoch_num, result.total_emission, result.participants_rewarded, result.dao_allocation
         );
 
         // ── M4: Flush epoch pending rewards → StateDB (persistent storage) ──
@@ -271,9 +268,8 @@ impl NodeService {
             let gov = governance.read();
 
             // 4a — Tally votes for proposals past their voting deadline
-            let active = gov.list_proposals(
-                Some(luxtensor_consensus::governance::ProposalStatus::Active),
-            );
+            let active =
+                gov.list_proposals(Some(luxtensor_consensus::governance::ProposalStatus::Active));
             let mut finalized_count = 0u32;
             for proposal in &active {
                 if new_height > proposal.voting_deadline {
@@ -320,7 +316,9 @@ impl NodeService {
             let result = validator_rotation.write().process_epoch_transition(epoch_num);
             info!(
                 "🔄 Epoch {} rotation: {} activated, {} exited",
-                epoch_num, result.activated_validators.len(), result.exited_validators.len()
+                epoch_num,
+                result.activated_validators.len(),
+                result.exited_validators.len()
             );
         }
 
@@ -342,10 +340,15 @@ impl NodeService {
                         if result.has_slashing() {
                             warn!(
                                 "🔐 Subnet {} commit-reveal: {} validators slashed at epoch {}",
-                                subnet.id, result.slashed_validators().len(), epoch_num
+                                subnet.id,
+                                result.slashed_validators().len(),
+                                epoch_num
                             );
                         } else {
-                            debug!("🔐 Subnet {} commit-reveal finalized for epoch {}", subnet.id, epoch_num);
+                            debug!(
+                                "🔐 Subnet {} commit-reveal finalized for epoch {}",
+                                subnet.id, epoch_num
+                            );
                         }
                     }
                     Err(_) => {
@@ -360,15 +363,14 @@ impl NodeService {
 
         // ── 📊 STEP 7: Scoring housekeeping ──────────────────────────────
         {
-            // Merge fresh Yuma scores into ScoringManager
-            let yuma_updates = YumaConsensus::compute(metagraph_db, epoch_num);
+            // H1 FIX: Reuse Yuma results from STEP 1 instead of recomputing.
+            // Computing twice could produce different results since STEP 1 modified metagraph.
             if !yuma_updates.is_empty() {
-                // Look up hotkeys from metagraph for each NeuronUpdate
                 let yuma_scores: Vec<([u8; 20], u32)> = yuma_updates
                     .iter()
                     .filter_map(|u| {
-                        // Resolve uid → hotkey via metagraph neuron lookup
-                        let neurons = metagraph_db.get_neurons_by_subnet(u.subnet_id).unwrap_or_default();
+                        let neurons =
+                            metagraph_db.get_neurons_by_subnet(u.subnet_id).unwrap_or_default();
                         neurons
                             .iter()
                             .find(|n| n.uid as u64 == u.uid)

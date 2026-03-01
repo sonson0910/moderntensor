@@ -25,14 +25,25 @@ impl EventDecoder {
         timestamp: i64,
         tx_data: &serde_json::Value,
     ) -> Result<()> {
+        // SECURITY (IDX-M2): Validate required fields instead of silent defaults.
+        // A transaction without a hash is malformed and must not be silently stored.
         let hash = tx_data.get("hash")
             .and_then(|h| h.as_str())
-            .unwrap_or("")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| crate::error::IndexerError::InvalidData(
+                format!("Transaction in block {} missing 'hash' field", block_number)
+            ))?
             .to_string();
 
         let from_address = tx_data.get("from")
             .and_then(|f| f.as_str())
-            .unwrap_or("")
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                warn!(tx_hash = %hash, block = block_number, "Transaction missing 'from' field");
+                crate::error::IndexerError::InvalidData(
+                    format!("Transaction {} missing 'from' field", hash)
+                )
+            })?
             .to_string();
 
         let to_address = tx_data.get("to")
@@ -287,7 +298,13 @@ impl EventDecoder {
         // In production, use a big integer library
         match u128::from_str_radix(clean, 16) {
             Ok(n) => n.to_string(),
-            Err(_) => format!("0x{}", clean), // Keep as hex if too large
+            Err(_) => {
+                tracing::warn!(
+                    hex = %hex,
+                    "parse_hex_amount: value exceeds u128::MAX, returning raw hex string"
+                );
+                format!("0x{}", clean) // Keep as hex if too large
+            }
         }
     }
 }

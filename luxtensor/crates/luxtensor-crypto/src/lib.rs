@@ -1,16 +1,17 @@
-pub mod hash;
-pub mod signature;
-pub mod merkle;
 pub mod error;
+pub mod hash;
+pub mod merkle;
+pub mod signature;
 pub mod vrf;
 
 // Explicit re-exports — hash
-pub use hash::{Hash, keccak256, blake3_hash, sha256};
+pub use hash::{blake3_hash, keccak256, sha256, Hash};
 
-// Explicit re-exports — signature
+// Re-export recover_address (deprecated) alongside its replacement for backward compatibility
+#[allow(deprecated)]
 pub use signature::{
-    CryptoAddress, KeyPair, verify_signature, recover_public_key,
-    address_from_public_key, recover_address, recover_address_strict,
+    address_from_public_key, recover_address, recover_address_strict, recover_public_key,
+    verify_signature, CryptoAddress, KeyPair,
 };
 
 // Explicit re-exports — merkle
@@ -21,6 +22,6 @@ pub use error::{CryptoError, Result};
 
 // Explicit re-exports — vrf
 pub use vrf::{
-    VrfOutput, VrfProof, VrfKeypair, VrfError,
-    vrf_verify, vrf_output_below_threshold, calculate_selection_threshold,
+    calculate_selection_threshold, vrf_output_below_threshold, vrf_verify, VrfError, VrfKeypair,
+    VrfOutput, VrfProof,
 };

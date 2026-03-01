@@ -85,14 +85,22 @@ impl<const D: usize> FixedPointVector<D> {
 
     /// Create a vector from a slice of f32 values.
     ///
-    /// # Panics
-    /// Panics if the slice length doesn't match D.
+    /// # Errors
+    /// Returns `DimensionMismatch` if the slice length doesn't match D.
+    /// Returns `InvalidData` if any value is NaN or Infinity.
     pub fn from_f32_slice(slice: &[f32]) -> Result<Self> {
         if slice.len() != D {
             return Err(HnswError::DimensionMismatch {
                 expected: D,
                 actual: slice.len(),
             });
+        }
+
+        // SECURITY (HNSW-20): Reject non-finite floats (NaN, +/-Inf) at the
+        // conversion boundary. NaN values would silently propagate through
+        // fixed-point operations and corrupt distance calculations.
+        if slice.iter().any(|v| !v.is_finite()) {
+            return Err(HnswError::InvalidData);
         }
 
         let mut components = [I64F32::ZERO; D];
@@ -190,6 +198,7 @@ impl<const D: usize> FixedPointVector<D> {
         }
 
         dot_product.saturating_div(magnitude_product)
+            .clamp(I64F32::NEG_ONE, I64F32::ONE)
     }
 
     /// Convert to a Vec<f32> for external use (e.g., display).
@@ -209,6 +218,16 @@ impl<const D: usize> Default for FixedPointVector<D> {
         Self::zero()
     }
 }
+
+// SECURITY (HNSW-21): Implement PartialEq for FixedPointVector so test
+// assertions and equality checks work correctly and deterministically.
+impl<const D: usize> PartialEq for FixedPointVector<D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.components == other.components
+    }
+}
+
+impl<const D: usize> Eq for FixedPointVector<D> {}
 
 impl<const D: usize> Add for FixedPointVector<D> {
     type Output = Self;
@@ -238,26 +257,45 @@ impl<const D: usize> Sub for FixedPointVector<D> {
 ///
 /// This algorithm is guaranteed to produce identical results on all platforms
 /// because it uses only fixed-point arithmetic operations.
+///
+/// SECURITY (HNSW-19): Uses a better initial guess based on bit-length for
+/// faster convergence and improved accuracy on extreme values. Also caps
+/// iterations to guarantee termination.
 #[inline]
 pub fn fixed_point_sqrt(value: I64F32) -> I64F32 {
     if value <= I64F32::ZERO {
         return I64F32::ZERO;
     }
 
-    // Initial guess: half of the value (works reasonably for most inputs)
-    let mut guess = value / I64F32::from_num(2);
+    // Better initial guess: use bit-length heuristic.
+    // For a value with B significant bits, sqrt ≈ 1 << (B/2).
+    // This converges much faster than value/2 for very large values.
+    let bits = value.to_bits();
+    let leading = (bits as u64).leading_zeros();
+    let significant_bits = 64u32.saturating_sub(leading);
+    let shift = significant_bits / 2;
+    let mut guess = I64F32::from_bits(1i64 << shift);
+
+    // Fallback: if the bit-heuristic gives zero (shouldn't happen for value > 0)
+    if guess == I64F32::ZERO {
+        guess = value.saturating_div(I64F32::from_num(2));
+    }
+    if guess == I64F32::ZERO {
+        return I64F32::ZERO;
+    }
 
     // Newton-Raphson iterations: x_new = (x + value/x) / 2
-    // 10 iterations provides sufficient precision for I64F32
-    for _ in 0..10 {
-        if guess == I64F32::ZERO {
-            break;
-        }
-        let next = (guess + value.saturating_div(guess)) / I64F32::from_num(2);
+    // 20 iterations is more than enough for I64F32 (converges quadratically)
+    for _ in 0..20 {
+        let next = (guess.saturating_add(value.saturating_div(guess)))
+            .saturating_div(I64F32::from_num(2));
         if next == guess {
             break; // Converged
         }
         guess = next;
+        if guess == I64F32::ZERO {
+            break;
+        }
     }
 
     guess

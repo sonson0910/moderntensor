@@ -13,7 +13,15 @@ use crate::{
 };
 use luxtensor_crypto::keccak256;
 
-/// Maximum input data size (16 MB) to prevent OOM during proof generation.
+/// Maximum input data size (16 MiB) to prevent OOM during proof generation.
+///
+/// This is stricter than `GuestInput::MAX_INPUT_SIZE` (64 MiB) because the
+/// prover allocates additional memory proportional to input size during
+/// proof generation (e.g., execution trace, memory image).
+///
+/// Validation layers:
+/// 1. `GuestInput::validate()` — rejects inputs > 64 MiB (type-level)
+/// 2. `ZkProver::prove()` — rejects inputs > 16 MiB (prover-level)
 const MAX_INPUT_SIZE: usize = 16 * 1024 * 1024;
 
 /// Maximum number of inputs in a single batch_prove call.
@@ -76,6 +84,18 @@ impl ZkProver {
     }
 
     /// Create a development-mode prover (fast, no real proofs)
+    ///
+    /// # Security Warning
+    /// Dev proofs provide NO cryptographic guarantees. The production node
+    /// in `service.rs` uses `default_prover()` with real proving enabled.
+    /// This constructor exists for:
+    /// - Unit tests
+    /// - Local development
+    /// - CI/CD pipelines
+    ///
+    /// The corresponding `ZkVerifier::default_verifier()` REJECTS dev proofs,
+    /// so even if a dev prover is accidentally used, proofs will be rejected
+    /// at verification time in production.
     pub fn dev_prover() -> Self {
         Self::new(ProverConfig::dev_mode())
     }
@@ -254,10 +274,18 @@ impl ZkProver {
             }
             #[cfg(not(feature = "groth16"))]
             {
-                (bincode::serialize(&receipt.inner).unwrap_or_default(), ProofType::Stark)
+                let seal = bincode::serialize(&receipt.inner)
+                    .map_err(|e| ZkVmError::ProofGenerationFailed(
+                        format!("Failed to serialize STARK receipt: {}", e)
+                    ))?;
+                (seal, ProofType::Stark)
             }
         } else {
-            (bincode::serialize(&receipt.inner).unwrap_or_default(), ProofType::Stark)
+            let seal = bincode::serialize(&receipt.inner)
+                .map_err(|e| ZkVmError::ProofGenerationFailed(
+                    format!("Failed to serialize STARK receipt: {}", e)
+                ))?;
+            (seal, ProofType::Stark)
         };
 
         let metadata = ProofMetadata {
@@ -280,6 +308,11 @@ impl ZkProver {
     ///
     /// This creates a deterministic mock proof that can be verified in dev mode.
     /// The proof is based on hashing the input and image ID.
+    ///
+    /// # Security Warning
+    /// Dev proofs provide NO cryptographic guarantees. They are deterministic
+    /// hash-based mock proofs intended only for testing. The production
+    /// `ZkVerifier::default_verifier()` rejects `ProofType::Dev` proofs.
     async fn generate_dev_proof(&self, image_id: ImageId, input: GuestInput) -> Result<ProofReceipt> {
         // Simulate execution by hashing input
         let journal = keccak256(&input.data).to_vec();
@@ -373,23 +406,18 @@ impl ZkProver {
                 // Create a temporary prover for this task
                 let prover = ZkProver::new(config);
 
-                // Get the elf bytes
-                let images_guard = images.read().await;
-                if let Some(_elf) = images_guard.get(&image_id) {
-                    // We need to register before proving in this worker
-                    drop(images_guard);
-                    let elf_clone = {
-                        let g = images.read().await;
-                        g.get(&image_id).cloned()
-                    };
-                    if let Some(elf_bytes) = elf_clone {
-                        prover.register_image(image_id, elf_bytes).await?;
+                // Clone the ELF bytes in a single lock acquisition to avoid TOCTOU
+                let elf_bytes = {
+                    let guard = images.read().await;
+                    guard.get(&image_id).cloned()
+                };
+
+                match elf_bytes {
+                    Some(elf) => {
+                        prover.register_image(image_id, elf).await?;
                         prover.prove(image_id, input).await
-                    } else {
-                        Err(ZkVmError::ImageNotFound(image_id.to_string()))
                     }
-                } else {
-                    Err(ZkVmError::ImageNotFound(image_id.to_string()))
+                    None => Err(ZkVmError::ImageNotFound(image_id.to_string())),
                 }
             });
         }

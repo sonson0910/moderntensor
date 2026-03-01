@@ -6,6 +6,7 @@
 use jsonrpc_core::{IoHandler, Params};
 use luxtensor_core::multisig::MultisigManager;
 use std::sync::Arc;
+use crate::helpers::verify_caller_signature;
 
 /// Shared context for Multisig RPC handlers.
 pub struct MultisigRpcContext {
@@ -141,6 +142,21 @@ fn register_multisig_propose_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing proposer"))?;
         let proposer = parse_address(proposer_hex)?;
 
+        // SECURITY FIX (Issue #8): Verify ECDSA signature to prove caller
+        // controls the proposer address.
+        let signature_hex = p
+            .get("signature")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params(
+                "Missing 'signature': ECDSA signature over keccak256(wallet_id || proposer) required"
+            ))?;
+        let recovery_id = p
+            .get("recovery_id")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u8;
+        let sign_message = format!("multisig_propose:{}{}", wallet_id, proposer_hex);
+        verify_caller_signature(&proposer, &sign_message, signature_hex, recovery_id)?;
+
         let to_hex = p
             .get("to")
             .and_then(|v| v.as_str())
@@ -206,6 +222,21 @@ fn register_multisig_approve_transaction(ctx: &MultisigRpcContext, io: &mut IoHa
             .and_then(|v| v.as_str())
             .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing signer"))?;
         let signer = parse_address(signer_hex)?;
+
+        // SECURITY FIX (Issue #8): Verify ECDSA signature to prove caller
+        // controls the signer address.
+        let signature_hex = p
+            .get("signature")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| jsonrpc_core::Error::invalid_params(
+                "Missing 'signature': ECDSA signature over keccak256(tx_id || signer) required"
+            ))?;
+        let recovery_id = p
+            .get("recovery_id")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u8;
+        let sign_message = format!("multisig_approve:{}{}", tx_id, signer_hex);
+        verify_caller_signature(&signer, &sign_message, signature_hex, recovery_id)?;
 
         let current_timestamp = p
             .get("current_timestamp")

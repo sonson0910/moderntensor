@@ -38,6 +38,8 @@ pub struct Mempool {
     tx_expiration: Duration,
     /// Expected chain_id — transactions with a different chain_id are rejected
     chain_id: u64,
+    /// L2 FIX: Last cleanup timestamp to avoid O(n) scan on every insert
+    last_cleanup: Arc<RwLock<Instant>>,
 }
 
 impl Mempool {
@@ -53,6 +55,7 @@ impl Mempool {
             validate_signatures: true,
             tx_expiration: Duration::from_secs(DEFAULT_TX_EXPIRATION_SECS),
             chain_id,
+            last_cleanup: Arc::new(RwLock::new(Instant::now())),
         }
     }
 
@@ -75,6 +78,7 @@ impl Mempool {
             validate_signatures: true,
             tx_expiration: Duration::from_secs(DEFAULT_TX_EXPIRATION_SECS),
             chain_id,
+            last_cleanup: Arc::new(RwLock::new(Instant::now())),
         }
     }
 
@@ -92,6 +96,7 @@ impl Mempool {
             validate_signatures: false,
             tx_expiration: Duration::from_secs(30 * 60),
             chain_id,
+            last_cleanup: Arc::new(RwLock::new(Instant::now())),
         }
     }
 
@@ -155,19 +160,18 @@ impl Mempool {
         // Get sender for per-sender limit check
         let sender = tx.from;
 
-        // DoS Protection 3: Check per-sender transaction limit
+        // H3 FIX: Per-sender limit check moved below to atomic write-lock scope
+        // to eliminate TOCTOU race between read-check and write-increment.
+
+        // L2 FIX: Only cleanup expired TXs periodically (every 60s) instead of
+        // on every insert. With 10K TXs, this avoids O(n) scan per insertion.
         {
-            let sender_counts = self.sender_tx_count.read();
-            if let Some(&count) = sender_counts.get(&sender) {
-                if count >= self.max_per_sender {
-                    warn!("🛡️ Rejected transaction from {:?}: sender limit {} reached", sender, self.max_per_sender);
-                    return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
-                }
+            let last = *self.last_cleanup.read();
+            if last.elapsed() > Duration::from_secs(60) {
+                self.cleanup_expired();
+                *self.last_cleanup.write() = Instant::now();
             }
         }
-
-        // Cleanup expired transactions first
-        self.cleanup_expired();
 
         let mut txs = self.transactions.write();
 
@@ -183,10 +187,17 @@ impl Mempool {
             return Err(MempoolError::DuplicateTransaction);
         }
 
-        // Update sender count
+        // H3 FIX: Atomic check-and-increment to prevent TOCTOU race.
+        // Previously, a read lock checked the count and released, then a write lock
+        // incremented — two threads could both pass the check simultaneously.
         {
             let mut sender_counts = self.sender_tx_count.write();
-            *sender_counts.entry(sender).or_insert(0) += 1;
+            let count = sender_counts.entry(sender).or_insert(0);
+            if *count >= self.max_per_sender {
+                warn!("🛡️ Rejected transaction from {:?}: sender limit {} reached", sender, self.max_per_sender);
+                return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
+            }
+            *count += 1;
         }
 
         // Wrap with timestamp and sender
@@ -280,8 +291,14 @@ impl Mempool {
             return Ok(0);
         }
 
-        let data = bincode::serialize(&transactions)
+        let payload = bincode::serialize(&transactions)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        // L5 FIX: Prepend a 4-byte version header to detect format mismatches on load.
+        const MEMPOOL_FILE_VERSION: u32 = 1;
+        let mut data = Vec::with_capacity(4 + payload.len());
+        data.extend_from_slice(&MEMPOOL_FILE_VERSION.to_le_bytes());
+        data.extend_from_slice(&payload);
 
         std::fs::write(path, data)?;
         info!("💾 Saved {} transactions to {}", count, path);
@@ -300,7 +317,25 @@ impl Mempool {
             Err(e) => return Err(e),
         };
 
-        let transactions: Vec<Transaction> = bincode::deserialize(&data)
+        // L5 FIX: Check version header to detect format mismatches.
+        // Files without header (pre-v1) are rejected gracefully.
+        const MEMPOOL_FILE_VERSION: u32 = 1;
+        if data.len() < 4 {
+            warn!("💾 Mempool backup too small ({} bytes), skipping", data.len());
+            let _ = std::fs::remove_file(path);
+            return Ok(0);
+        }
+        let file_version = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        if file_version != MEMPOOL_FILE_VERSION {
+            warn!(
+                "💾 Mempool backup version mismatch (file={}, expected={}), discarding",
+                file_version, MEMPOOL_FILE_VERSION
+            );
+            let _ = std::fs::remove_file(path);
+            return Ok(0);
+        }
+
+        let transactions: Vec<Transaction> = bincode::deserialize(&data[4..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
         let count = transactions.len();

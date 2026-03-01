@@ -1,5 +1,6 @@
 use crate::{Result, StorageError};
 use luxtensor_crypto::{keccak256, Hash};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 
 /// Pre-computed hash of the empty node: `keccak256(b"")`.
@@ -8,10 +9,8 @@ use std::collections::HashMap;
 /// every Branch node.  With 16 children per branch, this eliminates up to
 /// 16 × N_branches redundant hash invocations per `root_hash()` call.
 const EMPTY_NODE_HASH: Hash = [
-    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c,
-    0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
-    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
-    0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+    0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+    0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
 ];
 
 /// A single element in a raw-preimage Merkle proof.
@@ -52,20 +51,11 @@ enum TrieNode {
     /// Empty node (no children)
     Empty,
     /// Leaf node: remainder of key path + value
-    Leaf {
-        nibbles: Vec<u8>,
-        value: Vec<u8>,
-    },
+    Leaf { nibbles: Vec<u8>, value: Vec<u8> },
     /// Extension node: shared prefix + pointer to child
-    Extension {
-        nibbles: Vec<u8>,
-        child: Box<TrieNode>,
-    },
+    Extension { nibbles: Vec<u8>, child: Box<TrieNode> },
     /// Branch node: 16 children (one per nibble) + optional value
-    Branch {
-        children: Box<[Option<Box<TrieNode>>; 16]>,
-        value: Option<Vec<u8>>,
-    },
+    Branch { children: Box<[Option<Box<TrieNode>>; 16]>, value: Option<Vec<u8>> },
 }
 
 impl Default for TrieNode {
@@ -119,6 +109,12 @@ fn hex_prefix_encode(nibbles: &[u8], leaf: bool) -> Vec<u8> {
 
 impl TrieNode {
     /// Compute the hash of this node (recursive Merkle hash)
+    ///
+    /// PERFORMANCE (H-1): This recomputes the hash from scratch on every call,
+    /// traversing all descendants — O(n) for the full trie. A future optimization
+    /// should add `cached_hash: Option<Hash>` to Leaf/Extension/Branch variants,
+    /// invalidating on insert/delete paths only. This would reduce repeated
+    /// `root_hash()` calls to O(1) amortized (only recomputing dirty paths).
     fn hash(&self) -> Hash {
         match self {
             TrieNode::Empty => EMPTY_NODE_HASH,
@@ -157,21 +153,13 @@ impl TrieNode {
     /// Insert a key-value pair into this node, returning the new root node
     fn insert(self, nibbles: &[u8], value: Vec<u8>) -> TrieNode {
         match self {
-            TrieNode::Empty => {
-                TrieNode::Leaf {
-                    nibbles: nibbles.to_vec(),
-                    value,
-                }
-            }
+            TrieNode::Empty => TrieNode::Leaf { nibbles: nibbles.to_vec(), value },
             TrieNode::Leaf { nibbles: existing_nibbles, value: existing_value } => {
                 let common = common_prefix_len(&existing_nibbles, nibbles);
 
                 if common == existing_nibbles.len() && common == nibbles.len() {
                     // Same key — update value
-                    return TrieNode::Leaf {
-                        nibbles: existing_nibbles,
-                        value,
-                    };
+                    return TrieNode::Leaf { nibbles: existing_nibbles, value };
                 }
 
                 // Create branch node
@@ -262,10 +250,7 @@ impl TrieNode {
             }
             TrieNode::Branch { mut children, value: branch_value } => {
                 if nibbles.is_empty() {
-                    return TrieNode::Branch {
-                        children,
-                        value: Some(value),
-                    };
+                    return TrieNode::Branch { children, value: Some(value) };
                 }
 
                 let idx = nibbles[0] as usize;
@@ -282,7 +267,11 @@ impl TrieNode {
         match self {
             TrieNode::Empty => None,
             TrieNode::Leaf { nibbles: leaf_nibbles, value } => {
-                if leaf_nibbles == nibbles { Some(value) } else { None }
+                if leaf_nibbles == nibbles {
+                    Some(value)
+                } else {
+                    None
+                }
             }
             TrieNode::Extension { nibbles: ext_nibbles, child } => {
                 if nibbles.starts_with(ext_nibbles) {
@@ -435,7 +424,10 @@ impl TrieNode {
                 }
                 let (new_child, removed) = child.remove(&nibbles[ext_nibbles.len()..]);
                 if !removed {
-                    return (TrieNode::Extension { nibbles: ext_nibbles, child: Box::new(new_child) }, false);
+                    return (
+                        TrieNode::Extension { nibbles: ext_nibbles, child: Box::new(new_child) },
+                        false,
+                    );
                 }
                 // Child was modified — may need to collapse
                 let collapsed = match new_child {
@@ -480,8 +472,12 @@ impl TrieNode {
 
                 // Update child slot
                 match new_child {
-                    TrieNode::Empty => { children[idx] = None; }
-                    other => { children[idx] = Some(Box::new(other)); }
+                    TrieNode::Empty => {
+                        children[idx] = None;
+                    }
+                    other => {
+                        children[idx] = Some(Box::new(other));
+                    }
                 }
 
                 let new_node = Self::collapse_branch(children, branch_value);
@@ -542,22 +538,46 @@ impl TrieNode {
 /// Merkle Patricia Trie with proper node structure and cryptographic proofs
 pub struct MerkleTrie {
     root: TrieNode,
-    /// Cache of all keys for iteration (needed for backward compatibility)
+    /// Cache of all keys for iteration (needed for backward compatibility).
+    ///
+    /// NOTE (I-2): This duplicates data that exists in the trie itself. A future
+    /// optimization could implement a trie iterator to eliminate this HashMap,
+    /// reducing memory usage by ~50% for large tries.
     keys: HashMap<Vec<u8>, Vec<u8>>,
+    /// SECURITY (H-1): Cached root hash to avoid O(n) full-tree recomputation.
+    ///
+    /// Set to `None` whenever the trie is mutated (insert / delete). Lazily
+    /// recomputed on the next `root_hash()` call. Uses `Mutex` for interior
+    /// mutability so `root_hash()` can keep its `&self` signature while
+    /// remaining `Send + Sync` (required by `StateDB`'s `Arc<RwLock<MerkleTrie>>`).
+    ///
+    /// NOTE: This caches only the **root** hash. A deeper optimization would
+    /// cache hashes per-node (adding `cached_hash: Option<Hash>` to each
+    /// `TrieNode` variant) to make incremental updates truly O(log n) instead
+    /// of O(n). That is left as a future improvement.
+    cached_root_hash: Mutex<Option<Hash>>,
 }
 
 impl MerkleTrie {
     /// Create a new empty trie
     pub fn new() -> Self {
-        Self {
-            root: TrieNode::Empty,
-            keys: HashMap::new(),
-        }
+        Self { root: TrieNode::Empty, keys: HashMap::new(), cached_root_hash: Mutex::new(None) }
     }
 
-    /// Get the root hash
+    /// Get the root hash.
+    ///
+    /// SECURITY (H-1): Returns the cached hash if the trie has not been mutated
+    /// since the last call. Otherwise, recomputes the full tree hash and caches
+    /// the result. This prevents redundant O(n) traversals when `root_hash()`
+    /// is called multiple times between mutations.
     pub fn root_hash(&self) -> Hash {
-        self.root.hash()
+        let mut cache = self.cached_root_hash.lock();
+        if let Some(h) = *cache {
+            return h;
+        }
+        let h = self.root.hash();
+        *cache = Some(h);
+        h
     }
 
     /// Insert a key-value pair
@@ -566,6 +586,8 @@ impl MerkleTrie {
         let old_root = std::mem::take(&mut self.root);
         self.root = old_root.insert(&nibbles, value.to_vec());
         self.keys.insert(key.to_vec(), value.to_vec());
+        // SECURITY (H-1): Invalidate cached root hash — the trie structure changed.
+        *self.cached_root_hash.lock() = None;
         Ok(())
     }
 
@@ -589,20 +611,27 @@ impl MerkleTrie {
         Ok(proof)
     }
 
-    /// Strict Merkle proof verification that checks the complete hash chain.
+    /// Strict Merkle proof verification (root + leaf only, **no intermediate chain**).
     ///
-    /// Verifies:
-    /// 1. `proof[0]` == `root`
-    /// 2. `proof[last]` IS the expected leaf hash (computed from key suffix + value)
+    /// # Security Warning (C-3)
     ///
-    /// This prevents an attacker from constructing a proof that contains the leaf
-    /// hash but at a non-leaf position.
+    /// This method verifies only two things:
+    /// 1. `proof[0] == root`
+    /// 2. `proof[last]` is a valid leaf hash
     ///
-    /// For the **strongest guarantee** (full hash-chain), use [`verify_proof_with_preimages`]
-    /// with proofs produced by [`get_proof_with_preimages`].
+    /// It does **NOT** verify the intermediate hash chain between root and leaf.
+    /// An attacker can forge a proof by including the correct root and leaf hashes
+    /// while inserting arbitrary intermediate nodes.
+    ///
+    /// **Use [`verify_proof_with_preimages`] instead** for full hash-chain
+    /// verification with proofs produced by [`get_proof_with_preimages`].
     ///
     /// # Returns
     /// `true` if root matches and proof ends with the correct leaf hash.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Does not verify intermediate hash chain. Use verify_proof_with_preimages() for cryptographically sound proof verification."
+    )]
     pub fn verify_proof_strict(root: &Hash, key: &[u8], value: &[u8], proof: &[Hash]) -> bool {
         if proof.is_empty() {
             return false;
@@ -709,12 +738,17 @@ impl MerkleTrie {
     ///
     /// The `self.keys` HashMap is still updated for `get_all_keys()` backward
     /// compatibility, which remains O(1) amortized.
+    // SECURITY (M-6): After key deletion, intermediate Extension/Branch nodes that become
+    // unreachable are dropped by Rust's ownership system. No explicit garbage collection needed.
+    // If persisting trie nodes to disk in the future, implement node reference counting.
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
         if self.keys.remove(key).is_some() {
             let nibbles = bytes_to_nibbles(key);
             let old_root = std::mem::take(&mut self.root);
             let (new_root, _removed) = old_root.remove(&nibbles);
             self.root = new_root;
+            // SECURITY (H-1): Invalidate cached root hash — the trie structure changed.
+            *self.cached_root_hash.lock() = None;
         }
         Ok(())
     }
@@ -866,7 +900,12 @@ mod tests {
         assert!(!MerkleTrie::verify_proof_strict(&wrong_root, b"key", b"value", &proof));
         // verify_proof_with_preimages
         let raw_proof = trie.get_proof_with_preimages(b"key").unwrap();
-        assert!(!MerkleTrie::verify_proof_with_preimages(&wrong_root, b"key", b"value", &raw_proof));
+        assert!(!MerkleTrie::verify_proof_with_preimages(
+            &wrong_root,
+            b"key",
+            b"value",
+            &raw_proof
+        ));
     }
 
     #[test]
@@ -896,7 +935,8 @@ mod tests {
         trie_ac.insert(b"ccc", b"3").unwrap();
 
         assert_eq!(
-            trie_abc.root_hash(), trie_ac.root_hash(),
+            trie_abc.root_hash(),
+            trie_ac.root_hash(),
             "Root after delete must equal trie built without the deleted key"
         );
     }
@@ -922,7 +962,8 @@ mod tests {
         }
 
         assert_eq!(
-            trie_all.root_hash(), trie_half.root_hash(),
+            trie_all.root_hash(),
+            trie_half.root_hash(),
             "Root after 50 deletes must match trie built with remaining 50 keys"
         );
         assert_eq!(trie_all.len(), 50);
@@ -1110,7 +1151,12 @@ mod tests {
             assert!(MerkleTrie::verify_proof_strict(&root, &key, value.as_bytes(), &proof));
             // Also verify with raw preimages (full hash-chain, LUX-TRIE-42)
             let raw_proof = trie.get_proof_with_preimages(&key).unwrap();
-            assert!(MerkleTrie::verify_proof_with_preimages(&root, &key, value.as_bytes(), &raw_proof));
+            assert!(MerkleTrie::verify_proof_with_preimages(
+                &root,
+                &key,
+                value.as_bytes(),
+                &raw_proof
+            ));
         }
         let verify_elapsed = start.elapsed();
         println!(
@@ -1174,10 +1220,20 @@ mod tests {
         // verify_proof_strict (leaf LAST)
         let proof = trie.get_proof(key.as_bytes()).unwrap();
         assert!(proof.len() >= 2);
-        assert!(MerkleTrie::verify_proof_strict(&root, key.as_bytes(), value_str.as_bytes(), &proof));
+        assert!(MerkleTrie::verify_proof_strict(
+            &root,
+            key.as_bytes(),
+            value_str.as_bytes(),
+            &proof
+        ));
         // verify_proof_with_preimages (full hash-chain, LUX-TRIE-42)
         let raw_proof = trie.get_proof_with_preimages(key.as_bytes()).unwrap();
-        assert!(MerkleTrie::verify_proof_with_preimages(&root, key.as_bytes(), value_str.as_bytes(), &raw_proof));
+        assert!(MerkleTrie::verify_proof_with_preimages(
+            &root,
+            key.as_bytes(),
+            value_str.as_bytes(),
+            &raw_proof
+        ));
     }
 
     #[test]
@@ -1185,8 +1241,14 @@ mod tests {
         // Keys that share long common prefixes (adversarial pattern for tries)
         let mut trie = MerkleTrie::new();
         let prefixed_keys = [
-            b"aaaa1".as_ref(), b"aaaa2", b"aaab1", b"aaab2",
-            b"aaba1", b"aaba2", b"abaa1", b"abaa2",
+            b"aaaa1".as_ref(),
+            b"aaaa2",
+            b"aaab1",
+            b"aaab2",
+            b"aaba1",
+            b"aaba2",
+            b"abaa1",
+            b"abaa2",
         ];
         for (i, key) in prefixed_keys.iter().enumerate() {
             trie.insert(key, format!("v{}", i).as_bytes()).unwrap();
@@ -1231,11 +1293,7 @@ mod tests {
         for i in 0..1000u32 {
             let key = format!("account_{:08x}", i);
             let value = format!("balance_{}", i * 1000);
-            assert_eq!(
-                trie.get(key.as_bytes()).unwrap(),
-                Some(value.into_bytes()),
-            );
+            assert_eq!(trie.get(key.as_bytes()).unwrap(), Some(value.into_bytes()),);
         }
     }
 }
-

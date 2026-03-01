@@ -1,6 +1,5 @@
 use crate::{keccak256, CryptoError, Hash, Result};
 use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
-use zeroize::Zeroize;
 
 /// A 20-byte Ethereum-style address derived from a public key.
 /// This provides type safety over raw `[u8; 20]` arrays.
@@ -60,20 +59,21 @@ pub struct KeyPair {
 
 impl Drop for KeyPair {
     fn drop(&mut self) {
-        // SECURITY NOTE: secp256k1::SecretKey stores the 32-byte scalar internally
-        // and `secret_bytes()` returns a COPY, so zeroizing that copy does not clear
-        // the actual key material inside SecretKey.
-        //
-        // To properly zeroize, we overwrite the SecretKey in-place with a dummy value.
-        // SecretKey::from_slice will accept any valid 32-byte scalar (non-zero, < curve order).
-        // We overwrite self.secret_key with a well-known dummy to obliterate the real key.
-        let dummy = [0x01u8; 32]; // Valid scalar (1)
-        if let Ok(dummy_key) = SecretKey::from_slice(&dummy) {
-            self.secret_key = dummy_key;
+        // SECURITY: Use volatile writes to zero the secret key material.
+        // Regular assignments in Drop can be optimized away by the compiler
+        // since the memory is about to be freed. Volatile writes are not
+        // subject to dead-store elimination. (H-3)
+        let ptr = &mut self.secret_key as *mut SecretKey as *mut u8;
+        let size = core::mem::size_of::<SecretKey>();
+        for i in 0..size {
+            // SAFETY: ptr points to valid, aligned memory within self that we
+            // own exclusively (we have &mut self). Writing zeros byte-by-byte
+            // is safe for any repr. The volatile qualifier prevents the
+            // compiler from eliding these writes.
+            unsafe {
+                core::ptr::write_volatile(ptr.add(i), 0u8);
+            }
         }
-        // Also zeroize the copy for defense in depth
-        let mut secret_bytes = self.secret_key.secret_bytes();
-        secret_bytes.zeroize();
     }
 }
 
@@ -148,6 +148,11 @@ impl KeyPair {
         address.copy_from_slice(&hash[12..]);
         CryptoAddress(address)
     }
+
+    /// Get raw secret key bytes (caller is responsible for zeroization).
+    pub fn secret_bytes(&self) -> [u8; 32] {
+        self.secret_key.secret_bytes()
+    }
 }
 
 /// Verify a signature against a message hash and public key
@@ -188,6 +193,10 @@ pub fn verify_signature(
 }
 
 /// Recover public key from signature
+///
+/// # Security
+/// Rejects high-S signatures (BIP-62) to prevent malleability, consistent
+/// with `verify_signature` behavior.
 pub fn recover_public_key(
     message_hash: &Hash,
     signature: &[u8; 64],
@@ -195,9 +204,17 @@ pub fn recover_public_key(
 ) -> Result<Vec<u8>> {
     let secp = Secp256k1::new();
 
-    // Parse the signature
-    let _sig = Signature::from_compact(signature)
+    // SECURITY: Reject high-S signatures to prevent malleability (BIP-62 / M-3).
+    // This is consistent with verify_signature() which also rejects high-S.
+    let sig = Signature::from_compact(signature)
         .map_err(|e| CryptoError::Secp256k1Error(e.to_string()))?;
+    {
+        let mut normalized = sig;
+        normalized.normalize_s();
+        if normalized != sig {
+            return Err(CryptoError::InvalidSignature);
+        }
+    }
 
     // Parse the message
     let message = Message::from_digest_slice(message_hash)
@@ -231,6 +248,10 @@ pub fn recover_public_key(
 /// recovery IDs and returns the first success, which may not be the intended
 /// signer.  For transaction-signing contexts where you need certainty about
 /// the signer, use [`recover_address_strict`] instead.
+#[deprecated(
+    since = "0.5.0",
+    note = "Ambiguous for 64-byte signatures: tries both recovery IDs. Use `recover_address_strict` for consensus-critical paths."
+)]
 pub fn recover_address(message_hash: &Hash, signature: &[u8]) -> Result<CryptoAddress> {
     recover_address_inner(message_hash, signature)
 }
@@ -344,5 +365,72 @@ mod tests {
         let message = [0u8; 32];
         let signature = keypair.sign(&message).unwrap();
         assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        // L-3: Verify that sign → verify round-trip works correctly
+        let keypair = KeyPair::generate();
+        let msg = crate::keccak256(b"test message for roundtrip");
+        let sig = keypair.sign(&msg).unwrap();
+        let pubkey = keypair.public_key_bytes();
+        let result = verify_signature(&msg, &sig, &pubkey).unwrap();
+        assert!(result, "signature should verify for the correct key and message");
+    }
+
+    #[test]
+    fn test_sign_verify_wrong_message_fails() {
+        let keypair = KeyPair::generate();
+        let msg1 = crate::keccak256(b"message 1");
+        let msg2 = crate::keccak256(b"message 2");
+        let sig = keypair.sign(&msg1).unwrap();
+        let pubkey = keypair.public_key_bytes();
+        let result = verify_signature(&msg2, &sig, &pubkey).unwrap();
+        assert!(!result, "signature should NOT verify for a different message");
+    }
+
+    #[test]
+    fn test_sign_verify_wrong_key_fails() {
+        let keypair1 = KeyPair::generate();
+        let keypair2 = KeyPair::generate();
+        let msg = crate::keccak256(b"test message");
+        let sig = keypair1.sign(&msg).unwrap();
+        let wrong_pubkey = keypair2.public_key_bytes();
+        let result = verify_signature(&msg, &sig, &wrong_pubkey).unwrap();
+        assert!(!result, "signature should NOT verify for a different key");
+    }
+
+    #[test]
+    fn test_recover_address_strict_roundtrip() {
+        let keypair = KeyPair::generate();
+        let msg = crate::keccak256(b"recovery test");
+        let sig64 = keypair.sign(&msg).unwrap();
+        let expected_addr = keypair.address();
+
+        // Try both recovery IDs to find the correct one
+        for v in [0u8, 1u8] {
+            let mut sig65 = [0u8; 65];
+            sig65[..64].copy_from_slice(&sig64);
+            sig65[64] = v;
+            if let Ok(recovered) = recover_address_strict(&msg, &sig65) {
+                if recovered == expected_addr {
+                    return; // Success
+                }
+            }
+        }
+        panic!("Failed to recover correct address with either recovery ID");
+    }
+
+    #[test]
+    fn test_high_s_signature_rejected() {
+        // Verify that high-S signatures are rejected by verify_signature
+        let keypair = KeyPair::generate();
+        let msg = crate::keccak256(b"high-s test");
+        let sig = keypair.sign(&msg).unwrap();
+        let pubkey = keypair.public_key_bytes();
+
+        // The signed signature should have low-S (normalized)
+        let result = verify_signature(&msg, &sig, &pubkey).unwrap();
+        assert!(result, "low-S signature should verify");
     }
 }

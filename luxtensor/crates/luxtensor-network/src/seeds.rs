@@ -86,6 +86,52 @@ pub fn has_hardcoded_seeds(chain_id: u64) -> bool {
     !get_seeds_for_chain(chain_id).is_empty()
 }
 
+/// 🔧 FIX F19: Validate that the node has at least one way to discover peers.
+///
+/// For mainnet/testnet, either built-in seeds or config bootstrap_nodes
+/// must be present.  Aborts with an error if the node would be isolated.
+///
+/// # Arguments
+/// * `chain_id` - The chain ID of the network
+/// * `config_bootstrap_nodes` - Bootstrap nodes from the config file
+/// * `enable_mdns` - Whether mDNS is enabled
+///
+/// # Returns
+/// `Err(reason)` if the node cannot discover any peers.
+pub fn validate_bootstrap_config(
+    chain_id: u64,
+    config_bootstrap_nodes: &[String],
+    enable_mdns: bool,
+) -> Result<(), String> {
+    let seeds = get_seeds_for_chain(chain_id);
+    let has_seeds = !seeds.is_empty();
+    let has_config = !config_bootstrap_nodes.is_empty();
+
+    // Devnet allows mDNS-only operation
+    if chain_id != 8898 && chain_id != 9999 {
+        if !has_seeds && !has_config && !enable_mdns {
+            return Err(format!(
+                "No seed nodes, no bootstrap_nodes in config, and mDNS disabled for chain {}. \
+                 Node will be completely isolated.",
+                chain_id
+            ));
+        }
+        return Ok(());
+    }
+
+    // Mainnet/testnet require explicit bootstrap
+    if !has_seeds && !has_config {
+        return Err(format!(
+            "FATAL: {} (chain {}) has no built-in seed nodes and no bootstrap_nodes \
+             configured. The node cannot join the network. Add bootstrap_nodes to config.toml.",
+            get_network_name(chain_id),
+            chain_id
+        ));
+    }
+
+    Ok(())
+}
+
 /// Get network name from chain ID
 pub fn get_network_name(chain_id: u64) -> &'static str {
     match chain_id {

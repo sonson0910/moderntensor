@@ -16,7 +16,10 @@ pub struct RequestProcessor {
     prover: Arc<RwLock<ZkProver>>,
     /// Image ID for the AI inference program
     ai_image_id: ImageId,
-    /// Threshold (in gas units) below which optimistic mode is used
+    /// Threshold (in MDT value units) below which optimistic mode is used.
+    /// Requests whose staked/reward value exceeds this threshold MUST be
+    /// verified with a full ZK proof. Requests below it may be resolved
+    /// optimistically and are subject to the dispute window.
     optimistic_threshold: u64,
     /// Dispute window in blocks for optimistic results
     dispute_window_blocks: u64,
@@ -89,9 +92,17 @@ impl RequestProcessor {
     /// Maximum time allowed for a single AI inference + proof generation.
     const INFERENCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-    /// Default gas threshold below which optimistic mode is used.
-    /// Requests costing less than this skip ZK proof generation.
-    pub const DEFAULT_OPTIMISTIC_THRESHOLD: u64 = 100_000;
+    /// Default threshold for optimistic execution (MDT value units).
+    ///
+    /// Requests with `request_value < threshold` execute optimistically (no ZK proof).
+    /// Requests at or above this value ALWAYS receive full ZK verification.
+    ///
+    /// The unit is the smallest MDT denomination (1 MDT = 10^9 nano-MDT).
+    /// Default: 1_000_000_000 = 1 MDT — requests worth ≥ 1 MDT get full proof.
+    ///
+    /// Operators SHOULD tune this via `set_optimistic_threshold()` based on
+    /// network economics and acceptable risk.
+    pub const DEFAULT_OPTIMISTIC_THRESHOLD: u64 = 1_000_000_000;
 
     /// Default dispute window (in blocks) for optimistic results.
     /// During this window, any validator can challenge the result.
@@ -187,11 +198,11 @@ impl RequestProcessor {
         request_id: H256,
         model_hash: H256,
         input_data: Bytes,
-        gas_value: u64,
+        request_value: u64,
         current_block: u64,
         miner_address: [u8; 20],
     ) -> Result<OptimisticResult> {
-        if gas_value >= self.optimistic_threshold {
+        if request_value >= self.optimistic_threshold {
             // High-value: full ZK proof required
             let (result, proof_hash) = self.process_request(
                 request_id, model_hash, input_data,
@@ -209,18 +220,20 @@ impl RequestProcessor {
         // Low-value: optimistic mode — skip proof, return commitment hash
         let start = Instant::now();
 
-        // Compute a commitment hash (H(request_id || model_hash || input_data))
+        // Compute a commitment hash (H(request_id || model_hash || miner_address || input_data))
+        // Including miner_address prevents commitment forgery across miners.
         let commitment = {
-            let mut data = Vec::with_capacity(64 + input_data.len());
+            let mut data = Vec::with_capacity(64 + 20 + input_data.len());
             data.extend_from_slice(request_id.as_bytes());
             data.extend_from_slice(model_hash.as_bytes());
+            data.extend_from_slice(&miner_address);
             data.extend_from_slice(&input_data);
             H256::from_slice(&luxtensor_crypto::keccak256(&data)[..])
         };
 
         info!(
             request_id = ?request_id,
-            gas_value = gas_value,
+            request_value = request_value,
             elapsed_us = start.elapsed().as_micros() as u64,
             "Optimistic mode: skipped ZK proof for low-value request"
         );
@@ -357,7 +370,7 @@ mod tests {
         let model_hash = H256::from([2u8; 32]);
         let input_data = Bytes::from(vec![1, 2, 3]);
 
-        // Gas below threshold → optimistic
+        // Value below threshold → optimistic
         let result = processor.process_request_optimistic(
             request_id, model_hash, input_data, 50_000, 100, [0xAA; 20],
         ).await.unwrap();

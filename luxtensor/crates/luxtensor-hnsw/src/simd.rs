@@ -101,7 +101,14 @@ pub fn dot_product_simd(a: &[i64], b: &[i64]) -> i64 {
         let a_vec = i64x4::from_slice(&a[offset..offset + SIMD_LANES]);
         let b_vec = i64x4::from_slice(&b[offset..offset + SIMD_LANES]);
 
-        sum_vec = sum_vec.saturating_add(a_vec * b_vec);
+        // SECURITY: Clamp values to prevent overflow when multiplying.
+        // Max safe value for i64 multiplication without overflow: ~3.03e9 (sqrt(i64::MAX))
+        let max_safe = i64x4::splat(3_037_000_499);
+        let neg_max = i64x4::splat(-3_037_000_499);
+        let a_clamped = a_vec.simd_max(neg_max).simd_min(max_safe);
+        let b_clamped = b_vec.simd_max(neg_max).simd_min(max_safe);
+
+        sum_vec = sum_vec.saturating_add(a_clamped * b_clamped);
     }
 
     let mut sum = sum_vec.reduce_sum();
@@ -133,7 +140,10 @@ impl<const D: usize> SimdDistance<D> for FixedPointVector<D> {
         let b_bits: Vec<i64> = other.components.iter().map(|c| c.to_bits()).collect();
 
         let result = squared_distance_simd(&a_bits, &b_bits);
-        I64F32::from_bits(result)
+        // IMPORTANT: Squaring two I64F32 values doubles the fractional bits
+        // from 32 to 64. We need to right-shift by 32 to get back to I64F32
+        // scale. Without this, the result is off by a factor of 2^32.
+        I64F32::from_bits(result >> 32)
     }
 
     #[inline]
@@ -142,7 +152,8 @@ impl<const D: usize> SimdDistance<D> for FixedPointVector<D> {
         let b_bits: Vec<i64> = other.components.iter().map(|c| c.to_bits()).collect();
 
         let result = dot_product_simd(&a_bits, &b_bits);
-        I64F32::from_bits(result)
+        // Same scaling correction as squared_distance_fast.
+        I64F32::from_bits(result >> 32)
     }
 }
 
@@ -169,7 +180,8 @@ mod tests {
         let b = vec![110_i64, 190, 310, 390, 510, 590, 710, 790];
 
         // Scalar computation
-        let scalar: i64 = a.iter()
+        let scalar: i64 = a
+            .iter()
             .zip(b.iter())
             .map(|(x, y)| {
                 let diff = x - y;

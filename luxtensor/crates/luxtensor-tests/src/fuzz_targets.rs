@@ -11,8 +11,8 @@
 //! cargo +nightly fuzz run rpc_input
 //! ```
 
-use luxtensor_core::{Transaction, Block, BlockHeader};
-use sha3::{Keccak256, Digest};
+use luxtensor_core::{Block, BlockHeader, Transaction};
+use sha3::{Digest, Keccak256};
 
 /// Fuzz the transaction parser with arbitrary bytes
 pub fn fuzz_tx_parser(data: &[u8]) -> bool {
@@ -26,6 +26,15 @@ pub fn fuzz_tx_parser(data: &[u8]) -> bool {
             let _ = tx.value;
             let _ = tx.nonce;
             let _ = format!("{:?}", tx);
+
+            // SECURITY (FUZZ-M1): Verify serialization round-trip property.
+            // If bincode can deserialize, re-serializing should not panic.
+            if let Ok(re_encoded) = bincode::serialize(&tx) {
+                // Re-deserialize and compare hash — canonical encoding check
+                if let Ok(tx2) = bincode::deserialize::<Transaction>(&re_encoded) {
+                    let _ = tx2.hash();
+                }
+            }
             true
         }
         Err(_) => false, // Invalid data is expected
@@ -38,12 +47,17 @@ pub fn fuzz_block_validator(data: &[u8]) -> bool {
     match bincode::deserialize::<Block>(data) {
         Ok(block) => {
             // If it parses, validate it doesn't panic
-            let _ = block.hash();
+            let hash1 = block.hash();
             let _ = block.header.height;
             let _ = block.header.timestamp;
             let _ = block.header.previous_hash.clone();
             let _ = block.transactions.len();
             let _ = format!("{:?}", block.header);
+
+            // SECURITY (FUZZ-M2): Verify deterministic hashing property.
+            // Hashing the same block twice must always produce the same result.
+            let hash2 = block.hash();
+            assert_eq!(hash1, hash2, "Block hash must be deterministic");
             true
         }
         Err(_) => false,
@@ -75,6 +89,14 @@ pub fn fuzz_rpc_json(data: &[u8]) -> bool {
             let _ = value.get("params");
             let _ = value.get("id");
             let _ = value.get("jsonrpc");
+
+            // SECURITY (FUZZ-M3): Validate that method field, if present,
+            // is a string. Non-string methods should not reach handlers.
+            if let Some(method) = value.get("method") {
+                if !method.is_string() {
+                    return false;
+                }
+            }
             return true;
         }
     }
@@ -132,8 +154,14 @@ pub fn fuzz_consensus_message(data: &[u8]) -> bool {
     let mut i = 0;
     while i + 10 <= weight_data.len() {
         let uid = u64::from_le_bytes([
-            weight_data[i], weight_data[i + 1], weight_data[i + 2], weight_data[i + 3],
-            weight_data[i + 4], weight_data[i + 5], weight_data[i + 6], weight_data[i + 7],
+            weight_data[i],
+            weight_data[i + 1],
+            weight_data[i + 2],
+            weight_data[i + 3],
+            weight_data[i + 4],
+            weight_data[i + 5],
+            weight_data[i + 6],
+            weight_data[i + 7],
         ]);
         let weight = u16::from_le_bytes([weight_data[i + 8], weight_data[i + 9]]);
         weights.push((uid, weight));
@@ -171,8 +199,7 @@ pub fn fuzz_value_parser(data: &[u8]) -> bool {
     if data.len() >= 8 {
         // Try to parse as u64
         let value = u64::from_le_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
 
         // Test arithmetic operations don't panic

@@ -83,6 +83,17 @@ impl NodeIdentity {
                 .map_err(|e| NetworkError::Connection(format!("Failed to set key file permissions: {}", e)))?;
         }
 
+        // 🔧 FIX F10: Restrict key file access on Windows via icacls.
+        // Removes inherited permissions and grants full control only to the current user.
+        #[cfg(windows)]
+        {
+            if let Ok(username) = std::env::var("USERNAME") {
+                let _ = std::process::Command::new("icacls")
+                    .args([path, "/inheritance:r", "/grant:r", &format!("{}:F", username)])
+                    .output();
+            }
+        }
+
         let peer_id = self.peer_id();
         info!("💾 Saved node identity to {}", path);
         info!("   Peer ID: {}", peer_id);
@@ -109,6 +120,64 @@ impl NodeIdentity {
     pub fn peer_id_string(&self) -> String {
         self.peer_id().to_string()
     }
+
+    /// 🔧 FIX F13: Rotate the node keypair while preserving the old key for
+    /// attestation.
+    ///
+    /// Key rotation limits the blast radius of a compromised key. This method:
+    /// 1. Generates a fresh Ed25519 keypair.
+    /// 2. Saves it to `new_key_path` with restricted permissions.
+    /// 3. Optionally backs up the *old* key to `old_key_backup_path` so it can
+    ///    be used to sign a rotation attestation before being deleted.
+    /// 4. Updates `self.keypair` in place.
+    ///
+    /// **Callers** should:
+    ///   - Sign a `KeyRotation { old_peer_id, new_peer_id, timestamp }` message
+    ///     with the *old* keypair and broadcast it so peers can update routing
+    ///     tables.
+    ///   - Restart swarm-level connections after rotation.
+    ///   - Delete `old_key_backup_path` once the attestation has been broadcast.
+    pub fn rotate_key(
+        &mut self,
+        new_key_path: &str,
+        old_key_backup_path: Option<&str>,
+    ) -> Result<RotationResult, NetworkError> {
+        let old_peer_id = self.peer_id();
+
+        // Optionally back up the current key
+        if let Some(backup_path) = old_key_backup_path {
+            self.save_to_file(backup_path)?;
+            info!("📦 Old key backed up to {}", backup_path);
+        }
+
+        // Generate and persist new key
+        let new_keypair = Keypair::generate_ed25519();
+        let new_identity = NodeIdentity { keypair: new_keypair };
+        new_identity.save_to_file(new_key_path)?;
+
+        let new_peer_id = new_identity.peer_id();
+        info!(
+            "🔄 Key rotated: {} → {}",
+            old_peer_id, new_peer_id
+        );
+
+        // Swap in the new keypair
+        self.keypair = new_identity.keypair;
+
+        Ok(RotationResult {
+            old_peer_id,
+            new_peer_id,
+        })
+    }
+}
+
+/// Result of a key rotation operation.
+#[derive(Debug, Clone)]
+pub struct RotationResult {
+    /// The peer ID derived from the old (now-retired) keypair.
+    pub old_peer_id: libp2p::PeerId,
+    /// The peer ID derived from the newly generated keypair.
+    pub new_peer_id: libp2p::PeerId,
 }
 
 /// Print instructions for connecting to this node

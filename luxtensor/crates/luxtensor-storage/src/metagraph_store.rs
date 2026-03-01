@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 
-/// Column family names for metagraph data
+/// Column family names for metagraph data.
+///
+/// ARCHITECTURE (M-1): Some CF names here (subnets, neurons, validators, weights)
+/// overlap with constants in `db.rs`. This is intentional — `MetagraphDB` and
+/// `BlockchainDB` share the same physical RocksDB instance and use the same column
+/// families. If they are ever split into separate DB instances, these names must
+/// be namespaced (e.g., `mg_subnets`) to avoid collisions.
 const CF_SUBNETS: &str = "subnets";
 const CF_NEURONS: &str = "neurons";
 const CF_WEIGHTS: &str = "weights";
@@ -114,7 +120,13 @@ pub struct ValidatorData {
     pub blocks_produced: u64,
 }
 
-/// Metagraph database for persistent storage
+/// Metagraph database for persistent storage.
+///
+/// PERFORMANCE (M-6): Several query methods (`get_pending_ai_tasks`, `get_active_validators`,
+/// `get_delegations_for_validator`, `get_all_stakes`) perform full column-family scans
+/// with in-memory filtering. For production networks with thousands of entries, add
+/// secondary index column families (e.g., `ai_tasks_by_status`, `validators_by_active`,
+/// `delegations_by_validator`) to enable O(1) lookups.
 pub struct MetagraphDB {
     db: Arc<DB>,
 }
@@ -379,24 +391,36 @@ impl MetagraphDB {
     }
 
     /// Get pending AI tasks
+    // SECURITY (H-5): Full table scan — consider adding a secondary index (CF_PENDING_TASKS) for production scale.
     pub fn get_pending_ai_tasks(&self) -> Result<Vec<AITaskData>> {
         let cf = self.db.cf_handle(CF_AI_TASKS)
             .ok_or_else(|| StorageError::DatabaseError("Missing ai_tasks CF".into()))?;
 
-        let mut tasks = Vec::new();
+        let mut pending_tasks = Vec::new();
+        let mut scanned_count: usize = 0;
         let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
 
         for item in iter {
             let (_, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            scanned_count += 1;
             let task: AITaskData = bincode::deserialize(&value)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
             if task.status == 0 { // Pending
-                tasks.push(task);
+                pending_tasks.push(task);
             }
         }
 
-        Ok(tasks)
+        if scanned_count > 1000 {
+            tracing::warn!(
+                scanned = scanned_count,
+                pending = pending_tasks.len(),
+                "get_pending_ai_tasks: full table scan over {} items — consider adding a secondary index",
+                scanned_count
+            );
+        }
+
+        Ok(pending_tasks)
     }
 
     // ==================== METADATA OPERATIONS ====================
@@ -485,7 +509,10 @@ impl MetagraphDB {
 
     // ==================== DELEGATION OPERATIONS ====================
 
-    /// Store a delegation
+    /// Store a delegation.
+    ///
+    /// Uses a composite key `delegator || validator` (40 bytes) to support
+    /// multi-validator delegation. Each (delegator, validator) pair is unique.
     pub fn store_delegation(&self, data: &DelegationData) -> Result<()> {
         let cf = self.db.cf_handle(CF_DELEGATIONS)
             .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
@@ -493,16 +520,25 @@ impl MetagraphDB {
         let value = bincode::serialize(data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        self.db.put_cf(&cf, data.delegator, value)
+        // Composite key: delegator (20 bytes) || validator (20 bytes)
+        let mut key = Vec::with_capacity(40);
+        key.extend_from_slice(&data.delegator);
+        key.extend_from_slice(&data.validator);
+
+        self.db.put_cf(&cf, key, value)
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
     }
 
-    /// Get delegation for a delegator
-    pub fn get_delegation(&self, delegator: &[u8; 20]) -> Result<Option<DelegationData>> {
+    /// Get delegation for a specific (delegator, validator) pair
+    pub fn get_delegation(&self, delegator: &[u8; 20], validator: &[u8; 20]) -> Result<Option<DelegationData>> {
         let cf = self.db.cf_handle(CF_DELEGATIONS)
             .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
 
-        match self.db.get_cf(&cf, delegator) {
+        let mut key = Vec::with_capacity(40);
+        key.extend_from_slice(delegator);
+        key.extend_from_slice(validator);
+
+        match self.db.get_cf(&cf, &key) {
             Ok(Some(data)) => {
                 let delegation: DelegationData = bincode::deserialize(&data)
                     .map_err(|e| StorageError::SerializationError(e.to_string()))?;
@@ -511,6 +547,28 @@ impl MetagraphDB {
             Ok(None) => Ok(None),
             Err(e) => Err(StorageError::DatabaseError(e.to_string())),
         }
+    }
+
+    /// Get all delegations for a specific delegator (prefix scan by first 20 bytes)
+    pub fn get_delegations_for_delegator(&self, delegator: &[u8; 20]) -> Result<Vec<DelegationData>> {
+        let cf = self.db.cf_handle(CF_DELEGATIONS)
+            .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
+
+        let mut delegations = Vec::new();
+        let iter = self.db.prefix_iterator_cf(&cf, delegator);
+
+        for item in iter {
+            let (key, value) = item.map_err(|e| StorageError::DatabaseError(e.to_string()))?;
+            // Stop when prefix no longer matches
+            if key.len() < 20 || &key[..20] != delegator {
+                break;
+            }
+            let delegation: DelegationData = bincode::deserialize(&value)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            delegations.push(delegation);
+        }
+
+        Ok(delegations)
     }
 
     /// Get all delegations
@@ -531,18 +589,32 @@ impl MetagraphDB {
         Ok(delegations)
     }
 
-    /// Delete delegation for a delegator
-    pub fn delete_delegation(&self, delegator: &[u8; 20]) -> Result<()> {
+    /// Delete delegation for a specific (delegator, validator) pair
+    pub fn delete_delegation(&self, delegator: &[u8; 20], validator: &[u8; 20]) -> Result<()> {
         let cf = self.db.cf_handle(CF_DELEGATIONS)
             .ok_or_else(|| StorageError::DatabaseError("Missing delegations CF".into()))?;
 
-        self.db.delete_cf(&cf, delegator)
+        let mut key = Vec::with_capacity(40);
+        key.extend_from_slice(delegator);
+        key.extend_from_slice(validator);
+
+        self.db.delete_cf(&cf, key)
             .map_err(|e| StorageError::DatabaseError(e.to_string()))
     }
 
-    /// Get delegations for a specific validator
+    /// Get delegations for a specific validator using full table scan.
+    ///
+    /// For production scale with >10k delegations, consider adding a secondary
+    /// index CF keyed by `validator || delegator` for O(1) prefix lookups.
     pub fn get_delegations_for_validator(&self, validator: &[u8; 20]) -> Result<Vec<DelegationData>> {
         let all = self.get_all_delegations()?;
+        if all.len() > 1000 {
+            tracing::warn!(
+                scanned = all.len(),
+                "get_delegations_for_validator: scanning {} delegations — consider secondary index CF",
+                all.len()
+            );
+        }
         Ok(all.into_iter().filter(|d| &d.validator == validator).collect())
     }
 
@@ -696,32 +768,43 @@ impl MetagraphDB {
                 if self.get_neuron(subnet_id, uid).ok().flatten().is_some() {
                     continue;
                 }
-                if let Ok(ni) = bincode::deserialize::<LegacyNeuronInfo>(&data) {
-                    let hotkey_hex = ni.hotkey.trim_start_matches("0x");
-                    let coldkey_hex = ni.coldkey.trim_start_matches("0x");
-                    let mut hotkey = [0u8; 20];
-                    let mut coldkey = [0u8; 20];
-                    if hex::decode_to_slice(hotkey_hex, &mut hotkey).is_ok()
-                        && hex::decode_to_slice(coldkey_hex, &mut coldkey).is_ok()
-                    {
-                        let nd = NeuronData {
-                            uid,
-                            subnet_id,
-                            hotkey,
-                            coldkey,
-                            stake: ni.stake,
-                            trust: 0,
-                            rank: 0,
-                            incentive: 0,
-                            dividends: 0,
-                            emission: 0,
-                            last_update: ni.last_update,
-                            active: ni.active,
-                            endpoint: ni.endpoint.unwrap_or_default(),
-                        };
-                        if self.store_neuron(&nd).is_ok() {
-                            synced += 1;
+                // SECURITY (M-9): Log deserialization failures instead of silently skipping
+                match bincode::deserialize::<LegacyNeuronInfo>(&data) {
+                    Ok(ni) => {
+                        let hotkey_hex = ni.hotkey.trim_start_matches("0x");
+                        let coldkey_hex = ni.coldkey.trim_start_matches("0x");
+                        let mut hotkey = [0u8; 20];
+                        let mut coldkey = [0u8; 20];
+                        if hex::decode_to_slice(hotkey_hex, &mut hotkey).is_ok()
+                            && hex::decode_to_slice(coldkey_hex, &mut coldkey).is_ok()
+                        {
+                            let nd = NeuronData {
+                                uid,
+                                subnet_id,
+                                hotkey,
+                                coldkey,
+                                stake: ni.stake,
+                                trust: 0,
+                                rank: 0,
+                                incentive: 0,
+                                dividends: 0,
+                                emission: 0,
+                                last_update: ni.last_update,
+                                active: ni.active,
+                                endpoint: ni.endpoint.unwrap_or_default(),
+                            };
+                            if self.store_neuron(&nd).is_ok() {
+                                synced += 1;
+                            }
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            subnet_id = subnet_id,
+                            uid = uid,
+                            error = %e,
+                            "sync_from_blockchain: failed to deserialize neuron data, skipping entry"
+                        );
                     }
                 }
             }

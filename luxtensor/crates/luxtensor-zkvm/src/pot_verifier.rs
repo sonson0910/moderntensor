@@ -90,7 +90,13 @@ pub struct PoTVerifier {
     /// When present, proof verification delegates to RISC Zero / Groth16.
     /// When absent, falls back to structural validation.
     zk_verifier: Option<Arc<ZkVerifier>>,
+    /// Total batches per job_id (for checkpoint sampling).
+    /// If not set for a job, falls back to DEFAULT_TOTAL_BATCHES.
+    job_total_batches: HashMap<[u8; 32], u64>,
 }
+
+/// Default total_batches when no job-specific config is available.
+const DEFAULT_TOTAL_BATCHES: u64 = 1000;
 
 impl PoTVerifier {
     /// Create new PoT verifier without a cryptographic ZkVerifier backend.
@@ -98,10 +104,17 @@ impl PoTVerifier {
     /// Falls back to structural validation for ZK proofs.
     /// Use [`new_with_verifier`](Self::new_with_verifier) for production deployments.
     pub fn new() -> Self {
+        tracing::warn!(
+            "PoTVerifier created without ZkVerifier — only structural validation available. \
+             This is acceptable for development but MUST be upgraded for production via \
+             `with_zk_verifier()`. Without real ZK verification, training proofs cannot \
+             be cryptographically validated."
+        );
         Self {
             verified_checkpoints: HashMap::new(),
             challenge_seeds: HashMap::new(),
             zk_verifier: None,
+            job_total_batches: HashMap::new(),
         }
     }
 
@@ -115,7 +128,14 @@ impl PoTVerifier {
             verified_checkpoints: HashMap::new(),
             challenge_seeds: HashMap::new(),
             zk_verifier: Some(zk_verifier),
+            job_total_batches: HashMap::new(),
         }
+    }
+
+    /// Register the total number of batches for a training job.
+    /// This is used during checkpoint verification to compute expected sampled batches.
+    pub fn set_job_total_batches(&mut self, job_id: [u8; 32], total_batches: u64) {
+        self.job_total_batches.insert(job_id, total_batches);
     }
 
     /// Generate challenge seed for a training round
@@ -190,10 +210,21 @@ impl PoTVerifier {
         let checkpoint = &proof.checkpoint;
 
         // 1. Verify the sampled batches match expected from challenge seed
+        let total_batches = self.job_total_batches
+            .get(&checkpoint.job_id)
+            .copied()
+            .unwrap_or_else(|| {
+                warn!(
+                    job_id = ?hex::encode(&checkpoint.job_id[..8]),
+                    "No total_batches configured for job — using default {}",
+                    DEFAULT_TOTAL_BATCHES
+                );
+                DEFAULT_TOTAL_BATCHES
+            });
         if let Some(expected_batches) = self.get_sampled_batches(
             checkpoint.job_id,
             checkpoint.round,
-            1000, // Assumed total batches - should come from job config
+            total_batches,
             checkpoint.sampled_batches.len(),
         ) {
             if checkpoint.sampled_batches != expected_batches {
@@ -307,6 +338,13 @@ impl PoTVerifier {
         }
 
         // Fallback: structural validation (no ZkVerifier configured)
+        // SECURITY: Structural checks alone are NOT cryptographically sound.
+        // Only use for development/testing. Production MUST configure a ZkVerifier.
+        warn!(
+            "PoT proof verification falling back to structural-only checks. \
+             This does NOT provide cryptographic soundness. \
+             Configure a ZkVerifier for production."
+        );
         self.verify_zk_structural(pot_proof)
     }
 
@@ -368,10 +406,11 @@ impl PoTVerifier {
                     if let Ok(expected) = <[u8; 32]>::try_from(&public_inputs[..32]) {
                         let journal_hash = keccak256(&receipt.journal);
                         if journal_hash != expected {
-                            debug!(
+                            warn!(
                                 "PoT journal hash does not match gradient commitment in \
-                                 public_inputs — binding may diverge"
+                                 public_inputs — REJECTING proof to prevent commitment forgery"
                             );
+                            return false;
                         }
                     }
                 }

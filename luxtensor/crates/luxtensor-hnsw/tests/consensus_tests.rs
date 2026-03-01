@@ -222,10 +222,10 @@ fn test_large_graph_determinism() {
     let block_hash = [201u8; 32];
 
     // Build two large graphs with smaller ef for speed
-    let mut graph1: HnswGraph<256> = HnswGraph::with_params(luxtensor_hnsw::ml(), 100);
+    let mut graph1: HnswGraph<256> = HnswGraph::with_params(luxtensor_hnsw::ml(), 100).unwrap();
     let mut rng1 = DeterministicRng::new(tx_hash, block_hash);
 
-    let mut graph2: HnswGraph<256> = HnswGraph::with_params(luxtensor_hnsw::ml(), 100);
+    let mut graph2: HnswGraph<256> = HnswGraph::with_params(luxtensor_hnsw::ml(), 100).unwrap();
     let mut rng2 = DeterministicRng::new(tx_hash, block_hash);
 
     // Insert 500 vectors
@@ -236,8 +236,8 @@ fn test_large_graph_determinism() {
             values[j] = ((i * 7 + j * 13) % 1000) as f32 / 1000.0 - 0.5;
         }
         let vector = FixedPointVector::from_f32_slice(&values).unwrap();
-        graph1.insert(vector.clone(), &mut rng1);
-        graph2.insert(vector, &mut rng2);
+        graph1.insert(vector.clone(), &mut rng1).unwrap();
+        graph2.insert(vector, &mut rng2).unwrap();
     }
 
     // Verify structures match

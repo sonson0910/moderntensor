@@ -5,6 +5,7 @@ use crate::error::NetworkError;
 use crate::eclipse_protection::{EclipseProtection, EclipseConfig};
 use crate::messages::{serialize_message, NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
 use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
+use crate::rate_limiter::{RateLimiter, RateLimiterConfig};
 use futures::StreamExt;
 use std::sync::atomic::AtomicU64;
 use libp2p::{
@@ -14,6 +15,7 @@ use libp2p::{
     mdns,
     swarm::SwarmEvent,
     Multiaddr, PeerId, Swarm,
+    connection_limits,
 };
 use luxtensor_core::block::Block;
 use luxtensor_core::transaction::Transaction;
@@ -24,10 +26,12 @@ use tracing::{debug, info, warn};
 /// Event from the P2P swarm
 #[derive(Debug)]
 pub enum SwarmP2PEvent {
-    /// New block received
-    NewBlock(Block),
-    /// New transaction received
-    NewTransaction(Transaction),
+    /// New block received. Carries the libp2p PeerId of the gossip source
+    /// so rate-limiting is keyed by a cryptographic identity the peer cannot
+    /// forge without generating a new keypair (Sybil cost).
+    NewBlock(Block, PeerId),
+    /// New transaction received. Same PeerId semantics.
+    NewTransaction(Transaction, PeerId),
     /// Peer connected
     PeerConnected(PeerId),
     /// Peer disconnected
@@ -82,10 +86,13 @@ pub struct SwarmP2PNode {
     peer_discovery: std::sync::Arc<PeerDiscovery>,
     /// 🔧 FIX: Eclipse protection to limit connections per subnet
     eclipse_protection: std::sync::Arc<EclipseProtection>,
+    /// 🔧 FIX F1: Token-bucket rate limiter for all gossip messages
+    rate_limiter: std::sync::Arc<RateLimiter>,
     /// Monotonic nonce to prevent gossipsub dedup of identical sync requests
     sync_nonce: AtomicU64,
-    /// Throttle: last time we responded to any sync request
-    last_sync_response: std::time::Instant,
+    /// Throttle: last time we responded to a sync request, **per peer**
+    /// 🔧 FIX F17: Per-peer instead of global to avoid starving legitimate requestors
+    sync_response_timestamps: std::collections::HashMap<PeerId, std::time::Instant>,
 }
 
 /// Maximum sync requests per peer per minute
@@ -97,9 +104,18 @@ const SYNC_RATE_LIMIT_WINDOW: std::time::Duration = std::time::Duration::from_se
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct BlockchainBehaviour {
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
+    /// 🔧 FIX F11: mDNS wrapped in `Toggle` so it can be truly disabled at
+    /// runtime. Previously the behaviour was always instantiated even when the
+    /// user asked for mDNS to be off, which still bound the multicast socket
+    /// and leaked discovery on mainnet/testnet where mDNS is inappropriate.
+    mdns: libp2p::swarm::behaviour::toggle::Toggle<mdns::tokio::Behaviour>,
     /// Kademlia DHT for distributed peer discovery
     kademlia: kad::Behaviour<MemoryStore>,
+    /// 🔧 FIX F6: Transport-level connection limits.
+    /// Rejects inbound connections *before* the Noise handshake completes,
+    /// reducing the impact of resource exhaustion attacks. The post-connection
+    /// eclipse check in `ConnectionEstablished` still applies as a second layer.
+    connection_limits: connection_limits::Behaviour,
 }
 
 impl SwarmP2PNode {
@@ -111,7 +127,7 @@ impl SwarmP2PNode {
         event_sender: mpsc::Sender<SwarmP2PEvent>,
     ) -> Result<(Self, mpsc::Sender<SwarmCommand>), NetworkError> {
         let keypair = Keypair::generate_ed25519();
-        Self::with_keypair(listen_port, event_sender, keypair, vec![], true).await
+        Self::with_keypair(listen_port, event_sender, keypair, vec![], true, 0).await
     }
 
     /// Create a new P2P swarm node with provided keypair for persistent identity
@@ -122,6 +138,7 @@ impl SwarmP2PNode {
     /// * `keypair` - Keypair for node identity (load from file for persistent ID)
     /// * `bootstrap_nodes` - List of bootstrap multiaddrs to connect to
     /// * `enable_mdns` - Whether to enable mDNS discovery
+    /// * `chain_id` - Chain ID for network-specific tuning (mainnet=8898)
     ///
     /// # Returns
     /// * Tuple of (SwarmP2PNode, command sender)
@@ -131,6 +148,7 @@ impl SwarmP2PNode {
         keypair: Keypair,
         bootstrap_nodes: Vec<String>,
         enable_mdns: bool,
+        chain_id: u32,
     ) -> Result<(Self, mpsc::Sender<SwarmCommand>), NetworkError> {
         let (command_tx, command_rx) = mpsc::channel(P2P_CHANNEL_CAPACITY);
         let local_peer_id = PeerId::from(keypair.public());
@@ -140,20 +158,24 @@ impl SwarmP2PNode {
         // Message ID function to deduplicate — cryptographic content-only hash
         // Uses keccak256 instead of DefaultHasher to prevent collision attacks
         // and ensure stability across Rust versions.
+        // 🔧 FIX F14: Use full 32-byte keccak256 hash for message ID.
+        // Previously truncated to 20 bytes, needlessly reducing collision
+        // resistance from 2^128 to 2^80 in a security-critical dedup context.
         let message_id_fn = |message: &gossipsub::Message| {
             let hash = luxtensor_crypto::keccak256(&message.data);
-            gossipsub::MessageId::from(hash[..20].to_vec())
+            gossipsub::MessageId::from(hash.to_vec())
         };
 
         let gossipsub_config = gossipsub::ConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(1))
             .validation_mode(ValidationMode::Strict)
             .message_id_fn(message_id_fn)
-            // 🔧 FIX: Lower mesh thresholds for small networks (2-5 nodes)
-            .mesh_n_low(1)           // Minimum peers in mesh (default: 4)
-            .mesh_n_high(6)          // Maximum peers in mesh (default: 12)
-            .mesh_n(2)               // Desired peers in mesh (default: 6)
-            .mesh_outbound_min(1)    // Minimum outbound peers (default: 2)
+            // 🔧 FIX: Mesh thresholds are chain-aware. Mainnet (chain_id 8898) uses
+            // production values for large networks; devnet/testnet uses relaxed values.
+            .mesh_n_low(if chain_id == 8898 { 4 } else { 1 })
+            .mesh_n_high(if chain_id == 8898 { 12 } else { 6 })
+            .mesh_n(if chain_id == 8898 { 6 } else { 2 })
+            .mesh_outbound_min(if chain_id == 8898 { 2 } else { 1 })
             // 🔧 FIX: Disable flood_publish — use mesh routing for O(log N) instead of O(N)
             .flood_publish(false)
             // 🔧 FIX: cap max message size to 4MB to prevent memory exhaustion
@@ -193,14 +215,28 @@ impl SwarmP2PNode {
             info!("  ✓ Gossipsub peer scoring enabled");
         }
 
-        // Create mDNS behaviour for local discovery
-        let mdns = mdns::tokio::Behaviour::new(
-            mdns::Config::default(),
-            local_peer_id,
-        ).map_err(|e| NetworkError::Connection(e.to_string()))?;
+        // 🔧 FIX F11: Only instantiate mDNS when explicitly enabled.
+        // On mainnet / testnet, mDNS broadcasts on the local LAN are both
+        // unnecessary and a privacy / security risk. Wrapping in Toggle
+        // avoids binding the multicast socket entirely when disabled.
+        let mdns_toggle = if enable_mdns {
+            let mdns_behaviour = mdns::tokio::Behaviour::new(
+                mdns::Config::default(),
+                local_peer_id,
+            ).map_err(|e| NetworkError::Connection(e.to_string()))?;
+            info!("📡 mDNS discovery enabled");
+            libp2p::swarm::behaviour::toggle::Toggle::from(Some(mdns_behaviour))
+        } else {
+            info!("🔇 mDNS discovery disabled");
+            libp2p::swarm::behaviour::toggle::Toggle::from(None)
+        };
 
         // Create Kademlia DHT for distributed peer discovery
-        let store = MemoryStore::new(local_peer_id);
+        // 🔧 FIX F9: Bound MemoryStore to prevent DHT flooding OOM
+        let mut store_config = kad::store::MemoryStoreConfig::default();
+        store_config.max_records = 65_536;
+        store_config.max_provided_keys = 1_024;
+        let store = MemoryStore::with_config(local_peer_id, store_config);
         let mut kademlia_config = kad::Config::default();
         kademlia_config.set_protocol_names(vec![
             libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")
@@ -222,9 +258,30 @@ impl SwarmP2PNode {
         }
 
         // Combine behaviours
-        let behaviour = BlockchainBehaviour { gossipsub, mdns, kademlia };
+        // 🔧 FIX F6: Configure connection limits to reject excess connections at the
+        // transport layer, before any Noise handshake or gossipsub exchange occurs.
+        let conn_limits = connection_limits::ConnectionLimits::default()
+            .with_max_pending_incoming(Some(64))
+            .with_max_pending_outgoing(Some(64))
+            .with_max_established_incoming(Some(128))
+            .with_max_established_outgoing(Some(128))
+            .with_max_established_per_peer(Some(2));
+
+        let behaviour = BlockchainBehaviour {
+            gossipsub,
+            mdns: mdns_toggle,
+            kademlia,
+            connection_limits: connection_limits::Behaviour::new(conn_limits),
+        };
 
         // Build swarm using the new API
+        // 📌 INFO F20: Currently TCP-only transport. For mainnet, consider adding
+        // QUIC transport via `.with_quic()` for:
+        //   - 0-RTT connection setup (lower latency)
+        //   - Built-in TLS 1.3 (eliminates separate Noise handshake)
+        //   - Multiplexed streams without head-of-line blocking
+        //   - Better NAT traversal characteristics
+        // Requires adding `quic` feature to libp2p in workspace Cargo.toml.
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
@@ -303,8 +360,17 @@ impl SwarmP2PNode {
         // Initialize peer discovery for auto-selecting nearest peers
         let peer_discovery = std::sync::Arc::new(PeerDiscovery::new(DiscoveryConfig::default()));
 
-        // 🔧 FIX: Initialize eclipse protection for subnet-based connection limiting
-        let eclipse_protection = std::sync::Arc::new(EclipseProtection::new(EclipseConfig::default()));
+        // 🔧 FIX: Use strict eclipse protection on mainnet (max 2 peers per /24 subnet)
+        // to prevent Sybil/eclipse attacks. Testnet uses relaxed defaults.
+        let eclipse_config = if chain_id == 8898 {
+            EclipseConfig::mainnet()
+        } else {
+            EclipseConfig::default()
+        };
+        let eclipse_protection = std::sync::Arc::new(EclipseProtection::new(eclipse_config));
+
+        // 🔧 FIX F1: Initialize rate limiter for all gossip messages
+        let rate_limiter = std::sync::Arc::new(RateLimiter::new(RateLimiterConfig::default()));
 
         Ok((Self {
             swarm,
@@ -316,8 +382,9 @@ impl SwarmP2PNode {
             sync_requests: std::collections::HashMap::new(),
             peer_discovery,
             eclipse_protection,
+            rate_limiter,
             sync_nonce: AtomicU64::new(0),
-            last_sync_response: std::time::Instant::now(),
+            sync_response_timestamps: std::collections::HashMap::new(),
         }, command_tx))
     }
 
@@ -548,17 +615,24 @@ impl SwarmP2PNode {
             return;
         }
 
+        // 🔧 FIX F1: Rate-limit ALL gossip messages via token-bucket before CPU-costly deser.
+        // Keyed by PeerId (cryptographic identity) — see Finding #2 note.
+        if !self.rate_limiter.check(&source.to_string()) {
+            warn!("🚫 Rate limiting peer {} — dropping gossip message", source);
+            return;
+        }
+
         // Deserialize message with size limit to prevent DoS
         match crate::messages::deserialize_message(&message.data) {
             Ok(NetworkMessage::NewBlock(block)) => {
                 debug!("📥 Received block #{} from peer {}", block.header.height, source);
-                if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
+                if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block, source)).is_err() {
                     warn!("⚠️ Event channel full, dropping NewBlock — node is falling behind");
                 }
             }
             Ok(NetworkMessage::NewTransaction(tx)) => {
                 info!("📥 SWARM: Received NewTransaction from peer {}", source);
-                if self.event_sender.try_send(SwarmP2PEvent::NewTransaction(tx)).is_err() {
+                if self.event_sender.try_send(SwarmP2PEvent::NewTransaction(tx, source)).is_err() {
                     warn!("⚠️ Event channel full, dropping NewTransaction");
                 }
             }
@@ -592,14 +666,18 @@ impl SwarmP2PNode {
                     debug!("⚠️ High sync request rate from peer {} ({} requests/min)",
                           source, entry.0);
                 }
-                // Throttle: only respond to sync requests every 5 seconds max
-                // This prevents O(N²) response storms when multiple peers request same range
-                let elapsed = now.duration_since(self.last_sync_response);
-                if elapsed < std::time::Duration::from_secs(5) {
-                    debug!("🔄 Throttling sync response (last response {}ms ago)", elapsed.as_millis());
-                    return;
+
+                // 🔧 FIX F17: Per-peer sync response throttle (was global, starving others)
+                let now_throttle = std::time::Instant::now();
+                let last = self.sync_response_timestamps.get(&source);
+                if let Some(ts) = last {
+                    if now_throttle.duration_since(*ts) < std::time::Duration::from_secs(5) {
+                        debug!("🔄 Throttling sync response to peer {} (last response {}ms ago)",
+                              source, now_throttle.duration_since(*ts).as_millis());
+                        return;
+                    }
                 }
-                self.last_sync_response = now;
+                self.sync_response_timestamps.insert(source, now_throttle);
 
                 debug!("🔄 Sync request from {} for blocks {}-{}", source, from_height, to_height);
                 if self.event_sender.try_send(SwarmP2PEvent::SyncRequest {
@@ -613,11 +691,64 @@ impl SwarmP2PNode {
             Ok(NetworkMessage::Blocks { blocks, nonce: _ }) => {
                 debug!("📥 Received {} blocks from sync", blocks.len());
                 for block in blocks.into_iter().take(50) {
-                    if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block)).is_err() {
+                    if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block, source)).is_err() {
                         debug!("⚠️ Event channel full, dropping sync block");
                         break;
                     }
                 }
+            }
+            // 🔧 FIX F7: Verify AITaskDispatch ECDSA signature before forwarding.
+            // The message spec says "Receivers MUST verify" but previously fell through
+            // to the catch-all with zero verification.
+            Ok(NetworkMessage::AITaskDispatch {
+                task_id, model_hash, input_hash, reward, deadline,
+                validator_signature, validator_address,
+            }) => {
+                // Validate signature size (ECDSA = 64-65 bytes, DER ≤ 73)
+                if validator_signature.len() > 73 {
+                    warn!("🚫 AITaskDispatch from {} has oversized signature ({} bytes), dropping",
+                          source, validator_signature.len());
+                    return;
+                }
+                if validator_signature.is_empty() {
+                    warn!("🚫 AITaskDispatch from {} has empty signature, dropping", source);
+                    return;
+                }
+
+                // Reconstruct the signed payload: (task_id || model_hash || input_hash || reward || deadline)
+                let mut signed_payload = Vec::with_capacity(32 + model_hash.len() + 32 + 16 + 8);
+                signed_payload.extend_from_slice(&task_id);
+                signed_payload.extend_from_slice(model_hash.as_bytes());
+                signed_payload.extend_from_slice(&input_hash);
+                signed_payload.extend_from_slice(&reward.to_le_bytes());
+                signed_payload.extend_from_slice(&deadline.to_le_bytes());
+                let payload_hash = luxtensor_crypto::keccak256(&signed_payload);
+
+                // Verify ECDSA signature using recover_address_strict (65-byte sig required)
+                // or recover_address (deprecated, accepts 64-byte with trial recovery)
+                #[allow(deprecated)]
+                let expected_addr: luxtensor_crypto::CryptoAddress = validator_address.into();
+                let sig_verified = if validator_signature.len() == 65 {
+                    luxtensor_crypto::recover_address_strict(&payload_hash, &validator_signature)
+                        .map(|recovered| recovered == expected_addr)
+                        .unwrap_or(false)
+                } else if validator_signature.len() == 64 {
+                    luxtensor_crypto::recover_address(&payload_hash, &validator_signature)
+                        .map(|recovered| recovered == expected_addr)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if !sig_verified {
+                    warn!("🚫 AITaskDispatch from {} has invalid signature (validator {:?}), dropping",
+                          source, &validator_address[..4]);
+                    return;
+                }
+
+                info!("✅ AITaskDispatch from {} verified (task 0x{}, reward={})",
+                      source, hex::encode(&task_id[..8]), reward);
+                // TODO: Forward to application layer event channel when AI task handling is implemented
             }
             Ok(_) => {
                 debug!("Received other message type");
@@ -658,33 +789,23 @@ impl SwarmP2PNode {
 
     /// Broadcast a transaction to the network.
     ///
-    /// Publishes to the dedicated transactions gossipsub topic. If no peers are subscribed
-    /// to the transactions topic, falls back to the blocks topic for maximum reachability.
+    /// Publishes to the dedicated transactions gossipsub topic.
+    /// 🔧 FIX F15: Removed fallback to blocks topic — it polluted block gossip
+    /// and degraded block propagation. If no peers subscribe to transactions,
+    /// the TX will be discovered later via sync.
     pub fn broadcast_transaction(&mut self, tx: &Transaction) -> Result<(), NetworkError> {
         let message = NetworkMessage::NewTransaction(tx.clone());
         let data = serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
 
-        // Try the dedicated transactions topic first
-        match self.swarm.behaviour_mut().gossipsub.publish(self.transactions_topic.clone(), data.clone()) {
+        match self.swarm.behaviour_mut().gossipsub.publish(self.transactions_topic.clone(), data) {
             Ok(_) => {
                 debug!("📡 TX broadcast via transactions topic");
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {
-                // Fallback: try blocks topic which typically has more mesh peers
-                debug!("No peers on transactions topic, falling back to blocks topic");
-                match self.swarm.behaviour_mut().gossipsub.publish(self.blocks_topic.clone(), data) {
-                    Ok(_) => {
-                        debug!("📡 TX broadcast via blocks topic (fallback)");
-                        Ok(())
-                    }
-                    Err(gossipsub::PublishError::InsufficientPeers) => {
-                        warn!("⚠️ No peers on any topic — TX NOT propagated");
-                        Ok(()) // Not fatal — peers will sync later
-                    }
-                    Err(e) => Err(NetworkError::PublishFailed(e.to_string())),
-                }
+                warn!("⚠️ No peers subscribed to transactions topic — TX NOT propagated (will sync later)");
+                Ok(()) // Not fatal — peers will sync later
             }
             Err(e) => {
                 Err(NetworkError::PublishFailed(e.to_string()))

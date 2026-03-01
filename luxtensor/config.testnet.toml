@@ -1,5 +1,11 @@
-# LuxTensor Testnet Configuration
+# ====================================================================
+# LuxTensor TESTNET Configuration
+# ====================================================================
+# This configuration is for the public testnet.
+# DO NOT use this for local development (see config.dev.toml)
+# or production deployments (see config.production.toml).
 # Chain ID: 9999 (testnet)
+# ====================================================================
 
 [node]
 name = "luxtensor-testnet"

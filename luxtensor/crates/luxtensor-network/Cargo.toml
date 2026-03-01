@@ -15,7 +15,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
-sha3 = "0.10"
+sha3 = { workspace = true }
 
 luxtensor-core = { path = "../luxtensor-core" }
 luxtensor-crypto = { path = "../luxtensor-crypto" }

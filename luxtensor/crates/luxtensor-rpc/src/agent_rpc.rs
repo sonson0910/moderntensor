@@ -3,7 +3,7 @@
 //! Provides endpoints to register, manage, and query AI agents that run
 //! autonomously on-chain via Token Bound Accounts (ERC-6551 inspired).
 
-use crate::helpers::parse_address;
+use crate::helpers::{parse_address, verify_caller_signature};
 use jsonrpc_core::{IoHandler, Params, Value};
 use luxtensor_contracts::{AgentRegistry, AgentTriggerConfig};
 use std::sync::Arc;
@@ -40,77 +40,87 @@ fn register_agent_register(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_register", move |params: Params| {
         let registry = registry.clone();
         async move {
-        let p: serde_json::Value = params.parse()?;
+            let p: serde_json::Value = params.parse()?;
 
-        let agent_id_hex = p
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
-        let owner_hex = p
-            .get("owner")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing owner"))?;
-        let wallet_hex = p
-            .get("wallet_address")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing wallet_address"))?;
-        let contract_hex = p
-            .get("contract_address")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing contract_address"))?;
-        let gas_deposit_hex = p
-            .get("gas_deposit")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0x0");
-        let block_interval = p
-            .get("block_interval")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        let agent_id = parse_32_bytes(agent_id_hex)?;
-        let owner = parse_address(owner_hex)?;
-        let wallet = parse_address(wallet_hex)?;
-        let contract = parse_address(contract_hex)?;
-        let gas_deposit =
-            u128::from_str_radix(gas_deposit_hex.trim_start_matches("0x"), 16).unwrap_or(0);
-
-        let trigger_config = AgentTriggerConfig {
-            block_interval,
-            gas_limit_per_trigger: p
-                .get("gas_limit")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(500_000),
-            trigger_calldata: p
-                .get("calldata")
+            let agent_id_hex = p
+                .get("agent_id")
                 .and_then(|v| v.as_str())
-                .map(|s| hex::decode(s.trim_start_matches("0x")).unwrap_or_default())
-                .unwrap_or_default(),
-            enabled: block_interval > 0,
-        };
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
+            let owner_hex = p
+                .get("owner")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing owner"))?;
+            let wallet_hex = p
+                .get("wallet_address")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing wallet_address"))?;
+            let contract_hex = p
+                .get("contract_address")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing contract_address"))?;
+            let gas_deposit_hex = p.get("gas_deposit").and_then(|v| v.as_str()).unwrap_or("0x0");
+            let block_interval = p.get("block_interval").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        // Use current time as block approximation (actual block comes from consensus)
-        let current_block = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 6; // rough block estimate
+            let agent_id = parse_32_bytes(agent_id_hex)?;
+            let owner = parse_address(owner_hex)?;
+            let wallet = parse_address(wallet_hex)?;
+            let contract = parse_address(contract_hex)?;
+            let gas_deposit =
+                u128::from_str_radix(gas_deposit_hex.trim_start_matches("0x"), 16).unwrap_or(0);
 
-        match registry.register_agent(
-            agent_id, owner, wallet, contract, trigger_config, gas_deposit, current_block,
-        ) {
-            Ok(()) => {
-                info!(
-                    "Agent registered via RPC: 0x{}",
-                    hex::encode(agent_id)
-                );
-                Ok(serde_json::json!({
-                    "success": true,
-                    "agent_id": format!("0x{}", hex::encode(agent_id)),
-                }))
+            // SECURITY FIX (Issue #8): Verify ECDSA signature to prove caller
+            // controls the owner address. Without this, anyone can register agents
+            // under any owner's identity.
+            let signature_hex = p.get("signature").and_then(|v| v.as_str()).ok_or_else(|| {
+                jsonrpc_core::Error::invalid_params(
+                "Missing 'signature': ECDSA signature over keccak256(agent_id || owner) required"
+            )
+            })?;
+            let recovery_id = p.get("recovery_id").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            let sign_message = format!("agent_register:{}{}", agent_id_hex, owner_hex);
+            verify_caller_signature(&owner, &sign_message, signature_hex, recovery_id)?;
+
+            let trigger_config = AgentTriggerConfig {
+                block_interval,
+                gas_limit_per_trigger: p
+                    .get("gas_limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(500_000),
+                trigger_calldata: p
+                    .get("calldata")
+                    .and_then(|v| v.as_str())
+                    .map(|s| hex::decode(s.trim_start_matches("0x")).unwrap_or_default())
+                    .unwrap_or_default(),
+                enabled: block_interval > 0,
+            };
+
+            // Use current time as block approximation (actual block comes from consensus)
+            let current_block = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                / 6; // rough block estimate
+
+            match registry.register_agent(
+                agent_id,
+                owner,
+                wallet,
+                contract,
+                trigger_config,
+                gas_deposit,
+                current_block,
+            ) {
+                Ok(()) => {
+                    info!("Agent registered via RPC: 0x{}", hex::encode(agent_id));
+                    Ok(serde_json::json!({
+                        "success": true,
+                        "agent_id": format!("0x{}", hex::encode(agent_id)),
+                    }))
+                }
+                Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
             }
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
         }
-    }});
+    });
 }
 
 // =============================================================================
@@ -123,28 +133,29 @@ fn register_agent_deregister(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_deregister", move |params: Params| {
         let registry = registry.clone();
         async move {
-        let p: serde_json::Value = params.parse()?;
+            let p: serde_json::Value = params.parse()?;
 
-        let agent_id_hex = p
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
-        let caller_hex = p
-            .get("caller")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing caller"))?;
+            let agent_id_hex = p
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
+            let caller_hex = p
+                .get("caller")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing caller"))?;
 
-        let agent_id = parse_32_bytes(agent_id_hex)?;
-        let caller = parse_address(caller_hex)?;
+            let agent_id = parse_32_bytes(agent_id_hex)?;
+            let caller = parse_address(caller_hex)?;
 
-        match registry.deregister_agent(&agent_id, &caller) {
-            Ok(removed) => Ok(serde_json::json!({
-                "success": true,
-                "refunded_gas_deposit": format!("0x{:x}", removed.gas_deposit),
-            })),
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            match registry.deregister_agent(&agent_id, &caller) {
+                Ok(removed) => Ok(serde_json::json!({
+                    "success": true,
+                    "refunded_gas_deposit": format!("0x{:x}", removed.gas_deposit),
+                })),
+                Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            }
         }
-    }});
+    });
 }
 
 // =============================================================================
@@ -157,29 +168,29 @@ fn register_agent_deposit_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_depositGas", move |params: Params| {
         let registry = registry.clone();
         async move {
-        let p: serde_json::Value = params.parse()?;
+            let p: serde_json::Value = params.parse()?;
 
-        let agent_id_hex = p
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
-        let amount_hex = p
-            .get("amount")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing amount"))?;
+            let agent_id_hex = p
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
+            let amount_hex = p
+                .get("amount")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing amount"))?;
 
-        let agent_id = parse_32_bytes(agent_id_hex)?;
-        let amount =
-            u128::from_str_radix(amount_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+            let agent_id = parse_32_bytes(agent_id_hex)?;
+            let amount = u128::from_str_radix(amount_hex.trim_start_matches("0x"), 16).unwrap_or(0);
 
-        match registry.deposit_gas(&agent_id, amount) {
-            Ok(new_balance) => Ok(serde_json::json!({
-                "success": true,
-                "new_balance": format!("0x{:x}", new_balance),
-            })),
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            match registry.deposit_gas(&agent_id, amount) {
+                Ok(new_balance) => Ok(serde_json::json!({
+                    "success": true,
+                    "new_balance": format!("0x{:x}", new_balance),
+                })),
+                Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            }
         }
-    }});
+    });
 }
 
 // =============================================================================
@@ -192,34 +203,34 @@ fn register_agent_withdraw_gas(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_withdrawGas", move |params: Params| {
         let registry = registry.clone();
         async move {
-        let p: serde_json::Value = params.parse()?;
+            let p: serde_json::Value = params.parse()?;
 
-        let agent_id_hex = p
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
-        let caller_hex = p
-            .get("caller")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing caller"))?;
-        let amount_hex = p
-            .get("amount")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing amount"))?;
+            let agent_id_hex = p
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing agent_id"))?;
+            let caller_hex = p
+                .get("caller")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing caller"))?;
+            let amount_hex = p
+                .get("amount")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| jsonrpc_core::Error::invalid_params("Missing amount"))?;
 
-        let agent_id = parse_32_bytes(agent_id_hex)?;
-        let caller = parse_address(caller_hex)?;
-        let amount =
-            u128::from_str_radix(amount_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+            let agent_id = parse_32_bytes(agent_id_hex)?;
+            let caller = parse_address(caller_hex)?;
+            let amount = u128::from_str_radix(amount_hex.trim_start_matches("0x"), 16).unwrap_or(0);
 
-        match registry.withdraw_gas(&agent_id, amount, &caller) {
-            Ok(new_balance) => Ok(serde_json::json!({
-                "success": true,
-                "new_balance": format!("0x{:x}", new_balance),
-            })),
-            Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            match registry.withdraw_gas(&agent_id, amount, &caller) {
+                Ok(new_balance) => Ok(serde_json::json!({
+                    "success": true,
+                    "new_balance": format!("0x{:x}", new_balance),
+                })),
+                Err(e) => Err(jsonrpc_core::Error::invalid_params(e.to_string())),
+            }
         }
-    }});
+    });
 }
 
 // =============================================================================
@@ -232,18 +243,19 @@ fn register_agent_get_info(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_getInfo", move |params: Params| {
         let registry = registry.clone();
         async move {
-        let parsed: Vec<String> = params.parse()?;
-        if parsed.is_empty() {
-            return Err(jsonrpc_core::Error::invalid_params("Missing agent_id"));
-        }
+            let parsed: Vec<String> = params.parse()?;
+            if parsed.is_empty() {
+                return Err(jsonrpc_core::Error::invalid_params("Missing agent_id"));
+            }
 
-        let agent_id = parse_32_bytes(&parsed[0])?;
+            let agent_id = parse_32_bytes(&parsed[0])?;
 
-        match registry.get_agent(&agent_id) {
-            Some(agent) => Ok(agent_to_json(&agent)),
-            None => Ok(Value::Null),
+            match registry.get_agent(&agent_id) {
+                Some(agent) => Ok(agent_to_json(&agent)),
+                None => Ok(Value::Null),
+            }
         }
-    }});
+    });
 }
 
 // =============================================================================
@@ -256,19 +268,18 @@ fn register_agent_list_all(ctx: &AgentRpcContext, io: &mut IoHandler) {
     io.add_method("agent_listAll", move |_params: Params| {
         let registry = registry.clone();
         async move {
-        let agents = registry.list_agents();
-        let total = agents.len();
+            let agents = registry.list_agents();
+            let total = agents.len();
 
-        let agent_list: Vec<serde_json::Value> = agents
-            .iter()
-            .map(|a| agent_to_json(a))
-            .collect();
+            let agent_list: Vec<serde_json::Value> =
+                agents.iter().map(|a| agent_to_json(a)).collect();
 
-        Ok(serde_json::json!({
-            "total": total,
-            "agents": agent_list,
-        }))
-    }});
+            Ok(serde_json::json!({
+                "total": total,
+                "agents": agent_list,
+            }))
+        }
+    });
 }
 
 // =============================================================================

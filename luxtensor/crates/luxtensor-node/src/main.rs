@@ -2,31 +2,33 @@
 // Note: dead_code/unused warnings are enabled to catch real issues.
 // If specific items are intentionally unused, use #[allow(dead_code)] per-item.
 
-mod config;
-mod service;
 mod block_production;
+mod config;
 mod epoch_processing;
-mod service_utils;
-mod startup;
-mod mempool;
 mod executor;
 mod genesis_config;
-mod swarm_broadcaster;
-mod health;
-mod metrics;
 mod graceful_shutdown;
+mod health;
+mod mempool;
+mod metrics;
+mod service;
+mod service_utils;
+mod startup;
+mod swarm_broadcaster;
 pub mod task_dispatcher;
 
 mod p2p_handler;
 
 // Legacy modules — only compiled with `legacy` feature flag
 #[cfg(feature = "legacy")]
-mod shutdown;
-#[cfg(feature = "legacy")]
 pub mod root_subnet;
+#[cfg(feature = "legacy")]
+mod shutdown;
 
-pub use genesis_config::{GenesisConfig, GenesisAccount, GenesisError};
-pub use task_dispatcher::{TaskDispatcher, DispatcherConfig, MinerInfo, TaskAssignment, TaskResult, DispatchService};
+pub use genesis_config::{GenesisAccount, GenesisConfig, GenesisError};
+pub use task_dispatcher::{
+    DispatchService, DispatcherConfig, MinerInfo, TaskAssignment, TaskDispatcher, TaskResult,
+};
 
 // ── Performance: jemalloc allocator ──────────────────────────────────
 // jemalloc significantly reduces allocation contention under high
@@ -43,7 +45,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::Config;
 use service::NodeService;
-use tracing::info;
 use tracing_subscriber;
 
 #[derive(Parser)]
@@ -111,7 +112,8 @@ fn show_version() {
     println!("🦀 LuxTensor Node");
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
     println!("Build: {}", env!("CARGO_PKG_NAME"));
-    println!("Rust: {}", env!("CARGO_PKG_RUST_VERSION"));
+    // M3 FIX: Use option_env! to avoid compile-time panic if rust-version is unset in Cargo.toml
+    println!("Rust: {}", option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown"));
 }
 
 /// Start the node
@@ -120,7 +122,9 @@ async fn start_node(config_path: &str) -> Result<()> {
     let config = if std::path::Path::new(config_path).exists() {
         Config::from_file(config_path)?
     } else {
-        info!("Configuration file not found, using defaults");
+        // M4 FIX: Use eprintln! instead of info! since tracing isn't initialized yet.
+        // info!() calls before init_logging() produce no output.
+        eprintln!("Configuration file not found, using defaults");
         Config::default()
     };
 
@@ -147,10 +151,7 @@ fn init_logging(config: &Config) -> Result<()> {
 
     // Note: JSON formatting requires additional features
     // For now, use standard formatting
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(false)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(env_filter).with_target(false).init();
 
     Ok(())
 }

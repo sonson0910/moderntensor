@@ -6,11 +6,11 @@
 //   2. Verify Merkle proofs against a trusted state root.
 //   3. Perform header sync in ranges from full-node peers.
 
-use std::collections::HashMap;
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use luxtensor_core::block::BlockHeader;
 use luxtensor_core::types::Hash;
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 // ─── Error ───────────────────────────────────────────────────────────
 
@@ -40,9 +40,85 @@ pub enum LightClientError {
 
     #[error("no trusted header available — bootstrap required")]
     NotBootstrapped,
+
+    #[error("validator {0} is not in the trusted validator set at height {1}")]
+    UntrustedValidator(String, u64),
+
+    #[error("invalid validator signature at height {0}")]
+    InvalidValidatorSignature(u64),
 }
 
 pub type Result<T> = std::result::Result<T, LightClientError>;
+
+// ─── Validator Verification (FIX F4) ────────────────────────────────
+
+/// 🔧 FIX F4: Trait for verifying block proposer signatures.
+///
+/// Without this, a light client blindly trusts any header whose parent hash
+/// matches — an attacker can forge an entire fake header chain after obtaining
+/// a single trusted header. By plugging in a `ValidatorVerifier`, the light
+/// client ensures each header was signed by an authorised validator.
+pub trait ValidatorVerifier: Send + Sync {
+    /// Return `true` if `validator` (32-byte public key / identifier) is
+    /// authorised to propose blocks at `height`.
+    fn is_valid_validator(&self, validator: &[u8; 32], height: u64) -> bool;
+
+    /// Verify the ECDSA signature on `header_hash` using `signature` and
+    /// the 32-byte `validator` identifier. Returns `true` on success.
+    fn verify_block_signature(
+        &self,
+        header_hash: &Hash,
+        signature: &[u8],
+        validator: &[u8; 32],
+    ) -> bool;
+}
+
+/// A simple in-memory validator set for use outside of full-node contexts.
+///
+/// Stores a `HashSet<[u8; 32]>` of authorised validators. Signature
+/// verification delegates to `luxtensor_crypto::verify_signature`.
+pub struct SimpleValidatorSet {
+    validators: RwLock<HashSet<[u8; 32]>>,
+}
+
+impl SimpleValidatorSet {
+    /// Create a new validator set from a list of 32-byte validator public keys.
+    pub fn new(validators: Vec<[u8; 32]>) -> Self {
+        Self { validators: RwLock::new(validators.into_iter().collect()) }
+    }
+
+    /// Add a validator.
+    pub fn add_validator(&self, validator: [u8; 32]) {
+        self.validators.write().insert(validator);
+    }
+
+    /// Remove a validator.
+    pub fn remove_validator(&self, validator: &[u8; 32]) {
+        self.validators.write().remove(validator);
+    }
+}
+
+impl ValidatorVerifier for SimpleValidatorSet {
+    fn is_valid_validator(&self, validator: &[u8; 32], _height: u64) -> bool {
+        self.validators.read().contains(validator)
+    }
+
+    fn verify_block_signature(
+        &self,
+        header_hash: &Hash,
+        signature: &[u8],
+        validator: &[u8; 32],
+    ) -> bool {
+        if signature.len() != 64 {
+            return false;
+        }
+        let sig: [u8; 64] = match signature.try_into() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        luxtensor_crypto::signature::verify_signature(header_hash, &sig, validator).unwrap_or(false)
+    }
+}
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -79,11 +155,7 @@ pub struct LightClientConfig {
 
 impl Default for LightClientConfig {
     fn default() -> Self {
-        Self {
-            max_cached_headers: 10_000,
-            max_sync_range: 1_000,
-            min_confirmations: 6,
-        }
+        Self { max_cached_headers: 10_000, max_sync_range: 1_000, min_confirmations: 6 }
     }
 }
 
@@ -109,6 +181,10 @@ pub struct LightClientState {
     latest_height: RwLock<u64>,
     /// Known chain tip reported by peers.
     chain_tip: RwLock<u64>,
+    /// 🔧 FIX F4: Optional validator verifier for PoS signature checks.
+    /// When `Some`, every incoming header must be signed by a validator in
+    /// the set. When `None`, only structural checks are performed (legacy).
+    validator_verifier: Option<std::sync::Arc<dyn ValidatorVerifier>>,
 }
 
 impl LightClientState {
@@ -118,6 +194,21 @@ impl LightClientState {
             headers: RwLock::new(HashMap::new()),
             latest_height: RwLock::new(0),
             chain_tip: RwLock::new(0),
+            validator_verifier: None,
+        }
+    }
+
+    /// Create a light client with validator verification enabled (FIX F4).
+    pub fn with_validator_verifier(
+        config: LightClientConfig,
+        verifier: std::sync::Arc<dyn ValidatorVerifier>,
+    ) -> Self {
+        Self {
+            config,
+            headers: RwLock::new(HashMap::new()),
+            latest_height: RwLock::new(0),
+            chain_tip: RwLock::new(0),
+            validator_verifier: Some(verifier),
         }
     }
 
@@ -125,10 +216,7 @@ impl LightClientState {
     pub fn bootstrap(&self, header: BlockHeader) -> Result<()> {
         let hash = header.hash();
         let height = header.height;
-        let th = TrustedHeader {
-            header,
-            header_hash: hash,
-        };
+        let th = TrustedHeader { header, header_hash: hash };
         let mut headers = self.headers.write();
         headers.insert(height, th);
         *self.latest_height.write() = height;
@@ -141,6 +229,8 @@ impl LightClientState {
     /// 1. Height is exactly `latest + 1`.
     /// 2. `previous_hash` matches the hash of the latest trusted header.
     /// 3. Basic header validation (via `BlockHeader::validate()`).
+    /// 4. 🔧 FIX F4: Validator membership + ECDSA signature verification
+    ///    (when a `ValidatorVerifier` is configured).
     pub fn verify_and_append(&self, header: BlockHeader) -> Result<()> {
         let latest = *self.latest_height.read();
         if latest == 0 && self.headers.read().is_empty() {
@@ -158,9 +248,7 @@ impl LightClientState {
         // Verify parent link
         {
             let headers = self.headers.read();
-            let parent = headers
-                .get(&latest)
-                .ok_or(LightClientError::HeaderNotFound(latest))?;
+            let parent = headers.get(&latest).ok_or(LightClientError::HeaderNotFound(latest))?;
             if header.previous_hash != parent.header_hash {
                 return Err(LightClientError::ParentHashMismatch(header.height));
             }
@@ -171,12 +259,26 @@ impl LightClientState {
             return Err(LightClientError::InvalidHeader(header.height, e.to_string()));
         }
 
+        // 🔧 FIX F4: Verify validator membership and signature when configured.
+        // Without this, a light client accepts any structurally-valid header chain,
+        // allowing an attacker to forge blocks and trick the client.
+        if let Some(ref verifier) = self.validator_verifier {
+            if !verifier.is_valid_validator(&header.validator, header.height) {
+                return Err(LightClientError::UntrustedValidator(
+                    hex::encode(header.validator),
+                    header.height,
+                ));
+            }
+            let header_hash = header.hash();
+            if !verifier.verify_block_signature(&header_hash, &header.signature, &header.validator)
+            {
+                return Err(LightClientError::InvalidValidatorSignature(header.height));
+            }
+        }
+
         let hash = header.hash();
         let height = header.height;
-        let th = TrustedHeader {
-            header,
-            header_hash: hash,
-        };
+        let th = TrustedHeader { header, header_hash: hash };
 
         let mut headers = self.headers.write();
         headers.insert(height, th);
@@ -222,10 +324,7 @@ impl LightClientState {
         if tip == 0 || latest + self.config.min_confirmations >= tip {
             SyncStatus::Synced { height: latest }
         } else {
-            SyncStatus::Syncing {
-                trusted_height: latest,
-                chain_tip: tip,
-            }
+            SyncStatus::Syncing { trusted_height: latest, chain_tip: tip }
         }
     }
 
@@ -243,15 +342,9 @@ impl LightClientState {
     ///
     /// The proof is verified against the state root of the header at
     /// `at_height`.
-    pub fn verify_merkle_proof(
-        &self,
-        proof: &MerkleProof,
-        at_height: u64,
-    ) -> Result<bool> {
+    pub fn verify_merkle_proof(&self, proof: &MerkleProof, at_height: u64) -> Result<bool> {
         let headers = self.headers.read();
-        let th = headers
-            .get(&at_height)
-            .ok_or(LightClientError::HeaderNotFound(at_height))?;
+        let th = headers.get(&at_height).ok_or(LightClientError::HeaderNotFound(at_height))?;
 
         let computed_root = Self::compute_merkle_root(proof);
         if computed_root != th.header.state_root {

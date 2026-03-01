@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
+use rocksdb::DB;
 use tracing::{info, warn, error};
 use sha2::{Sha256, Digest};
 
@@ -75,7 +76,21 @@ impl DbMaintenance {
         }
     }
 
-    /// Create a backup of the database
+    /// Create a backup of the database directory.
+    ///
+    /// # Security Warning (H-3)
+    /// This method uses raw file copy (`copy_dir_recursive`) while the RocksDB
+    /// database may still be open and writing. This can produce **corrupt backups**
+    /// because RocksDB uses WAL (Write-Ahead Log) and SST files that may be
+    /// mid-write during the copy.
+    ///
+    /// For production environments, use [`create_consistent_backup`] instead,
+    /// which uses the RocksDB `Checkpoint` API to create a consistent
+    /// point-in-time snapshot without requiring the database to be closed.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Raw file copy can produce corrupt backups. Use create_consistent_backup() instead."
+    )]
     pub fn create_backup(&self, label: &str) -> io::Result<PathBuf> {
         // Ensure backup directory exists
         fs::create_dir_all(&self.backup_config.backup_dir)?;
@@ -236,6 +251,56 @@ impl DbMaintenance {
         }
 
         Ok(())
+    }
+
+    /// Create a **consistent** backup using the RocksDB Checkpoint API.
+    ///
+    /// SECURITY (H-3): Unlike `create_backup` (which does a raw file copy),
+    /// this method creates a point-in-time consistent snapshot via hard-links
+    /// (or copies on file systems that don't support hard-links). The snapshot
+    /// is safe to take while the database is open and actively serving writes.
+    ///
+    /// # Arguments
+    /// * `db` — A reference to the open RocksDB instance.
+    /// * `label` — A human-readable label appended to the backup directory name.
+    ///
+    /// # Returns
+    /// The path to the created backup directory.
+    pub fn create_consistent_backup(&self, db: &DB, label: &str) -> io::Result<PathBuf> {
+        // Ensure backup directory exists
+        fs::create_dir_all(&self.backup_config.backup_dir)?;
+
+        // Generate backup filename with timestamp
+        let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                warn!("System clock before UNIX epoch: {}, using 0", e);
+                0
+            }
+        };
+
+        let backup_name = format!("backup_{}_{}", label, timestamp);
+        let backup_path = self.backup_config.backup_dir.join(&backup_name);
+
+        info!("💾 Creating consistent backup (Checkpoint API): {:?}", backup_path);
+
+        // Use RocksDB Checkpoint API for a consistent point-in-time snapshot
+        let checkpoint = rocksdb::checkpoint::Checkpoint::new(db)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Checkpoint::new failed: {}", e)))?;
+
+        checkpoint.create_checkpoint(&backup_path)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("create_checkpoint failed: {}", e)))?;
+
+        info!("✅ Consistent backup created: {:?}", backup_path);
+
+        // Write checksum file
+        let checksum = self.compute_directory_checksum(&backup_path)?;
+        fs::write(backup_path.join("CHECKSUM"), &checksum)?;
+
+        // Cleanup old backups
+        self.cleanup_old_backups()?;
+
+        Ok(backup_path)
     }
 
     // Helper: Get directory size

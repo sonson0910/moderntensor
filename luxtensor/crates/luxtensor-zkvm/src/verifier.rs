@@ -40,8 +40,8 @@ impl Default for VerifierConfig {
             allow_dev_proofs: false,
             require_groth16: false,
             max_proof_age_seconds: 0,
-            max_seal_size_bytes: 2 * 1024 * 1024,  // 2 MB — realistic STARK proof upper bound
-            min_seal_size_bytes: 16,               // minimum meaningful proof
+            max_seal_size_bytes: 2 * 1024 * 1024, // 2 MB — realistic STARK proof upper bound
+            min_seal_size_bytes: 16,              // minimum meaningful proof
             replay_protection: true,
             replay_cache_size: 100_000,
         }
@@ -105,8 +105,15 @@ pub struct ZkVerifier {
     success_count: std::sync::atomic::AtomicU64,
     /// Failed verifications
     failure_count: std::sync::atomic::AtomicU64,
-    /// Proof hashes seen (replay protection)
-    seen_proofs: parking_lot::RwLock<std::collections::HashSet<Hash>>,
+    /// Proof hashes seen (replay protection).
+    ///
+    /// # Limitations
+    /// - In-memory only: lost on restart. Persistent replay protection requires
+    ///   a durable store (e.g., RocksDB or embedded SQLite).
+    /// - BTreeSet eviction removes entries by hash order (arbitrary), not FIFO.
+    ///   This means recently-seen proofs may be evicted while older ones remain.
+    ///   TODO: Replace with LRU cache or time-indexed structure for proper eviction.
+    seen_proofs: parking_lot::RwLock<std::collections::BTreeSet<Hash>>,
 }
 
 impl ZkVerifier {
@@ -124,7 +131,7 @@ impl ZkVerifier {
             verification_count: std::sync::atomic::AtomicU64::new(0),
             success_count: std::sync::atomic::AtomicU64::new(0),
             failure_count: std::sync::atomic::AtomicU64::new(0),
-            seen_proofs: parking_lot::RwLock::new(std::collections::HashSet::new()),
+            seen_proofs: parking_lot::RwLock::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -365,21 +372,17 @@ impl ZkVerifier {
         receipt: &ProofReceipt,
         start: Instant,
     ) -> Result<VerificationResult> {
-        use risc0_zkvm::Receipt;
         use crate::ZkVmError;
+        use risc0_zkvm::Receipt;
 
         // Deserialize the receipt from the seal bytes
         let inner: risc0_zkvm::InnerReceipt =
             bincode::deserialize(&receipt.proof.seal).map_err(|e| {
-                ZkVmError::VerificationFailed(format!(
-                    "Failed to deserialize STARK proof: {}", e
-                ))
+                ZkVmError::VerificationFailed(format!("Failed to deserialize STARK proof: {}", e))
             })?;
 
-        let risc0_receipt = Receipt {
-            inner,
-            journal: risc0_zkvm::Journal::new(receipt.journal.clone()),
-        };
+        let risc0_receipt =
+            Receipt { inner, journal: risc0_zkvm::Journal::new(receipt.journal.clone()) };
 
         // Verify the receipt against the expected image ID.
         // Receipt::verify takes impl Into<Digest> where Digest is [u32; 8].
@@ -393,12 +396,10 @@ impl ZkVerifier {
                     start.elapsed().as_micros() as u64,
                 ))
             }
-            Err(e) => {
-                Ok(VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("STARK verification failed: {}", e),
-                ))
-            }
+            Err(e) => Ok(VerificationResult::invalid(
+                receipt.image_id,
+                format!("STARK verification failed: {}", e),
+            )),
         }
     }
 
@@ -451,14 +452,12 @@ impl ZkVerifier {
         receipt: &ProofReceipt,
         start: Instant,
     ) -> Result<VerificationResult> {
-        use risc0_groth16::Groth16Receipt;
         use crate::ZkVmError;
+        use risc0_groth16::Groth16Receipt;
 
         let groth16_receipt: Groth16Receipt =
             bincode::deserialize(&receipt.proof.seal).map_err(|e| {
-                ZkVmError::VerificationFailed(format!(
-                    "Failed to deserialize Groth16 proof: {}", e
-                ))
+                ZkVmError::VerificationFailed(format!("Failed to deserialize Groth16 proof: {}", e))
             })?;
 
         match groth16_receipt.verify(&receipt.journal, receipt.image_id.0) {
@@ -470,12 +469,10 @@ impl ZkVerifier {
                     start.elapsed().as_micros() as u64,
                 ))
             }
-            Err(e) => {
-                Ok(VerificationResult::invalid(
-                    receipt.image_id,
-                    format!("Groth16 verification failed: {}", e),
-                ))
-            }
+            Err(e) => Ok(VerificationResult::invalid(
+                receipt.image_id,
+                format!("Groth16 verification failed: {}", e),
+            )),
         }
     }
 

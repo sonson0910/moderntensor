@@ -49,6 +49,10 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
     /// @notice Trainer reward claims
     mapping(address => mapping(uint256 => uint256)) public trainerClaimedRounds;
 
+    /// @notice Track active job participation: trainer => active job count
+    /// @dev SECURITY (H-8): Prevents unstaking during active job participation
+    mapping(address => uint256) public activeJobCount;
+
     // ==================== EVENTS ====================
 
     event Staked(address indexed trainer, uint256 amount);
@@ -65,7 +69,10 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
     );
     event Slashed(address indexed trainer, uint256 amount, string reason);
     event InsurancePayout(address indexed recipient, uint256 amount);
-    event AggregatorUpdated(address indexed oldAggregator, address indexed newAggregator);
+    event AggregatorUpdated(
+        address indexed oldAggregator,
+        address indexed newAggregator
+    );
     event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
     event SlashPercentageUpdated(uint256 oldPercentage, uint256 newPercentage);
 
@@ -112,7 +119,11 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
     function unstake(uint256 amount) external nonReentrant {
         if (stakes[msg.sender] < amount) revert InsufficientBalance();
 
-        // TODO: Check if trainer is in active job
+        // SECURITY (H-8): Prevent unstaking during active job participation
+        require(
+            activeJobCount[msg.sender] == 0,
+            "Cannot unstake during active job"
+        );
 
         stakes[msg.sender] -= amount;
         mdtToken.safeTransfer(msg.sender, amount);
@@ -189,6 +200,22 @@ contract TrainingEscrow is Ownable, ReentrancyGuard {
         insuranceFund += slashAmount;
 
         emit Slashed(trainer, slashAmount, reason);
+    }
+
+    // ==================== ACTIVE JOB TRACKING ====================
+
+    /// @notice Mark trainer as active in a job (called by aggregator)
+    /// @dev SECURITY (H-8): Tracks active job participation
+    function markTrainerActive(address trainer) external onlyAggregator {
+        activeJobCount[trainer]++;
+    }
+
+    /// @notice Mark trainer as inactive from a job (called by aggregator)
+    /// @dev SECURITY (H-8): Tracks active job participation
+    function markTrainerInactive(address trainer) external onlyAggregator {
+        if (activeJobCount[trainer] > 0) {
+            activeJobCount[trainer]--;
+        }
     }
 
     // ==================== ADMIN ====================

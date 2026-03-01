@@ -36,6 +36,7 @@ luxtensor-contracts = { path = "../luxtensor-contracts" }
 luxtensor-oracle = { path = "../luxtensor-oracle" }
 luxtensor-zkvm = { path = "../luxtensor-zkvm" }
 rayon = { workspace = true }
+sysinfo = "0.32"
 
 # jemalloc for high-performance concurrent allocation (Linux/macOS only)
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

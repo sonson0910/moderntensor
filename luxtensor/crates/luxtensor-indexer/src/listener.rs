@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 /// Block listener that subscribes to new blocks via WebSocket
 pub struct BlockListener {
@@ -86,7 +86,8 @@ impl BlockListener {
     }
 
     async fn listen_loop(&self) -> Result<()> {
-        // Connect to WebSocket
+        // SECURITY (L-3): WebSocket connection is unauthenticated.
+        // If the upstream node requires auth, add token/header support here.
         let (ws_stream, _) = connect_async(&self.ws_url).await?;
         let (mut write, mut read) = ws_stream.split();
 
@@ -101,8 +102,7 @@ impl BlockListener {
         };
 
         let request_json = serde_json::to_string(&subscribe_request)?;
-        write.send(Message::Text(request_json)).await
-            .map_err(|e| IndexerError::WebSocket(e))?;
+        write.send(Message::Text(request_json)).await.map_err(|e| IndexerError::WebSocket(e))?;
 
         info!("Subscribed to newBlocks");
 
@@ -116,7 +116,9 @@ impl BlockListener {
                     self.handle_message(&text).await?;
                 }
                 Ok(Message::Ping(data)) => {
-                    write.send(Message::Pong(data)).await
+                    write
+                        .send(Message::Pong(data))
+                        .await
                         .map_err(|e| IndexerError::WebSocket(e))?;
                 }
                 Ok(Message::Close(_)) => {
@@ -157,7 +159,8 @@ impl BlockListener {
     }
 
     async fn handle_block_event(&self, data: &serde_json::Value) -> Result<()> {
-        let block_number = data.get("number")
+        let block_number = data
+            .get("number")
             .and_then(|n| n.as_str())
             .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
 
@@ -165,26 +168,26 @@ impl BlockListener {
         let block_number = match block_number {
             Some(n) if n >= 0 => n,
             _ => {
-                warn!("Skipping block event with invalid/missing block number: {:?}", data.get("number"));
+                warn!(
+                    "Skipping block event with invalid/missing block number: {:?}",
+                    data.get("number")
+                );
                 return Ok(());
             }
         };
 
-        let block_hash = data.get("hash")
-            .and_then(|h| h.as_str())
-            .unwrap_or("")
-            .to_string();
+        let block_hash = data.get("hash").and_then(|h| h.as_str()).unwrap_or("").to_string();
 
-        let parent_hash = data.get("parentHash")
-            .and_then(|h| h.as_str())
-            .map(|s| s.to_string());
+        let parent_hash = data.get("parentHash").and_then(|h| h.as_str()).map(|s| s.to_string());
 
-        let timestamp = data.get("timestamp")
+        let timestamp = data
+            .get("timestamp")
             .and_then(|t| t.as_str())
             .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
             .unwrap_or(0);
 
-        let tx_count = data.get("transactions")
+        let tx_count = data
+            .get("transactions")
             .and_then(|t| t.as_array())
             .map(|a| a.len() as i32)
             .unwrap_or(0);

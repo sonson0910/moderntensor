@@ -50,6 +50,12 @@ const MAX_INPUT_DATA_LEN: u32 = 10 * 1024 * 1024;
 fn main() {
     // Read and validate model hash
     let model_hash_len: u32 = env::read();
+    // SECURITY (GUEST-H2): Reject zero-length model hashes — a commitment over
+    // no model identity is meaningless and could allow trivial proof forgery.
+    assert!(
+        model_hash_len > 0,
+        "model_hash_len must be > 0",
+    );
     assert!(
         model_hash_len <= MAX_MODEL_HASH_LEN,
         "model_hash_len exceeds maximum ({} > {})",
@@ -64,6 +70,12 @@ fn main() {
 
     // Read and validate input data
     let input_data_len: u32 = env::read();
+    // SECURITY (GUEST-H3): Reject zero-length input data — an inference over
+    // empty input is undefined and the commitment would be model-hash-only.
+    assert!(
+        input_data_len > 0,
+        "input_data_len must be > 0",
+    );
     assert!(
         input_data_len <= MAX_INPUT_DATA_LEN,
         "input_data_len exceeds maximum ({} > {})",
@@ -76,10 +88,19 @@ fn main() {
         buf
     };
 
-    // Compute commitment: SHA-256(model_hash || input_data)
-    // Uses risc0's built-in SHA-256 (hardware accelerated in zkVM)
-    let mut combined = alloc::vec::Vec::with_capacity(model_hash.len() + input_data.len());
+    // SECURITY (GUEST-M6): Domain-separated commitment with length prefixes.
+    // Plain `SHA-256(model_hash || input_data)` is ambiguous: different
+    // (model_hash, input_data) pairs can produce the same concatenation.
+    // By prefixing each field with its 4-byte big-endian length, the
+    // hash input is uniquely decodable.
+    //
+    // Format: SHA-256(model_hash_len_be4 || model_hash || input_data_len_be4 || input_data)
+    let mut combined = alloc::vec::Vec::with_capacity(
+        4 + model_hash.len() + 4 + input_data.len()
+    );
+    combined.extend_from_slice(&model_hash_len.to_be_bytes());
     combined.extend_from_slice(&model_hash);
+    combined.extend_from_slice(&input_data_len.to_be_bytes());
     combined.extend_from_slice(&input_data);
 
     let commitment = risc0_zkvm::sha::Impl::hash_bytes(&combined);

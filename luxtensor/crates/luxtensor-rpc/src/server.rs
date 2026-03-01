@@ -467,6 +467,9 @@ impl RpcServer {
         system_rpc::register_monitoring_methods(&system_ctx, io);
 
         // ── Modular handlers (with DB persistence) ──
+        // Server-scoped locked stakes map (replaces global lazy_static singleton)
+        let locked_stakes: Arc<parking_lot::RwLock<std::collections::HashMap<[u8; 20], (u128, u64, u64)>>> =
+            Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new()));
         register_staking_handlers(
             io,
             self.validators.clone(),
@@ -475,6 +478,7 @@ impl RpcServer {
             self.unified_state.clone(),
             self.metagraph.clone(),
             self.mempool.clone(),
+            locked_stakes,
         );
         register_subnet_handlers(io, self.subnets.clone(), self.db.clone(), self.metagraph.clone(), self.mempool.clone());
         register_neuron_handlers(

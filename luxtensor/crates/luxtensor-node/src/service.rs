@@ -509,7 +509,9 @@ impl NodeService {
             }
         }
 
-        let health_monitor = Arc::new(RwLock::new(HealthMonitor::new(HealthConfig::default())));
+        let health_monitor = Arc::new(RwLock::new(
+            HealthMonitor::with_data_dir(HealthConfig::default(), config.node.data_dir.clone()),
+        ));
 
         let fast_finality = Arc::new(RwLock::new(
             FastFinality::new(67, luxtensor_consensus::ValidatorSet::new())
@@ -753,8 +755,12 @@ impl NodeService {
             }
         }
 
-        // SECURITY: Zeroize secret key bytes after use
-        secret.iter_mut().for_each(|b| *b = 0);
+        // M8 FIX: Use volatile writes for guaranteed zeroization that can't be optimized away.
+        // A simple `*b = 0` loop can be elided by the compiler since `secret` is about to go
+        // out of scope. `write_volatile` has side-effect semantics that prevent this.
+        for byte in secret.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0u8); }
+        }
 
         match result {
             Ok(keypair) => {
@@ -771,13 +777,30 @@ impl NodeService {
     // NOTE: `start()` has been moved to `startup.rs`
     // NOTE: Block production functions have been moved to `block_production.rs`
 
-    /// Wait for shutdown signal
+    /// Wait for shutdown signal (Ctrl+C or SIGTERM on Unix)
     pub async fn wait_for_shutdown(&mut self) -> Result<()> {
         info!("Node is running. Press Ctrl+C to shutdown.");
 
-        // Wait for shutdown signal
-        tokio::signal::ctrl_c().await?;
-        info!("Received shutdown signal");
+        // Wait for shutdown signal — support both Ctrl+C and SIGTERM for containers
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate())
+                .expect("failed to register SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received Ctrl+C shutdown signal");
+                }
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM shutdown signal");
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await?;
+            info!("Received shutdown signal");
+        }
 
         self.shutdown().await
     }

@@ -116,6 +116,7 @@ impl NodeService {
             keypair,
             bootstrap_nodes.clone(),
             enable_mdns,
+            self.config.node.chain_id as u32,
         )
         .await
         {
@@ -167,6 +168,7 @@ impl NodeService {
                     epoch_length: self.epoch_length,
                     best_height: self.best_height_guard.clone(),
                     is_syncing: self.is_syncing.clone(),
+                    merkle_cache: self.merkle_cache.clone(),
                 };
                 let event_task: JoinHandle<Result<()>> = tokio::spawn(async move {
                     p2p_ctx.run(p2p_event_rx).await;
@@ -183,12 +185,20 @@ impl NodeService {
                 let sync_storage = self.storage.clone();
                 let sync_node_name = self.config.node.name.clone();
                 let is_syncing_for_periodic = self.is_syncing.clone();
+                let mut sync_shutdown_rx = self.shutdown_tx.subscribe();
                 let sync_task = tokio::spawn(async move {
                     let mut last_sync_height = 0u64;
                     let mut sync_interval_secs = 10u64;
                     let mut consecutive_no_progress = 0u32;
                     loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(sync_interval_secs)).await;
+                        // H4 FIX: Check shutdown signal alongside sleep to avoid hanging on shutdown
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(sync_interval_secs)) => {}
+                            _ = sync_shutdown_rx.recv() => {
+                                info!("🔄 Sync task shutting down");
+                                break;
+                            }
+                        }
 
                         // Check current height from storage
                         let my_height =
@@ -201,7 +211,9 @@ impl NodeService {
                         } else {
                             // No progress → backoff: 10 → 20 → 40 → 60 (cap)
                             consecutive_no_progress += 1;
-                            sync_interval_secs = (10u64 * 2u64.saturating_pow(consecutive_no_progress.min(3))).min(60);
+                            sync_interval_secs = (10u64
+                                * 2u64.saturating_pow(consecutive_no_progress.min(3)))
+                            .min(60);
                         }
 
                         // Only request sync if we've made no progress since last check
@@ -239,15 +251,20 @@ impl NodeService {
                         if is_syncing_for_periodic.load(std::sync::atomic::Ordering::SeqCst) {
                             if consecutive_no_progress >= 1 && peer_count == 0 {
                                 info!("⏰ Solo mode: no peers, resuming block production");
-                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
-                            } else if consecutive_no_progress >= 1 && my_height == 0 && peer_count > 0 {
+                                is_syncing_for_periodic
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                            } else if consecutive_no_progress >= 1
+                                && my_height == 0
+                                && peer_count > 0
+                            {
                                 // Peers are connected but none of them has blocks to offer.
                                 // This is a fresh network bootstrap scenario — start producing.
                                 info!(
                                     "⏰ Fresh network: {} peer(s) connected but no blocks after {}s — bootstrapping",
                                     peer_count, sync_interval_secs
                                 );
-                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
+                                is_syncing_for_periodic
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
                             } else if consecutive_no_progress >= 1 && my_height > 0 {
                                 // 🔧 FIX: Node has existing data (my_height > 0) and has received
                                 // no new blocks after 1 check (10 seconds). This means we are already
@@ -258,10 +275,12 @@ impl NodeService {
                                     "⏰ Already synced: height={}, {} peer(s), no new blocks after {}s — resuming",
                                     my_height, peer_count, sync_interval_secs
                                 );
-                                is_syncing_for_periodic.store(false, std::sync::atomic::Ordering::SeqCst);
+                                is_syncing_for_periodic
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
                             }
                         }
                     }
+                    Ok(())
                 });
                 self.tasks.push(sync_task);
             }
@@ -365,7 +384,6 @@ impl NodeService {
             // validators appear missing and metrics stay at 0.
             rpc_server.set_metagraph(self.metagraph_db.clone());
 
-
             let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
             let rpc_threads = self.config.rpc.threads;
             let rpc_cors_origins = self.config.rpc.cors_origins.clone();
@@ -404,10 +422,19 @@ impl NodeService {
             let ws_broadcast_tx = ws_server.get_broadcast_sender();
             self.ws_broadcast = Some(ws_broadcast_tx);
 
+            // 🔧 FIX: Pass shutdown signal so WebSocket server shuts down gracefully
+            let mut ws_shutdown_rx = self.shutdown_tx.subscribe();
             let task = tokio::spawn(async move {
                 info!("  ✓ WebSocket RPC listening on ws://{}", ws_addr);
-                if let Err(e) = ws_server.start(&ws_addr).await {
-                    error!("WebSocket server error: {:?}", e);
+                tokio::select! {
+                    result = ws_server.start(&ws_addr) => {
+                        if let Err(e) = result {
+                            error!("WebSocket server error: {:?}", e);
+                        }
+                    }
+                    _ = ws_shutdown_rx.recv() => {
+                        info!("WebSocket server shutting down");
+                    }
                 }
                 Ok::<(), anyhow::Error>(())
             });
@@ -496,14 +523,14 @@ impl NodeService {
                     fast_finality_clone, // BFT fast finality hook
                     metrics_for_loop,    // NodeMetrics recording
                     ws_broadcast_for_block, // WebSocket event broadcast
-                    halving_schedule_clone,  // 📊 Phase 3: Halving schedule
-                    burn_manager_clone,      // 📊 Phase 3: Fee burning
-                    fee_market_clone,        // 📊 Phase 3: EIP-1559 dynamic pricing
-                    governance_clone,        // 🏛️ Phase 4+: Governance epoch hooks
+                    halving_schedule_clone, // 📊 Phase 3: Halving schedule
+                    burn_manager_clone,  // 📊 Phase 3: Fee burning
+                    fee_market_clone,    // 📊 Phase 3: EIP-1559 dynamic pricing
+                    governance_clone,    // 🏛️ Phase 4+: Governance epoch hooks
                     validator_rotation_clone, // 🔄 Phase 4+: Validator rotation
-                    commit_reveal_clone,     // 🔐 Phase 4+: Commit-reveal finalization
-                    scoring_manager_clone,   // 📊 Phase 5+: Performance scoring
-                    vrf_keypair_for_block,   // 🎲 VRF keypair for block proofs (C2 fix)
+                    commit_reveal_clone, // 🔐 Phase 4+: Commit-reveal finalization
+                    scoring_manager_clone, // 📊 Phase 5+: Performance scoring
+                    vrf_keypair_for_block, // 🎲 VRF keypair for block proofs (C2 fix)
                     ai_circuit_breaker_clone, // 🛡️ AI layer circuit breaker
                 )
                 .await
@@ -524,8 +551,10 @@ impl NodeService {
             } else {
                 DispatchService::new(self.task_dispatcher.clone())
             };
+            // H4 FIX: Pass shutdown receiver so dispatch service can terminate gracefully
+            let dispatch_shutdown_rx = self.shutdown_tx.subscribe();
             let dispatch_handle = tokio::spawn(async move {
-                dispatch_service.start().await;
+                dispatch_service.start(dispatch_shutdown_rx).await;
                 Ok::<(), anyhow::Error>(())
             });
             self.tasks.push(dispatch_handle);

@@ -91,6 +91,10 @@ contract SemanticMatchmaker is Ownable, ReentrancyGuard {
     /// @notice Match counter
     uint256 public nextMatchId;
 
+    /// @notice Track if player is in queue
+    /// @dev SECURITY (M-14): O(1) queue membership check
+    mapping(address => bool) public isInQueue;
+
     /// @notice Profile embedding dimension
     uint256 public embeddingDimension;
 
@@ -239,11 +243,9 @@ contract SemanticMatchmaker is Ownable, ReentrancyGuard {
             revert InvalidPlayerCount(minPlayers, maxPlayers);
         }
 
-        // Check not already in queue
-        for (uint256 i = 0; i < matchQueue.length; i++) {
-            if (matchQueue[i].player == msg.sender) {
-                revert AlreadyInQueue(msg.sender);
-            }
+        // SECURITY (M-14): O(1) queue membership check
+        if (isInQueue[msg.sender]) {
+            revert AlreadyInQueue(msg.sender);
         }
 
         matchQueue.push(
@@ -255,6 +257,8 @@ contract SemanticMatchmaker is Ownable, ReentrancyGuard {
                 maxPlayers: maxPlayers
             })
         );
+
+        isInQueue[msg.sender] = true;
 
         queuePosition = matchQueue.length;
         emit MatchRequested(msg.sender, queuePosition);
@@ -419,6 +423,8 @@ contract SemanticMatchmaker is Ownable, ReentrancyGuard {
      */
     function _removeFromQueue(uint256 index) internal {
         require(index < matchQueue.length, "Invalid index");
+        // SECURITY (M-14): Clear queue membership
+        isInQueue[matchQueue[index].player] = false;
         matchQueue[index] = matchQueue[matchQueue.length - 1];
         matchQueue.pop();
     }

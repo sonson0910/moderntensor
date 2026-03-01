@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use rand::RngCore;
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 use helpers::*;
 
@@ -125,10 +126,6 @@ struct SendTxArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Sender's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
-    #[arg(long)]
-    from: Option<String>,
-
     /// Destination address (0x...)
     #[arg(long)]
     to: String,
@@ -160,10 +157,6 @@ struct StakeArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Staker's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
-    #[arg(long)]
-    from: Option<String>,
-
     /// Amount of MDT to stake
     #[arg(long)]
     amount: String,
@@ -174,10 +167,6 @@ struct UnstakeArgs {
     /// RPC endpoint URL
     #[arg(long)]
     rpc_url: String,
-
-    /// Staker's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
-    #[arg(long)]
-    from: Option<String>,
 
     /// Amount of MDT to unstake
     #[arg(long)]
@@ -190,10 +179,6 @@ struct DelegateArgs {
     #[arg(long)]
     rpc_url: String,
 
-    /// Delegator's private key (hex). Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
-    #[arg(long)]
-    from: Option<String>,
-
     /// Validator address to delegate to (0x...)
     #[arg(long)]
     validator: String,
@@ -205,10 +190,6 @@ struct DelegateArgs {
 
 #[derive(Args)]
 struct ImportKeyArgs {
-    /// Private key hex to import. Omit to use LUXTENSOR_PRIVATE_KEY env var or interactive prompt
-    #[arg(long)]
-    private_key: Option<String>,
-
     /// Output keystore file path
     #[arg(long)]
     output: PathBuf,
@@ -274,10 +255,13 @@ async fn main() -> Result<()> {
 
             let keypair = KeyPair::generate();
             let address = keypair.address();
+            let secret = Zeroizing::new(keypair.secret_bytes());
 
-            println!("🔑 Generated new keypair:");
-            println!("   Address: 0x{}", hex::encode(address));
-            println!("\n⚠️  IMPORTANT: Save your private key securely!");
+            eprintln!("🔑 Generated new keypair:");
+            eprintln!("   Address:     0x{}", hex::encode(address));
+            eprintln!("   Private Key: 0x{}", hex::encode(&*secret));
+            eprintln!("\n⚠️  IMPORTANT: Save your private key securely!");
+            eprintln!("   Use `luxtensor import-key` to store it in an encrypted keystore.");
         }
 
         Commands::Status { rpc } => match rpc_call(&rpc, "system_syncState", vec![]).await {
@@ -359,7 +343,8 @@ async fn handle_query(cmd: QueryCommands) -> Result<()> {
             let block_num = if number == "latest" {
                 serde_json::json!("latest")
             } else {
-                serde_json::json!(format!("0x{:x}", number.parse::<u64>().unwrap_or(0)))
+                serde_json::json!(format!("0x{:x}", number.parse::<u64>()
+                    .map_err(|_| anyhow::anyhow!("Invalid block number: '{}'", number))?))
             };
             let result =
                 rpc_call(&rpc, "eth_getBlockByNumber", vec![block_num, serde_json::json!(false)])
@@ -380,13 +365,15 @@ async fn handle_query(cmd: QueryCommands) -> Result<()> {
 // ============================================================
 
 fn generate_config(args: ConfigGenArgs) -> Result<()> {
-    // SECURITY: Validate node_id >= 1 to prevent u32 underflow wrapping
+    // SECURITY: Validate node_id >= 1 to prevent underflow wrapping
     if args.node_id == 0 {
         anyhow::bail!("node_id must be >= 1");
     }
     let port_offset = (args.node_id - 1) as u16;
-    let p2p_port = 30303 + port_offset;
-    let rpc_port = 8545 + port_offset;
+    let p2p_port = 30303u16.checked_add(port_offset)
+        .ok_or_else(|| anyhow::anyhow!("node_id {} causes P2P port overflow (max 65535)", args.node_id))?;
+    let rpc_port = 8545u16.checked_add(port_offset)
+        .ok_or_else(|| anyhow::anyhow!("node_id {} causes RPC port overflow (max 65535)", args.node_id))?;
 
     let bootstrap = args
         .bootstrap
@@ -458,9 +445,9 @@ log_file = "./node.log"
 
 async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
     // Read private key securely (env var or interactive prompt if not on CLI)
-    let from_key = read_private_key(args.from)?;
-    let secret = parse_private_key(&from_key)?;
-    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+    let from_key = Zeroizing::new(read_private_key(None)?);
+    let secret = Zeroizing::new(parse_private_key(&from_key)?);
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&*secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let from_address = keypair.address();
     println!("📤 Sending transaction from: {}", from_address);
@@ -584,9 +571,15 @@ async fn handle_send_tx(args: SendTxArgs) -> Result<()> {
 // ============================================================
 
 async fn handle_stake(args: StakeArgs) -> Result<()> {
-    let from_key = read_private_key(args.from)?;
-    let secret = parse_private_key(&from_key)?;
-    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+    // TODO(#STAKE-SIGN): These staking commands currently only derive the
+    // address from the private key for the RPC call parameter.  They do NOT
+    // build a signed transaction, so the node must trust the caller's
+    // claimed address.  A future iteration should build and sign an EIP-155
+    // transaction (like handle_send_tx) calling the staking precompile /
+    // contract.
+    let from_key = Zeroizing::new(read_private_key(None)?);
+    let secret = Zeroizing::new(parse_private_key(&from_key)?);
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&*secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
 
@@ -606,9 +599,9 @@ async fn handle_stake(args: StakeArgs) -> Result<()> {
 }
 
 async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
-    let from_key = read_private_key(args.from)?;
-    let secret = parse_private_key(&from_key)?;
-    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+    let from_key = Zeroizing::new(read_private_key(None)?);
+    let secret = Zeroizing::new(parse_private_key(&from_key)?);
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&*secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
 
@@ -628,9 +621,9 @@ async fn handle_unstake(args: UnstakeArgs) -> Result<()> {
 }
 
 async fn handle_delegate(args: DelegateArgs) -> Result<()> {
-    let from_key = read_private_key(args.from)?;
-    let secret = parse_private_key(&from_key)?;
-    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+    let from_key = Zeroizing::new(read_private_key(None)?);
+    let secret = Zeroizing::new(parse_private_key(&from_key)?);
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&*secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
 
@@ -658,26 +651,33 @@ async fn handle_delegate(args: DelegateArgs) -> Result<()> {
 // ============================================================
 
 fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
-    println!("⚠️  WARNING: Handle private keys with extreme care.");
+    eprintln!("⚠️  WARNING: Handle private keys with extreme care.");
 
-    let pk = read_private_key(args.private_key)?;
-    let secret = parse_private_key(&pk)?;
-    let keypair = luxtensor_crypto::KeyPair::from_secret(&secret)
+    let pk = Zeroizing::new(read_private_key(None)?);
+    let secret = Zeroizing::new(parse_private_key(&pk)?);
+    let keypair = luxtensor_crypto::KeyPair::from_secret(&*secret)
         .map_err(|e| anyhow::anyhow!("Invalid private key: {}", e))?;
     let address = keypair.address();
 
     // Get password (prompt interactively if not provided via flag)
-    let password = match args.password {
-        Some(p) => p,
+    let password = Zeroizing::new(match args.password {
+        Some(p) => {
+            eprintln!("⚠️  Warning: Passing password via CLI arg exposes it in shell history.");
+            eprintln!("   Consider omitting --password to use the interactive prompt instead.");
+            p
+        }
         None => {
             let pass = rpassword::prompt_password("Enter password to encrypt keystore: ")
                 .map_err(|e| anyhow::anyhow!("Failed to read password: {}", e))?;
             pass.trim().to_string()
         }
-    };
+    });
 
     if password.is_empty() {
         anyhow::bail!("Password cannot be empty");
+    }
+    if password.len() < 8 {
+        anyhow::bail!("Password must be at least 8 characters");
     }
 
     // Generate random 32-byte salt and 16-byte IV using OS CSPRNG
@@ -690,7 +690,7 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     let derived_key = derive_key_scrypt(password.as_bytes(), &salt)?;
 
     // Encrypt the private key with AES-128-CTR (first 16 bytes of derived key)
-    let ciphertext = aes128_ctr_apply(&derived_key[..16], &iv, &secret)?;
+    let ciphertext = aes128_ctr_apply(&derived_key[..16], &iv, &*secret)?;
 
     // MAC for integrity verification: keccak256(derived_key[16..32] || ciphertext)
     let mut mac_input = Vec::with_capacity(48);
@@ -720,6 +720,13 @@ fn handle_import_key(args: ImportKeyArgs) -> Result<()> {
     });
 
     std::fs::write(&args.output, serde_json::to_string_pretty(&keystore)?)?;
+
+    // Restrict file permissions on Unix (owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&args.output, std::fs::Permissions::from_mode(0o600))?;
+    }
 
     println!("✅ Keystore saved: {}", args.output.display());
     println!("   Address: {}", address);
@@ -754,6 +761,12 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     let keystore: serde_json::Value =
         serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("Invalid keystore JSON: {}", e))?;
 
+    // Validate keystore version
+    let version = keystore.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+    if version == 0 || version > 2 {
+        anyhow::bail!("Unsupported keystore version: {}. Expected 1 or 2.", version);
+    }
+
     let crypto = keystore
         .get("crypto")
         .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing 'crypto' field"))?;
@@ -787,6 +800,12 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     let stored_mac = hex::decode(stored_mac_hex)?;
 
     // Derive key based on KDF type
+    // NOTE: v1 keystores (kdf="keccak256-iter", cipher="xor-keccak256") use a
+    // weaker PBKDF scheme (iterated keccak256) and XOR-based encryption.
+    // If a v1 keystore is encountered, a deprecation warning is emitted
+    // suggesting the user re-import the key via `import-key` to upgrade
+    // to the v2 format (scrypt + AES-128-CTR). A future release may drop
+    // v1 support entirely.
     let derived_key = match kdf {
         "scrypt" => {
             // v2 keystore: scrypt KDF
@@ -796,11 +815,12 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
             // v1 legacy keystore: iterated keccak256
             eprintln!("⚠️  WARNING: This keystore uses a legacy encryption format (keccak256-iter + XOR).");
             eprintln!("   Please re-import your key to upgrade to the secure format (scrypt + AES-128-CTR).");
-            let iterations = kdfparams
+            let iterations_u64 = kdfparams
                 .get("iterations")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing iterations"))?
-                as u32;
+                .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing iterations"))?;
+            let iterations = u32::try_from(iterations_u64)
+                .map_err(|_| anyhow::anyhow!("iterations value {} exceeds u32::MAX", iterations_u64))?;
             derive_key_legacy(password.as_bytes(), &salt, iterations)
         }
         _ => {
@@ -819,7 +839,7 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
     }
 
     // Decrypt private key based on cipher type
-    let private_key: [u8; 32] = match cipher {
+    let private_key: Zeroizing<[u8; 32]> = match cipher {
         "aes-128-ctr" => {
             // v2 keystore: AES-128-CTR
             let iv_hex = crypto
@@ -829,13 +849,13 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("Invalid keystore: missing IV for AES-128-CTR"))?;
             let iv = hex::decode(iv_hex)?;
             let decrypted = aes128_ctr_apply(&derived_key[..16], &iv, &ciphertext)?;
-            let mut key = [0u8; 32];
+            let mut key = Zeroizing::new([0u8; 32]);
             key.copy_from_slice(&decrypted);
             key
         }
         "xor-keccak256" => {
             // v1 legacy keystore: XOR decryption
-            let mut key = [0u8; 32];
+            let mut key = Zeroizing::new([0u8; 32]);
             for i in 0..32 {
                 key[i] = ciphertext[i] ^ derived_key[i];
             }
@@ -848,10 +868,10 @@ fn handle_export_key(args: ExportKeyArgs) -> Result<()> {
 
     let address = keystore.get("address").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-    println!("⚠️  WARNING: Your private key is displayed below. Keep it secure!");
-    println!("🔑 Address: {}", address);
-    println!("   Private Key: 0x{}", hex::encode(private_key));
-    println!("⚠️  Never share your private key with anyone!");
+    eprintln!("⚠️  WARNING: Your private key is displayed below. Keep it secure!");
+    eprintln!("🔑 Address: {}", address);
+    eprintln!("   Private Key: 0x{}", hex::encode(&*private_key));
+    eprintln!("⚠️  Never share your private key with anyone!");
 
     Ok(())
 }

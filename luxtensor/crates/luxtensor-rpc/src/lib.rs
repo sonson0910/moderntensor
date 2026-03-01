@@ -45,78 +45,80 @@
 //! See [`api_registry::ALL_METHODS`] for the complete compile-time catalog.
 //!
 
+pub mod allocation_rpc;
 pub mod blockchain_rpc;
 pub mod broadcaster;
 pub mod error;
+pub mod eth_rpc;
+pub mod handlers;
+pub mod helpers;
+pub mod logs;
+pub mod node_rpc;
+pub mod peer_count;
+pub mod rewards_rpc;
 pub mod server;
+pub mod staking_rpc;
+pub mod subnet_rpc;
 pub mod system_rpc;
 pub mod types;
-pub mod websocket;
 pub mod validation;
-pub mod rewards_rpc;
-pub mod allocation_rpc;
-pub mod node_rpc;
-pub mod eth_rpc;
-pub mod logs;
-pub mod subnet_rpc;
-pub mod helpers;
-pub mod handlers;
-pub mod staking_rpc;
-pub mod peer_count;
+pub mod websocket;
 // contract_registry module DELETED - bytecode now stored in Account.code
-pub mod rate_limiter;
 pub mod admin_auth;
-pub mod load_balancer;
-pub mod query_rpc;
 pub mod ai_rpc;
-pub mod tx_rpc;
-pub mod miner_dispatch_rpc;
-pub mod training_rpc;
-pub mod rpc_cache;
 pub mod api_registry;
+pub mod load_balancer;
+pub mod miner_dispatch_rpc;
+pub mod query_rpc;
+pub mod rate_limiter;
+pub mod rpc_cache;
+pub mod training_rpc;
+pub mod tx_rpc;
 
-
-pub use rate_limiter::{RateLimiter, RateLimiterConfig};
-pub use admin_auth::{AdminAuth, AdminAuthConfig, requires_admin_auth};
-pub use load_balancer::{
-    RpcLoadBalancer, LoadBalancerConfig, LoadBalancerStats,
-    NodeEndpoint, NodeHealth, SmartRpcClient,
-};
+pub use admin_auth::{check_admin_auth, requires_admin_auth, AdminAuth, AdminAuthConfig};
+pub use ai_rpc::{register_ai_methods, AiRpcContext};
+pub use allocation_rpc::register_allocation_methods;
+pub use api_registry::{register_list_methods, RpcMethodInfo};
 pub use broadcaster::{
-    TransactionBroadcaster, BroadcastError,
-    NoOpBroadcaster, ChannelBroadcaster, CompositeBroadcaster,
-    BroadcasterBuilder,
+    BroadcastError, BroadcasterBuilder, ChannelBroadcaster, CompositeBroadcaster, NoOpBroadcaster,
+    TransactionBroadcaster,
 };
 pub use error::*;
-pub use server::RpcServer;
-pub use types::*;
-pub use websocket::{WebSocketServer, BroadcastEvent, SubscriptionType};
-pub use validation::{RpcLimits, ValidationError, validate_address, validate_hash, validate_hex_data};
-pub use rewards_rpc::register_reward_methods;
-pub use allocation_rpc::register_allocation_methods;
+pub use eth_rpc::{
+    register_aa_methods, register_eth_methods, register_log_methods, FaucetRpcConfig,
+};
+pub use load_balancer::{
+    LoadBalancerConfig, LoadBalancerStats, NodeEndpoint, NodeHealth, RpcLoadBalancer,
+    SmartRpcClient,
+};
+pub use logs::{LogEntry, LogFilter, LogStore, LogStoreStats};
+pub use miner_dispatch_rpc::{register_miner_dispatch_methods, MinerDispatchContext};
 pub use node_rpc::register_node_methods;
-pub use eth_rpc::{register_eth_methods, register_log_methods, register_aa_methods, FaucetRpcConfig};
-pub use logs::{LogStore, LogEntry, LogFilter, LogStoreStats};
-pub use subnet_rpc::{register_subnet_methods, RootSubnet, new_root_subnet, RootSubnetState};
-pub use query_rpc::{QueryRpcContext, register_query_methods};
-pub use ai_rpc::{AiRpcContext, register_ai_methods};
-pub use tx_rpc::{TxRpcContext, register_tx_methods};
-pub use miner_dispatch_rpc::{MinerDispatchContext, register_miner_dispatch_methods};
-pub use training_rpc::{TrainingRpcContext, register_training_methods};
+pub use query_rpc::{register_query_methods, QueryRpcContext};
+pub use rate_limiter::{RateLimiter, RateLimiterConfig};
+pub use rewards_rpc::register_reward_methods;
 pub use rpc_cache::RpcStateCache;
-pub use api_registry::{RpcMethodInfo, register_list_methods};
+pub use server::RpcServer;
+pub use subnet_rpc::{new_root_subnet, register_subnet_methods, RootSubnet, RootSubnetState};
+pub use training_rpc::{register_training_methods, TrainingRpcContext};
+pub use tx_rpc::{register_tx_methods, TxRpcContext};
+pub use types::*;
+pub use validation::{
+    validate_address, validate_hash, validate_hex_data, RpcLimits, ValidationError,
+};
+pub use websocket::{BroadcastEvent, SubscriptionType, WebSocketServer};
 
 pub mod zkml_rpc;
-pub use zkml_rpc::{ZkmlRpcContext, register_zkml_methods};
+pub use zkml_rpc::{register_zkml_methods, ZkmlRpcContext};
 
 pub mod agent_rpc;
-pub use agent_rpc::{AgentRpcContext, register_agent_methods};
+pub use agent_rpc::{register_agent_methods, AgentRpcContext};
 
 pub mod dispute_rpc;
-pub use dispute_rpc::{DisputeRpcContext, register_dispute_methods};
+pub use dispute_rpc::{register_dispute_methods, DisputeRpcContext};
 
 pub mod bridge_rpc;
-pub use bridge_rpc::{BridgeRpcContext, register_bridge_methods};
+pub use bridge_rpc::{register_bridge_methods, BridgeRpcContext};
 
 pub mod multisig_rpc;
-pub use multisig_rpc::{MultisigRpcContext, register_multisig_methods};
+pub use multisig_rpc::{register_multisig_methods, MultisigRpcContext};

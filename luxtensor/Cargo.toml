@@ -59,6 +59,7 @@ authors = ["LuxTensor Team <sonlearn155@gmail.com>"]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = "0.7"
+tokio-tungstenite = "0.21"
 futures = "0.3"
 
 # Serialization
@@ -86,7 +87,8 @@ libp2p = { version = "0.53", features = ["tcp", "noise", "gossipsub", "mdns", "y
 # Storage
 rocksdb = "0.21"
 
-# RPC
+# RPC — DEPRECATED: jsonrpc-core/jsonrpc-http-server are unmaintained.
+# TODO: Migrate to `jsonrpsee` (Parity's maintained replacement).
 jsonrpc-core = "18.0"
 jsonrpc-http-server = "18.0"
 
@@ -103,11 +105,22 @@ anyhow = "1.0"
 
 # Utils
 hex = "0.4"
-bytes = "1.5"
+bytes = "1.10"
+subtle = "2"
+lazy_static = "1.4"
+async-trait = "0.1"
+num_cpus = "1.16"
 parking_lot = "0.12"
 rayon = "1.10"
 fixed = { version = "1.28", features = ["serde"] }
 dashmap = "6.1"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# EVM
+revm = "14.0"
+revm-primitives = "10.0"
 
 # Testing
 criterion = "0.5"

@@ -91,6 +91,8 @@ impl CacheStats {
 }
 
 /// Thread-safe LRU cache for storage layer
+// SECURITY (M-7): All block/header/tx writes MUST go through StorageCache methods
+// to ensure cache consistency. Direct BlockchainDB writes will cause stale cache reads.
 pub struct StorageCache {
     /// Block cache: height -> Block
     block_by_height: RwLock<LruCache<u64, Block>>,
@@ -276,6 +278,61 @@ impl StorageCache {
             self.transactions.read().len(),
         )
     }
+
+    /// Invalidate all cached blocks and headers at or above the given height.
+    ///
+    /// SECURITY (M-3): Must be called during chain reorganizations to prevent
+    /// stale reads. After a reorg replaces a block at `fork_height`, all blocks
+    /// at that height and above become invalid and must be evicted from the cache.
+    ///
+    /// This method also evicts the corresponding block headers so that subsequent
+    /// `get_header()` calls return fresh data from RocksDB.
+    pub fn invalidate_from_height(&self, fork_height: u64) {
+        // Phase 1: Collect (height, hash) pairs to invalidate.
+        // Uses peek() semantics — read-only traversal without modifying LRU order.
+        let to_invalidate: Vec<(u64, Hash)> = {
+            let cache = self.block_by_height.read();
+            cache
+                .iter()
+                .filter(|(&h, _)| h >= fork_height)
+                .map(|(&h, block)| (h, block.hash()))
+                .collect()
+        };
+
+        if to_invalidate.is_empty() {
+            return;
+        }
+
+        // Phase 2: Remove from height-indexed block cache.
+        {
+            let mut cache = self.block_by_height.write();
+            for &(h, _) in &to_invalidate {
+                cache.pop(&h);
+            }
+        }
+
+        // Phase 3: Remove from hash-indexed block cache.
+        {
+            let mut cache = self.block_by_hash.write();
+            for &(_, ref hash) in &to_invalidate {
+                cache.pop(hash);
+            }
+        }
+
+        // Phase 4: Remove headers for invalidated block hashes.
+        {
+            let mut headers = self.headers.write();
+            for &(_, ref hash) in &to_invalidate {
+                headers.pop(hash);
+            }
+        }
+
+        debug!(
+            "Cache invalidated {} blocks/headers at heights >= {}",
+            to_invalidate.len(),
+            fork_height,
+        );
+    }
 }
 
 impl Default for StorageCache {
@@ -356,6 +413,13 @@ impl CachedBlockchainDB {
     }
 
     /// Store a block (write-through cache)
+    ///
+    /// SECURITY (M-3): The cache is not automatically invalidated on chain
+    /// reorganizations. If a reorg replaces a block at an existing height, the
+    /// old block remains cached until naturally evicted by LRU pressure.
+    /// Callers handling reorgs should call
+    /// `self.cache.invalidate_from_height(fork_height)` before storing the
+    /// replacement blocks.
     pub fn store_block(&self, block: &Block) -> crate::Result<()> {
         // Write to RocksDB first
         self.inner.store_block(block)?;

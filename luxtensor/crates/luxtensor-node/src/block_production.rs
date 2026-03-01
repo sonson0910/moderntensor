@@ -286,6 +286,10 @@ impl NodeService {
 
                             // 🔧 FIX C3: Reset accumulator at epoch boundaries so it
                             // doesn't inflate utility scores across epochs.
+                            // M5 NOTE: The epoch boundary block's TX count is included in
+                            // epoch_tx_count (passed to produce_block BEFORE incrementing)
+                            // plus valid_tx_count (the current block's TXs). Resetting here
+                            // is correct: it zeroes the accumulator for the NEXT epoch.
                             if epoch_length > 0 && block.header.height % epoch_length == 0 {
                                 epoch_tx_accumulator = 0;
                             }
@@ -584,6 +588,14 @@ impl NodeService {
                 tx, &mut temp_state, new_height, block_hash, tx_index, block_timestamp,
             ) {
                 Ok(receipt) => {
+                    // H6 FIX: Enforce block gas limit — stop including TXs once limit is reached
+                    if total_gas + receipt.gas_used > BLOCK_GAS_LIMIT {
+                        debug!(
+                            "⛽ Block gas limit reached: {} + {} > {}, skipping remaining TXs",
+                            total_gas, receipt.gas_used, BLOCK_GAS_LIMIT
+                        );
+                        break;
+                    }
                     total_gas += receipt.gas_used;
                     valid_receipts.push(receipt);
                     valid_transactions.push(tx.clone());
@@ -595,9 +607,10 @@ impl NodeService {
         }
 
         // 🔥 Burn tx fees via BurnManager (Phase 3 tokenomics)
+        // C1 FIX: Use receipt.gas_used instead of tx.gas_limit to burn only actual gas consumed.
         let mut total_fees_burned: u128 = 0;
-        for tx in &valid_transactions {
-            let tx_fee = (tx.gas_price as u128).saturating_mul(tx.gas_limit as u128);
+        for (tx, receipt) in valid_transactions.iter().zip(valid_receipts.iter()) {
+            let tx_fee = (tx.gas_price as u128).saturating_mul(receipt.gas_used as u128);
             if tx_fee > 0 {
                 let (burned, _remaining) = burn_manager.burn_tx_fee(tx_fee, new_height);
                 total_fees_burned += burned;

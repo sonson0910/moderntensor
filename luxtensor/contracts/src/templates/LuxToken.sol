@@ -23,7 +23,6 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
  * ```
  */
 contract LuxToken is ERC20, ERC20Burnable, Ownable, ERC20Permit {
-
     /// @notice Maximum supply (optional, 0 = unlimited)
     uint256 public maxSupply;
 
@@ -48,14 +47,17 @@ contract LuxToken is ERC20, ERC20Burnable, Ownable, ERC20Permit {
         string memory symbol,
         uint256 initialSupply,
         uint256 _maxSupply
-    )
-        ERC20(name, symbol)
-        Ownable(msg.sender)
-        ERC20Permit(name)
-    {
-        require(_maxSupply == 0 || initialSupply <= _maxSupply, "Initial > max");
+    ) ERC20(name, symbol) Ownable(msg.sender) ERC20Permit(name) {
+        require(
+            _maxSupply == 0 || initialSupply <= _maxSupply,
+            "Initial > max"
+        );
 
-        maxSupply = _maxSupply;
+        if (_maxSupply > 0) {
+            maxSupply = _maxSupply * 10 ** decimals();
+        } else {
+            maxSupply = 0;
+        }
         mintingEnabled = true;
 
         if (initialSupply > 0) {
@@ -73,7 +75,7 @@ contract LuxToken is ERC20, ERC20Burnable, Ownable, ERC20Permit {
         require(mintingEnabled, "Minting disabled");
 
         if (maxSupply > 0) {
-            require(totalSupply() + amount <= maxSupply * 10 ** decimals(), "Exceeds max supply");
+            require(totalSupply() + amount <= maxSupply, "Exceeds max supply");
         }
 
         _mint(to, amount);
