@@ -28,3 +28,21 @@ pub enum OracleError {
 }
 
 pub type Result<T> = std::result::Result<T, OracleError>;
+
+impl OracleError {
+    /// SECURITY(ORACLE-21): Return a sanitized error message safe for external exposure.
+    /// Internal details (node URLs, stack traces, contract addresses) are stripped.
+    /// Use this when returning errors over RPC/API boundaries.
+    pub fn sanitized_message(&self) -> &'static str {
+        match self {
+            OracleError::Connection(_) => "Connection error",
+            OracleError::Contract(_) => "Contract interaction error",
+            OracleError::AiInference(_) => "AI inference error",
+            OracleError::Transaction(_) => "Transaction error",
+            OracleError::ProofGeneration(_) => "Proof generation error",
+            OracleError::DisputeError(_) => "Dispute error",
+            OracleError::Config(_) => "Configuration error",
+            OracleError::Timeout(_) => "Operation timed out",
+        }
+    }
+}

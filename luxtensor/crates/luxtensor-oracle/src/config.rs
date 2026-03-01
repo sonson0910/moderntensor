@@ -41,7 +41,9 @@ impl std::fmt::Debug for OracleConfig {
             .field("node_ws_url", &self.node_ws_url)
             .field("oracle_contract_address", &self.oracle_contract_address)
             .field("private_key", &"[REDACTED]")
-            .field("database_url", &self.database_url)
+            // SECURITY(ORACLE-05): Redact database_url — may contain credentials
+            // (e.g., postgres://user:password@host/db)
+            .field("database_url", &self.database_url.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
@@ -52,11 +54,14 @@ impl OracleConfig {
             node_ws_url: env::var("NODE_WS_URL")
                 .unwrap_or_else(|_| "ws://127.0.0.1:8546".to_string()),
             oracle_contract_address: env::var("ORACLE_CONTRACT_ADDRESS")
-                .map_err(|_| anyhow::anyhow!("ORACLE_CONTRACT_ADDRESS environment variable is required"))?
+                .map_err(|_| {
+                    anyhow::anyhow!("ORACLE_CONTRACT_ADDRESS environment variable is required")
+                })?
                 .parse()
                 .map_err(|e| anyhow::anyhow!("Invalid ORACLE_CONTRACT_ADDRESS: {}", e))?,
-            private_key: env::var("ORACLE_PRIVATE_KEY")
-                .map_err(|_| anyhow::anyhow!("ORACLE_PRIVATE_KEY environment variable must be set"))?,
+            private_key: env::var("ORACLE_PRIVATE_KEY").map_err(|_| {
+                anyhow::anyhow!("ORACLE_PRIVATE_KEY environment variable must be set")
+            })?,
             database_url: env::var("DATABASE_URL").ok(),
         };
 
@@ -73,10 +78,7 @@ impl OracleConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
         // Validate WebSocket URL scheme
         if !self.node_ws_url.starts_with("ws://") && !self.node_ws_url.starts_with("wss://") {
-            anyhow::bail!(
-                "NODE_WS_URL must use ws:// or wss:// scheme, got: {}",
-                self.node_ws_url
-            );
+            anyhow::bail!("NODE_WS_URL must use ws:// or wss:// scheme, got: {}", self.node_ws_url);
         }
 
         // Validate private key format (64 hex chars = 32 bytes)
@@ -105,9 +107,9 @@ mod tests {
     fn test_validate_good_config() {
         let config = OracleConfig {
             node_ws_url: "ws://127.0.0.1:8546".to_string(),
-            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-                .parse()
-                .unwrap(),
+            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap(),
+            // SECURITY(ORACLE-19): This is a well-known test key (Hardhat account #0).
+            // NEVER use this key in production — it is publicly known.
             private_key: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .to_string(),
             database_url: None,
@@ -119,9 +121,7 @@ mod tests {
     fn test_validate_bad_ws_url() {
         let config = OracleConfig {
             node_ws_url: "http://127.0.0.1:8545".to_string(),
-            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-                .parse()
-                .unwrap(),
+            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap(),
             private_key: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .to_string(),
             database_url: None,
@@ -134,9 +134,7 @@ mod tests {
     fn test_validate_bad_private_key() {
         let config = OracleConfig {
             node_ws_url: "ws://127.0.0.1:8546".to_string(),
-            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-                .parse()
-                .unwrap(),
+            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap(),
             private_key: "too_short".to_string(),
             database_url: None,
         };
@@ -161,9 +159,7 @@ mod tests {
     fn test_validate_with_0x_prefix() {
         let config = OracleConfig {
             node_ws_url: "wss://mainnet.luxtensor.io/ws".to_string(),
-            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-                .parse()
-                .unwrap(),
+            oracle_contract_address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse().unwrap(),
             private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .to_string(),
             database_url: Some("postgres://localhost/oracle".to_string()),

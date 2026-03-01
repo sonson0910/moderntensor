@@ -1,8 +1,8 @@
 use crate::config::OracleConfig;
 use crate::error::{OracleError, Result};
 use ethers::prelude::*;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::info;
 
 // Generate contract bindings again for the submitter
@@ -24,14 +24,16 @@ impl TxSubmitter {
             .map_err(|e| OracleError::Connection(e.to_string()))?;
 
         // Get chain ID from the connected node instead of hardcoding
-        let chain_id_u256 = provider.get_chainid()
+        let chain_id_u256 = provider
+            .get_chainid()
             .await
             .map_err(|e| OracleError::Connection(format!("Failed to get chain ID: {}", e)))?;
 
         // SECURITY: Validate chain_id fits in u64 to prevent silent truncation
         if chain_id_u256 > ethers::types::U256::from(u64::MAX) {
             return Err(OracleError::Connection(format!(
-                "Chain ID {} exceeds u64::MAX", chain_id_u256
+                "Chain ID {} exceeds u64::MAX",
+                chain_id_u256
             )));
         }
         let chain_id = chain_id_u256.as_u64();
@@ -50,6 +52,12 @@ impl TxSubmitter {
     /// Maximum number of retry attempts for transaction submission.
     const MAX_RETRIES: u32 = 3;
 
+    /// Submit a fulfillment transaction to the oracle smart contract.
+    ///
+    /// # Gas Configuration
+    /// SECURITY(ORACLE-14): Currently relies on provider defaults for gas pricing.
+    /// TODO: Add explicit `gas()` / `max_fee_per_gas` / `max_priority_fee_per_gas`
+    /// via config for production deployments to prevent stuck or overpriced transactions.
     pub async fn submit_fulfillment(
         &self,
         request_id: [u8; 32],
@@ -61,15 +69,19 @@ impl TxSubmitter {
         let mut backoff = std::time::Duration::from_secs(2);
 
         for attempt in 0..=Self::MAX_RETRIES {
-            let call = self.contract
-                .fulfill_request(request_id, result.clone(), proof_hash);
+            let call = self.contract.fulfill_request(request_id, result.clone(), proof_hash);
             let send_result = call.send().await;
 
             match send_result {
                 Ok(pending_tx) => {
-                    let receipt = pending_tx.await
-                        .map_err(|e| OracleError::Transaction(e.to_string()))?
-                        .ok_or(OracleError::Transaction("Transaction dropped".to_string()))?;
+                    // SECURITY(ORACLE-03): Timeout on tx confirmation to prevent
+                    // indefinite hangs when transactions are stuck in the mempool.
+                    let receipt =
+                        tokio::time::timeout(std::time::Duration::from_secs(120), pending_tx)
+                            .await
+                            .map_err(|_| OracleError::Timeout(std::time::Duration::from_secs(120)))?
+                            .map_err(|e| OracleError::Transaction(e.to_string()))?
+                            .ok_or(OracleError::Transaction("Transaction dropped".to_string()))?;
 
                     info!("Transaction confirmed: {:?}", receipt.transaction_hash);
                     return Ok(receipt.transaction_hash);

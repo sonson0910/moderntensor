@@ -21,6 +21,9 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+/// SECURITY(ORACLE-08): Named constant for GC retention blocks (was magic number 100).
+const GC_RETENTION_BLOCKS: u64 = 100;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────────────────────────────────────
@@ -178,6 +181,15 @@ impl DisputeManager {
         submitted_at: u64,
         dispute_deadline: u64,
     ) -> Result<(), OracleError> {
+        // SECURITY(ORACLE-09): Validate that dispute_deadline is after submitted_at.
+        // A deadline <= submitted_at would create an immediately-finalizable result,
+        // effectively bypassing the dispute window.
+        if dispute_deadline <= submitted_at {
+            return Err(OracleError::DisputeError(
+                "dispute_deadline must be after submitted_at".to_string(),
+            ));
+        }
+
         let mut pending = self.pending_results.write().await;
 
         // Bounded capacity — prevent DoS
@@ -250,6 +262,14 @@ impl DisputeManager {
         proof_hash: H256,
         current_block: u64,
     ) -> Result<(), OracleError> {
+        // SECURITY(ORACLE-10): Reject zero-address challengers.
+        // A zero address makes attribution/slashing ambiguous.
+        if challenger == [0u8; 20] {
+            return Err(OracleError::DisputeError(
+                "Challenger address must not be the zero address".to_string(),
+            ));
+        }
+
         // 1. Validate the request exists and is disputable
         let mut pending = self.pending_results.write().await;
         let record = pending.get_mut(&request_id).ok_or_else(|| {
@@ -258,6 +278,15 @@ impl DisputeManager {
                 request_id
             ))
         })?;
+
+        // SECURITY(ORACLE-18): Prevent miners from disputing their own results.
+        // A miner could submit a wrong result then dispute it themselves to
+        // game the system (e.g., claim challenger rewards).
+        if challenger == record.miner_address {
+            return Err(OracleError::DisputeError(
+                "Miner cannot dispute their own result".to_string(),
+            ));
+        }
 
         // Must be in Pending status
         if record.status != DisputeStatus::Pending {
@@ -314,10 +343,16 @@ impl DisputeManager {
     ///
     /// # Arguments
     /// * `current_block` - the current block height
-    /// * `miner_stake_fn` - closure that returns a miner's current stake
     /// * `slash_percent` - the percentage to slash for fraudulent AI (from `SlashingConfig`)
     ///
-    /// This function is intentionally sync-compatible for the hot consensus path.
+    /// # Thread Safety (ORACLE-12)
+    /// This function releases and re-acquires the `pending_results` lock between
+    /// Phase 1 (finalization) and Phase 2 (verification). A concurrent `submit_dispute()`
+    /// call between phases could modify a record's status. This is acceptable because:
+    /// - `process_block` is called once per block in the consensus loop (single-threaded)
+    /// - Phase 2 reads `active_disputes` which was populated by `submit_dispute()` before
+    ///   this call
+    /// - Any dispute submitted *during* `process_block` will be processed in the next block
     pub async fn process_block(
         &self,
         current_block: u64,
@@ -346,10 +381,12 @@ impl DisputeManager {
                 }
             }
 
-            // Garbage-collect old finalized entries
+            // SECURITY(ORACLE-08): Use named constant and saturating arithmetic
+            // for GC retention calculation to prevent theoretical overflow.
             pending.retain(|_, r| {
                 !matches!(r.status, DisputeStatus::Finalized | DisputeStatus::Resolved)
-                    || r.dispute_deadline + grace + 100 > current_block
+                    || r.dispute_deadline.saturating_add(grace).saturating_add(GC_RETENTION_BLOCKS)
+                        > current_block
             });
         }
 
@@ -484,10 +521,8 @@ impl DisputeManager {
             return Ok(None);
         }
 
-        let slash_amount = miner_stake
-            .checked_mul(slash_percent as u128)
-            .map(|v| v / 100)
-            .unwrap_or(miner_stake); // On overflow, cap at full stake rather than u128::MAX
+        let slash_amount =
+            miner_stake.checked_mul(slash_percent as u128).map(|v| v / 100).unwrap_or(miner_stake); // On overflow, cap at full stake rather than u128::MAX
 
         record.status = DisputeStatus::Slashed { slash_amount };
 
@@ -596,23 +631,13 @@ mod tests {
         .unwrap();
 
         // Compute valid commitment for the fraud proof
-        let proof_hash = compute_commitment(
-            &req_id,
-            &test_model_hash(),
-            &input_data,
-            &correct_result,
-        );
+        let proof_hash =
+            compute_commitment(&req_id, &test_model_hash(), &input_data, &correct_result);
 
         // Challenger submits a different result with valid commitment
-        dm.submit_dispute(
-            req_id,
-            test_challenger(),
-            Bytes::from(correct_result),
-            proof_hash,
-            120,
-        )
-        .await
-        .unwrap();
+        dm.submit_dispute(req_id, test_challenger(), Bytes::from(correct_result), proof_hash, 120)
+            .await
+            .unwrap();
 
         assert_eq!(dm.active_dispute_count().await, 1);
 
@@ -648,12 +673,7 @@ mod tests {
         .unwrap();
 
         // Challenger submits the SAME result with valid commitment
-        let proof_hash = compute_commitment(
-            &req_id,
-            &test_model_hash(),
-            &input_data,
-            &result,
-        );
+        let proof_hash = compute_commitment(&req_id, &test_model_hash(), &input_data, &result);
         dm.submit_dispute(
             req_id,
             test_challenger(),

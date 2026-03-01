@@ -92,6 +92,10 @@ impl RequestProcessor {
     /// Maximum time allowed for a single AI inference + proof generation.
     const INFERENCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+    /// SECURITY(ORACLE-04): Maximum allowed input size to prevent memory exhaustion DoS.
+    /// Requests exceeding this limit are rejected before any computation begins.
+    const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+
     /// Default threshold for optimistic execution (MDT value units).
     ///
     /// Requests with `request_value < threshold` execute optimistically (no ZK proof).
@@ -115,6 +119,15 @@ impl RequestProcessor {
         model_hash: H256,
         input_data: Bytes,
     ) -> Result<(Bytes, H256)> {
+        // SECURITY(ORACLE-04): Reject oversized inputs before processing
+        if input_data.len() > Self::MAX_INPUT_SIZE {
+            return Err(crate::error::OracleError::AiInference(format!(
+                "Input data too large: {} bytes (max {})",
+                input_data.len(),
+                Self::MAX_INPUT_SIZE
+            )));
+        }
+
         info!(request_id = ?request_id, model = ?model_hash, "Processing AI request with zkVM");
 
         // Prepare guest input: combine model hash and input data
@@ -130,8 +143,11 @@ impl RequestProcessor {
         // Verify the AI inference image is registered
         if !prover.is_image_registered(&self.ai_image_id).await {
             return Err(crate::error::OracleError::ProofGeneration(
+                // SECURITY(ORACLE-16): Clear error message about uninitialized processor.
+                // The placeholder DEFAULT_AI_IMAGE_ID ([0xAA; 32]) is never registered
+                // automatically. Callers MUST call initialize(Some(elf_bytes)) first.
                 "AI inference image not registered. Call initialize() with a valid ELF binary \
-                 before processing requests."
+                 before processing requests. The processor may be using the placeholder image ID."
                     .to_string(),
             ));
         }
@@ -202,6 +218,15 @@ impl RequestProcessor {
         current_block: u64,
         miner_address: [u8; 20],
     ) -> Result<OptimisticResult> {
+        // SECURITY(ORACLE-04): Reject oversized inputs in optimistic mode too
+        if input_data.len() > Self::MAX_INPUT_SIZE {
+            return Err(crate::error::OracleError::AiInference(format!(
+                "Input data too large: {} bytes (max {})",
+                input_data.len(),
+                Self::MAX_INPUT_SIZE
+            )));
+        }
+
         if request_value >= self.optimistic_threshold {
             // High-value: full ZK proof required
             let (result, proof_hash) = self.process_request(
@@ -242,7 +267,10 @@ impl RequestProcessor {
             result: Bytes::from(commitment.as_bytes().to_vec()),
             proof_hash: None,
             optimistic: true,
-            dispute_deadline: current_block + self.dispute_window_blocks,
+            // SECURITY(ORACLE-11): Use saturating_add to prevent overflow
+            // when current_block is near u64::MAX (would wrap to 0, creating
+            // an immediately-expired dispute deadline).
+            dispute_deadline: current_block.saturating_add(self.dispute_window_blocks),
             miner_address,
         })
     }
