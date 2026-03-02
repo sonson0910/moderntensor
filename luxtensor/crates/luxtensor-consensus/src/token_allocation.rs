@@ -183,7 +183,12 @@ impl VestingEntry {
 }
 
 /// Token Allocation Manager
-/// Handles pre-minting at TGE and vesting release
+/// Handles pre-minting at TGE and vesting release.
+///
+/// ## Persistence
+/// Use `snapshot()` / `restore()` to serialize and restore vesting state
+/// across node restarts. Without persistence, a restarted node has an empty
+/// claimed_amount map, enabling double-claiming.
 pub struct TokenAllocation {
     /// TGE timestamp
     tge_timestamp: u64,
@@ -195,6 +200,9 @@ pub struct TokenAllocation {
     total_minted: RwLock<u128>,
     /// Emission pool (for gradual emission)
     emission_pool: RwLock<u128>,
+    /// Addresses authorized to call `mint_emission`.
+    /// When non-empty, only these addresses may mint from the emission pool.
+    authorized_minters: RwLock<Vec<[u8; 20]>>,
 }
 
 impl TokenAllocation {
@@ -206,6 +214,7 @@ impl TokenAllocation {
             vesting_entries: RwLock::new(Vec::new()),
             total_minted: RwLock::new(0),
             emission_pool: RwLock::new(0),
+            authorized_minters: RwLock::new(Vec::new()),
         }
     }
 
@@ -317,19 +326,58 @@ impl TokenAllocation {
             .sum()
     }
 
-    /// Mint from emission pool (for rewards)
+    /// Mint from emission pool (for block rewards).
+    ///
+    /// When `authorized_minters` is non-empty, only callers in that set are
+    /// allowed to mint. This overload does not check the caller — use
+    /// `mint_emission_by()` when the caller identity is available.
     pub fn mint_emission(&self, amount: u128) -> Result<u128, &'static str> {
+        self.mint_emission_by(amount, None)
+    }
+
+    /// Mint from emission pool with optional caller authorization.
+    ///
+    /// When `authorized_minters` is non-empty:
+    ///   - `caller = Some(addr)` that IS in the set → allowed
+    ///   - `caller = Some(addr)` NOT in the set → rejected
+    ///   - `caller = None` → allowed (internal block-production path)
+    pub fn mint_emission_by(
+        &self,
+        amount: u128,
+        caller: Option<&[u8; 20]>,
+    ) -> Result<u128, &'static str> {
+        // Authorization check
+        let minters = self.authorized_minters.read();
+        if !minters.is_empty() {
+            if let Some(addr) = caller {
+                if !minters.contains(addr) {
+                    return Err("Caller not authorized to mint emission");
+                }
+            }
+        }
+        drop(minters);
+
         let mut pool = self.emission_pool.write();
         if amount > *pool {
             return Err("Emission pool exhausted");
         }
         *pool = pool.saturating_sub(amount);
-        // FIX: Read through the write guard to avoid self-deadlock.
-        // Previously: `self.total_minted.read()` while holding `.write()` — guaranteed
-        // deadlock with parking_lot's non-reentrant RwLock.
         let mut minted = self.total_minted.write();
         *minted = minted.saturating_add(amount);
         Ok(amount)
+    }
+
+    /// Add an address to the authorized minters set.
+    pub fn add_authorized_minter(&self, address: [u8; 20]) {
+        let mut minters = self.authorized_minters.write();
+        if !minters.contains(&address) {
+            minters.push(address);
+        }
+    }
+
+    /// Remove an address from the authorized minters set.
+    pub fn remove_authorized_minter(&self, address: &[u8; 20]) {
+        self.authorized_minters.write().retain(|a| a != address);
     }
 
     /// Get remaining emission pool
@@ -354,6 +402,54 @@ impl TokenAllocation {
             allocations: minted.iter().map(|(k, v)| (*k, *v)).collect(),
         }
     }
+
+    // ── Persistence ──────────────────────────────────────────────────
+
+    /// Serialize the full allocation state to JSON bytes for persistence.
+    ///
+    /// Call this periodically (e.g., after each epoch or at shutdown) and
+    /// write the result to RocksDB or disk.
+    pub fn snapshot(&self) -> Result<Vec<u8>, String> {
+        let minted = self.minted.read();
+        let entries = self.vesting_entries.read();
+        let total_minted = self.total_minted.read();
+        let emission_pool = self.emission_pool.read();
+
+        let snap = AllocationSnapshot {
+            tge_timestamp: self.tge_timestamp,
+            minted: minted.clone(),
+            vesting_entries: entries.clone(),
+            total_minted: *total_minted,
+            emission_pool: *emission_pool,
+        };
+        serde_json::to_vec(&snap).map_err(|e| e.to_string())
+    }
+
+    /// Restore allocation state from a previously serialized snapshot.
+    ///
+    /// Should be called at node startup before accepting any claims.
+    pub fn restore(data: &[u8]) -> Result<Self, String> {
+        let snap: AllocationSnapshot =
+            serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        Ok(Self {
+            tge_timestamp: snap.tge_timestamp,
+            minted: RwLock::new(snap.minted),
+            vesting_entries: RwLock::new(snap.vesting_entries),
+            total_minted: RwLock::new(snap.total_minted),
+            emission_pool: RwLock::new(snap.emission_pool),
+            authorized_minters: RwLock::new(Vec::new()),
+        })
+    }
+}
+
+/// Internal snapshot struct for (de)serialization.
+#[derive(Serialize, Deserialize)]
+struct AllocationSnapshot {
+    tge_timestamp: u64,
+    minted: HashMap<AllocationCategory, u128>,
+    vesting_entries: Vec<VestingEntry>,
+    total_minted: u128,
+    emission_pool: u128,
 }
 
 /// TGE execution result

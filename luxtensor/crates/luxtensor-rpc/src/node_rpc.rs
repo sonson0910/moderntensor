@@ -338,6 +338,108 @@ pub fn register_node_methods(
     });
 
     // =========================================================================
+    // node_setGpu — register GPU capability with attestation hash
+    // Params: { address, gpu_tier, attestation, timestamp, signature }
+    // gpu_tier: "None" | "Consumer" | "Professional" | "DataCenter"
+    // attestation: hex-encoded 32-byte benchmark or TEE attestation hash
+    // =========================================================================
+    let reg = registry.clone();
+    io.add_method("node_setGpu", move |params: Params| {
+        let reg = reg.clone();
+        async move {
+        let p: SetGpuParams = params.parse()?;
+
+        let address = parse_address(&p.address)?;
+
+        // Verify timestamp freshness (within 5 minutes)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > p.timestamp + 300 || p.timestamp > now + 60 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature expired or future timestamp".to_string(),
+                data: None,
+            });
+        }
+
+        // Verify caller owns the address
+        let message = format!(
+            "node_setGpu:{}:{}:{}:{}",
+            hex::encode(address), p.gpu_tier, p.attestation, p.timestamp
+        );
+        let addr = luxtensor_core::Address::from(address);
+        verify_caller_signature(&addr, &message, &p.signature, 0)
+            .or_else(|_| verify_caller_signature(&addr, &message, &p.signature, 1))
+            .map_err(|_| RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Signature verification failed".to_string(),
+                data: None,
+            })?;
+
+        // Parse GPU tier
+        let gpu = match p.gpu_tier.to_lowercase().as_str() {
+            "none" => luxtensor_consensus::GpuCapability::None,
+            "basic" => luxtensor_consensus::GpuCapability::Basic,
+            "advanced" => luxtensor_consensus::GpuCapability::Advanced,
+            "professional" => luxtensor_consensus::GpuCapability::Professional,
+            _ => return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Invalid gpu_tier. Use: None, Basic, Advanced, Professional".to_string(),
+                data: None,
+            }),
+        };
+
+        // Parse attestation hash (must be non-zero for GPU bonus)
+        let att_hex = p.attestation.strip_prefix("0x").unwrap_or(&p.attestation);
+        let att_bytes = hex::decode(att_hex).map_err(|_| RpcError {
+            code: ErrorCode::InvalidParams,
+            message: "Invalid hex attestation".to_string(),
+            data: None,
+        })?;
+        if att_bytes.len() != 32 {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Attestation must be exactly 32 bytes".to_string(),
+                data: None,
+            });
+        }
+        let mut attestation = [0u8; 32];
+        attestation.copy_from_slice(&att_bytes);
+
+        if attestation == [0u8; 32] {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Attestation must be non-zero. Submit a benchmark or TEE attestation hash.".to_string(),
+                data: None,
+            });
+        }
+
+        // Apply GPU capability with attestation
+        let mut nodes = reg.write();
+        if let Some(node) = nodes.get_mut_node(address) {
+            node.set_gpu_with_attestation(gpu, attestation);
+            let bonus = node.effective_stake_with_gpu();
+            Ok(json!({
+                "success": true,
+                "address": p.address,
+                "gpu_tier": format!("{:?}", gpu),
+                "attestation": format!("0x{}", hex::encode(attestation)),
+                "effective_stake": bonus.to_string(),
+                "message": "GPU capability registered with attestation"
+            }))
+        } else {
+            Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "Node not found. Register the node first.".to_string(),
+                data: None,
+            })
+        }
+        }
+    });
+
+    // =========================================================================
     // system_nodeRoles — roles this node performs in the network
     // Params: []
     // Returns: { roles: ["Authority" | "Full" | "LightClient"], description }
@@ -380,6 +482,16 @@ struct AddressParams {
 struct SignedAddressParams {
     address: String,
     timestamp: String,
+    signature: String,
+}
+
+/// Params for setting GPU capability with attestation
+#[derive(Deserialize)]
+struct SetGpuParams {
+    address: String,
+    gpu_tier: String,
+    attestation: String,
+    timestamp: u64,
     signature: String,
 }
 

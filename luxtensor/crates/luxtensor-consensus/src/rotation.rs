@@ -36,6 +36,12 @@ pub struct RotationConfig {
     pub max_validators: usize,
     /// Minimum stake required to become a validator
     pub min_stake: u128,
+    /// 🔧 FIX: Maximum validators to activate per epoch (churn limit).
+    /// Prevents mass activation from destabilizing the active set.
+    /// Set to 0 for unlimited (not recommended for production).
+    pub max_activations_per_epoch: usize,
+    /// 🔧 FIX: Maximum validators to exit per epoch (churn limit).
+    pub max_exits_per_epoch: usize,
 }
 
 impl Default for RotationConfig {
@@ -46,6 +52,8 @@ impl Default for RotationConfig {
             exit_delay_epochs: 2,
             max_validators: 100,
             min_stake: MIN_STAKE, // 1,000,000 MDT (= 10^24 base units) — matches constants::consensus::MIN_STAKE
+            max_activations_per_epoch: 10, // 🔧 FIX: Max 10% churn per epoch (at 100 max validators)
+            max_exits_per_epoch: 10,
         }
     }
 }
@@ -125,13 +133,8 @@ impl ValidatorRotation {
             activation_epoch
         );
 
-        self.pending_validators.insert(
-            validator.address,
-            PendingValidator {
-                validator,
-                activation_epoch,
-            },
-        );
+        self.pending_validators
+            .insert(validator.address, PendingValidator { validator, activation_epoch });
 
         Ok(activation_epoch)
     }
@@ -182,33 +185,54 @@ impl ValidatorRotation {
     }
 
     /// Activate validators whose activation epoch has arrived
+    ///
+    /// 🔧 FIX: Enforces per-epoch churn limit (`max_activations_per_epoch`).
+    /// Validators are sorted by stake (descending) so highest-stake validators
+    /// get priority when the churn limit is reached. Overflow is re-queued.
     fn activate_pending_validators(&mut self, new_epoch: u64) -> Vec<Address> {
         let mut activated = Vec::new();
 
         // Collect ready validators
-        let ready_to_activate: Vec<Address> = self
+        let mut ready_to_activate: Vec<(Address, u128)> = self
             .pending_validators
             .iter()
             .filter(|(_, pending)| pending.activation_epoch <= new_epoch)
-            .map(|(addr, _)| *addr)
+            .map(|(addr, pending)| (*addr, pending.validator.stake))
             .collect();
 
-        for address in ready_to_activate {
+        // 🔧 FIX: Sort by stake descending for deterministic, fair ordering
+        ready_to_activate.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        // 🔧 FIX: Apply churn limit
+        let churn_limit = if self.config.max_activations_per_epoch > 0 {
+            self.config.max_activations_per_epoch
+        } else {
+            ready_to_activate.len() // unlimited
+        };
+
+        for (address, _stake) in ready_to_activate {
+            if activated.len() >= churn_limit {
+                // Re-queue excess validators for next epoch
+                if let Some(pending) = self.pending_validators.get_mut(&address) {
+                    pending.activation_epoch = new_epoch + 1;
+                }
+                warn!(
+                    "Churn limit reached ({}/epoch), validator {} deferred to epoch {}",
+                    churn_limit,
+                    hex::encode(&address),
+                    new_epoch + 1
+                );
+                continue;
+            }
+
             if let Some(pending) = self.pending_validators.remove(&address) {
                 if self.current_validators.len() < self.config.max_validators {
                     if let Err(e) = self.current_validators.add_validator(pending.validator) {
-                        warn!(
-                            "Failed to activate validator {}: {}",
-                            hex::encode(&address), e
-                        );
+                        warn!("Failed to activate validator {}: {}", hex::encode(&address), e);
                         continue;
                     }
                     activated.push(address);
-                    info!(
-                        "Activated validator {} at epoch {}",
-                        hex::encode(&address),
-                        new_epoch
-                    );
+                    info!("Activated validator {} at epoch {}", hex::encode(&address), new_epoch);
                 } else {
                     warn!(
                         "Cannot activate validator {}, max validator count reached",
@@ -235,36 +259,49 @@ impl ValidatorRotation {
     /// Each validator's exit_epoch was set when they requested exit:
     ///   exit_epoch = request_epoch + exit_delay_epochs
     /// Only validators with exit_epoch <= new_epoch are actually removed.
+    ///
+    /// 🔧 FIX: Enforces per-epoch churn limit (`max_exits_per_epoch`).
     fn process_validator_exits(&mut self, new_epoch: u64) -> Vec<Address> {
         let mut exited = Vec::new();
 
         // Collect validators whose exit epoch has arrived
-        let ready_to_exit: Vec<Address> = self
+        let mut ready_to_exit: Vec<Address> = self
             .exiting_validators
             .iter()
             .filter(|(_, exit_epoch)| **exit_epoch <= new_epoch)
             .map(|(addr, _)| *addr)
             .collect();
 
+        // Sort by address for deterministic ordering
+        ready_to_exit.sort();
+
+        // 🔧 FIX: Apply churn limit
+        let churn_limit = if self.config.max_exits_per_epoch > 0 {
+            self.config.max_exits_per_epoch
+        } else {
+            ready_to_exit.len()
+        };
+
         for address in ready_to_exit {
-            if let Err(e) = self.current_validators.remove_validator(&address) {
+            if exited.len() >= churn_limit {
                 warn!(
-                    "Failed to remove exiting validator {}: {}",
-                    hex::encode(&address), e
+                    "Exit churn limit reached ({}/epoch), validator {} deferred",
+                    churn_limit,
+                    hex::encode(&address),
                 );
+                continue; // stays in exiting_validators, will be processed next epoch
+            }
+
+            if let Err(e) = self.current_validators.remove_validator(&address) {
+                warn!("Failed to remove exiting validator {}: {}", hex::encode(&address), e);
             }
             self.exiting_validators.remove(&address);
             exited.push(address);
-            info!(
-                "Exited validator {} at epoch {}",
-                hex::encode(&address),
-                new_epoch,
-            );
+            info!("Exited validator {} at epoch {}", hex::encode(&address), new_epoch,);
         }
 
         exited
     }
-
 
     /// Get pending validator count
     pub fn pending_count(&self) -> usize {

@@ -11,6 +11,7 @@ use luxtensor_core::types::Hash;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use tracing::warn;
 
 // ─── Error ───────────────────────────────────────────────────────────
 
@@ -188,7 +189,15 @@ pub struct LightClientState {
 }
 
 impl LightClientState {
+    /// Create a new light client **without** validator verification.
+    ///
+    /// Without a `ValidatorVerifier`, the light client accepts any
+    /// structurally-valid header chain. **For production use, call
+    /// `with_validator_verifier()` instead.** This constructor is for tests,
+    /// devnet, or bootstrap-phase initialization only.
     pub fn new(config: LightClientConfig) -> Self {
+        warn!("⚠️  LightClient created WITHOUT ValidatorVerifier — header signatures will NOT be checked. \
+               Use with_validator_verifier() for production security.");
         Self {
             config,
             headers: RwLock::new(HashMap::new()),

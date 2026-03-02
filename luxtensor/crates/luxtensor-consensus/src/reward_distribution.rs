@@ -294,15 +294,17 @@ impl RewardDistributor {
         infra_nodes: &[InfrastructureNodeInfo],
     ) -> DistributionResult {
         // Calculate pool sizes using integer BPS arithmetic (no f64 precision loss)
-        // SECURITY: Use checked_mul to prevent overflow when total_emission is large
-        let miner_pool = total_emission.checked_mul(self.config.miner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
-        let validator_pool = total_emission.checked_mul(self.config.validator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
-        let infra_pool = total_emission.checked_mul(self.config.infrastructure_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
-        let delegator_pool = total_emission.checked_mul(self.config.delegator_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
-        let subnet_pool = total_emission.checked_mul(self.config.subnet_owner_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
-        let dao_allocation = total_emission.checked_mul(self.config.dao_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+        // 🔧 FIX: replaced unwrap_or(u128::MAX) with unwrap_or(0) — returning MAX
+        // on overflow would silently distribute an astronomical amount instead of
+        // capping at zero which is detectable and safe.
+        let miner_pool = total_emission.checked_mul(self.config.miner_share_bps as u128).unwrap_or(0) / 10_000;
+        let validator_pool = total_emission.checked_mul(self.config.validator_share_bps as u128).unwrap_or(0) / 10_000;
+        let infra_pool = total_emission.checked_mul(self.config.infrastructure_share_bps as u128).unwrap_or(0) / 10_000;
+        let delegator_pool = total_emission.checked_mul(self.config.delegator_share_bps as u128).unwrap_or(0) / 10_000;
+        let subnet_pool = total_emission.checked_mul(self.config.subnet_owner_share_bps as u128).unwrap_or(0) / 10_000;
+        let dao_allocation = total_emission.checked_mul(self.config.dao_share_bps as u128).unwrap_or(0) / 10_000;
         let community_ecosystem_allocation =
-            total_emission.checked_mul(self.config.community_ecosystem_share_bps as u128).unwrap_or(u128::MAX) / 10_000;
+            total_emission.checked_mul(self.config.community_ecosystem_share_bps as u128).unwrap_or(0) / 10_000;
 
         // Distribute to each group
         let miner_rewards = self.distribute_by_score(miner_pool, miners);
@@ -343,13 +345,19 @@ impl RewardDistributor {
             return rewards;
         }
 
+        // 🔧 FIX: Sort miners by address for deterministic dust assignment.
+        // Previously dust went to miners.last() which depends on caller's input order,
+        // potentially causing consensus splits if different nodes order differently.
+        let mut sorted_miners: Vec<&MinerInfo> = miners.iter().collect();
+        sorted_miners.sort_by_key(|m| m.address);
+
         // SECURITY: Scale scores to integer for precision-safe division
         // Each score is scaled by 10^12 relative to total, then used for pro-rata
         const PRECISION: u128 = 1_000_000_000_000; // 10^12
         let mut _distributed: u128 = 0;
 
         // Convert scores to scaled integer shares to avoid f64→u128 cast precision loss
-        let scaled_scores: Vec<([u8; 20], u128)> = miners
+        let scaled_scores: Vec<([u8; 20], u128)> = sorted_miners
             .iter()
             .map(|m| {
                 // Scale: (score * PRECISION) / total_score — both f64, result fits u128
@@ -368,10 +376,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last participant to ensure full pool distribution
+        // Give rounding dust to LAST sorted participant (deterministic by address)
         let dust = pool.saturating_sub(_distributed);
         if dust > 0 {
-            if let Some(last) = miners.last() {
+            if let Some(last) = sorted_miners.last() {
                 *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
@@ -437,8 +445,12 @@ impl RewardDistributor {
     ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
+        // 🔧 FIX: Sort by address for deterministic dust assignment
+        let mut sorted_miners: Vec<&MinerEpochStats> = miners.iter().collect();
+        sorted_miners.sort_by_key(|m| m.address);
+
         // Calculate effective scores with dynamic GPU bonus
-        let effective_scores: Vec<([u8; 20], f64)> = miners
+        let effective_scores: Vec<([u8; 20], f64)> = sorted_miners
             .iter()
             .map(|m| {
                 // GPU bonus scales with task completion ratio
@@ -470,10 +482,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last participant
+        // Give rounding dust to last sorted participant
         let dust = pool.saturating_sub(distributed);
         if dust > 0 {
-            if let Some(last) = miners.last() {
+            if let Some(last) = sorted_miners.last() {
                 *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
@@ -489,9 +501,13 @@ impl RewardDistributor {
     ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
+        // 🔧 FIX: Sort by address for deterministic dust assignment
+        let mut sorted_validators: Vec<&ValidatorInfo> = validators.iter().collect();
+        sorted_validators.sort_by_key(|v| v.address);
+
         // Calculate effective stake using logarithmic curve
         let effective_stakes: Vec<([u8; 20], u128)> =
-            validators.iter().map(|v| (v.address, logarithmic_stake(v.stake))).collect();
+            sorted_validators.iter().map(|v| (v.address, logarithmic_stake(v.stake))).collect();
 
         let total_effective: u128 = effective_stakes.iter().map(|(_, e)| e).sum();
         if total_effective == 0 {
@@ -509,10 +525,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last participant
+        // Give rounding dust to last sorted participant
         let dust = pool.saturating_sub(distributed);
         if dust > 0 {
-            if let Some(last) = validators.last() {
+            if let Some(last) = sorted_validators.last() {
                 *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
@@ -528,8 +544,12 @@ impl RewardDistributor {
     ) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
+        // 🔧 FIX: Sort by address for deterministic dust assignment
+        let mut sorted_delegators: Vec<&DelegatorInfo> = delegators.iter().collect();
+        sorted_delegators.sort_by_key(|d| d.address);
+
         // Calculate weighted stake: logarithmic_stake * (1 + lock_bonus_bps/10000)
-        let weighted_stakes: Vec<(_, u128)> = delegators
+        let weighted_stakes: Vec<(_, u128)> = sorted_delegators
             .iter()
             .map(|d| {
                 let bonus_bps = self.lock_bonus.get_bonus_bps(d.lock_days);
@@ -554,10 +574,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last participant
+        // Give rounding dust to last sorted delegator
         let dust = pool.saturating_sub(distributed);
         if dust > 0 {
-            if let Some(last) = delegators.last() {
+            if let Some(last) = sorted_delegators.last() {
                 *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
@@ -582,13 +602,17 @@ impl RewardDistributor {
             return rewards;
         }
 
-        let total_score: f64 = nodes.iter().map(|n| n.uptime_score).sum();
+        // 🔧 FIX: Sort by address for deterministic dust assignment
+        let mut sorted_nodes: Vec<&InfrastructureNodeInfo> = nodes.iter().collect();
+        sorted_nodes.sort_by_key(|n| n.address);
+
+        let total_score: f64 = sorted_nodes.iter().map(|n| n.uptime_score).sum();
         if total_score == 0.0 {
             return rewards;
         }
 
         let mut _distributed: u128 = 0;
-        for node in nodes {
+        for node in &sorted_nodes {
             // SECURITY: Use fixed-point integer arithmetic instead of f64
             const PRECISION: u128 = 1_000_000_000_000;
             let scaled_share = if total_score > 0.0 {
@@ -609,10 +633,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last infrastructure node
+        // Give rounding dust to last sorted infrastructure node
         let dust = pool.saturating_sub(_distributed);
         if dust > 0 {
-            if let Some(last) = nodes.last() {
+            if let Some(last) = sorted_nodes.last() {
                 *rewards.entry(last.address).or_insert(0) += dust;
             }
         }
@@ -624,13 +648,17 @@ impl RewardDistributor {
     fn distribute_to_subnets(&self, pool: u128, subnets: &[SubnetInfo]) -> HashMap<[u8; 20], u128> {
         let mut rewards = HashMap::new();
 
-        let total_weight: u128 = subnets.iter().map(|s| s.emission_weight).sum();
+        // 🔧 FIX: Sort by owner address for deterministic dust assignment
+        let mut sorted_subnets: Vec<&SubnetInfo> = subnets.iter().collect();
+        sorted_subnets.sort_by_key(|s| s.owner);
+
+        let total_weight: u128 = sorted_subnets.iter().map(|s| s.emission_weight).sum();
         if total_weight == 0 {
             return rewards;
         }
 
         let mut distributed: u128 = 0;
-        for subnet in subnets {
+        for subnet in &sorted_subnets {
             let share = (pool as u128)
                 .checked_mul(subnet.emission_weight)
                 .map(|x| x / total_weight)
@@ -641,10 +669,10 @@ impl RewardDistributor {
             }
         }
 
-        // Give rounding dust to last subnet owner
+        // Give rounding dust to last sorted subnet owner
         let dust = pool.saturating_sub(distributed);
         if dust > 0 {
-            if let Some(last) = subnets.last() {
+            if let Some(last) = sorted_subnets.last() {
                 *rewards.entry(last.owner).or_insert(0) += dust;
             }
         }

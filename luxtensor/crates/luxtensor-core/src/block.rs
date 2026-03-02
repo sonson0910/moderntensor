@@ -107,16 +107,37 @@ impl BlockHeader {
     /// Maximum allowed drift of block timestamp into the future (seconds).
     pub const MAX_FUTURE_DRIFT_SECS: u64 = 15;
 
-    /// Validate block header timestamp against current time.
+    /// Validate block header timestamp against current time and parent.
     ///
-    /// Rejects blocks with timestamps more than [`MAX_FUTURE_DRIFT_SECS`]
-    /// seconds in the future. This prevents validators from manipulating
-    /// timestamps to gain unfair advantages in time-dependent logic.
+    /// Rejects blocks with timestamps:
+    /// - More than [`MAX_FUTURE_DRIFT_SECS`] seconds in the future
+    /// - Less than or equal to the parent block's timestamp (monotonicity)
+    ///
+    /// Timestamp monotonicity is critical for time-dependent smart contract
+    /// logic (vesting, auctions, lock periods). Without it, a validator
+    /// could set `block.timestamp = 0` to manipulate on-chain time.
     pub fn validate_timestamp(&self, current_timestamp: u64) -> crate::Result<()> {
         if self.timestamp > current_timestamp + Self::MAX_FUTURE_DRIFT_SECS {
             return Err(crate::CoreError::InvalidBlock(format!(
                 "block timestamp {} is too far in the future (current: {}, max drift: {}s)",
-                self.timestamp, current_timestamp, Self::MAX_FUTURE_DRIFT_SECS
+                self.timestamp,
+                current_timestamp,
+                Self::MAX_FUTURE_DRIFT_SECS
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate that this block's timestamp is strictly greater than its parent's.
+    ///
+    /// SECURITY: Prevents timestamp manipulation attacks where a validator sets
+    /// `block.timestamp <= parent.timestamp`, which could break time-dependent
+    /// contract logic (vesting schedules, lock durations, auction deadlines).
+    pub fn validate_timestamp_monotonic(&self, parent_timestamp: u64) -> crate::Result<()> {
+        if self.timestamp <= parent_timestamp {
+            return Err(crate::CoreError::InvalidBlock(format!(
+                "block timestamp {} must be strictly greater than parent timestamp {}",
+                self.timestamp, parent_timestamp
             )));
         }
         Ok(())
@@ -252,17 +273,12 @@ impl Block {
         self.validate()?;
 
         // SECURITY: Verify the block signature against the header hash
-        let sig_bytes: [u8; 64] = self
-            .header
-            .signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| {
-                crate::CoreError::InvalidBlock(format!(
-                    "invalid signature length: expected 64, got {}",
-                    self.header.signature.len()
-                ))
-            })?;
+        let sig_bytes: [u8; 64] = self.header.signature.as_slice().try_into().map_err(|_| {
+            crate::CoreError::InvalidBlock(format!(
+                "invalid signature length: expected 64, got {}",
+                self.header.signature.len()
+            ))
+        })?;
 
         let block_hash = self.header.hash();
 

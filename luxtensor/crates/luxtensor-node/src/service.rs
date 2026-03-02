@@ -146,6 +146,8 @@ pub struct NodeService {
     pub(crate) vtrust_scorer: Arc<RwLock<VTrustScorer>>,
     /// Path to VTrust snapshot file (JSON-serialized VTrustSnapshot)
     pub(crate) vtrust_snapshot_path: std::path::PathBuf,
+    /// Path to token allocation snapshot file (JSON-serialized)
+    pub(crate) token_alloc_snapshot_path: std::path::PathBuf,
     /// Emission controller for block reward calculation with halving + utility adjustment
     pub(crate) emission_controller: Arc<RwLock<luxtensor_consensus::EmissionController>>,
     /// Halving schedule for Bitcoin-like reward reduction
@@ -174,6 +176,8 @@ pub struct NodeService {
     pub(crate) request_processor: Arc<luxtensor_oracle::RequestProcessor>,
     /// VRF keypair (secp256k1 EC-VRF) for attaching verifiable randomness proofs to blocks
     pub(crate) vrf_keypair: Option<Arc<luxtensor_crypto::vrf::VrfKeypair>>,
+    /// Fork resolution manager for reorg detection and chain validation
+    pub(crate) fork_resolver: Arc<RwLock<luxtensor_consensus::fork_resolution::ForkResolver>>,
 }
 
 impl NodeService {
@@ -202,7 +206,8 @@ impl NodeService {
 
         // Phase 2: Consensus + mempool
         let (consensus, vtrust_scorer, vtrust_snapshot_path, mempool,
-             reward_executor, token_allocation, node_registry) =
+             reward_executor, token_allocation, node_registry,
+             token_alloc_snapshot_path) =
             Self::init_consensus_and_mempool(&config, &storage, &state_db)?;
 
         // Phase 3: Security modules
@@ -276,6 +281,7 @@ impl NodeService {
             ws_broadcast: None,
             vtrust_scorer,
             vtrust_snapshot_path,
+            token_alloc_snapshot_path,
             emission_controller,
             halving_schedule,
             burn_manager,
@@ -290,6 +296,9 @@ impl NodeService {
             pot_verifier,
             request_processor,
             vrf_keypair,
+            fork_resolver: Arc::new(RwLock::new(
+                luxtensor_consensus::fork_resolution::ForkResolver::default(),
+            )),
         })
     }
 
@@ -408,6 +417,7 @@ impl NodeService {
         Arc<RwLock<RewardExecutor>>,
         Arc<RwLock<TokenAllocation>>,
         Arc<RwLock<NodeRegistry>>,
+        std::path::PathBuf, // token_allocation_snapshot_path
     )> {
         info!("⚖️  Initializing consensus...");
         let consensus_config = ConsensusConfig {
@@ -451,8 +461,33 @@ impl NodeService {
         let reward_executor = Arc::new(RwLock::new(RewardExecutor::new(dao_address)));
         info!("  ✓ Reward executor initialized with DAO: 0x{}", hex::encode(&dao_address));
 
-        let tge_timestamp = current_timestamp();
-        let token_allocation = Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)));
+        // Token allocation with disk persistence
+        let token_alloc_snapshot_path = config.node.data_dir.join("token_allocation_snapshot.json");
+        let token_allocation = {
+            match std::fs::read(&token_alloc_snapshot_path) {
+                Ok(bytes) => match TokenAllocation::restore(&bytes) {
+                    Ok(restored) => {
+                        info!("  ✓ Token allocation restored from snapshot");
+                        Arc::new(RwLock::new(restored))
+                    }
+                    Err(e) => {
+                        warn!("  ⚠️ Failed to deserialize token allocation snapshot: {}", e);
+                        let tge_timestamp = current_timestamp();
+                        Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)))
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    info!("  ✓ No token allocation snapshot found, starting fresh");
+                    let tge_timestamp = current_timestamp();
+                    Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)))
+                }
+                Err(e) => {
+                    warn!("  ⚠️ Failed to read token allocation snapshot: {}", e);
+                    let tge_timestamp = current_timestamp();
+                    Arc::new(RwLock::new(TokenAllocation::new(tge_timestamp)))
+                }
+            }
+        };
         let node_registry = Arc::new(RwLock::new(NodeRegistry::new()));
         info!("  ✓ Token allocation + node registry initialized");
 
@@ -460,7 +495,8 @@ impl NodeService {
         let _ = (storage, state_db);
 
         Ok((consensus, vtrust_scorer, vtrust_snapshot_path, mempool,
-            reward_executor, token_allocation, node_registry))
+            reward_executor, token_allocation, node_registry,
+            token_alloc_snapshot_path))
     }
 
     // ========================================================================
@@ -843,6 +879,20 @@ impl NodeService {
                     }
                 }
                 Err(e) => warn!("⚠️ Failed to serialize VTrust snapshot: {}", e),
+            }
+        }
+
+        // Persist token allocation snapshot for next startup
+        {
+            match self.token_allocation.read().snapshot() {
+                Ok(bytes) => {
+                    if let Err(e) = std::fs::write(&self.token_alloc_snapshot_path, &bytes) {
+                        warn!("⚠️ Failed to save token allocation snapshot: {}", e);
+                    } else {
+                        info!("💾 Token allocation snapshot saved");
+                    }
+                }
+                Err(e) => warn!("⚠️ Failed to serialize token allocation snapshot: {}", e),
             }
         }
 

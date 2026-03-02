@@ -12,6 +12,7 @@
 
 use crate::types::{Address, Hash};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 // ─── Error ───────────────────────────────────────────────────────────
 
@@ -266,7 +267,11 @@ fn verify_attestations_with_config(config: &BridgeConfig, proof: &BridgeProof) -
             if !seen_relayers.insert(a.relayer) {
                 return false;
             }
-            match luxtensor_crypto::recover_address(&a.message_hash, &a.signature) {
+            // 🔧 FIX H-1: Use recover_address_strict (requires explicit v byte)
+            // instead of deprecated recover_address which tries both recovery IDs.
+            // Since we already validated signature.len() == 65 above, the v byte
+            // is present and we get unambiguous recovery.
+            match luxtensor_crypto::recover_address_strict(&a.message_hash, &a.signature) {
                 Ok(recovered) => recovered.as_bytes() == a.relayer.as_bytes(),
                 Err(_) => false,
             }
@@ -431,27 +436,32 @@ impl InMemoryBridge {
 /// with root `expected_root`. Each element in `proof` is a sibling hash that,
 /// combined with the current hash, produces the next level's hash.
 ///
-/// Uses the same keccak256 hash function as the rest of the chain.
+/// 🔧 FIX M-2: Uses domain-separated hashing to prevent second-preimage attacks.
+/// Leaf hash is prefixed with 0x00, internal node hashes are prefixed with 0x01,
+/// matching the convention used in `luxtensor_crypto::merkle`.
 fn verify_merkle_proof(message_hash: &Hash, proof: &[Hash], expected_root: &Hash) -> bool {
     if proof.is_empty() {
         // Single-element tree: message_hash should equal root
         return message_hash == expected_root;
     }
 
-    let mut current = *message_hash;
+    // Leaf: H(0x00 || message_hash)
+    let mut leaf_data = [0u8; 33];
+    leaf_data[0] = 0x00;
+    leaf_data[1..33].copy_from_slice(message_hash);
+    let mut current = luxtensor_crypto::keccak256(&leaf_data);
+
     for sibling in proof {
-        // Canonical ordering: smaller hash first to ensure determinism
-        let combined = if current <= *sibling {
-            let mut data = [0u8; 64];
-            data[..32].copy_from_slice(&current);
-            data[32..].copy_from_slice(sibling);
-            data
+        // Internal node: H(0x01 || min(a,b) || max(a,b))
+        let mut combined = [0u8; 65];
+        combined[0] = 0x01; // domain separator for internal nodes
+        if current <= *sibling {
+            combined[1..33].copy_from_slice(&current);
+            combined[33..65].copy_from_slice(sibling);
         } else {
-            let mut data = [0u8; 64];
-            data[..32].copy_from_slice(sibling);
-            data[32..].copy_from_slice(&current);
-            data
-        };
+            combined[1..33].copy_from_slice(sibling);
+            combined[33..65].copy_from_slice(&current);
+        }
         current = luxtensor_crypto::keccak256(&combined);
     }
     current == *expected_root
@@ -549,7 +559,14 @@ impl Bridge for InMemoryBridge {
 
         // H-1 FIX: Use explicit config flag instead of magic zero-root sentinel.
         // When attestation_only_mode is false, Merkle proof is always verified.
-        if !self.config.attestation_only_mode {
+        if self.config.attestation_only_mode {
+            // 🔧 FIX H-4: Warn when attestation_only_mode bypasses Merkle verification.
+            // This reduces bridge security to a trusted multi-sig model.
+            warn!(
+                "⚠️  Bridge attestation_only_mode is ACTIVE — Merkle proof verification \
+                 is SKIPPED. Do NOT use in production once light client is integrated."
+            );
+        } else {
             if !verify_merkle_proof(
                 &proof.message.message_hash,
                 &proof.merkle_proof,
@@ -773,7 +790,13 @@ impl Bridge for PersistentBridge {
         }
 
         // H-1 FIX: Use explicit config flag instead of magic zero-root sentinel.
-        if !self.config.attestation_only_mode {
+        if self.config.attestation_only_mode {
+            // 🔧 FIX H-4: Warn when attestation_only_mode bypasses Merkle verification.
+            warn!(
+                "⚠️  Bridge attestation_only_mode is ACTIVE — Merkle proof verification \
+                 is SKIPPED. Do NOT use in production once light client is integrated."
+            );
+        } else {
             if !verify_merkle_proof(
                 &proof.message.message_hash,
                 &proof.merkle_proof,
@@ -1129,21 +1152,36 @@ mod tests {
         let leaf = keccak256(b"test message");
         assert!(verify_merkle_proof(&leaf, &[], &leaf));
 
-        // Two-element tree
+        // Two-element tree with domain-separated hashing (🔧 FIX M-2)
         let leaf_a = keccak256(b"message_a");
         let leaf_b = keccak256(b"message_b");
-        let (first, second) = if leaf_a <= leaf_b { (leaf_a, leaf_b) } else { (leaf_b, leaf_a) };
-        let mut combined = [0u8; 64];
-        combined[..32].copy_from_slice(&first);
-        combined[32..].copy_from_slice(&second);
+
+        // Compute leaf hashes (0x00 prefix = domain separator for leaves)
+        let mut lda = [0u8; 33];
+        lda[0] = 0x00;
+        lda[1..33].copy_from_slice(&leaf_a);
+        let hash_a = keccak256(&lda);
+
+        let mut ldb = [0u8; 33];
+        ldb[0] = 0x00;
+        ldb[1..33].copy_from_slice(&leaf_b);
+        let hash_b = keccak256(&ldb);
+
+        // Compute root: H(0x01 || min(hash_a, hash_b) || max(hash_a, hash_b))
+        let (first, second) = if hash_a <= hash_b { (hash_a, hash_b) } else { (hash_b, hash_a) };
+        let mut combined = [0u8; 65];
+        combined[0] = 0x01;
+        combined[1..33].copy_from_slice(&first);
+        combined[33..65].copy_from_slice(&second);
         let root = keccak256(&combined);
 
-        assert!(verify_merkle_proof(&leaf_a, &[leaf_b], &root));
-        assert!(verify_merkle_proof(&leaf_b, &[leaf_a], &root));
+        // Proof elements are sibling leaf hashes (already domain-separated)
+        assert!(verify_merkle_proof(&leaf_a, &[hash_b], &root));
+        assert!(verify_merkle_proof(&leaf_b, &[hash_a], &root));
 
         // Invalid proof: wrong root
         let wrong_root = [0u8; 32];
-        assert!(!verify_merkle_proof(&leaf_a, &[leaf_b], &wrong_root));
+        assert!(!verify_merkle_proof(&leaf_a, &[hash_b], &wrong_root));
     }
 
     #[test]

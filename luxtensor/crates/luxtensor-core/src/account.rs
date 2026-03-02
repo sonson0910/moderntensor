@@ -132,9 +132,16 @@ impl Account {
         Ok(())
     }
 
-    /// Check if account can afford a transfer
+    /// Check if account can afford a transfer.
+    ///
+    /// 🔧 FIX M-3: Uses `checked_add` instead of `saturating_add` so that
+    /// the overflow case is handled explicitly (returns `false`) rather
+    /// than relying on saturation semantics for correctness.
     pub fn can_afford(&self, amount: u128, gas_cost: u128) -> bool {
-        self.balance >= amount.saturating_add(gas_cost)
+        match amount.checked_add(gas_cost) {
+            Some(total) => self.balance >= total,
+            None => false, // amount + gas_cost overflows u128 → definitely can't afford
+        }
     }
 }
 

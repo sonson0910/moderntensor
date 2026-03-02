@@ -47,13 +47,13 @@ pub fn logarithmic_stake(stake: u128) -> u128 {
     // Breakpoints: (token_count, eff_bps)
     // Must be sorted ascending by token_count.
     const BREAKPOINTS: [(u128, u128); 7] = [
-        (1,      10_000),  // 1 MDT    → 100%
-        (10,      8_500),  // 10 MDT   → 85%
-        (50,      6_000),  // 50 MDT   → 60%
-        (100,     5_000),  // 100 MDT  → 50%
-        (500,     2_500),  // 500 MDT  → 25%
-        (1_000,   2_000),  // 1000 MDT → 20%
-        (10_000,  1_000),  // 10000 MDT→ 10% (floor)
+        (1, 10_000),     // 1 MDT    → 100%
+        (10, 8_500),     // 10 MDT   → 85%
+        (50, 6_000),     // 50 MDT   → 60%
+        (100, 5_000),    // 100 MDT  → 50%
+        (500, 2_500),    // 500 MDT  → 25%
+        (1_000, 2_000),  // 1000 MDT → 20%
+        (10_000, 1_000), // 10000 MDT→ 10% (floor)
     ];
 
     // Normalize stake to whole tokens (integer division — truncate)
@@ -122,7 +122,9 @@ impl NodeTier {
         }
     }
 
-    /// Get tier from stake amount
+    /// Get the raw tier implied by a given stake amount (ignoring cooldowns).
+    /// For runtime tier assignment that respects upgrade cooldowns, use
+    /// `NodeInfo::update_stake()` or `NodeInfo::effective_tier()` instead.
     pub fn from_stake(stake: u128) -> Self {
         if stake >= SUPER_VALIDATOR_STAKE {
             NodeTier::SuperValidator
@@ -138,9 +140,9 @@ impl NodeTier {
     /// Get reward share for this tier in BPS (10_000 = 100%).
     pub fn emission_share_bps(&self) -> u32 {
         match self {
-            NodeTier::LightNode => 0,        // No emission, only tx fees
-            NodeTier::FullNode => 200,       // 2% infrastructure
-            NodeTier::Validator => 2_800,    // 28% validation
+            NodeTier::LightNode => 0,          // No emission, only tx fees
+            NodeTier::FullNode => 200,         // 2% infrastructure
+            NodeTier::Validator => 2_800,      // 28% validation
             NodeTier::SuperValidator => 2_800, // Same as validator + priority fees
         }
     }
@@ -171,7 +173,11 @@ impl NodeTier {
     }
 }
 
-/// GPU capability for AI nodes
+/// GPU capability for AI nodes.
+///
+/// Nodes must submit a GPU attestation hash via `set_gpu_with_attestation()`
+/// to claim a GPU bonus. Without a valid attestation, `effective_stake_with_gpu()`
+/// ignores the GPU bonus and falls back to the base effective stake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GpuCapability {
     #[default]
@@ -188,10 +194,10 @@ impl GpuCapability {
     /// Get GPU bonus multiplier in BPS (10_000 = 1.0x, 12_000 = 1.2x).
     pub fn bonus_multiplier_bps(&self) -> u128 {
         match self {
-            GpuCapability::None => 10_000,          // 1.0x — no bonus
-            GpuCapability::Basic => 12_000,          // 1.2x — +20%
-            GpuCapability::Advanced => 13_000,       // 1.3x — +30%
-            GpuCapability::Professional => 14_000,   // 1.4x — +40% (capped)
+            GpuCapability::None => 10_000,         // 1.0x — no bonus
+            GpuCapability::Basic => 12_000,        // 1.2x — +20%
+            GpuCapability::Advanced => 13_000,     // 1.3x — +30%
+            GpuCapability::Professional => 14_000, // 1.4x — +40% (capped)
         }
     }
 
@@ -201,21 +207,31 @@ impl GpuCapability {
     }
 }
 
+/// Minimum number of blocks between tier upgrades.
+/// Downgrades are immediate since they reduce privileges.
+pub const TIER_UPGRADE_COOLDOWN: u64 = 7200; // ~1 epoch (assuming 12s blocks)
+
 /// Registered node info
 #[derive(Debug, Clone)]
 pub struct NodeInfo {
     pub address: [u8; 20],
     pub tier: NodeTier,
     pub stake: u128,
-    pub registered_at: u64, // block height
-    pub last_active: u64,   // block height
-    pub uptime_score_bps: u32,  // 0 - 10_000 BPS (0% - 100%)
+    pub registered_at: u64,    // block height
+    pub last_active: u64,      // block height
+    pub uptime_score_bps: u32, // 0 - 10_000 BPS (0% - 100%)
     pub blocks_produced: u64,
     pub tx_relayed: u64,
     /// GPU capability for AI tasks
     pub gpu: GpuCapability,
     /// AI tasks completed
     pub ai_tasks_completed: u64,
+    /// Block height at which the last tier *upgrade* was applied.
+    /// Used to enforce the `TIER_UPGRADE_COOLDOWN` anti-oscillation window.
+    pub last_tier_upgrade_height: u64,
+    /// GPU attestation hash (32 bytes). Must be non-zero for the GPU bonus
+    /// to be applied. Zero means the node has not submitted a valid attestation.
+    pub gpu_attestation: [u8; 32],
 }
 
 impl NodeInfo {
@@ -231,6 +247,8 @@ impl NodeInfo {
             tx_relayed: 0,
             gpu: GpuCapability::None,
             ai_tasks_completed: 0,
+            last_tier_upgrade_height: block_height,
+            gpu_attestation: [0u8; 32],
         }
     }
 
@@ -252,15 +270,30 @@ impl NodeInfo {
     }
 
     /// Calculate effective stake with GPU bonus (deterministic integer math).
+    /// The GPU bonus is only applied when a valid attestation has been submitted
+    /// (i.e., `gpu_attestation` is non-zero).
     pub fn effective_stake_with_gpu(&self) -> u128 {
         let base = self.effective_stake();
-        // GPU bonus in BPS: base * multiplier_bps / 10_000
-        base * self.gpu.bonus_multiplier_bps() / 10_000
+        // Only apply GPU bonus if the node has provided a non-zero attestation
+        if self.gpu.has_gpu() && self.gpu_attestation != [0u8; 32] {
+            base * self.gpu.bonus_multiplier_bps() / 10_000
+        } else {
+            base
+        }
     }
 
-    /// Set GPU capability
+    /// Set GPU capability **without** attestation (legacy / test only).
+    /// The GPU bonus will NOT be applied by `effective_stake_with_gpu()`
+    /// until a valid attestation hash is submitted via `set_gpu_with_attestation()`.
     pub fn set_gpu(&mut self, gpu: GpuCapability) {
         self.gpu = gpu;
+    }
+
+    /// Set GPU capability with a benchmark or TEE attestation hash.
+    /// The attestation must be non-zero for the GPU bonus to take effect.
+    pub fn set_gpu_with_attestation(&mut self, gpu: GpuCapability, attestation: [u8; 32]) {
+        self.gpu = gpu;
+        self.gpu_attestation = attestation;
     }
 
     /// Record AI task completion
@@ -268,10 +301,54 @@ impl NodeInfo {
         self.ai_tasks_completed += 1;
     }
 
-    /// Update stake and recalculate tier
+    /// Update stake and recalculate tier with upgrade cooldown enforcement.
+    ///
+    /// Tier **downgrades** are applied immediately (they reduce privileges).
+    /// Tier **upgrades** are only applied if `TIER_UPGRADE_COOLDOWN` blocks
+    /// have elapsed since the last upgrade, preventing oscillation attacks.
     pub fn update_stake(&mut self, new_stake: u128) {
         self.stake = new_stake;
         self.tier = NodeTier::from_stake(new_stake);
+    }
+
+    /// Update stake with cooldown-enforced tier upgrade.
+    ///
+    /// `current_height` is the current block height used to check the
+    /// cooldown window. Returns the new effective tier.
+    pub fn update_stake_at(&mut self, new_stake: u128, current_height: u64) -> NodeTier {
+        let new_tier = NodeTier::from_stake(new_stake);
+        self.stake = new_stake;
+
+        if new_tier > self.tier {
+            // Upgrade: enforce cooldown
+            if current_height.saturating_sub(self.last_tier_upgrade_height) >= TIER_UPGRADE_COOLDOWN
+            {
+                self.tier = new_tier;
+                self.last_tier_upgrade_height = current_height;
+            }
+            // else: keep old tier until cooldown expires
+        } else {
+            // Downgrade or same tier: apply immediately
+            self.tier = new_tier;
+        }
+        self.tier
+    }
+
+    /// Get the effective tier, respecting the upgrade cooldown.
+    /// Returns the raw `from_stake` tier only if the cooldown has elapsed.
+    pub fn effective_tier(&self, current_height: u64) -> NodeTier {
+        let raw_tier = NodeTier::from_stake(self.stake);
+        if raw_tier > self.tier {
+            // Pending upgrade — check cooldown
+            if current_height.saturating_sub(self.last_tier_upgrade_height) >= TIER_UPGRADE_COOLDOWN
+            {
+                raw_tier
+            } else {
+                self.tier
+            }
+        } else {
+            raw_tier
+        }
     }
 
     /// Record block production
@@ -330,12 +407,30 @@ impl NodeRegistry {
         Ok(tier)
     }
 
-    /// Update node stake
-    pub fn update_stake(&self, address: [u8; 20], new_stake: u128) -> Option<NodeTier> {
+    /// Update node stake with cooldown-enforced tier upgrades.
+    ///
+    /// When `current_height` is supplied the cooldown window is checked:
+    /// tier *upgrades* are delayed by [`TIER_UPGRADE_COOLDOWN`] blocks while
+    /// tier *downgrades* apply immediately (they reduce privileges).
+    ///
+    /// Passing `None` for `current_height` bypasses the cooldown (legacy path).
+    pub fn update_stake_at_height(
+        &self,
+        address: [u8; 20],
+        new_stake: u128,
+        current_height: Option<u64>,
+    ) -> Option<NodeTier> {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(&address) {
             let old_tier = node.tier;
-            node.update_stake(new_stake);
+            match current_height {
+                Some(h) => {
+                    node.update_stake_at(new_stake, h);
+                }
+                None => {
+                    node.update_stake(new_stake);
+                }
+            }
             let new_tier = node.tier;
 
             // Update tier index if changed
@@ -351,6 +446,14 @@ impl NodeRegistry {
         } else {
             None
         }
+    }
+
+    /// Update node stake **without** tier-upgrade cooldown (legacy convenience).
+    ///
+    /// Prefer [`update_stake_at_height`] in production paths where the current
+    /// block height is available.
+    pub fn update_stake(&self, address: [u8; 20], new_stake: u128) -> Option<NodeTier> {
+        self.update_stake_at_height(address, new_stake, None)
     }
 
     /// Unregister a node
@@ -369,6 +472,11 @@ impl NodeRegistry {
     /// Get node info
     pub fn get(&self, address: [u8; 20]) -> Option<NodeInfo> {
         self.nodes.read().get(&address).cloned()
+    }
+
+    /// Get a mutable reference to a node (requires `&mut self` — caller must hold write lock).
+    pub fn get_mut_node(&mut self, address: [u8; 20]) -> Option<&mut NodeInfo> {
+        self.nodes.get_mut().get_mut(&address)
     }
 
     /// Get node tier
@@ -401,6 +509,23 @@ impl NodeRegistry {
         let mut nodes = self.get_by_tier(NodeTier::Validator);
         nodes.extend(self.get_by_tier(NodeTier::SuperValidator));
         nodes
+    }
+
+    /// Get all validators using their *effective* tier at a given block height.
+    ///
+    /// Nodes whose raw tier is `Validator` or `SuperValidator` but whose
+    /// upgrade cooldown has not elapsed will be excluded. This gives a
+    /// more accurate picture of which nodes should participate in consensus.
+    pub fn get_validators_at(&self, current_height: u64) -> Vec<NodeInfo> {
+        let nodes = self.nodes.read();
+        nodes
+            .values()
+            .filter(|n| {
+                let eff = n.effective_tier(current_height);
+                eff == NodeTier::Validator || eff == NodeTier::SuperValidator
+            })
+            .cloned()
+            .collect()
     }
 
     /// Get super validators only

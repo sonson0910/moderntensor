@@ -145,7 +145,16 @@ impl TransactionExecutor {
 
         // Faucet TX bypass — transactions from Address::zero() are special
         // "mint" transactions used by dev_faucet.
+        //
+        // SECURITY: Faucet mints bypass signature verification, gas price checks,
+        // and balance checks. On mainnet, a validator could include these to mint
+        // unlimited tokens. Guard with skip_signature_verification (dev_mode proxy).
         let is_faucet_mint = tx.from == Address::zero();
+        if is_faucet_mint && !self.skip_signature_verification {
+            return Err(CoreError::InvalidTransaction(
+                "Faucet mint transactions (from=0x0) are only allowed in dev mode".to_string()
+            ));
+        }
 
         // SECURITY: Enforce minimum gas price to prevent zero-fee spam
         if !is_faucet_mint && tx.gas_price < MIN_GAS_PRICE {
@@ -206,9 +215,19 @@ impl TransactionExecutor {
 
         // Deduct cost from sender (skip for faucet)
         if !is_faucet_mint {
-            sender.balance = sender.balance.saturating_sub(total_cost);
+            // SECURITY: Use checked_sub instead of saturating_sub.
+            // The balance check above guarantees this won't underflow,
+            // but checked_sub makes any future logic bug fail-loud.
+            sender.balance = sender.balance.checked_sub(total_cost)
+                .ok_or_else(|| CoreError::InvalidTransaction(
+                    format!("Balance underflow: {} - {} (this is a bug)", sender.balance, total_cost)
+                ))?;
         }
-        sender.nonce = sender.nonce.saturating_add(1);
+        // SECURITY: Use checked_add for nonce to prevent silent wrap at u64::MAX
+        sender.nonce = sender.nonce.checked_add(1)
+            .ok_or_else(|| CoreError::InvalidTransaction(
+                "Nonce overflow at u64::MAX".to_string()
+            ))?;
         state.set_account(tx.from, sender);
 
         let mut actual_gas_used = gas_cost;
@@ -344,14 +363,45 @@ impl TransactionExecutor {
 
     // ── Route: Metagraph precompile (AI layer) ───────────────────────────
 
-    fn route_metagraph(&self, tx: &Transaction, _actual_gas_used: &mut u64) -> ExecutionStatus {
+    /// Minimum gas cost for metagraph precompile operations.
+    /// These native operations consume CPU + disk I/O, so they must have a
+    /// gas cost proportional to their complexity to prevent spam.
+    const METAGRAPH_BASE_GAS: u64 = 50_000;
+    const METAGRAPH_REGISTER_GAS: u64 = 100_000;
+    const METAGRAPH_SET_WEIGHTS_GAS: u64 = 200_000;
+
+    fn route_metagraph(&self, tx: &Transaction, actual_gas_used: &mut u64) -> ExecutionStatus {
+        // SECURITY: Charge gas for metagraph operations. Previously, the
+        // _actual_gas_used parameter was unused, allowing unlimited spam.
+        *actual_gas_used = (*actual_gas_used).max(Self::METAGRAPH_BASE_GAS);
         match MetagraphTxPayload::decode(&tx.data) {
-            Ok(payload) => {
+            Ok(ref payload) => {
+                // Charge operation-specific gas based on complexity
+                match payload {
+                    MetagraphTxPayload::RegisterNeuron { .. } |
+                    MetagraphTxPayload::RegisterValidator { .. } |
+                    MetagraphTxPayload::CreateSubnet { .. } => {
+                        *actual_gas_used = (*actual_gas_used).max(Self::METAGRAPH_REGISTER_GAS);
+                    }
+                    MetagraphTxPayload::SetWeights { .. } => {
+                        // SetWeights is the most expensive: proportional to data size
+                        let data_gas = Self::METAGRAPH_SET_WEIGHTS_GAS
+                            + (tx.data.len() as u64 * 68); // 68 gas per byte
+                        *actual_gas_used = (*actual_gas_used).max(data_gas);
+                    }
+                    _ => {
+                        *actual_gas_used = (*actual_gas_used).max(Self::METAGRAPH_BASE_GAS);
+                    }
+                }
                 let meta_status = if let Some(ref mdb) = self.metagraph_db {
-                    self.execute_metagraph_precompile(&payload, mdb)
+                    self.execute_metagraph_precompile(payload, mdb)
                 } else {
-                    tracing::warn!("⚠️ MetagraphDB not attached — precompile tx ignored");
-                    ExecutionStatus::Success
+                    // SECURITY: Return Failed when MetagraphDB is not attached.
+                    // Returning Success would mislead users into thinking their
+                    // metagraph operation (register neuron, create subnet, etc.)
+                    // succeeded when it was silently dropped.
+                    tracing::warn!("⚠️ MetagraphDB not attached — precompile tx REJECTED");
+                    ExecutionStatus::Failed
                 };
                 info!("🔗 Metagraph precompile executed: {:?}", meta_status);
                 meta_status

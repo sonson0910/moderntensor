@@ -121,11 +121,10 @@ fn register_send_transaction(ctx: &TxRpcContext, io: &mut IoHandler) {
 
         // Reject unsigned transactions on non-dev chains
         // eth_sendTransaction cannot sign — use eth_sendRawTransaction for production
-        // SECURITY FIX: Only LuxTensor local-dev (8898) and Hardhat-like chains
-        // (1337, 31337) are allowed. NEVER include Ethereum mainnet (1),
-        // Goerli (5), or Sepolia (11155111) — those are REAL chains where
-        // unsigned TXs would be forgeable.
-        let is_dev = matches!(chain_id, 8898 | 1337 | 31337);
+        // SECURITY FIX: Only LuxTensor DEVNET (88980) and Hardhat-like chains
+        // (1337, 31337) are allowed. NEVER include mainnet (8898),
+        // Ethereum mainnet (1), Goerli (5), or Sepolia (11155111).
+        let is_dev = matches!(chain_id, 88980 | 1337 | 31337);
         if !is_dev {
             return Err(jsonrpc_core::Error {
                 code: jsonrpc_core::ErrorCode::ServerError(-32000),
@@ -308,21 +307,49 @@ fn build_fallback_receipt(hash: &[u8; 32], tx: &Transaction) -> serde_json::Valu
     })
 }
 
-/// Compute contract address for deployment transactions
+/// Compute contract address for deployment transactions.
+///
+/// SECURITY: Uses `keccak256(RLP([sender, nonce]))` — the same algorithm as
+/// Ethereum's CREATE opcode (EIP-161). This ensures deterministic, consistent
+/// contract addresses across all nodes and restarts.
+///
+/// Previous implementation used `std::collections::hash_map::DefaultHasher`
+/// (SipHash with random seed), which produced non-deterministic addresses
+/// across different process invocations.
 fn compute_contract_address(tx: &Transaction) -> serde_json::Value {
     if tx.to.is_none() && !tx.data.is_empty() {
         let nonce = tx.nonce;
         let from_bytes = tx.from.as_bytes();
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash_slice(from_bytes, &mut hasher);
-        std::hash::Hash::hash(&nonce, &mut hasher);
-        let hash_val = std::hash::Hasher::finish(&hasher);
 
-        let mut addr = [0u8; 20];
-        addr[..8].copy_from_slice(&hash_val.to_be_bytes());
-        addr[8..16].copy_from_slice(&hash_val.to_le_bytes());
-        addr[16..20].copy_from_slice(&(nonce as u32).to_be_bytes());
+        // RLP encode [sender, nonce] per Ethereum CREATE spec
+        let mut rlp_data = Vec::with_capacity(64);
+        // RLP list prefix (short list)
+        // sender: 20 bytes → RLP prefix 0x94 (0x80 + 20)
+        rlp_data.push(0xd6); // list prefix: 0xc0 + 22 (total inner length estimate)
+        rlp_data.push(0x94); // 20-byte string prefix
+        rlp_data.extend_from_slice(from_bytes);
+        // nonce: encode as minimal integer
+        if nonce == 0 {
+            rlp_data.push(0x80); // RLP empty byte string for 0
+        } else if nonce < 128 {
+            rlp_data.push(nonce as u8);
+        } else {
+            // Encode nonce as big-endian bytes (strip leading zeros)
+            let nonce_bytes = nonce.to_be_bytes();
+            let start = nonce_bytes.iter().position(|&b| b != 0).unwrap_or(7);
+            let nonce_slice = &nonce_bytes[start..];
+            rlp_data.push(0x80 + nonce_slice.len() as u8);
+            rlp_data.extend_from_slice(nonce_slice);
+        }
+        // Fix up the list prefix length
+        let inner_len = rlp_data.len() - 1; // subtract the list prefix byte
+        if inner_len <= 55 {
+            rlp_data[0] = 0xc0 + inner_len as u8;
+        }
 
+        let hash = luxtensor_crypto::keccak256(&rlp_data);
+        // Contract address = last 20 bytes of keccak256 hash
+        let addr = &hash[12..32];
         json!(format!("0x{}", hex::encode(addr)))
     } else {
         serde_json::Value::Null

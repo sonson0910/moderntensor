@@ -68,14 +68,23 @@ impl MetagraphTxPayload {
         bincode::deserialize(data)
     }
 
-    /// Returns true if this is a metagraph tx payload (starts with valid variant tag)
+    /// Returns true if this is a metagraph tx payload.
+    ///
+    /// Uses a cheap variant-tag check (first 4 bytes) before falling through
+    /// to full bincode deserialization, so invalid payloads are rejected in O(1)
+    /// without allocating.
     pub fn is_metagraph_data(data: &[u8]) -> bool {
-        // The first 8 bytes in fixint encoding contain the enum variant index.
-        // We accept variant indices 0-3 (RegisterNeuron, RegisterValidator, CreateSubnet, SetWeights).
+        // Quick length check: minimum valid payload is 8 bytes (variant tag)
         if data.len() < 8 {
             return false;
         }
-        // Try to decode — if it succeeds, it's valid metagraph data
+        // Quick variant check: fixint encoding stores variant as u32 in first 4 bytes (LE).
+        // Valid variants are 0-3 (RegisterNeuron, RegisterValidator, CreateSubnet, SetWeights).
+        let variant = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        if variant > 3 {
+            return false;
+        }
+        // Full deserialization to confirm structural validity
         Self::decode(data).is_ok()
     }
 }

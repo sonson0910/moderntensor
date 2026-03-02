@@ -468,7 +468,10 @@ impl ContractExecutor {
         Ok(())
     }
 
-    /// Generate deterministic contract address
+    /// Generate deterministic contract address.
+    ///
+    /// Uses `keccak256(deployer ‖ nonce.to_le_bytes())` — intentionally different
+    /// from Ethereum's RLP-based derivation for LuxTensor's own address space.
     fn generate_contract_address(&self, deployer: &Address, nonce: u64) -> ContractAddress {
         use luxtensor_crypto::keccak256;
 

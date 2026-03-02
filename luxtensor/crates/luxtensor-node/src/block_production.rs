@@ -140,6 +140,8 @@ impl NodeService {
         vrf_keypair: Option<Arc<luxtensor_crypto::vrf::VrfKeypair>>,
         // 🛡️ AI layer circuit breaker — protects against cascade failures in epoch operations
         ai_circuit_breaker: Arc<luxtensor_consensus::AILayerCircuitBreaker>,
+        // 🔍 Liveness monitor — check network health each slot
+        liveness_monitor: Arc<RwLock<luxtensor_consensus::liveness::LivenessMonitor>>,
     ) -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(block_time));
         let mut slot_counter: u64 = 0;
@@ -170,7 +172,53 @@ impl NodeService {
                         continue;
                     }
 
-                    // 🔧 DEBUG: Log every slot to confirm block production is running
+                    // � Liveness check: decide if network is healthy enough to produce
+                    {
+                        let current_height = best_height_guard.load(std::sync::atomic::Ordering::SeqCst);
+                        let action = liveness_monitor.read().check_liveness(current_height);
+                        match action {
+                            luxtensor_consensus::liveness::LivenessAction::Healthy => {
+                                // Network healthy — proceed normally
+                            }
+                            luxtensor_consensus::liveness::LivenessAction::WaitMore => {
+                                debug!("⏳ Liveness: waiting for more blocks before producing");
+                                // Don't skip — this is a soft signal
+                            }
+                            luxtensor_consensus::liveness::LivenessAction::SkipValidator => {
+                                warn!("⏭️ Liveness: stalled validator detected, skipping slot {}", slot);
+                                liveness_monitor.write().record_missed_block();
+                                continue;
+                            }
+                            luxtensor_consensus::liveness::LivenessAction::DiscoverPeers => {
+                                warn!("🔍 Liveness: low peer count — requesting peer discovery");
+                                if let Some(ref tx) = broadcast_tx {
+                                    let _ = tx.try_send(SwarmCommand::RequestSync {
+                                        from_height: current_height + 1,
+                                        to_height: current_height + 10,
+                                        my_id: validator_id.clone(),
+                                    });
+                                }
+                                // Still produce if we're the leader — solo nodes need this
+                            }
+                            luxtensor_consensus::liveness::LivenessAction::RequestSync => {
+                                info!("🔄 Liveness: requesting chain sync");
+                                if let Some(ref tx) = broadcast_tx {
+                                    let _ = tx.try_send(SwarmCommand::RequestSync {
+                                        from_height: current_height + 1,
+                                        to_height: current_height + 100,
+                                        my_id: validator_id.clone(),
+                                    });
+                                }
+                                // Don't skip block production — we may be the only producer
+                            }
+                            luxtensor_consensus::liveness::LivenessAction::NetworkStalled => {
+                                warn!("🛑 Liveness: network stalled — no blocks for extended period");
+                                // Network is stalled — still try to produce to recover
+                            }
+                        }
+                    }
+
+                    // �🔧 DEBUG: Log every slot to confirm block production is running
                     debug!("⏰ Slot {} processing (chain_id: {})", slot, chain_id);
 
                     // 🔧 Drain transactions from UnifiedMempool into node mempool
@@ -811,6 +859,48 @@ impl NodeService {
     ) {
         // ⚖️ Optimistic AI: process disputes and finalize/slash
         Self::process_disputes(dispute_manager, slashing_manager, new_height, header.timestamp).await;
+
+        // 🔍 Slashing: check for double-signing at this height
+        {
+            let double_signers = slashing_manager.read().check_double_signing(new_height);
+            for evidence in double_signers {
+                warn!(
+                    "🚨 Double signing detected at height {}: validator {:?}",
+                    new_height, evidence.validator
+                );
+                if let Err(e) = slashing_manager.write().slash(evidence, new_height) {
+                    warn!("Failed to slash double-signer: {}", e);
+                }
+            }
+        }
+
+        // 🔍 Slashing: check for offline validators among active set
+        {
+            let active_validators: Vec<luxtensor_core::Address> = {
+                let pos = consensus.read();
+                let vs = pos.validator_set();
+                let vs_lock = vs.read();
+                vs_lock.active_validators().iter().map(|v| v.address).collect()
+            };
+            for validator_addr in &active_validators {
+                if let Some(evidence) = slashing_manager.read().check_offline(validator_addr, new_height) {
+                    warn!(
+                        "🚨 Offline validator detected: {:?} (missed {} blocks)",
+                        validator_addr, evidence.height
+                    );
+                    if let Err(e) = slashing_manager.write().slash(evidence, new_height) {
+                        warn!("Failed to slash offline validator: {}", e);
+                    }
+                }
+            }
+            // Reset missed blocks counter for the block producer
+            if header.validator != [0u8; 32] {
+                let mut addr = [0u8; 20];
+                addr.copy_from_slice(&header.validator[12..32]);
+                let producer = luxtensor_core::Address::from(addr);
+                slashing_manager.read().reset_missed_blocks(&producer);
+            }
+        }
 
         // Update consensus with the new block hash for VRF entropy
         consensus.read().update_last_block_hash(block.hash());

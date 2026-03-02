@@ -372,11 +372,15 @@ contract ZkMLVerifier is Ownable {
     }
 
     /**
-     * @notice Toggle dev mode
+     * @notice Disable dev mode permanently.
+     * @dev SECURITY: Dev mode can only be DISABLED (one-way switch).
+     *      Once disabled, it cannot be re-enabled, preventing an owner key
+     *      compromise from bypassing proof verification on production.
      */
-    function setDevMode(bool enabled) external onlyOwner {
-        devModeEnabled = enabled;
-        emit DevModeToggled(enabled);
+    function disableDevMode() external onlyOwner {
+        require(devModeEnabled, "Dev mode already disabled");
+        devModeEnabled = false;
+        emit DevModeToggled(false);
     }
 
     /**

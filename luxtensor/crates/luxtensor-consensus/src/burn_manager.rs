@@ -102,8 +102,11 @@ impl BurnManager {
 
     /// Process transaction fee - returns (burned, remaining)
     pub fn burn_tx_fee(&self, fee: u128, block_height: u64) -> (u128, u128) {
+        // 🔧 FIX: Cap at `fee` to prevent inflated burn counters on overflow.
+        // Without `.min(fee)`, checked_mul overflow → u128::MAX / 10000 ≫ fee.
         let burn_amount =
             fee.checked_mul(self.config.tx_fee_burn_rate_bps as u128).unwrap_or(u128::MAX) / 10000;
+        let burn_amount = burn_amount.min(fee);
         let remaining = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::TransactionFee, burn_amount, block_height, None);
@@ -122,8 +125,10 @@ impl BurnManager {
         block_height: u64,
         owner: [u8; 20],
     ) -> (u128, u128) {
+        // 🔧 FIX: Cap at `fee` to prevent inflated burn counters on overflow.
         let burn_amount =
             fee.checked_mul(self.config.subnet_burn_rate_bps as u128).unwrap_or(u128::MAX) / 10000;
+        let burn_amount = burn_amount.min(fee);
         let recycle_amount = fee.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::SubnetRegistration, burn_amount, block_height, Some(owner));
@@ -138,9 +143,11 @@ impl BurnManager {
 
     /// Burn for unmet quota (100% burned)
     pub fn burn_unmet_quota(&self, amount: u128, block_height: u64, participant: [u8; 20]) -> u128 {
+        // 🔧 FIX: Cap at `amount` to prevent inflated burn counters on overflow.
         let burn_amount =
             amount.checked_mul(self.config.unmet_quota_burn_rate_bps as u128).unwrap_or(u128::MAX)
                 / 10000;
+        let burn_amount = burn_amount.min(amount);
 
         self.record_burn(BurnType::UnmetQuota, burn_amount, block_height, Some(participant));
 
@@ -158,10 +165,12 @@ impl BurnManager {
         block_height: u64,
         validator: [u8; 20],
     ) -> (u128, u128) {
+        // 🔧 FIX: Cap at `slashed_amount` to prevent inflated burn counters on overflow.
         let burn_amount = slashed_amount
             .checked_mul(self.config.slashing_burn_rate_bps as u128)
             .unwrap_or(u128::MAX)
             / 10000;
+        let burn_amount = burn_amount.min(slashed_amount);
         let remaining = slashed_amount.saturating_sub(burn_amount);
 
         self.record_burn(BurnType::Slashing, burn_amount, block_height, Some(validator));

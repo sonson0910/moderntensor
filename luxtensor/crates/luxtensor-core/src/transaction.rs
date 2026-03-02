@@ -8,7 +8,10 @@ fn strip_leading_zeros(bytes: &[u8]) -> &[u8] {
     &bytes[start..]
 }
 
-/// Transaction structure with chain_id for replay protection
+/// Transaction structure with chain_id for replay protection.
+///
+/// The `from` field is set at construction time and is NOT authenticated
+/// until `verify_signature()` is called. Always verify before trusting it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     /// Chain ID to prevent cross-chain replay attacks

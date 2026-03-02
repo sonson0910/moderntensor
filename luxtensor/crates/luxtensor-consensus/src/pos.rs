@@ -8,6 +8,17 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+// ── MAINNET SAFETY GUARD ──────────────────────────────────────────────────
+// When building for mainnet (release profile without `testnet` feature),
+// the `production-vrf` feature MUST be enabled. The pseudo-VRF is
+// biasable and MUST NOT be used in production.
+#[cfg(all(not(feature = "production-vrf"), not(debug_assertions), not(test)))]
+compile_error!(
+    "MAINNET BUILD DETECTED without `production-vrf` feature!\n\
+     The pseudo-VRF in pos.rs is NOT secure for production.\n\
+     Enable `production-vrf` feature or build with debug_assertions (dev/testnet)."
+);
+
 // Production VRF imports — only compiled with the `production-vrf` feature.
 #[cfg(feature = "production-vrf")]
 use crate::vrf_key::{VrfKeypair, VrfPublicKey, VrfSecretKey, vrf_prove};
@@ -167,6 +178,13 @@ impl ProofOfStake {
         *self.prev_epoch_randao.write() = Some(mix);
     }
 
+    /// Get the current RANDAO mix (if available).
+    ///
+    /// Returns `None` if no epoch has been finalized yet.
+    pub fn get_randao_mix(&self) -> Option<Hash> {
+        *self.randao_mix.read()
+    }
+
     /// Select a validator for a given slot using VRF-based selection
     ///
     /// 🔧 FIX MC-1: Read all shared state (last_block_hash, randao_mix, validator_set)
@@ -174,12 +192,15 @@ impl ProofOfStake {
     /// locks, allowing a race during epoch transitions where the seed could be computed
     /// with a stale hash but a fresh RANDAO mix (or vice versa).
     pub fn select_validator(&self, slot: u64) -> Result<Address, ConsensusError> {
-        // Acquire all read guards before any computation to get a consistent snapshot
+        // 🔧 FIX: Acquire ALL read guards atomically — including prev_epoch_randao.
+        // Previously prev_epoch_randao was read inside compute_seed_with under a
+        // separate lock, creating a TOCTOU race during epoch transitions.
         let last_hash = *self.last_block_hash.read();
         let randao = *self.randao_mix.read();
+        let prev_randao = *self.prev_epoch_randao.read();
         let validator_set = self.validator_set.read();
 
-        let seed = self.compute_seed_with(slot, last_hash, randao);
+        let seed = self.compute_seed_with(slot, last_hash, randao, prev_randao);
 
         validator_set
             .select_by_seed(&seed)
@@ -211,7 +232,8 @@ impl ProofOfStake {
     pub fn compute_seed(&self, slot: u64) -> Hash {
         let last_hash = *self.last_block_hash.read();
         let randao = *self.randao_mix.read();
-        self.compute_seed_with(slot, last_hash, randao)
+        let prev_randao = *self.prev_epoch_randao.read();
+        self.compute_seed_with(slot, last_hash, randao, prev_randao)
     }
 
     /// Pure computation of seed from pre-read values.
@@ -247,7 +269,7 @@ impl ProofOfStake {
     /// production-vrf = []   # Enable ONLY when real VRF is wired in
     /// ```
     #[cfg(not(feature = "production-vrf"))]
-    fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>) -> Hash {
+    fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>, prev_epoch_randao: Option<Hash>) -> Hash {
         // PSEUDO-VRF — TESTNET ONLY.  See doc comment above for the mainnet upgrade path.
         let epoch = if self.config.epoch_length > 0 { slot / self.config.epoch_length } else { 0 };
 
@@ -263,10 +285,10 @@ impl ProofOfStake {
         //   2. randao (current)   — single-round mix, vulnerable to last-look bias
         //   3. (neither)          — seed is purely function of chain data (no RANDAO)
         //
-        // The node service should always call `update_prev_epoch_randao()` at epoch
-        // boundaries so that (1) is available in steady state.
-        let lookback = *self.prev_epoch_randao.read();
-        if let Some(lb) = lookback {
+        // 🔧 FIX: prev_epoch_randao is now passed as a parameter (read atomically
+        // by the caller alongside last_hash and randao_mix) instead of being read
+        // under a separate lock inside this function — eliminates TOCTOU race.
+        if let Some(lb) = prev_epoch_randao {
             // Preferred path: mix in the immutable lookback seed first.
             data.extend_from_slice(&lb);
             // Then optionally also mix in the current epoch mix for additional entropy.
@@ -306,7 +328,7 @@ impl ProofOfStake {
     /// This is intentional: a missing key is a misconfiguration that should
     /// prevent the node from silently producing invalid blocks.
     #[cfg(feature = "production-vrf")]
-    fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>) -> Hash {
+    fn compute_seed_with(&self, slot: u64, last_hash: Hash, randao: Option<Hash>, prev_epoch_randao: Option<Hash>) -> Hash {
         let epoch = if self.config.epoch_length > 0 {
             slot / self.config.epoch_length
         } else {
@@ -321,8 +343,8 @@ impl ProofOfStake {
         alpha.extend_from_slice(&last_hash);
 
         // Anti-last-look-bias: prefer the finalized previous epoch's RANDAO.
-        let lookback = *self.prev_epoch_randao.read();
-        if let Some(lb) = lookback {
+        // 🔧 FIX: prev_epoch_randao passed as parameter (atomically read by caller).
+        if let Some(lb) = prev_epoch_randao {
             alpha.extend_from_slice(&lb);
         } else if let Some(mix) = randao {
             alpha.extend_from_slice(&mix);
@@ -768,7 +790,7 @@ mod tests {
         fn production_seed_does_not_panic() {
             let pos = make_pos_with_vrf_key();
             let last_hash = [1u8; 32];
-            let seed = pos.compute_seed_with(0, last_hash, None);
+            let seed = pos.compute_seed_with(0, last_hash, None, None);
             // Just check we got a non-zero hash (probability of all-zero is negligible)
             assert_ne!(seed, [0u8; 32]);
         }
@@ -778,8 +800,8 @@ mod tests {
         fn production_seed_is_deterministic() {
             let pos = make_pos_with_vrf_key();
             let last_hash = [42u8; 32];
-            let seed1 = pos.compute_seed_with(5, last_hash, None);
-            let seed2 = pos.compute_seed_with(5, last_hash, None);
+            let seed1 = pos.compute_seed_with(5, last_hash, None, None);
+            let seed2 = pos.compute_seed_with(5, last_hash, None, None);
             assert_eq!(seed1, seed2, "VRF seed must be deterministic for same inputs");
         }
 
@@ -788,9 +810,9 @@ mod tests {
         fn production_seed_differs_per_slot() {
             let pos = make_pos_with_vrf_key();
             let last_hash = [1u8; 32];
-            let seed_slot1 = pos.compute_seed_with(5, last_hash, None);
+            let seed_slot1 = pos.compute_seed_with(5, last_hash, None, None);
             let last_hash2 = [2u8; 32];
-            let seed_slot2 = pos.compute_seed_with(5, last_hash2, None);
+            let seed_slot2 = pos.compute_seed_with(5, last_hash2, None, None);
             assert_ne!(seed_slot1, seed_slot2, "different last_hash must yield different VRF seeds");
         }
 

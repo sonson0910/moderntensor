@@ -141,6 +141,17 @@ impl RateLimiter {
         self.check(peer_id) && self.check(&ip_key)
     }
 
+    /// 🔧 FIX S5: Dual-key rate check with custom token cost.
+    ///
+    /// Combines `check_with_ip` semantics with per-message-type costing.
+    /// Heavier messages (blocks, sync batches) consume more tokens than
+    /// lightweight ones (transactions), reflecting their actual resource
+    /// impact on the receiving node.
+    pub fn check_with_ip_and_cost(&self, peer_id: &str, ip: &std::net::IpAddr, cost: f64) -> bool {
+        let ip_key = format!("ip:{}", ip);
+        self.check_with_cost(peer_id, cost) && self.check_with_cost(&ip_key, cost)
+    }
+
     /// Check if request is allowed with custom cost
     pub fn check_with_cost(&self, peer_id: &str, cost: f64) -> bool {
         if self.is_banned(peer_id) {
@@ -181,6 +192,24 @@ impl RateLimiter {
 
         self.bans.write().insert(
             peer_id.to_string(),
+            BanRecord {
+                banned_at: Instant::now(),
+                duration: self.config.ban_duration,
+                reason: reason.to_string(),
+            },
+        );
+    }
+
+    /// 🔧 FIX S3: Ban by IP address.
+    ///
+    /// Uses the `ip:` prefix key so that *all* PeerIds from the same IP are
+    /// blocked simultaneously. This prevents a Sybil attacker from bypassing
+    /// a PeerId ban by simply generating a new keypair.
+    pub fn ban_ip(&self, ip: &std::net::IpAddr, reason: &str) {
+        let ip_key = format!("ip:{}", ip);
+        warn!("Banning IP {} for: {}", ip, reason);
+        self.bans.write().insert(
+            ip_key,
             BanRecord {
                 banned_at: Instant::now(),
                 duration: self.config.ban_duration,

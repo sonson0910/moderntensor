@@ -124,13 +124,18 @@ impl GenesisConfig {
         }
 
         // Safety: warn (not reject) if development genesis used on known chain IDs
-        // LuxTensor uses chain_id=8898 for both dev and mainnet; rejecting dev genesis
-        // here would prevent local development. Testnet (9999) gets the same treatment.
-        if self.is_development() && (self.chain_id == 8898 || self.chain_id == 9999) {
+        // LuxTensor mainnet=8898, testnet=9999, devnet=88980. Rejecting dev genesis
+        // here would prevent local development, so we warn instead.
+        if self.is_development() && (self.chain_id == 8898 || self.chain_id == 9999 || self.chain_id == 88980) {
             tracing::warn!(
                 "⚠️  Dev genesis (known test accounts) detected on chain {} ({}) — OK for local dev, NOT for production.",
                 self.chain_id,
-                if self.chain_id == 8898 { "LuxTensor Mainnet/Dev" } else { "Testnet" }
+                match self.chain_id {
+                    8898 => "LuxTensor Mainnet",
+                    9999 => "Testnet",
+                    88980 => "Devnet",
+                    _ => "Unknown",
+                }
             );
         }
 

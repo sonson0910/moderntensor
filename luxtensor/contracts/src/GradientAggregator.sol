@@ -84,6 +84,10 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     /// @dev SECURITY (M-12): Avoids unbounded loop in getActiveJobsCount
     uint256 public activeJobCount;
 
+    /// @notice Undistributed rewards per job (from rounds with no verified trainers)
+    /// @dev SECURITY: Tracks rewards that couldn't be distributed so they can be recovered
+    mapping(uint256 => uint256) public undistributedRewards;
+
     // ==================== EVENTS ====================
 
     event JobCreated(
@@ -319,6 +323,9 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
 
     /**
      * @dev Complete current round and distribute rewards
+     * @dev SECURITY: Round rewards are only distributed to verified trainers.
+     *      If no trainers are verified when round completes, rewards for that
+     *      round are held in the contract and can be recovered via recoverUndistributedRewards().
      */
     function _completeRound(uint256 jobId) internal {
         TrainingJob storage job = jobs[jobId];
@@ -337,6 +344,7 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
             if (submissions[i].verified) verifiedCount++;
         }
 
+        uint256 undistributed = 0;
         if (verifiedCount > 0) {
             uint256 rewardPerTrainer = job.rewardPerRound / verifiedCount;
             uint256 distributed = 0;
@@ -357,6 +365,10 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
                     );
                 }
             }
+        } else {
+            // No verified trainers — track undistributed rewards
+            undistributed = job.rewardPerRound;
+            undistributedRewards[jobId] += undistributed;
         }
 
         emit RoundCompleted(
@@ -479,5 +491,23 @@ contract GradientAggregator is Ownable, ReentrancyGuard {
     /// @dev SECURITY (M-12): Returns cached counter instead of iterating all jobs
     function getActiveJobsCount() external view returns (uint256) {
         return activeJobCount;
+    }
+
+    /**
+     * @notice Recover undistributed rewards from a completed job
+     * @dev SECURITY: Only the job creator can recover undistributed rewards,
+     *      and only after the job is completed. This prevents reward loss when
+     *      rounds complete without verified trainers.
+     * @param jobId The job ID
+     */
+    function recoverUndistributedRewards(uint256 jobId) external nonReentrant {
+        TrainingJob storage job = jobs[jobId];
+        require(job.status == JobStatus.Completed, "Job not completed");
+        require(job.creator == msg.sender, "Not job creator");
+        uint256 amount = undistributedRewards[jobId];
+        require(amount > 0, "No undistributed rewards");
+
+        undistributedRewards[jobId] = 0;
+        mdtToken.safeTransfer(msg.sender, amount);
     }
 }

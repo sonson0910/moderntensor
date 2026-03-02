@@ -16,12 +16,13 @@ pub mod chain_id {
     pub const TESTNET: u64 = 9999;
     /// Devnet chain ID (local development)
     ///
-    /// ALIGNED with MAINNET (8898) because LuxTensor runs a single canonical network.
-    /// Testnet uses TESTNET (9999) for replay protection when needed.
+    /// SECURITY: DEVNET uses a **distinct** chain ID from MAINNET to prevent
+    /// EIP-155 cross-chain replay attacks. Transactions signed on devnet are
+    /// invalid on mainnet and vice versa.
     ///
-    /// NOTE: All config files, Python SDK, and Metamask integrations use 8898.
-    /// Keeping DEVNET == MAINNET == 8898 ensures tx signatures are consistent.
-    pub const DEVNET: u64 = 8898;
+    /// NOTE: Update config files, Python SDK, and Metamask integrations to use
+    /// 88980 for devnet if they previously used 8898.
+    pub const DEVNET: u64 = 88980;
 }
 
 /// Official Treasury and System Addresses

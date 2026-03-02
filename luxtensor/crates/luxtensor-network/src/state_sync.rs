@@ -271,6 +271,11 @@ pub enum SnapSyncPhase {
 }
 
 /// Tracks the overall state of a snap sync run.
+///
+/// Always use [`StateSyncManager::select_pivot_block_multi`] which requires
+/// `min_agreement` peers to agree on the same `(height, state_root)`
+/// before committing the pivot. The single-peer variant
+/// [`select_pivot_block`] is **deprecated** and will be removed.
 #[derive(Debug, Clone)]
 pub struct SnapSyncState {
     /// Current phase
@@ -725,9 +730,9 @@ impl StateSyncManager {
     ///
     /// The pivot is the block whose state we will download via snap sync.
     /// Choosing a block well behind HEAD avoids re-org risk.
-    ///
-    /// ⚠️ DEPRECATED: Prefer [`select_pivot_block_multi`] which requires
+    /// Prefer [`select_pivot_block_multi`] which requires
     /// agreement from multiple peers to prevent state sync poisoning (F3).
+    #[deprecated(since = "0.1.0", note = "Use select_pivot_block_multi instead")]
     pub fn select_pivot_block(
         &mut self,
         head_block: u64,
@@ -839,7 +844,7 @@ impl StateSyncManager {
         match self.snap_sync.phase {
             SnapSyncPhase::SelectingPivot => {
                 Err(SyncError::PivotSelectionFailed(
-                    "Must call select_pivot_block() before advancing".to_string(),
+                    "Must call select_pivot_block_multi() before advancing".to_string(),
                 ))
             }
             SnapSyncPhase::DownloadingState => {

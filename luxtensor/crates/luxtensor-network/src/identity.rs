@@ -42,7 +42,19 @@ impl NodeIdentity {
     }
 
     /// Load keypair from file
+    ///
+    /// 🔧 FIX S10: Rejects symlinks to prevent symlink-redirection attacks on
+    /// multi-tenant systems where an attacker could point the key file path at
+    /// another user's key or a sensitive system file.
     pub fn load_from_file(path: &str) -> Result<Self, NetworkError> {
+        // Security: reject symlinks
+        let p = Path::new(path);
+        if p.is_symlink() {
+            return Err(NetworkError::Connection(
+                format!("SECURITY: key file '{}' is a symlink — refusing to load (potential attack)", path)
+            ));
+        }
+
         let bytes = fs::read(path)
             .map_err(|e| NetworkError::Connection(format!("Failed to read key file: {}", e)))?;
 
@@ -58,7 +70,17 @@ impl NodeIdentity {
     }
 
     /// Save keypair to file
+    ///
+    /// 🔧 FIX S10: Rejects symlinks to prevent file overwrite attacks.
     pub fn save_to_file(&self, path: &str) -> Result<(), NetworkError> {
+        // Security: reject if target is a symlink
+        let p = Path::new(path);
+        if p.exists() && p.is_symlink() {
+            return Err(NetworkError::Connection(
+                format!("SECURITY: key file '{}' is a symlink — refusing to write (potential attack)", path)
+            ));
+        }
+
         // Use protobuf encoding (libp2p standard format, works for all key types)
         let bytes = self.keypair.to_protobuf_encoding()
             .map_err(|e| NetworkError::Connection(format!("Failed to encode keypair: {}", e)))?;

@@ -202,7 +202,7 @@ pub fn register_allocation_methods(
 
             let amount = parse_amount(&p.amount)?;
 
-            match alloc.write().mint_emission(amount) {
+            match alloc.write().mint_emission_by(amount, Some(&caller_addr)) {
                 Ok(minted) => Ok(json!({
                     "success": true,
                     "caller": p.caller,

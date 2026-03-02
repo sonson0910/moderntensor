@@ -553,7 +553,8 @@ pub fn register_debug_metagraph_handler(
         let db = db.clone();
         async move {
             // SECURITY (RPC-2 FIX): Require admin auth for debug endpoints
-            crate::admin_auth::check_admin_auth("admin_debugMetagraph", None)?;
+            // NOTE: client_ip is None here — in production, extract from socket.
+            crate::admin_auth::check_admin_auth("admin_debugMetagraph", None, None)?;
 
             // Validators
             let validators = db.get_all_validators().unwrap_or_default();

@@ -173,9 +173,22 @@ pub fn requires_admin_auth(method: &str) -> bool {
 /// # Arguments
 /// * `method_name` - The RPC method being called (for error messages)
 /// * `api_key` - Optional API key from the request params
+/// Check admin authorization for a privileged RPC method.
+///
+/// # Arguments
+/// * `method_name` - The RPC method being called (for error messages)
+/// * `api_key` - Optional API key from the request params
+/// * `client_ip` - The actual IP address of the caller (from socket or trusted proxy)
+///
+/// # Security
+/// When `LUXTENSOR_ADMIN_KEY` is not set, admin methods are restricted to localhost
+/// (127.0.0.1 / ::1) only. The `client_ip` parameter MUST come from the actual
+/// connection socket address, NOT from a spoofable header like `X-Forwarded-For`
+/// (unless behind a trusted reverse proxy that strips/rewrites the header).
 pub fn check_admin_auth(
     method_name: &str,
     api_key: Option<&str>,
+    client_ip: Option<&str>,
 ) -> std::result::Result<(), jsonrpc_core::Error> {
     let env_key = std::env::var("LUXTENSOR_ADMIN_KEY").ok();
 
@@ -189,17 +202,20 @@ pub fn check_admin_auth(
             });
         }
     } else {
-        // No LUXTENSOR_ADMIN_KEY set: allow localhost only
+        // No LUXTENSOR_ADMIN_KEY set: allow localhost only.
+        // SECURITY: Use the actual `client_ip` instead of a hardcoded "127.0.0.1".
+        // Previously this always passed because it checked a literal against itself.
+        let actual_ip = client_ip.unwrap_or("unknown");
         let localhost_auth = AdminAuth::new(AdminAuthConfig::with_ip_whitelist(vec![
             "127.0.0.1".to_string(),
             "::1".to_string(),
         ]));
-        if !localhost_auth.authenticate(None, "127.0.0.1") {
+        if !localhost_auth.authenticate(None, actual_ip) {
             return Err(jsonrpc_core::Error {
                 code: jsonrpc_core::ErrorCode::ServerError(-32099),
                 message: format!(
-                    "Unauthorized: {} requires LUXTENSOR_ADMIN_KEY or localhost access",
-                    method_name
+                    "Unauthorized: {} requires LUXTENSOR_ADMIN_KEY or localhost access (caller: {})",
+                    method_name, actual_ip
                 ),
                 data: None,
             });

@@ -197,13 +197,43 @@ impl PeerManager {
     }
 
     /// Add or update a peer
+    ///
+    /// 🔧 FIX S4: When at capacity, evicts the peer with the lowest
+    /// `connection_score()` if the incoming peer has a higher score.
+    /// This prevents a first-arrival Sybil attack from filling all
+    /// slots with low-quality peers and blocking legitimate ones.
     pub fn add_peer(&mut self, peer_info: PeerInfo) -> bool {
-        if self.peers.len() >= self.max_peers && !self.peers.contains_key(&peer_info.peer_id) {
-            return false;
+        // Already tracking this peer — just update
+        if self.peers.contains_key(&peer_info.peer_id) {
+            self.peers.insert(peer_info.peer_id, peer_info);
+            return true;
         }
 
-        self.peers.insert(peer_info.peer_id, peer_info);
-        true
+        // Capacity available — accept immediately
+        if self.peers.len() < self.max_peers {
+            self.peers.insert(peer_info.peer_id, peer_info);
+            return true;
+        }
+
+        // At capacity — try eviction of lowest-scoring peer
+        let incoming_score = peer_info.connection_score();
+        let worst = self.peers.iter()
+            .min_by(|a, b| {
+                a.1.connection_score()
+                    .partial_cmp(&b.1.connection_score())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+        if let Some((worst_id, worst_info)) = worst {
+            if worst_info.connection_score() < incoming_score {
+                let evicted_id = *worst_id;
+                self.peers.remove(&evicted_id);
+                self.peers.insert(peer_info.peer_id, peer_info);
+                return true;
+            }
+        }
+
+        false // incoming peer is worse than all current peers
     }
 
     /// Remove a peer

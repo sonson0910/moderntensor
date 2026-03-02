@@ -1,5 +1,6 @@
 use crate::{keccak256, CryptoError, Hash, Result};
 use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
+use zeroize::Zeroizing;
 
 /// A 20-byte Ethereum-style address derived from a public key.
 /// This provides type safety over raw `[u8; 20]` arrays.
@@ -149,9 +150,10 @@ impl KeyPair {
         CryptoAddress(address)
     }
 
-    /// Get raw secret key bytes (caller is responsible for zeroization).
-    pub fn secret_bytes(&self) -> [u8; 32] {
-        self.secret_key.secret_bytes()
+    /// Get raw secret key bytes wrapped in a `Zeroizing` guard that
+    /// automatically wipes the memory when dropped.
+    pub fn secret_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.secret_key.secret_bytes())
     }
 }
 

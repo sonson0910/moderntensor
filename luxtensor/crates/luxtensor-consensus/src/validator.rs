@@ -100,7 +100,9 @@ impl ValidatorSet {
     /// Remove a validator from the set
     pub fn remove_validator(&mut self, address: &Address) -> Result<(), &'static str> {
         if let Some(validator) = self.validators.remove(address) {
-            self.total_stake = self.total_stake.saturating_sub(validator.stake);
+            // 🔧 FIX: Use checked_sub to catch accounting bugs instead of silently clamping.
+            self.total_stake = self.total_stake.checked_sub(validator.stake)
+                .ok_or("total_stake underflow when removing validator — accounting bug")?;
             Ok(())
         } else {
             Err("Validator not found")
@@ -117,7 +119,11 @@ impl ValidatorSet {
             return Err("Stake below minimum—fully unstake via validator rotation instead");
         }
         if let Some(validator) = self.validators.get_mut(address) {
-            self.total_stake = self.total_stake.saturating_sub(validator.stake).saturating_add(new_stake);
+            // 🔧 FIX: Use checked arithmetic to catch accounting bugs early.
+            self.total_stake = self.total_stake.checked_sub(validator.stake)
+                .ok_or("total_stake underflow during stake update")?;
+            self.total_stake = self.total_stake.checked_add(new_stake)
+                .ok_or("total_stake overflow during stake update")?;
             validator.stake = new_stake;
             if new_stake == 0 {
                 validator.active = false; // Auto-deactivate on zero stake
@@ -156,8 +162,16 @@ impl ValidatorSet {
     }
 
     /// Activate a validator (for unjailing)
+    ///
+    /// 🔧 FIX: Requires minimum stake to reactivate. A slashed validator with
+    /// zero or sub-minimum stake must re-stake before being allowed back into
+    /// the active set. This prevents "ghost validators" from participating
+    /// in consensus without economic skin-in-the-game.
     pub fn activate_validator(&mut self, address: &Address) -> Result<(), &'static str> {
         if let Some(validator) = self.validators.get_mut(address) {
+            if self.min_stake > 0 && validator.stake < self.min_stake {
+                return Err("Cannot reactivate: stake below minimum — re-stake first");
+            }
             validator.active = true;
             Ok(())
         } else {

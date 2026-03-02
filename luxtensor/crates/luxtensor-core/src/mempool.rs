@@ -620,7 +620,16 @@ impl UnifiedMempool {
         let count = transactions.len();
         let mut txs = self.transactions.write();
 
+        // 🔧 FIX L-3: Re-validate transactions loaded from disk. A corrupted or
+        // tampered backup file could inject transactions with invalid signatures
+        // or wrong chain_id. We verify each one before inserting.
+        let mut skipped = 0usize;
         for tx in transactions {
+            // Validate signature — reject unsigned or tampered transactions
+            if tx.verify_signature().is_err() {
+                skipped += 1;
+                continue;
+            }
             let hash = tx.hash();
             if !txs.contains_key(&hash) {
                 txs.insert(hash, TimedTransaction {
@@ -628,6 +637,10 @@ impl UnifiedMempool {
                     added_at: Instant::now(),
                 });
             }
+        }
+
+        if skipped > 0 {
+            warn!("💾 Skipped {} transactions with invalid signatures during mempool load", skipped);
         }
 
         // Remove the backup file after successful load

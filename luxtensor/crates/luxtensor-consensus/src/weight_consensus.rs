@@ -585,21 +585,53 @@ impl VTrustScorer {
 /// - Different committees per block and subnet (unpredictable to colluders)
 /// - Determinism (all honest nodes agree on the same committee)
 /// - No external randomness source required
+///
+/// For grind-resistant selection, use [`select_committee_with_randao`] which
+/// blends a RANDAO accumulator into the seed.
 pub fn select_committee(
     validators: &[Address],
     committee_size: usize,
     block_hash: &Hash,
     subnet_uid: u64,
 ) -> Vec<Address> {
+    select_committee_inner(validators, committee_size, block_hash, subnet_uid, None)
+}
+
+/// Grind-resistant committee selection that blends RANDAO into the seed.
+///
+/// `randao_mix` incorporates contributions from multiple validators (via
+/// `PoSConsensus::randao_mix`), making seed grinding require control of
+/// N−1 previous RANDAO contributors rather than just the block producer.
+pub fn select_committee_with_randao(
+    validators: &[Address],
+    committee_size: usize,
+    block_hash: &Hash,
+    subnet_uid: u64,
+    randao_mix: &Hash,
+) -> Vec<Address> {
+    select_committee_inner(validators, committee_size, block_hash, subnet_uid, Some(randao_mix))
+}
+
+/// Internal implementation shared by both committee selection variants.
+fn select_committee_inner(
+    validators: &[Address],
+    committee_size: usize,
+    block_hash: &Hash,
+    subnet_uid: u64,
+    randao_mix: Option<&Hash>,
+) -> Vec<Address> {
     if validators.is_empty() || committee_size == 0 {
         return Vec::new();
     }
     let size = committee_size.min(validators.len());
 
-    // Build seed: H(block_hash || subnet_uid)
+    // Build seed: H(block_hash || subnet_uid [|| randao_mix])
     let mut hasher = Keccak256::new();
     hasher.update(block_hash);
     hasher.update(subnet_uid.to_le_bytes());
+    if let Some(randao) = randao_mix {
+        hasher.update(randao);
+    }
     let seed: [u8; 32] = hasher.finalize().into();
 
     // Fisher-Yates partial shuffle using seed bytes

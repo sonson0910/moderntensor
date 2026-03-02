@@ -5,13 +5,13 @@ use crate::types::ContractAddress;
 use luxtensor_core::constants::chain_id;
 use luxtensor_core::types::{Address, Hash};
 use parking_lot::RwLock;
+use revm::primitives::Log as RevmLog;
 use revm::primitives::{
     AccountInfo, Address as RevmAddress, Bytecode, Bytes, ExecutionResult as RevmExecutionResult,
     Output, TransactTo, U256,
 };
 use revm::{Database, DatabaseCommit, Evm};
 use std::collections::HashMap;
-use revm::primitives::Log as RevmLog;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -24,11 +24,7 @@ fn convert_revm_logs(logs: &[RevmLog]) -> Vec<EvmLog> {
             for topic in log.data.topics() {
                 topics.push(topic.0);
             }
-            EvmLog {
-                address: log.address.0.to_vec(),
-                topics,
-                data: log.data.data.to_vec(),
-            }
+            EvmLog { address: log.address.0.to_vec(), topics, data: log.data.data.to_vec() }
         })
         .collect()
 }
@@ -635,6 +631,10 @@ impl PersistentEvmExecutor {
 
     /// Flush dirty EVM state to RocksDB (called after each block execution).
     /// Extracts current in-memory state and writes it atomically.
+    ///
+    /// Atomicity is guaranteed by the `EvmStateStore::flush_evm_state`
+    /// implementation which uses a RocksDB `WriteBatch` — all account,
+    /// storage, and deletion writes are committed as one atomic unit.
     pub fn flush_to_db(&self, db: &dyn EvmStateStore) -> Result<(), String> {
         // SECURITY: Acquire write lock on dirty flag from the start to prevent
         // TOCTOU race between checking and clearing the flag.

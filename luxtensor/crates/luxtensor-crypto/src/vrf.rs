@@ -282,6 +282,13 @@ impl VrfKeypair {
 ///   5. c' = challenge(pk, H, Γ, U, V)
 ///   6. Verify c' == c
 ///   7. Output = keccak256(Γ_compressed)
+///
+/// Verify an EC-VRF proof and return the VRF output on success.
+///
+/// Tries the proof's stored gamma prefix byte first, then falls back to
+/// both SEC1 prefixes (0x02, 0x03) for the public key. This is correct
+/// for verification because the challenge is computed from the decompressed
+/// point, not from the prefix byte.
 pub fn vrf_verify(
     public_key: &[u8; 32],
     alpha: &[u8],
@@ -295,9 +302,16 @@ pub fn vrf_verify(
         return Err(VrfError::InvalidProof);
     }
 
-    // Try both compressed key prefixes (0x02 = even y, 0x03 = odd y)
-    // and accept whichever yields a valid challenge match.
-    for prefix in [0x02u8, 0x03u8] {
+    // Order prefixes so we try the proof's stored gamma prefix first (fast path),
+    // then fall back to the other prefix if needed.
+    let stored_prefix = proof.gamma_compressed[0];
+    let prefixes = if stored_prefix == 0x03 {
+        [0x03u8, 0x02u8]
+    } else {
+        [0x02u8, 0x03u8]
+    };
+
+    for prefix in prefixes {
         let mut compressed_pk = [0u8; 33];
         compressed_pk[0] = prefix;
         compressed_pk[1..33].copy_from_slice(public_key);

@@ -71,24 +71,49 @@ pub struct UtilityMetrics {
 impl UtilityMetrics {
     /// Calculate utility score (0.0 - 2.0)
     /// Score > 1.0 means high utility, < 1.0 means low utility
+    ///
+    /// Delegates to the deterministic `utility_score_bps()` and converts to
+    /// f64 for backward compatibility with `EmissionResult::utility_score`
+    /// and `EmissionStats`. Consensus-critical paths use `utility_score_bps()`
+    /// directly to guarantee cross-platform determinism.
     pub fn utility_score(&self) -> f64 {
-        // Base score from validator participation
-        let validator_score = (self.active_validators as f64 / 100.0).min(1.0);
+        // Delegate to integer BPS version and convert
+        self.utility_score_bps() as f64 / 10_000.0
+    }
 
-        // Transaction activity score
-        let tx_score = (self.epoch_transactions as f64 / 10000.0).min(1.0);
+    /// Calculate utility score in basis points (BPS), fully deterministic.
+    ///
+    /// Returns a value in the range 5_000 – 15_000 (representing 0.50x – 1.50x).
+    /// Uses only integer arithmetic — no f64 — so results are identical across
+    /// all platforms, compilers, and optimization levels.
+    ///
+    /// 🔧 FIX: Replaces f64-based utility_score() in the consensus-critical
+    /// adjusted_emission() path. f64 division and multiplication are NOT
+    /// guaranteed to produce bit-identical results across x86/ARM/WASM and
+    /// different Rust compiler versions, which can cause consensus splits.
+    pub fn utility_score_bps(&self) -> u64 {
+        // validator_score: active_validators / 100, capped at 1.0
+        // In BPS: min(active_validators * 100, 10_000)
+        let validator_bps = (self.active_validators.saturating_mul(100)).min(10_000);
 
-        // AI task score (unique to ModernTensor)
-        let ai_score = (self.epoch_ai_tasks as f64 / 1000.0).min(1.0);
+        // tx_score: epoch_transactions / 10_000, capped at 1.0
+        // In BPS: min(epoch_transactions, 10_000)
+        let tx_bps = self.epoch_transactions.min(10_000);
 
-        // Block utilization
-        let util_score = self.block_utilization as f64 / 100.0;
+        // ai_score: epoch_ai_tasks / 1_000, capped at 1.0
+        // In BPS: min(epoch_ai_tasks * 10, 10_000)
+        let ai_bps = (self.epoch_ai_tasks.saturating_mul(10)).min(10_000);
 
-        // Weighted average
-        let base_score = validator_score * 0.3 + tx_score * 0.2 + ai_score * 0.3 + util_score * 0.2;
+        // util_score: block_utilization / 100
+        // In BPS: block_utilization * 100
+        let util_bps = (self.block_utilization as u64).saturating_mul(100);
 
-        // Normalize to 0.5 - 1.5 range
-        0.5 + base_score
+        // Weighted average in BPS (weights: 30%, 20%, 30%, 20%)
+        // base_score_bps = (v*30 + t*20 + a*30 + u*20) / 100
+        let base_bps = (validator_bps * 30 + tx_bps * 20 + ai_bps * 30 + util_bps * 20) / 100;
+
+        // Normalize to 5000 – 15000 range (0.5x – 1.5x)
+        5_000 + base_bps
     }
 }
 
@@ -139,14 +164,15 @@ impl EmissionController {
     }
 
     /// Calculate adjusted emission based on utility
+    ///
+    /// 🔧 FIX: Uses `utility_score_bps()` (integer-only) instead of f64
+    /// `utility_score()` for deterministic cross-platform computation.
     #[must_use]
     pub fn adjusted_emission(&self, block_height: u64, utility: &UtilityMetrics) -> u128 {
         let base = self.base_emission(block_height);
-        let utility_score = utility.utility_score();
 
-        // Calculate adjustment factor using integer BPS to avoid f64 precision loss on u128
-        // utility_score range: 0.5 - 1.5 → utility_bps range: 5000 - 15000
-        let utility_bps = (utility_score * 10_000.0).round() as i64;
+        // Use deterministic integer BPS (5000-15000) instead of f64
+        let utility_bps = utility.utility_score_bps() as i64;
         let weight = self.config.utility_weight as i64; // 0-100
 
         // adjustment_bps = 10_000 + (utility_bps - 10_000) * weight / 100

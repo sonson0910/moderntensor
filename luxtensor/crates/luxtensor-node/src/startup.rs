@@ -110,6 +110,17 @@ impl NodeService {
 
         let enable_mdns = self.config.network.enable_mdns;
 
+        // 🛡️ Validate bootstrap configuration before starting P2P.
+        // Warns if node may be isolated (no seeds, no bootstrap nodes, no mDNS).
+        if let Err(reason) = luxtensor_network::validate_bootstrap_config(
+            self.config.node.chain_id as u64,
+            &bootstrap_nodes,
+            enable_mdns,
+        ) {
+            warn!("⚠️ Bootstrap config warning: {}", reason);
+            // Don't abort — mDNS may still discover local peers
+        }
+
         match SwarmP2PNode::with_keypair(
             self.config.network.listen_port,
             p2p_event_tx,
@@ -169,6 +180,8 @@ impl NodeService {
                     best_height: self.best_height_guard.clone(),
                     is_syncing: self.is_syncing.clone(),
                     merkle_cache: self.merkle_cache.clone(),
+                    slashing_manager: self.slashing_manager.clone(),
+                    fork_resolver: self.fork_resolver.clone(),
                 };
                 let event_task: JoinHandle<Result<()>> = tokio::spawn(async move {
                     p2p_ctx.run(p2p_event_rx).await;
@@ -384,6 +397,10 @@ impl NodeService {
             // validators appear missing and metrics stay at 0.
             rpc_server.set_metagraph(self.metagraph_db.clone());
 
+            // Wire NodeRegistry into RPC so node_register, node_setGpu etc. operate
+            // on the same registry that consensus / block production uses.
+            rpc_server.set_node_registry(self.node_registry.clone());
+
             let addr = format!("{}:{}", self.config.rpc.listen_addr, self.config.rpc.listen_port);
             let rpc_threads = self.config.rpc.threads;
             let rpc_cors_origins = self.config.rpc.cors_origins.clone();
@@ -492,6 +509,7 @@ impl NodeService {
             let scoring_manager_clone = self.scoring_manager.clone();
             let vrf_keypair_for_block = self.vrf_keypair.clone();
             let ai_circuit_breaker_clone = self.ai_circuit_breaker.clone();
+            let liveness_monitor_clone = self.liveness_monitor.clone();
             let task = tokio::spawn(async move {
                 Self::block_production_loop(
                     consensus,
@@ -532,6 +550,7 @@ impl NodeService {
                     scoring_manager_clone, // 📊 Phase 5+: Performance scoring
                     vrf_keypair_for_block, // 🎲 VRF keypair for block proofs (C2 fix)
                     ai_circuit_breaker_clone, // 🛡️ AI layer circuit breaker
+                    liveness_monitor_clone, // 🔍 Liveness monitoring per slot
                 )
                 .await
             });

@@ -255,7 +255,7 @@ async fn main() -> Result<()> {
 
             let keypair = KeyPair::generate();
             let address = keypair.address();
-            let secret = Zeroizing::new(keypair.secret_bytes());
+            let secret = keypair.secret_bytes(); // already Zeroizing<[u8; 32]>
 
             eprintln!("🔑 Generated new keypair:");
             eprintln!("   Address:     0x{}", hex::encode(address));

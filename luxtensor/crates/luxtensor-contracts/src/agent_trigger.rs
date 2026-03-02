@@ -18,7 +18,7 @@ use crate::agent_registry::{AgentAccount, AgentRegistry};
 use crate::evm_executor::EvmExecutor;
 use crate::types::ContractAddress;
 use std::sync::Arc;
-use tracing::{info, warn, debug, error};
+use tracing::{debug, error, info, warn};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types
@@ -150,10 +150,8 @@ impl AgentTriggerEngine {
         }
 
         // Log remaining skipped agents
-        let remaining_agents = triggered_agents.len()
-            - outcome.successful
-            - outcome.failed
-            - outcome.skipped;
+        let remaining_agents =
+            triggered_agents.len() - outcome.successful - outcome.failed - outcome.skipped;
         if remaining_agents > 0 {
             outcome.skipped += remaining_agents;
         }
@@ -183,8 +181,9 @@ impl AgentTriggerEngine {
         let contract_addr = ContractAddress::from(*agent.contract_address.as_bytes());
 
         // Get the agent's contract code from the EVM state
-        // In a real scenario, the code would already be deployed and stored
-        // For now, we attempt the call — the EVM will handle missing code
+        // The EVM resolves the actual contract code from its own state database
+        // (via the `Database` trait implementation). Agent registration validates
+        // that the contract exists, so a missing contract triggers a revert here.
         let contract_code = Vec::new(); // EVM resolves from its own state
 
         let result = self.evm.call(
@@ -192,7 +191,7 @@ impl AgentTriggerEngine {
             contract_addr,
             contract_code,
             agent.trigger_config.trigger_calldata.clone(),
-            0,       // no value transfer for triggers
+            0, // no value transfer for triggers
             agent.trigger_config.gas_limit_per_trigger,
             block_number,
             timestamp,

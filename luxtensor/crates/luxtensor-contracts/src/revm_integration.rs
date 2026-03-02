@@ -39,7 +39,7 @@ impl Default for EvmConfig {
         Self {
             block_gas_limit: 30_000_000,
             base_fee: 1_000_000_000,    // 1 gwei
-            chain_id: chain_id::DEVNET, // LuxTensor devnet chain ID (8898)
+            chain_id: chain_id::DEVNET, // LuxTensor devnet chain ID (88980)
             enable_precompiles: true,
             enable_eip1559: true,
             enable_tracing: false,
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn test_evm_config_default() {
         let config = EvmConfig::default();
-        assert_eq!(config.chain_id, 8898);
+        assert_eq!(config.chain_id, 88980);
         assert!(config.enable_precompiles);
         assert!(config.enable_eip1559);
     }

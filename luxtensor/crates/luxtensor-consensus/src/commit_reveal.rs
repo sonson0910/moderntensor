@@ -38,7 +38,10 @@ impl Default for CommitRevealConfig {
         Self {
             commit_window: 100, // ~20 minutes at 12s blocks
             reveal_window: 100, // ~20 minutes to reveal
-            min_commits: 1,     // At least 1 validator (for testnets)
+            // 🔧 FIX: Raised from 1 to 3 to prevent single-validator finalization.
+            // A single committer can dictate all subnet weights if min_commits == 1.
+            // For testnets with < 3 validators, override this in config.
+            min_commits: 3,
             slash_on_no_reveal: true,
             // Per tokenomics: validators who don't reveal get slashed
             no_reveal_slash_percent: 5, // 5% of stake slashed (was 80%, reduced to prevent catastrophic loss from transient issues)
@@ -194,8 +197,16 @@ impl SubnetEpochState {
         }
     }
 
-    /// Get revealed weights aggregated
-    /// Optimized: Uses cached weights if available (O(1)), falls back to recompute if needed
+    /// Get revealed weights aggregated (simple average across validators).
+    ///
+    /// Optimized: Uses cached weights if available (O(1)), falls back to recompute if needed.
+    ///
+    /// SECURITY NOTE: This uses uniform averaging (each validator = 1 vote regardless of
+    /// stake). This is vulnerable to Sybil attacks where an adversary registers many
+    /// low-stake validators to dominate the average. A stake-weighted aggregation
+    /// would be more aligned with the PoS security model, but requires passing
+    /// validator stakes into the commit/reveal flow. Consider upgrading to
+    /// stake-weighted averaging in a future version.
     pub fn get_revealed_weights(&self) -> Vec<(u64, u16)> {
         // Use cached weights if populated (from incremental updates during reveal)
         if !self.cached_weights.is_empty() {

@@ -14,7 +14,6 @@
 use crate::executor::TransactionExecutor;
 use crate::health::HealthMonitor;
 use crate::mempool::Mempool;
-use crate::service::MAX_BLOCK_CLOCK_DRIFT_SECS;
 
 use dashmap::DashMap;
 use luxtensor_consensus::fast_finality::FastFinality;
@@ -59,6 +58,8 @@ pub(crate) struct P2PContext {
     pub best_height: Arc<AtomicU64>,
     pub is_syncing: Arc<AtomicBool>,
     pub merkle_cache: Arc<CachedStateDB>,
+    pub slashing_manager: Arc<RwLock<luxtensor_consensus::slashing::SlashingManager>>,
+    pub fork_resolver: Arc<RwLock<luxtensor_consensus::fork_resolution::ForkResolver>>,
 }
 
 impl P2PContext {
@@ -146,21 +147,35 @@ impl P2PContext {
         }
 
         // Validate reasonable timestamp (not too far in future)
+        // Uses BlockHeader::validate_timestamp which enforces MAX_FUTURE_DRIFT_SECS
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if block.header.timestamp > now + MAX_BLOCK_CLOCK_DRIFT_SECS {
-            warn!(
-                "🚫 Block #{} rejected: timestamp {} is too far in the future (now={})",
-                height, block.header.timestamp, now
-            );
+        if let Err(e) = block.header.validate_timestamp(now) {
+            warn!("🚫 Block #{} rejected: {}", height, e);
             return;
         }
 
         // Full structural validation via Block::validate()
         if let Err(e) = block.validate() {
             warn!("🚫 Block #{} rejected: validate() failed: {}", height, e);
+            return;
+        }
+
+        // 🔐 Validate checkpoint state root if this block is at a checkpoint height.
+        // Prevents accepting blocks with forged state roots at checkpointed heights.
+        if block.header.state_root != [0u8; 32]
+            && !self.long_range_protection.validate_checkpoint_state_root(
+                height,
+                block_hash,
+                block.header.state_root,
+            )
+        {
+            warn!(
+                "🚫 Block #{} rejected: state_root mismatch at checkpoint height",
+                height
+            );
             return;
         }
 
@@ -282,11 +297,11 @@ impl P2PContext {
             }
 
             // SECURITY: Validate timestamp monotonicity against parent
-            if block.header.timestamp < prev_block.header.timestamp {
-                warn!(
-                    "🚫 Block #{} rejected: timestamp regression ({} < parent {})",
-                    height, block.header.timestamp, prev_block.header.timestamp
-                );
+            // Uses BlockHeader::validate_timestamp_monotonic which enforces
+            // strict inequality (block.timestamp > parent.timestamp), preventing
+            // timestamp manipulation attacks on time-dependent contracts.
+            if let Err(e) = block.header.validate_timestamp_monotonic(prev_block.header.timestamp) {
+                warn!("🚫 Block #{} rejected: {}", height, e);
                 return false;
             }
         }
@@ -357,6 +372,26 @@ impl P2PContext {
                     &addr_20[..4]
                 );
                 return false;
+            }
+
+            // SECURITY: Verify the proposer was selected by PoS VRF for this slot.
+            // validate_block_producer checks that the VRF seed selects this validator.
+            // Log mismatch as warning but don't reject during bootstrap (select_validator may error).
+            {
+                let pos = self.consensus.read();
+                match pos.validate_block_producer(&proposer_addr, height) {
+                    Ok(()) => {
+                        debug!("✅ Block #{} proposer verified by PoS VRF", height);
+                    }
+                    Err(e) => {
+                        // During bootstrap (empty validator set), select_validator errors
+                        // are expected. Log but don't reject.
+                        debug!(
+                            "⚠️ Block #{} proposer VRF mismatch (may be bootstrap): {}",
+                            height, e
+                        );
+                    }
+                }
             }
 
             // VRF proof verification
@@ -468,6 +503,20 @@ impl P2PContext {
                 Ok(false) => debug!("Block #{} collecting finality signatures", height),
                 Err(e) => debug!("FastFinality skipped: {}", e),
             }
+
+            // 🔍 Record block signature for double-sign detection
+            // This enables SlashingManager::check_double_signing() to find
+            // validators who signed multiple blocks at the same height.
+            if !block.header.signature.is_empty() {
+                let sig_hash = luxtensor_crypto::keccak256(&block.header.signature);
+                self.slashing_manager.read().record_block_signature(
+                    height,
+                    block_hash,
+                    addr,
+                    sig_hash,
+                );
+                debug!("🔍 Recorded block signature for double-sign tracking at height {}", height);
+            }
         }
 
         // Liveness monitoring
@@ -481,11 +530,16 @@ impl P2PContext {
         if height > finality_depth {
             let finalized_height = height - finality_depth;
             if let Ok(Some(finalized_block)) = self.storage.get_block_by_height(finalized_height) {
+                let finalized_hash = finalized_block.hash();
                 self.long_range_protection.update_finalized(
-                    finalized_block.hash(),
+                    finalized_hash,
                     finalized_height,
                     finalized_block.header.state_root,
                 );
+
+                // 🔗 Mark block as finalized in ForkResolver
+                // This prevents reorgs from replacing finalized blocks.
+                self.fork_resolver.write().finalize_block(finalized_hash);
             }
         }
     }

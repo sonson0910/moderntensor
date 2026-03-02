@@ -170,7 +170,9 @@ pub fn register_monitoring_methods(ctx: &SystemRpcContext, io: &mut IoHandler) {
         let db_for_debug = db_for_debug.clone();
         async move {
             // SECURITY (RPC-2 FIX): Require admin auth for debug endpoints
-            crate::admin_auth::check_admin_auth("debug_forkChoiceState", None)?;
+            // NOTE: client_ip is None here — in production, the HTTP server layer
+            // should extract the actual socket IP and pass it through.
+            crate::admin_auth::check_admin_auth("debug_forkChoiceState", None, None)?;
 
             let block_scores = match db_for_debug.load_all_block_scores() {
                 Ok(scores) => scores

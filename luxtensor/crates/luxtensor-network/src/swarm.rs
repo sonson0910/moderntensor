@@ -1,27 +1,48 @@
 //! P2P Swarm implementation with mDNS discovery
 //! This module provides actual network connectivity using libp2p Swarm
 
+use crate::eclipse_protection::{EclipseConfig, EclipseProtection};
 use crate::error::NetworkError;
-use crate::eclipse_protection::{EclipseProtection, EclipseConfig};
-use crate::messages::{serialize_message, NetworkMessage, TOPIC_BLOCKS, TOPIC_TRANSACTIONS, TOPIC_SYNC};
-use crate::peer_discovery::{PeerDiscovery, DiscoveryConfig};
+use crate::messages::{
+    serialize_message, NetworkMessage, TOPIC_BLOCKS, TOPIC_SYNC, TOPIC_TRANSACTIONS,
+};
+use crate::peer_discovery::{DiscoveryConfig, PeerDiscovery};
 use crate::rate_limiter::{RateLimiter, RateLimiterConfig};
 use futures::StreamExt;
-use std::sync::atomic::AtomicU64;
 use libp2p::{
+    connection_limits,
     gossipsub::{self, IdentTopic, MessageAuthenticity, ValidationMode},
     identity::Keypair,
     kad::{self, store::MemoryStore, Mode as KadMode},
     mdns,
     swarm::SwarmEvent,
     Multiaddr, PeerId, Swarm,
-    connection_limits,
 };
 use luxtensor_core::block::Block;
 use luxtensor_core::transaction::Transaction;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+/// 🔧 FIX S2: Tracks pending sync requests with timeout and retry logic.
+///
+/// When a sync request is sent, a record is created with `sent_at` timestamp.
+/// On each event loop tick, `check_timeouts()` detects stale requests and
+/// triggers retries up to `max_retries`. After exhausting retries the request
+/// is dropped and the peer is penalised.
+#[derive(Debug)]
+struct PendingSyncRequest {
+    from_height: u64,
+    to_height: u64,
+    my_id: String,
+    sent_at: std::time::Instant,
+    retries: u32,
+}
+
+/// Configuration for sync request timeout behaviour.
+const SYNC_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const SYNC_REQUEST_MAX_RETRIES: u32 = 3;
 
 /// Event from the P2P swarm
 #[derive(Debug)]
@@ -46,11 +67,19 @@ pub enum SwarmCommand {
     BroadcastBlock(Block),
     BroadcastTransaction(Transaction),
     /// Request sync from peers
-    RequestSync { from_height: u64, to_height: u64, my_id: String },
+    RequestSync {
+        from_height: u64,
+        to_height: u64,
+        my_id: String,
+    },
     /// Send blocks in response to sync request
-    SendBlocks { blocks: Vec<Block> },
+    SendBlocks {
+        blocks: Vec<Block>,
+    },
     /// Disconnect a peer (e.g. blocked by eclipse protection)
-    DisconnectPeer { peer_id: String },
+    DisconnectPeer {
+        peer_id: String,
+    },
     /// Broadcast AI task to miners for dispatch
     ///
     /// SECURITY: Requires validator signature to prevent forged dispatches (H3 fix)
@@ -93,6 +122,14 @@ pub struct SwarmP2PNode {
     /// Throttle: last time we responded to a sync request, **per peer**
     /// 🔧 FIX F17: Per-peer instead of global to avoid starving legitimate requestors
     sync_response_timestamps: std::collections::HashMap<PeerId, std::time::Instant>,
+    /// 🔧 FIX S6: PeerId → IP map for dual-key rate limiting.
+    /// Populated on `ConnectionEstablished`, removed on `ConnectionClosed`.
+    /// Used by `handle_gossip_message` to call `check_with_ip` instead of
+    /// `check` alone, preventing Sybil bypass via multiple PeerIds from one IP.
+    peer_ips: std::collections::HashMap<PeerId, std::net::IpAddr>,
+    /// 🔧 FIX S2: Pending sync requests with timeout tracking.
+    /// Checked periodically to retry or drop stale requests.
+    pending_sync_requests: Vec<PendingSyncRequest>,
 }
 
 /// Maximum sync requests per peer per minute
@@ -187,7 +224,8 @@ impl SwarmP2PNode {
         let mut gossipsub = gossipsub::Behaviour::new(
             MessageAuthenticity::Signed(keypair.clone()),
             gossipsub_config,
-        ).map_err(|e| NetworkError::GossipsubInit(e.to_string()))?;
+        )
+        .map_err(|e| NetworkError::GossipsubInit(e.to_string()))?;
 
         // 🔧 FIX: Enable gossipsub peer scoring to penalise bad actors
         let peer_score_params = gossipsub::PeerScoreParams {
@@ -203,9 +241,9 @@ impl SwarmP2PNode {
             ..Default::default()
         };
         let peer_score_thresholds = gossipsub::PeerScoreThresholds {
-            gossip_threshold: -10.0,        // 🔧 FIX: Tighter threshold (was -100)
-            publish_threshold: -30.0,       // 🔧 FIX: Tighter threshold (was -200)
-            graylist_threshold: -50.0,      // 🔧 FIX: Tighter threshold (was -400)
+            gossip_threshold: -10.0,   // 🔧 FIX: Tighter threshold (was -100)
+            publish_threshold: -30.0,  // 🔧 FIX: Tighter threshold (was -200)
+            graylist_threshold: -50.0, // 🔧 FIX: Tighter threshold (was -400)
             opportunistic_graft_threshold: 5.0,
             ..Default::default()
         };
@@ -220,10 +258,9 @@ impl SwarmP2PNode {
         // unnecessary and a privacy / security risk. Wrapping in Toggle
         // avoids binding the multicast socket entirely when disabled.
         let mdns_toggle = if enable_mdns {
-            let mdns_behaviour = mdns::tokio::Behaviour::new(
-                mdns::Config::default(),
-                local_peer_id,
-            ).map_err(|e| NetworkError::Connection(e.to_string()))?;
+            let mdns_behaviour =
+                mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)
+                    .map_err(|e| NetworkError::Connection(e.to_string()))?;
             info!("📡 mDNS discovery enabled");
             libp2p::swarm::behaviour::toggle::Toggle::from(Some(mdns_behaviour))
         } else {
@@ -238,9 +275,8 @@ impl SwarmP2PNode {
         store_config.max_provided_keys = 1_024;
         let store = MemoryStore::with_config(local_peer_id, store_config);
         let mut kademlia_config = kad::Config::default();
-        kademlia_config.set_protocol_names(vec![
-            libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")
-        ]);
+        kademlia_config
+            .set_protocol_names(vec![libp2p::StreamProtocol::new("/luxtensor/kad/1.0.0")]);
         let mut kademlia = kad::Behaviour::with_config(local_peer_id, store, kademlia_config);
 
         // Set Kademlia mode to Server (full DHT participant)
@@ -300,7 +336,8 @@ impl SwarmP2PNode {
             .parse()
             .map_err(|e: libp2p::multiaddr::Error| NetworkError::Connection(e.to_string()))?;
 
-        swarm.listen_on(listen_addr.clone())
+        swarm
+            .listen_on(listen_addr.clone())
             .map_err(|e| NetworkError::Connection(e.to_string()))?;
 
         info!("🌐 Listening on {}", listen_addr);
@@ -311,11 +348,20 @@ impl SwarmP2PNode {
         let sync_topic = IdentTopic::new(TOPIC_SYNC);
 
         // Subscribe to topics
-        swarm.behaviour_mut().gossipsub.subscribe(&blocks_topic)
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&blocks_topic)
             .map_err(|e| NetworkError::SubscriptionFailed(e.to_string()))?;
-        swarm.behaviour_mut().gossipsub.subscribe(&transactions_topic)
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&transactions_topic)
             .map_err(|e| NetworkError::SubscriptionFailed(e.to_string()))?;
-        swarm.behaviour_mut().gossipsub.subscribe(&sync_topic)
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&sync_topic)
             .map_err(|e| NetworkError::SubscriptionFailed(e.to_string()))?;
 
         info!("📡 Subscribed to topics: blocks, transactions, sync");
@@ -327,7 +373,8 @@ impl SwarmP2PNode {
                 match addr_str.parse::<Multiaddr>() {
                     Ok(addr) => {
                         // Extract peer ID from multiaddr if present
-                        if let Some(libp2p::multiaddr::Protocol::P2p(peer_id)) = addr.iter().last() {
+                        if let Some(libp2p::multiaddr::Protocol::P2p(peer_id)) = addr.iter().last()
+                        {
                             // Add as explicit peer for gossipsub
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                             info!("   Added explicit peer: {}", peer_id);
@@ -362,38 +409,47 @@ impl SwarmP2PNode {
 
         // 🔧 FIX: Use strict eclipse protection on mainnet (max 2 peers per /24 subnet)
         // to prevent Sybil/eclipse attacks. Testnet uses relaxed defaults.
-        let eclipse_config = if chain_id == 8898 {
-            EclipseConfig::mainnet()
-        } else {
-            EclipseConfig::default()
-        };
+        let eclipse_config =
+            if chain_id == 8898 { EclipseConfig::mainnet() } else { EclipseConfig::default() };
         let eclipse_protection = std::sync::Arc::new(EclipseProtection::new(eclipse_config));
 
         // 🔧 FIX F1: Initialize rate limiter for all gossip messages
         let rate_limiter = std::sync::Arc::new(RateLimiter::new(RateLimiterConfig::default()));
 
-        Ok((Self {
-            swarm,
-            event_sender,
-            command_rx,
-            blocks_topic,
-            transactions_topic,
-            sync_topic,
-            sync_requests: std::collections::HashMap::new(),
-            peer_discovery,
-            eclipse_protection,
-            rate_limiter,
-            sync_nonce: AtomicU64::new(0),
-            sync_response_timestamps: std::collections::HashMap::new(),
-        }, command_tx))
+        Ok((
+            Self {
+                swarm,
+                event_sender,
+                command_rx,
+                blocks_topic,
+                transactions_topic,
+                sync_topic,
+                sync_requests: std::collections::HashMap::new(),
+                peer_discovery,
+                eclipse_protection,
+                rate_limiter,
+                sync_nonce: AtomicU64::new(0),
+                sync_response_timestamps: std::collections::HashMap::new(),
+                peer_ips: std::collections::HashMap::new(),
+                pending_sync_requests: Vec::new(),
+            },
+            command_tx,
+        ))
     }
 
     /// Run the swarm event loop - this must be called in a tokio task
     pub async fn run(&mut self) {
         info!("🚀 P2P Swarm event loop started");
 
+        // 🔧 FIX S2: Periodic timer to check sync request timeouts
+        let mut sync_timeout_interval = tokio::time::interval(std::time::Duration::from_secs(10));
+
         loop {
             tokio::select! {
+                // 🔧 FIX S2: Check for timed-out sync requests and retry
+                _ = sync_timeout_interval.tick() => {
+                    self.check_sync_timeouts();
+                }
                 // Handle swarm events
                 event = self.swarm.select_next_some() => {
                     match event {
@@ -438,6 +494,8 @@ impl SwarmP2PNode {
                                     continue;
                                 }
                                 self.eclipse_protection.add_peer(peer_id.to_string(), ip, is_outbound);
+                                // 🔧 FIX S6: Track PeerId→IP for dual-key rate limiting
+                                self.peer_ips.insert(peer_id, ip);
                             }
 
                             info!("✅ Connected to peer: {}", peer_id);
@@ -448,6 +506,8 @@ impl SwarmP2PNode {
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
                             // 🔧 FIX: Remove peer from eclipse protection tracking
                             self.eclipse_protection.remove_peer(&peer_id.to_string());
+                            // 🔧 FIX S6: Remove from IP map
+                            self.peer_ips.remove(&peer_id);
                             info!("❌ Disconnected from peer: {}", peer_id);
                             if self.event_sender.try_send(SwarmP2PEvent::PeerDisconnected(peer_id)).is_err() {
                                 warn!("⚠️ Event channel full, dropping PeerDisconnected event");
@@ -572,10 +632,8 @@ impl SwarmP2PNode {
 
                     // Register with peer discovery for latency tracking
                     let peer_id_str = peer_id.to_string();
-                    self.peer_discovery.on_peer_discovered(
-                        peer_id_str.clone(),
-                        vec![addr.to_string()],
-                    );
+                    self.peer_discovery
+                        .on_peer_discovered(peer_id_str.clone(), vec![addr.to_string()]);
 
                     // Add peer to gossipsub
                     self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
@@ -610,15 +668,40 @@ impl SwarmP2PNode {
 
         // SECURITY: Reject oversized messages before deserialization
         if msg_len > crate::messages::MAX_MESSAGE_SIZE as usize {
-            warn!("🚫 Dropping oversized gossip message from {}: {} bytes (max {})",
-                  source, msg_len, crate::messages::MAX_MESSAGE_SIZE);
+            warn!(
+                "🚫 Dropping oversized gossip message from {}: {} bytes (max {})",
+                source,
+                msg_len,
+                crate::messages::MAX_MESSAGE_SIZE
+            );
             return;
         }
 
-        // 🔧 FIX F1: Rate-limit ALL gossip messages via token-bucket before CPU-costly deser.
-        // Keyed by PeerId (cryptographic identity) — see Finding #2 note.
-        if !self.rate_limiter.check(&source.to_string()) {
-            warn!("🚫 Rate limiting peer {} — dropping gossip message", source);
+        // 🔧 FIX F1+S5+S6: Rate-limit ALL gossip messages with per-topic cost.
+        //
+        // Different topics have different resource impacts:
+        //   - Transactions (1 token): lightweight, high volume expected
+        //   - Blocks (5 tokens):      CPU-heavy validation, large payload
+        //   - Sync (10 tokens):       very expensive, triggers DB lookups
+        //
+        // Uses dual-key (PeerId + IP) to prevent Sybil bypass (S6).
+        let msg_cost: f64 = if topic.contains("blocks") {
+            5.0
+        } else if topic.contains("sync") {
+            10.0
+        } else {
+            1.0 // transactions and other topics
+        };
+        let rate_ok = if let Some(ip) = self.peer_ips.get(&source) {
+            self.rate_limiter.check_with_ip_and_cost(&source.to_string(), ip, msg_cost)
+        } else {
+            self.rate_limiter.check_with_cost(&source.to_string(), msg_cost)
+        };
+        if !rate_ok {
+            warn!(
+                "🚫 Rate limiting peer {} on topic {} (cost {}) — dropping",
+                source, topic, msg_cost
+            );
             return;
         }
 
@@ -626,6 +709,39 @@ impl SwarmP2PNode {
         match crate::messages::deserialize_message(&message.data) {
             Ok(NetworkMessage::NewBlock(block)) => {
                 debug!("📥 Received block #{} from peer {}", block.header.height, source);
+
+                // 🔧 FIX S8: Detect block withholding / selfish mining.
+                // If the block timestamp is more than 60s behind the current time,
+                // the proposer likely withheld it for strategic advantage.
+                // Penalize the *source* peer (gossip propagator) with a mild score
+                // hit. Full proposer slashing requires consensus-layer integration.
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if block.header.height > 0 {
+                    if block.header.timestamp + 60 < now_secs {
+                        let delay = now_secs - block.header.timestamp;
+                        warn!(
+                            "⏰ Block #{} from {} arrived {}s late (timestamp={}, now={}). \
+                               Possible block withholding.",
+                            block.header.height, source, delay, block.header.timestamp, now_secs
+                        );
+                        // Mild penalty on the relay peer; heavy penalty requires
+                        // identifying the actual proposer at the consensus layer.
+                        self.eclipse_protection.update_peer_score(&source.to_string(), -2);
+                    }
+                    // Also reject blocks from the future (> 15s drift)
+                    if block.header.timestamp > now_secs + 15 {
+                        warn!(
+                            "🚫 Block #{} from {} has future timestamp ({} > {}+15), dropping",
+                            block.header.height, source, block.header.timestamp, now_secs
+                        );
+                        self.penalize_peer(&source, -5, "Block with future timestamp");
+                        return;
+                    }
+                }
+
                 if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block, source)).is_err() {
                     warn!("⚠️ Event channel full, dropping NewBlock — node is falling behind");
                 }
@@ -636,14 +752,21 @@ impl SwarmP2PNode {
                     warn!("⚠️ Event channel full, dropping NewTransaction");
                 }
             }
-            Ok(NetworkMessage::SyncRequest { from_height, to_height, requester_id: _, nonce: _ }) => {
+            Ok(NetworkMessage::SyncRequest {
+                from_height,
+                to_height,
+                requester_id: _,
+                nonce: _,
+            }) => {
                 // SECURITY: Validate sync range to prevent DoS.
                 // An attacker requesting from_height=0, to_height=u64::MAX would force
                 // expensive database lookups. Cap range at 1000 blocks.
                 const MAX_SYNC_RANGE: u64 = 1000;
                 if to_height.saturating_sub(from_height) > MAX_SYNC_RANGE {
-                    warn!("🚫 Rejecting oversized sync request from peer {} ({}-{}, range > {})",
-                          source, from_height, to_height, MAX_SYNC_RANGE);
+                    warn!(
+                        "🚫 Rejecting oversized sync request from peer {} ({}-{}, range > {})",
+                        source, from_height, to_height, MAX_SYNC_RANGE
+                    );
                     return;
                 }
 
@@ -663,8 +786,10 @@ impl SwarmP2PNode {
                 // cached messages in bursts when peers first connect, which would
                 // otherwise permanently starve sync.
                 if entry.0 == MAX_SYNC_REQUESTS_PER_PEER {
-                    debug!("⚠️ High sync request rate from peer {} ({} requests/min)",
-                          source, entry.0);
+                    debug!(
+                        "⚠️ High sync request rate from peer {} ({} requests/min)",
+                        source, entry.0
+                    );
                 }
 
                 // 🔧 FIX F17: Per-peer sync response throttle (was global, starving others)
@@ -672,28 +797,93 @@ impl SwarmP2PNode {
                 let last = self.sync_response_timestamps.get(&source);
                 if let Some(ts) = last {
                     if now_throttle.duration_since(*ts) < std::time::Duration::from_secs(5) {
-                        debug!("🔄 Throttling sync response to peer {} (last response {}ms ago)",
-                              source, now_throttle.duration_since(*ts).as_millis());
+                        debug!(
+                            "🔄 Throttling sync response to peer {} (last response {}ms ago)",
+                            source,
+                            now_throttle.duration_since(*ts).as_millis()
+                        );
                         return;
                     }
                 }
                 self.sync_response_timestamps.insert(source, now_throttle);
 
                 debug!("🔄 Sync request from {} for blocks {}-{}", source, from_height, to_height);
-                if self.event_sender.try_send(SwarmP2PEvent::SyncRequest {
-                    from_height,
-                    to_height,
-                    requester_id: source.to_string(),
-                }).is_err() {
+                if self
+                    .event_sender
+                    .try_send(SwarmP2PEvent::SyncRequest {
+                        from_height,
+                        to_height,
+                        requester_id: source.to_string(),
+                    })
+                    .is_err()
+                {
                     debug!("⚠️ Event channel full, dropping SyncRequest");
                 }
             }
             Ok(NetworkMessage::Blocks { blocks, nonce: _ }) => {
                 debug!("📥 Received {} blocks from sync", blocks.len());
+                // 🔧 FIX S1: Pre-validate sync blocks at the network layer before
+                // forwarding to the consumer. This prevents a malicious peer from
+                // injecting a phantom chain of structurally invalid blocks.
+                let mut prev_height: Option<u64> = None;
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let mut valid_count = 0u32;
                 for block in blocks.into_iter().take(50) {
+                    // 1. Structural validation (gas, extra_data, tx count)
+                    if let Err(e) = block.validate() {
+                        warn!(
+                            "🚫 Sync block #{} from {} failed validation: {}, dropping remainder",
+                            block.header.height, source, e
+                        );
+                        self.penalize_peer(&source, -10, "Invalid sync block structure");
+                        break;
+                    }
+                    // 2. Hash integrity — recompute and compare
+                    let computed = block.header.hash();
+                    // We can't compare to a stored hash since we don't have the chain,
+                    // so at minimum verify the hash is non-zero (not a blank block)
+                    if computed == [0u8; 32] {
+                        warn!(
+                            "🚫 Sync block #{} from {} has zero hash, dropping",
+                            block.header.height, source
+                        );
+                        self.penalize_peer(&source, -10, "Sync block with zero hash");
+                        break;
+                    }
+                    // 3. Height monotonicity within the batch
+                    if let Some(prev) = prev_height {
+                        if block.header.height != prev + 1 {
+                            warn!("🚫 Sync blocks from {} have non-sequential heights ({} → {}), dropping remainder",
+                                  source, prev, block.header.height);
+                            self.penalize_peer(&source, -10, "Non-sequential sync block heights");
+                            break;
+                        }
+                    }
+                    // 4. Timestamp sanity — reject blocks from far future
+                    if block.header.height > 0 && block.header.timestamp > now_ts + 30 {
+                        warn!(
+                            "🚫 Sync block #{} from {} has future timestamp ({} > {}+30), dropping",
+                            block.header.height, source, block.header.timestamp, now_ts
+                        );
+                        self.penalize_peer(&source, -5, "Sync block with future timestamp");
+                        break;
+                    }
+                    prev_height = Some(block.header.height);
+                    valid_count += 1;
                     if self.event_sender.try_send(SwarmP2PEvent::NewBlock(block, source)).is_err() {
                         debug!("⚠️ Event channel full, dropping sync block");
                         break;
+                    }
+                }
+                if valid_count > 0 {
+                    debug!("✅ Forwarded {} validated sync blocks from {}", valid_count, source);
+                    // 🔧 FIX S2: Mark fulfilled sync requests so the timeout tracker
+                    // doesn't retry a range that has already been answered.
+                    if let Some(first_h) = prev_height.map(|last| last + 1 - valid_count as u64) {
+                        self.clear_fulfilled_sync_requests(first_h, prev_height.unwrap_or(first_h));
                     }
                 }
             }
@@ -701,13 +891,21 @@ impl SwarmP2PNode {
             // The message spec says "Receivers MUST verify" but previously fell through
             // to the catch-all with zero verification.
             Ok(NetworkMessage::AITaskDispatch {
-                task_id, model_hash, input_hash, reward, deadline,
-                validator_signature, validator_address,
+                task_id,
+                model_hash,
+                input_hash,
+                reward,
+                deadline,
+                validator_signature,
+                validator_address,
             }) => {
                 // Validate signature size (ECDSA = 64-65 bytes, DER ≤ 73)
                 if validator_signature.len() > 73 {
-                    warn!("🚫 AITaskDispatch from {} has oversized signature ({} bytes), dropping",
-                          source, validator_signature.len());
+                    warn!(
+                        "🚫 AITaskDispatch from {} has oversized signature ({} bytes), dropping",
+                        source,
+                        validator_signature.len()
+                    );
                     return;
                 }
                 if validator_signature.is_empty() {
@@ -726,13 +924,13 @@ impl SwarmP2PNode {
 
                 // Verify ECDSA signature using recover_address_strict (65-byte sig required)
                 // or recover_address (deprecated, accepts 64-byte with trial recovery)
-                #[allow(deprecated)]
                 let expected_addr: luxtensor_crypto::CryptoAddress = validator_address.into();
                 let sig_verified = if validator_signature.len() == 65 {
                     luxtensor_crypto::recover_address_strict(&payload_hash, &validator_signature)
                         .map(|recovered| recovered == expected_addr)
                         .unwrap_or(false)
                 } else if validator_signature.len() == 64 {
+                    #[allow(deprecated)]
                     luxtensor_crypto::recover_address(&payload_hash, &validator_signature)
                         .map(|recovered| recovered == expected_addr)
                         .unwrap_or(false)
@@ -746,28 +944,54 @@ impl SwarmP2PNode {
                     return;
                 }
 
-                info!("✅ AITaskDispatch from {} verified (task 0x{}, reward={})",
-                      source, hex::encode(&task_id[..8]), reward);
+                info!(
+                    "✅ AITaskDispatch from {} verified (task 0x{}, reward={})",
+                    source,
+                    hex::encode(&task_id[..8]),
+                    reward
+                );
                 // TODO: Forward to application layer event channel when AI task handling is implemented
             }
             Ok(_) => {
                 debug!("Received other message type");
             }
             Err(e) => {
-                let first_bytes: Vec<String> = message.data.iter()
-                    .take(8)
-                    .map(|b| format!("{:02x}", b))
-                    .collect();
+                let first_bytes: Vec<String> =
+                    message.data.iter().take(8).map(|b| format!("{:02x}", b)).collect();
                 warn!(
                     "Failed to deserialize gossip message from {} on topic '{}' ({} bytes, first 8: [{}]): {}",
                     source, topic, msg_len, first_bytes.join(" "), e
                 );
+                // 🔧 FIX S7+S3: Penalize peer for sending malformed gossip data.
+                // Uses penalize_peer which bans both the PeerId (eclipse score)
+                // and the source IP (rate limiter) to prevent Sybil bypass.
+                self.penalize_peer(&source, -5, "Malformed gossip data");
             }
         }
     }
 
-    /// Broadcast a block to the network
+    /// Broadcast a block to the network.
+    ///
+    /// Logs a warning if the block's timestamp is more than 30 seconds behind
+    /// the current wall-clock time, which may indicate withholding / late
+    /// publication by the proposer.
     pub fn broadcast_block(&mut self, block: &Block) -> Result<(), NetworkError> {
+        // Detect late block publication (S8 — Selfish Mining mitigation)
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let block_ts = block.header.timestamp;
+        if now_secs > block_ts && now_secs - block_ts > 30 {
+            warn!(
+                "Block #{} timestamp {} is {}s behind wall-clock {} — possible withholding",
+                block.header.height,
+                block_ts,
+                now_secs - block_ts,
+                now_secs
+            );
+        }
+
         let message = NetworkMessage::NewBlock(block.clone());
         let data = serialize_message(&message)
             .map_err(|e| NetworkError::SerializationFailed(e.to_string()))?;
@@ -781,9 +1005,7 @@ impl SwarmP2PNode {
                 debug!("No peers subscribed to blocks topic (will sync later)");
                 Ok(()) // Not an error - just no peers yet
             }
-            Err(e) => {
-                Err(NetworkError::PublishFailed(e.to_string()))
-            }
+            Err(e) => Err(NetworkError::PublishFailed(e.to_string())),
         }
     }
 
@@ -807,9 +1029,18 @@ impl SwarmP2PNode {
                 warn!("⚠️ No peers subscribed to transactions topic — TX NOT propagated (will sync later)");
                 Ok(()) // Not fatal — peers will sync later
             }
-            Err(e) => {
-                Err(NetworkError::PublishFailed(e.to_string()))
-            }
+            Err(e) => Err(NetworkError::PublishFailed(e.to_string())),
+        }
+    }
+
+    /// 🔧 FIX S3: Penalize a peer by eclipse score AND ban their IP.
+    ///
+    /// Combines `eclipse_protection::update_peer_score` with `rate_limiter::ban_ip`
+    /// so that generating a new PeerId from the same IP cannot evade the ban.
+    fn penalize_peer(&self, source: &PeerId, delta: i32, reason: &str) {
+        self.eclipse_protection.update_peer_score(&source.to_string(), delta);
+        if let Some(ip) = self.peer_ips.get(source) {
+            self.rate_limiter.ban_ip(ip, reason);
         }
     }
 
@@ -838,10 +1069,21 @@ impl SwarmP2PNode {
         &self.peer_discovery
     }
 
-    /// Send sync request to network
+    /// Send sync request to network.
+    ///
     /// Each request gets a unique nonce to prevent gossipsub from deduplicating
-    /// identical requests (same from/to/requester_id) via keccak256 message_id_fn
-    fn send_sync_request(&mut self, from_height: u64, to_height: u64, my_id: String) -> Result<(), NetworkError> {
+    /// identical requests (same from/to/requester_id) via keccak256 message_id_fn.
+    ///
+    /// 🔧 FIX S2: Tracks the request in `pending_sync_requests` so that
+    /// `check_sync_timeouts()` can detect unresponsive peers and retry
+    /// with a fresh nonce. After `SYNC_REQUEST_MAX_RETRIES` the request
+    /// is dropped.
+    fn send_sync_request(
+        &mut self,
+        from_height: u64,
+        to_height: u64,
+        my_id: String,
+    ) -> Result<(), NetworkError> {
         let nonce = self.sync_nonce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let message = NetworkMessage::SyncRequest {
             from_height,
@@ -855,16 +1097,91 @@ impl SwarmP2PNode {
         match self.swarm.behaviour_mut().gossipsub.publish(self.sync_topic.clone(), data) {
             Ok(_) => {
                 debug!("🔄 Sent sync request for blocks {}-{}", from_height, to_height);
+                // Track this request for timeout retry
+                self.pending_sync_requests.push(PendingSyncRequest {
+                    from_height,
+                    to_height,
+                    my_id,
+                    sent_at: std::time::Instant::now(),
+                    retries: 0,
+                });
                 Ok(())
             }
             Err(gossipsub::PublishError::InsufficientPeers) => {
                 debug!("No peers subscribed to sync topic");
                 Ok(())
             }
-            Err(e) => {
-                Err(NetworkError::PublishFailed(e.to_string()))
+            Err(e) => Err(NetworkError::PublishFailed(e.to_string())),
+        }
+    }
+
+    /// 🔧 FIX S2: Check for timed-out sync requests and retry or drop them.
+    ///
+    /// Called periodically from the event loop timer. For each pending request
+    /// that has exceeded `SYNC_REQUEST_TIMEOUT`:
+    /// - If retries < `SYNC_REQUEST_MAX_RETRIES`, re-publish with a new nonce
+    /// - Otherwise, drop the request and log a warning
+    fn check_sync_timeouts(&mut self) {
+        let now = std::time::Instant::now();
+        let mut to_retry: Vec<PendingSyncRequest> = Vec::new();
+
+        // Drain expired requests into retry list
+        self.pending_sync_requests.retain(|req| {
+            if now.duration_since(req.sent_at) < SYNC_REQUEST_TIMEOUT {
+                true // still within timeout window
+            } else if req.retries < SYNC_REQUEST_MAX_RETRIES {
+                to_retry.push(PendingSyncRequest {
+                    from_height: req.from_height,
+                    to_height: req.to_height,
+                    my_id: req.my_id.clone(),
+                    sent_at: now,
+                    retries: req.retries + 1,
+                });
+                false // remove the old record; retry will add a new one
+            } else {
+                warn!(
+                    "🚫 Sync request {}-{} timed out after {} retries, dropping",
+                    req.from_height, req.to_height, req.retries
+                );
+                false
+            }
+        });
+
+        // Re-publish retries with fresh nonces
+        for req in to_retry {
+            let nonce = self.sync_nonce.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let message = NetworkMessage::SyncRequest {
+                from_height: req.from_height,
+                to_height: req.to_height,
+                requester_id: req.my_id.clone(),
+                nonce,
+            };
+            if let Ok(data) = serialize_message(&message) {
+                match self.swarm.behaviour_mut().gossipsub.publish(self.sync_topic.clone(), data) {
+                    Ok(_) => {
+                        info!(
+                            "🔄 Retry {}/{} sync request for blocks {}-{}",
+                            req.retries, SYNC_REQUEST_MAX_RETRIES, req.from_height, req.to_height
+                        );
+                        self.pending_sync_requests.push(req);
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to retry sync request: {}", e);
+                    }
+                }
             }
         }
+    }
+
+    /// 🔧 FIX S2: Clear pending sync requests for a fulfilled range.
+    ///
+    /// Called when sync blocks are received to remove tracking records
+    /// whose range overlaps with the received blocks.
+    fn clear_fulfilled_sync_requests(&mut self, received_from: u64, received_to: u64) {
+        self.pending_sync_requests.retain(|req| {
+            // Remove if the received range covers this request
+            !(received_from <= req.from_height && received_to >= req.to_height)
+        });
     }
 }
 

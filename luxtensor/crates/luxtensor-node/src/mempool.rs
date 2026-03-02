@@ -1,9 +1,9 @@
-use luxtensor_core::{Transaction, Hash, Address};
-use std::collections::HashMap;
+use luxtensor_core::{Address, Hash, Transaction};
 use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{warn, info, debug};
+use tracing::{debug, info, warn};
 
 /// Default maximum pending transactions per sender (DoS protection)
 const DEFAULT_MAX_PER_SENDER: usize = 16;
@@ -90,9 +90,9 @@ impl Mempool {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             sender_tx_count: Arc::new(RwLock::new(HashMap::new())),
             max_size,
-            max_per_sender: 1000,                  // Relaxed for dev
-            min_gas_price: 0,                      // No minimum for dev
-            max_tx_size: 1024 * 1024,              // 1MB for dev
+            max_per_sender: 1000,     // Relaxed for dev
+            min_gas_price: 0,         // No minimum for dev
+            max_tx_size: 1024 * 1024, // 1MB for dev
             validate_signatures: false,
             tx_expiration: Duration::from_secs(30 * 60),
             chain_id,
@@ -106,9 +106,7 @@ impl Mempool {
         let now = Instant::now();
         let before = txs.len();
 
-        txs.retain(|_, timed_tx| {
-            now.duration_since(timed_tx.added_at) < self.tx_expiration
-        });
+        txs.retain(|_, timed_tx| now.duration_since(timed_tx.added_at) < self.tx_expiration);
 
         let removed = before - txs.len();
         if removed > 0 {
@@ -125,10 +123,7 @@ impl Mempool {
                 "🛡️ Rejected transaction: chain_id {} != expected {}",
                 tx.chain_id, self.chain_id
             );
-            return Err(MempoolError::WrongChainId {
-                expected: self.chain_id,
-                got: tx.chain_id,
-            });
+            return Err(MempoolError::WrongChainId { expected: self.chain_id, got: tx.chain_id });
         }
 
         // DoS Protection 1: Check transaction size
@@ -144,8 +139,14 @@ impl Mempool {
 
         // DoS Protection 2: Check minimum gas price (skip for faucet mints)
         if !is_faucet_mint && tx.gas_price < self.min_gas_price {
-            debug!("🛡️ Rejected transaction: gas_price {} < min {}", tx.gas_price, self.min_gas_price);
-            return Err(MempoolError::GasPriceTooLow { price: tx.gas_price, min: self.min_gas_price });
+            debug!(
+                "🛡️ Rejected transaction: gas_price {} < min {}",
+                tx.gas_price, self.min_gas_price
+            );
+            return Err(MempoolError::GasPriceTooLow {
+                price: tx.gas_price,
+                min: self.min_gas_price,
+            });
         }
 
         // SECURITY: Validate signature before accepting into mempool
@@ -194,22 +195,23 @@ impl Mempool {
             let mut sender_counts = self.sender_tx_count.write();
             let count = sender_counts.entry(sender).or_insert(0);
             if *count >= self.max_per_sender {
-                warn!("🛡️ Rejected transaction from {:?}: sender limit {} reached", sender, self.max_per_sender);
-                return Err(MempoolError::SenderLimitReached { sender, limit: self.max_per_sender });
+                warn!(
+                    "🛡️ Rejected transaction from {:?}: sender limit {} reached",
+                    sender, self.max_per_sender
+                );
+                return Err(MempoolError::SenderLimitReached {
+                    sender,
+                    limit: self.max_per_sender,
+                });
             }
             *count += 1;
         }
 
         // Wrap with timestamp and sender
-        let timed_tx = TimedTransaction {
-            tx,
-            added_at: Instant::now(),
-        };
+        let timed_tx = TimedTransaction { tx, added_at: Instant::now() };
         txs.insert(hash, timed_tx);
         Ok(())
     }
-
-
 
     /// Get all pending transactions
     #[allow(dead_code)]
@@ -226,13 +228,18 @@ impl Mempool {
     /// Transactions are also prioritized by gas_price (higher gas = earlier inclusion).
     pub fn get_transactions_for_block(&self, limit: usize) -> Vec<Transaction> {
         let txs = self.transactions.read();
-        debug!("get_transactions_for_block: mempool has {} transactions, limit={}", txs.len(), limit);
+        debug!(
+            "get_transactions_for_block: mempool has {} transactions, limit={}",
+            txs.len(),
+            limit
+        );
         let mut sorted: Vec<Transaction> = txs.values().map(|t| t.tx.clone()).collect();
 
         // Primary sort: gas_price descending (priority), secondary: sender + nonce ascending
         sorted.sort_by(|a, b| {
             // First: higher gas_price transactions get priority
-            b.gas_price.cmp(&a.gas_price)
+            b.gas_price
+                .cmp(&a.gas_price)
                 // Then: group by sender and order by nonce within sender
                 .then_with(|| a.from.cmp(&b.from))
                 .then_with(|| a.nonce.cmp(&b.nonce))
@@ -339,23 +346,39 @@ impl Mempool {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
         let count = transactions.len();
+        let mut loaded = 0;
         let mut txs = self.transactions.write();
 
         for tx in transactions {
+            // SECURITY: Re-validate signatures when loading from file.
+            // A compromised backup file could contain unsigned or tampered
+            // transactions that bypass all mempool protections.
+            if self.validate_signatures && tx.from != Address::zero() {
+                if let Err(e) = tx.verify_signature() {
+                    warn!("💾 Skipping invalid-signature tx from backup: {:?}", e);
+                    continue;
+                }
+            }
+            // Verify chain_id matches
+            if tx.chain_id != self.chain_id {
+                warn!(
+                    "💾 Skipping tx with wrong chain_id {} (expected {})",
+                    tx.chain_id, self.chain_id
+                );
+                continue;
+            }
             let hash = tx.hash();
             if !txs.contains_key(&hash) {
-                txs.insert(hash, TimedTransaction {
-                    tx,
-                    added_at: std::time::Instant::now(),
-                });
+                txs.insert(hash, TimedTransaction { tx, added_at: std::time::Instant::now() });
+                loaded += 1;
             }
         }
 
         // Remove the backup file after successful load
         let _ = std::fs::remove_file(path);
 
-        info!("💾 Loaded {} transactions from {}", count, path);
-        Ok(count)
+        info!("💾 Loaded {}/{} valid transactions from {}", loaded, count, path);
+        Ok(loaded)
     }
 }
 
@@ -392,15 +415,7 @@ mod tests {
     const TEST_CHAIN_ID: u64 = 8898;
 
     fn create_test_transaction(nonce: u64) -> Transaction {
-        Transaction::new(
-            nonce,
-            Address::zero(),
-            Some(Address::zero()),
-            1000,
-            1,
-            21000,
-            vec![],
-        )
+        Transaction::new(nonce, Address::zero(), Some(Address::zero()), 1000, 1, 21000, vec![])
     }
 
     #[test]

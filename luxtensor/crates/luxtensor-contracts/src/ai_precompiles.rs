@@ -281,7 +281,12 @@ pub struct TrainingJob {
     pub gradient_hashes: Vec<[u8; 32]>,
 }
 
-/// AI Precompile state manager
+/// AI Precompile state manager.
+///
+/// All state except the HNSW vector store is in-memory and lost on restart.
+/// Use `AIPrecompileState::snapshot()` / `restore()` (to be wired into the
+/// node's shutdown/startup hooks) to persist AI request history, training
+/// jobs, and the semantic registry alongside the HNSW checkpoint.
 #[derive(Clone, Default)]
 pub struct AIPrecompileState {
     requests: Arc<RwLock<HashMap<[u8; 32], AIRequestEntry>>>,
@@ -956,10 +961,11 @@ pub fn vector_query_precompile(
 
     // Scores as fixed-point uint256 (score * 1e18 for precision)
     // This converts f32 distance to a scaled integer representation
+    // 🔧 FIX M-5: Clamp to [0.0, MAX_SAFE] before scaling to prevent
+    // negative/extreme f32 values from producing misleading u128 results.
     for score in scores_vec {
-        // Convert f32 score to fixed-point (18 decimals)
-        // Score is typically a distance (lower = better), so we keep as-is
-        let scaled_score = (score as f64 * 1e18) as u128;
+        let clamped = (score as f64).clamp(0.0, 1e20);
+        let scaled_score = (clamped * 1e18) as u128;
         let mut score_bytes = [0u8; 32];
         score_bytes[16..32].copy_from_slice(&scaled_score.to_be_bytes());
         output.extend_from_slice(&score_bytes);
@@ -1096,7 +1102,8 @@ pub fn classify_precompile(
     output[28..32].copy_from_slice(&label.to_be_bytes());
 
     // Confidence as fixed-point (18 decimals)
-    let scaled_confidence = (confidence as f64 * 1e18) as u128;
+    // 🔧 FIX M-5: Clamp before scaling
+    let scaled_confidence = ((confidence as f64).clamp(0.0, 1e20) * 1e18) as u128;
     output[48..64].copy_from_slice(&scaled_confidence.to_be_bytes());
 
     Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
@@ -1171,7 +1178,8 @@ pub fn cluster_assign_precompile(
     let mut output = vec![0u8; 64];
     output[24..32].copy_from_slice(&cluster_id.to_be_bytes());
 
-    let scaled_distance = (distance as f64 * 1e18) as u128;
+    // 🔧 FIX M-5: Clamp before scaling
+    let scaled_distance = ((distance as f64).clamp(0.0, 1e20) * 1e18) as u128;
     output[48..64].copy_from_slice(&scaled_distance.to_be_bytes());
 
     Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
@@ -1243,7 +1251,8 @@ pub fn anomaly_score_precompile(
 
     // Encode output: uint256 anomaly_score
     let mut output = vec![0u8; 32];
-    let scaled_score = (score as f64 * 1e18) as u128;
+    // 🔧 FIX M-5: Clamp before scaling
+    let scaled_score = ((score as f64).clamp(0.0, 1e20) * 1e18) as u128;
     output[16..32].copy_from_slice(&scaled_score.to_be_bytes());
 
     Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
@@ -1360,7 +1369,8 @@ pub fn similarity_gate_precompile(
     let mut output = vec![0u8; 64];
     output[31] = if is_similar { 1 } else { 0 };
 
-    let scaled_similarity = (similarity as f64 * 1e18) as u128;
+    // 🔧 FIX M-5: Clamp before scaling
+    let scaled_similarity = ((similarity as f64).clamp(0.0, 1e20) * 1e18) as u128;
     output[48..64].copy_from_slice(&scaled_similarity.to_be_bytes());
 
     Ok(PrecompileOutput::new(gas_cost, Bytes::from(output)))
@@ -1691,7 +1701,8 @@ pub fn global_search_precompile(
     output.extend_from_slice(&[0u8; 24]);
     output.extend_from_slice(&(results.len() as u64).to_be_bytes());
     for (_, score, _) in &results {
-        let scaled = (*score as f64 * 1e18) as u128;
+        // 🔧 FIX M-5: Clamp before scaling
+        let scaled = ((*score as f64).clamp(0.0, 1e20) * 1e18) as u128;
         output.extend_from_slice(&[0u8; 16]);
         output.extend_from_slice(&scaled.to_be_bytes());
     }

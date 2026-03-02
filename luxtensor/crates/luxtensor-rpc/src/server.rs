@@ -11,7 +11,7 @@ use crate::{
 use jsonrpc_core::IoHandler;
 use jsonrpc_http_server::{Server, ServerBuilder};
 use luxtensor_consensus::{
-    AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, ValidatorSet,
+    AILayerCircuitBreaker, CommitRevealConfig, CommitRevealManager, NodeRegistry, ValidatorSet,
 };
 use luxtensor_core::{Hash, Transaction, UnifiedStateDB};
 use luxtensor_storage::{BlockchainDB, CachedStateDB, MetagraphDB};
@@ -116,6 +116,8 @@ pub struct RpcServer {
     health_fn: Option<Arc<dyn Fn() -> serde_json::Value + Send + Sync>>,
     /// Reward executor for rewards_* RPC methods (optional, shared with block production)
     reward_executor: Option<Arc<parking_lot::RwLock<RewardExecutor>>>,
+    /// Node registry for progressive staking / GPU attestation RPC endpoints
+    node_registry: Option<Arc<RwLock<NodeRegistry>>>,
 }
 
 impl RpcServer {
@@ -187,6 +189,7 @@ impl RpcServer {
             metrics_prometheus_fn: None,
             health_fn: None,
             reward_executor: None,
+            node_registry: None,
         }
     }
 
@@ -268,6 +271,11 @@ impl RpcServer {
         self.metagraph = metagraph;
     }
 
+    /// Set the node registry — enables node_register, node_setGpu, node_tier, etc.
+    pub fn set_node_registry(&mut self, registry: Arc<RwLock<NodeRegistry>>) {
+        self.node_registry = Some(registry);
+    }
+
 
 
 
@@ -329,6 +337,7 @@ impl RpcServer {
             metrics_prometheus_fn: None,
             health_fn: None,
             reward_executor: None,
+            node_registry: None,
         }
     }
 
@@ -509,6 +518,11 @@ impl RpcServer {
         let miner_ctx = Arc::new(MinerDispatchContext::new(self.metagraph.clone()));
         register_miner_dispatch_methods(miner_ctx, io);
 
+        // Register node tier RPC methods (node_register, node_setGpu, etc.)
+        if let Some(ref registry) = self.node_registry {
+            crate::node_rpc::register_node_methods(io, registry.clone());
+        }
+
         // Register checkpoint handlers for fast sync
         register_checkpoint_handlers(io, self.db.clone(), self.data_dir.clone());
 
@@ -632,6 +646,11 @@ impl RpcServer {
         }
 
         // SECURITY: Apply rate limiter middleware for DoS protection.
+        // WARNING: This trusts X-Forwarded-For / X-Real-IP headers, which are
+        // spoofable unless the node is behind a trusted reverse proxy (nginx, etc.).
+        // If running without a reverse proxy, consider removing the header extraction
+        // and using only the socket-level remote address (requires hyper connection info).
+        // TODO: Add `trust_proxy: bool` config option to control this behavior.
         let rate_limiter_mw = self.rate_limiter.clone();
         builder = builder.request_middleware(
             move |request: jsonrpc_http_server::hyper::Request<jsonrpc_http_server::hyper::Body>| {
@@ -795,6 +814,7 @@ impl RpcServerBuilder {
             metrics_prometheus_fn: None,
             health_fn: None,
             reward_executor: None,
+            node_registry: None,
         }
     }
 }

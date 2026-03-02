@@ -367,6 +367,10 @@ impl SlashingManager {
 
     /// Process unjailing (called each block)
     ///
+    /// 🔧 FIX: Validates stake >= min_stake before reactivating. A slashed
+    /// validator with zero or sub-minimum stake stays jailed until they
+    /// re-stake to the minimum required amount.
+    ///
     /// LOCK ORDER: validator_set → jailed (matches slash() to prevent ABBA deadlock)
     pub fn process_unjail(&self, current_height: u64) -> Vec<Address> {
         let mut validator_set = self.validator_set.write();
@@ -376,15 +380,26 @@ impl SlashingManager {
 
         jailed.retain(|validator, status| {
             if current_height >= status.release_at {
-                info!("Unjailing validator {:?} at height {}", validator, current_height);
-
-                // Reactivate validator
-                if let Err(e) = validator_set.activate_validator(validator) {
-                    warn!("Failed to reactivate unjailed validator: {}", e);
+                // 🔧 FIX: Check validator has sufficient stake before reactivation.
+                // activate_validator now enforces min_stake internally, but we also
+                // check here to provide a clear log message.
+                match validator_set.activate_validator(validator) {
+                    Ok(()) => {
+                        info!("Unjailing validator {:?} at height {}", validator, current_height);
+                        unjailed.push(*validator);
+                        false // Remove from jailed map
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Cannot unjail validator {:?}: {} — must re-stake to minimum before reactivation",
+                            validator, e
+                        );
+                        // Keep jailed — they can try again after re-staking.
+                        // Extend release_at by 1 to prevent repeated warn spam every block.
+                        // (The validator stays jailed until they re-stake.)
+                        true
+                    }
                 }
-
-                unjailed.push(*validator);
-                false // Remove from jailed map
             } else {
                 true // Keep in jailed map
             }

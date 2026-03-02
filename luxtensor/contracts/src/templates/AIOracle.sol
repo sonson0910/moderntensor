@@ -80,6 +80,11 @@ contract AIOracle is Ownable, ReentrancyGuard {
     /// @notice Whether fulfiller registration is required
     bool public requireRegistration = true;
 
+    /// @notice Default proof type for zkML verification
+    /// @dev SECURITY: Defaults to STARK (0) for production. Set to 2 (Dev) only for testing.
+    ///      0 = STARK (full verification), 1 = Groth16 (SNARK), 2 = Dev (hash-only, testing)
+    uint8 public defaultProofType = 0;
+
     // ========== EVENTS ==========
 
     event AIRequestCreated(
@@ -222,11 +227,13 @@ contract AIOracle is Ownable, ReentrancyGuard {
         // Verify zkML proof if verifier is set
         if (zkmlVerifier != address(0) && proofHash != bytes32(0)) {
             // Call ZkMLVerifier to check proof validity
+            // SECURITY FIX: Use configured defaultProofType instead of
+            // hardcoded Dev mode (2). Dev proofs skip real verification.
             (bool isValid, ) = IZkMLVerifier(zkmlVerifier).verifyProof(
                 req.modelHash, // imageId
                 result, // journal (public output)
                 abi.encodePacked(proofHash), // seal
-                2 // proofType: Dev mode
+                defaultProofType // proofType: configurable (STARK=0, Groth16=1, Dev=2)
             );
             require(isValid, "Invalid zkML proof");
         }
@@ -336,6 +343,15 @@ contract AIOracle is Ownable, ReentrancyGuard {
      */
     function setRequireRegistration(bool required) external onlyOwner {
         requireRegistration = required;
+    }
+
+    /**
+     * @notice Set default proof type for zkML verification
+     * @param _proofType 0=STARK, 1=Groth16, 2=Dev (testing only)
+     */
+    function setDefaultProofType(uint8 _proofType) external onlyOwner {
+        require(_proofType <= 2, "Invalid proof type");
+        defaultProofType = _proofType;
     }
 
     /**

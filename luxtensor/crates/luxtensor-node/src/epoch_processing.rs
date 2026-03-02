@@ -257,6 +257,37 @@ impl NodeService {
             Ok(mix) => {
                 consensus.read().update_randao_mix(mix);
                 info!("🎲 Epoch {} RANDAO mix finalized: {:?}", epoch_num, &mix[..8]);
+
+                // Pre-compute the next epoch's committee using the finalized
+                // RANDAO mix. This makes committee membership unpredictable
+                // until the epoch boundary and deterministic afterwards.
+                let pos = consensus.read();
+                let validator_addrs: Vec<luxtensor_core::Address> = pos
+                    .validator_set()
+                    .read()
+                    .active_validators()
+                    .iter()
+                    .map(|v| v.address)
+                    .collect();
+                if !validator_addrs.is_empty() {
+                    let block_hash = header.hash();
+                    let committee_size = validator_addrs.len().min(21); // cap at 21 BFT members
+                    let committee = luxtensor_consensus::weight_consensus::select_committee_with_randao(
+                        &validator_addrs,
+                        committee_size,
+                        &block_hash,
+                        0, // subnet 0 = main chain
+                        &mix,
+                    );
+                    info!(
+                        "🗳️ Epoch {} committee selected ({}/{} validators, RANDAO-seeded)",
+                        epoch_num + 1, committee.len(), validator_addrs.len()
+                    );
+                    debug!(
+                        "🗳️ Committee members: {:?}",
+                        committee.iter().map(|a| hex::encode(a.as_bytes())).collect::<Vec<_>>()
+                    );
+                }
             }
             Err(e) => {
                 debug!("⚠️  RANDAO finalize skipped for epoch {}: {}", epoch_num, e);
